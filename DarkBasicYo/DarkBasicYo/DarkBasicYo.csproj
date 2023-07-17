@@ -1,18 +1,18 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
     <PropertyGroup>
-        <OutputType>Exe</OutputType>
-        <TargetFramework>net7.0</TargetFramework>
-        <ImplicitUsings>enable</ImplicitUsings>
-        <Nullable>enable</Nullable>
+        <TargetFramework>netstandard2.0</TargetFramework>
+<!--        <ImplicitUsings>enable</ImplicitUsings>-->
+
     </PropertyGroup>
 
     <ItemGroup>
-      <Folder Include="AntlrStuff\Output\" />
+<!--      <PackageReference Include="Antlr4.Runtime.Standard" Version="4.13.0" />-->
     </ItemGroup>
-
-    <ItemGroup>
-      <PackageReference Include="Antlr4.Runtime.Standard" Version="4.13.0" />
-    </ItemGroup>
+    
+    <Target Name="CopyDll" AfterTargets="Build">
+        <Message Text="Copying the dll!" Importance="high" />
+        <Exec Command="./copy.sh" />
+    </Target>
 
 </Project>

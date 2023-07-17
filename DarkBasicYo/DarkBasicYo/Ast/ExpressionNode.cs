@@ -1,23 +1,118 @@
-namespace DarkBasicYo.Ast;
+using System;
+using System.Collections.Generic;
 
-public interface IExpressionNode
+namespace DarkBasicYo.Ast
 {
-    
-}
 
-public class LiteralIntExpression : AstNode, IExpressionNode
-{
-    public int value;
-    public LiteralIntExpression(Token token) : base(token)
+    public interface IExpressionNode
     {
-        if (!int.TryParse(token.raw, out value))
+
+    }
+
+    public enum OperationType
+    {
+        Add,
+        Subtract,
+        Divide,
+        Mult,
+        LessThan,
+        GreaterThan
+    }
+
+    public static class OperationUtil
+    {
+        public static readonly Dictionary<LexemType, OperationType> _lexemToOperation =
+            new Dictionary<LexemType, OperationType>
+            {
+                [LexemType.OpPlus] = OperationType.Add,
+                [LexemType.OpDivide] = OperationType.Divide,
+                [LexemType.OpMinus] = OperationType.Subtract,
+                [LexemType.OpMultiply] = OperationType.Mult,
+                [LexemType.OpGt] = OperationType.GreaterThan,
+                [LexemType.OpLt] = OperationType.LessThan,
+            };
+
+        public static OperationType Convert(Token token)
         {
-            throw new Exception("Parser exception! Expected int, but found " + token.raw);
+            if (!_lexemToOperation.TryGetValue(token.type, out var opType))
+            {
+                throw new ParserException("Uknown operation", token);
+            }
+
+            return opType;
         }
     }
 
-    protected override string GetString()
+    public class BinaryOperandExpression : AstNode, IExpressionNode
     {
-        return value.ToString();
+        public IExpressionNode lhs, rhs;
+        public OperationType operationType;
+
+        public BinaryOperandExpression(Token start, Token end, Token op, IExpressionNode lhs, IExpressionNode rhs)
+            : base(start, end)
+        {
+            this.lhs = lhs;
+            this.rhs = rhs;
+            this.operationType = OperationUtil.Convert(op);
+            // switch (op.type)
+            // {
+            //     case LexemType.OpPlus:
+            //         operationType = OperationType.Add;
+            //         break;
+            //     case LexemType.OpMinus:
+            //         operationType = OperationType.Subtract;
+            //         break;
+            //     case LexemType.OpLt:
+            //         operationType = OperationType.LessThan;
+            //         break;
+            //     case LexemType.OpGt:
+            //         operationType = OperationType.GreaterThan;
+            //         break;
+            //     default:
+            //         throw new ParserException("Invalid operation, " + op.type, op);
+            // }
+        }
+
+        protected override string GetString()
+        {
+            return $"{operationType.ToString().ToLowerInvariant()} {lhs},{rhs}";
+        }
+    }
+
+    public class LiteralIntExpression : AstNode, IExpressionNode
+    {
+        public int value;
+
+        public LiteralIntExpression(Token token) : base(token)
+        {
+            if (!int.TryParse(token.raw, out value))
+            {
+                throw new Exception("Parser exception! Expected int, but found " + token.raw);
+            }
+        }
+
+        protected override string GetString()
+        {
+            return value.ToString();
+        }
+    }
+
+
+    public class LiteralRealExpression : AstNode, IExpressionNode
+    {
+        public float value;
+
+        public LiteralRealExpression(Token token) : base(token)
+        {
+            if (!float.TryParse(token.raw, out value))
+            {
+                throw new Exception("Parser exception! Expected float, but found " + token.raw);
+            }
+        }
+
+        protected override string GetString()
+        {
+            return startToken.raw;
+        }
     }
 }

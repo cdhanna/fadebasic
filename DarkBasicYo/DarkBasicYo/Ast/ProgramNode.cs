@@ -1,16 +1,20 @@
-namespace DarkBasicYo.Ast;
+using System.Collections.Generic;
+using System.Linq;
 
-public class ProgramNode : AstNode
+namespace DarkBasicYo.Ast
 {
-    public ProgramNode(Token start) : base(start)
+    public class ProgramNode : AstNode
     {
-        
-    }
-    
-    public List<IStatementNode> statements = new List<IStatementNode>();
-    
-    protected override string GetString()
-    {
-        return $"{string.Join(",", statements.Select(x => x.ToString()))}";
+        public ProgramNode(Token start) : base(start)
+        {
+
+        }
+
+        public List<IStatementNode> statements = new List<IStatementNode>();
+
+        protected override string GetString()
+        {
+            return $"{string.Join(",", statements.Select(x => x.ToString()))}";
+        }
     }
 }

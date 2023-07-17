@@ -1,30 +1,33 @@
-namespace DarkBasicYo.Ast;
-
-public abstract class AstNode
+namespace DarkBasicYo.Ast
 {
-    public Token startToken;
-    public Token endToken;
 
-    protected AstNode()
+    public abstract class AstNode
     {
-        
-    }
-    protected AstNode(Token start, Token end)
-    {
-        startToken = start;
-        endToken = end;
-    }
+        public Token startToken;
+        public Token endToken;
 
-    protected AstNode(Token token) : this(token, token)
-    {
-        
+        protected AstNode()
+        {
+
+        }
+
+        protected AstNode(Token start, Token end)
+        {
+            startToken = start;
+            endToken = end;
+        }
+
+        protected AstNode(Token token) : this(token, token)
+        {
+
+        }
+
+        public override string ToString()
+        {
+            return $"({GetString()})";
+        }
+
+        protected abstract string GetString();
+
     }
-
-    public override string ToString()
-    {
-        return $"({GetString()})";
-    }
-
-    protected abstract string GetString();
-
 }

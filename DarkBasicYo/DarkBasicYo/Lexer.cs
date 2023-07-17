@@ -1,185 +1,342 @@
+using System;
+using System.Collections.Generic;
+using System.Diagnostics;
+using System.Linq;
 using System.Text.RegularExpressions;
 
-namespace DarkBasicYo;
-
-public enum LexemType
+namespace DarkBasicYo
 {
-    WhiteSpace,
-    OpPlus,
-    OpMinus,
-    OpEqual,
-    LiteralReal,
-    LiteralInt,
-    LiteralString,
-    VariableInteger,
-    VariableReal,
-    VariableString,
-    CommandWord
-}
 
-public class Lexer
-{
-    
-    // TODOs
-    /*
-     * 3. comments REM REMSTART REMEND, `
-     * 4. string literals
-     * 5. if endif, else
-     * 6. for loop stuff
-     * 7. repeat until
-     */
-    
-    public static List<Lexem> Lexems = new List<Lexem>
+    public enum LexemType
     {
-        new Lexem(LexemType.WhiteSpace, new Regex("^(\\s|\\t|\\n)+")),
-        new Lexem(LexemType.OpPlus, new Regex("^\\+")),
-        new Lexem(LexemType.OpMinus, new Regex("^\\-")),
-        new Lexem(LexemType.OpEqual, new Regex("^=")),
-        new Lexem(LexemType.LiteralReal, new Regex("^((\\d+\\.(\\d*))|(\\.\\d+))")),
-        new Lexem(LexemType.LiteralInt, new Regex("^\\d+")),
-        new Lexem(LexemType.VariableString, new Regex("^([a-z,A-Z][a-z,A-Z,0-9,_]*)\\$")),
-        new Lexem(LexemType.VariableReal, new Regex("^([a-z,A-Z][a-z,A-Z,0-9,_]*)#")),
-        new Lexem(LexemType.VariableInteger, new Regex("^[a-z,A-Z][a-z,A-Z,0-9,_]*")),
-    };
-    
-    
-    public List<Token> Tokenize(string input, CommandCollection commands=null)
+        EOF,
+        EndStatement,
+        KeywordRem,
+        KeywordRemStart,
+        KeywordRemEnd,
+        
+        KeywordIf,
+        KeywordThen,
+        KeywordEndIf,
+        KeywordElse,
+        
+        KeywordWhile,
+        KeywordEndWhile,
+        KeywordAs,
+        KeywordTypeInteger,
+        KeywordTypeByte,
+        KeywordTypeWord,
+        KeywordTypeDWord,
+        KeywordTypeDoubleInteger,
+        KeywordTypeFloat, // real
+        KeywordTypeDoubleFloat,
+        KeywordTypeString,
+        KeywordTypeBoolean,
+
+
+        WhiteSpace,
+        ArgSplitter,
+        OpPlus,
+        OpMultiply,
+        OpDivide,
+        OpGt,
+        OpLt,
+        OpMinus,
+        OpEqual,
+        ParenOpen,
+        ParenClose,
+        LiteralReal,
+        LiteralInt,
+        LiteralString,
+        VariableGeneral,
+        VariableReal,
+        VariableString,
+        CommandWord
+    }
+
+    public class Lexer
     {
-        var tokens = new List<Token>();
-        if (commands == null)
-        {
-            commands = new CommandCollection();
-        }
 
-        var lexems = Lexems.ToList();
-        foreach (var command in commands.Commands)
+        // TODOs
+        /*
+         * 3. comments REM REMSTART REMEND, `
+         * 5. if endif, else
+         * 6. for loop stuff
+         * 7. repeat until
+         * 1. functions
+         * 2. types
+         * 3. arrays
+         * 4. negative numbers
+         * AND, OR, XOR and NOT
+         */
+
+        public static List<Lexem> Lexems = new List<Lexem>
         {
-            // var pattern = "";
-            var components = command.command.Select(x =>
+            new Lexem(LexemType.EndStatement, new Regex("^;")),
+            new Lexem(LexemType.ArgSplitter, new Regex("^,")),
+            
+            new Lexem(LexemType.WhiteSpace, new Regex("^(\\s|\\t|\\n)+")),
+            new Lexem(LexemType.ParenOpen, new Regex("^\\(")),
+            new Lexem(LexemType.ParenClose, new Regex("^\\)")),
+            new Lexem(LexemType.OpPlus, new Regex("^\\+")),
+            new Lexem(LexemType.OpMultiply, new Regex("^\\*")),
+            new Lexem(LexemType.OpDivide, new Regex("^\\/")),
+            new Lexem(LexemType.OpGt, new Regex("^\\>")),
+            new Lexem(LexemType.OpLt, new Regex("^\\<")),
+            new Lexem(LexemType.OpMinus, new Regex("^\\-")),
+            new Lexem(LexemType.OpEqual, new Regex("^=")),
+
+            new Lexem(LexemType.KeywordIf, new Regex("^if")),
+            new Lexem(LexemType.KeywordEndIf, new Regex("^endif")),
+            new Lexem(LexemType.KeywordElse, new Regex("^else")),
+            new Lexem(LexemType.KeywordThen, new Regex("^then")),
+
+            new Lexem(LexemType.KeywordRem, new Regex("^rem")),
+            new Lexem(LexemType.KeywordRem, new Regex("^`")),
+            new Lexem(LexemType.KeywordRemStart, new Regex("^remstart")),
+            new Lexem(LexemType.KeywordRemEnd, new Regex("^remend")),
+            
+            new Lexem(LexemType.KeywordWhile, new Regex("^while")),
+            new Lexem(LexemType.KeywordEndWhile, new Regex("^endwhile")),
+            new Lexem(LexemType.KeywordAs, new Regex("^as")),
+            new Lexem(LexemType.KeywordTypeBoolean, new Regex("^boolean")),
+            new Lexem(LexemType.KeywordTypeByte, new Regex("^byte")),
+            new Lexem(LexemType.KeywordTypeInteger, new Regex("^integer")),
+            new Lexem(LexemType.KeywordTypeWord, new Regex("^word")),
+            new Lexem(LexemType.KeywordTypeDWord, new Regex("^dword")),
+            new Lexem(LexemType.KeywordTypeDoubleInteger, new Regex("^double integer")),
+            new Lexem(LexemType.KeywordTypeFloat, new Regex("^float")),
+            new Lexem(LexemType.KeywordTypeDoubleFloat, new Regex("^double float")),
+            new Lexem(LexemType.KeywordTypeString, new Regex("^string")),
+
+            new Lexem(-2, LexemType.LiteralReal, new Regex("^((\\d+\\.(\\d*))|(\\.\\d+))")),
+            new Lexem(LexemType.LiteralInt, new Regex("^\\d+")),
+            new Lexem(LexemType.LiteralString, new Regex("^\"(.*)\"")),
+            new Lexem(-2, LexemType.VariableString, new Regex("^([a-z,A-Z][a-z,A-Z,0-9,_]*)\\$")),
+            new Lexem(-2, LexemType.VariableReal, new Regex("^([a-z,A-Z][a-z,A-Z,0-9,_]*)#")),
+            new Lexem(2, LexemType.VariableGeneral, new Regex("^[a-z,A-Z][a-z,A-Z,0-9,_]*")),
+        };
+
+
+        public List<Token> Tokenize(string input, CommandCollection commands = null)
+        {
+            var tokens = new List<Token>();
+            if (commands == null)
             {
-                switch (x)
-                {
-                    case ' ':
-                        return "(\\s|\\t)+";
-                    default:
-                        return $"({char.ToLower(x)}|{char.ToUpper(x)})";
-                }
-            });
-            var pattern = "^" + string.Join("", components);
-            var commandLexem = new Lexem(-1, LexemType.CommandWord, new Regex(pattern));
-            lexems.Add(commandLexem);
-        }
+                commands = StandardCommands.LimitedCommands;
+            }
 
-        lexems.Sort((a, b) => a.priority.CompareTo(b.priority));
-
-        var lines = input.Split("\n", StringSplitOptions.RemoveEmptyEntries);
-
-        for (var lineNumber = 0; lineNumber < lines.Length; lineNumber++)
-        {
-            var line = lines[lineNumber];
-
-            for (var charNumber = 0; charNumber < line.Length; charNumber = charNumber)
+            var lexems = Lexems.ToList();
+            foreach (var command in commands.Commands)
             {
-                var foundMatch = false;
-                var subStr = line.Substring(charNumber);
-
-                for (var lexemId = 0; lexemId < lexems.Count; lexemId++)
+                // var pattern = "";
+                var components = command.command.Select(x =>
                 {
-                    var lexem = lexems[lexemId];
-                    var matches = lexem.regex.Matches(subStr);
-                    if (matches.Count == 1)
+                    switch (x)
                     {
-                        foundMatch = true;
-                        var token = new Token
-                        {
-                            raw = matches[0].Value,
-                            lexem = lexem,
-                            lineNumber = lineNumber,
-                            charNumber = charNumber
-                        };
+                        case ' ':
+                            return "(\\s|\\t)+";
+                        default:
+                            return $"({char.ToLower(x)}|{char.ToUpper(x)})";
+                    }
+                });
+                var pattern = "^" + string.Join("", components);
+                var commandLexem = new Lexem(-1, LexemType.CommandWord, new Regex(pattern));
+                lexems.Add(commandLexem);
+            }
 
-                        if (lexem.type != LexemType.WhiteSpace)
+            lexems.Sort((a, b) => a.priority.CompareTo(b.priority));
+
+            var lines = input.Split(new string[]{"\n"}, StringSplitOptions.RemoveEmptyEntries);
+
+            var eolLexem = new Lexem(LexemType.EndStatement, null);
+            
+            for (var lineNumber = 0; lineNumber < lines.Length; lineNumber++)
+            {
+                var line = lines[lineNumber];
+
+                for (var charNumber = 0; charNumber < line.Length; charNumber = charNumber)
+                {
+                    var foundMatch = false;
+                    var subStr = line.Substring(charNumber).ToLowerInvariant();
+
+                    for (var lexemId = 0; lexemId < lexems.Count; lexemId++)
+                    {
+                        var lexem = lexems[lexemId];
+                        var matches = lexem.regex.Matches(subStr);
+                        if (matches.Count == 1)
                         {
-                            // we ignore white space in token generation
-                            tokens.Add(token);
+                            foundMatch = true;
+                            var token = new Token
+                            {
+                                raw = matches[0].Value,
+                                lexem = lexem,
+                                lineNumber = lineNumber,
+                                charNumber = charNumber
+                            };
+
+                            switch (lexem.type)
+                            {
+                                case LexemType.WhiteSpace:
+                                    // we ignore white space in token generation
+                                    break;
+                                default:
+                                    tokens.Add(token);
+                                    break;
+                            }
+                            
+                            charNumber += token.raw.Length;
+                            break;
                         }
-                        
-                        charNumber += token.raw.Length;
-                        break;
-                    } else if (matches.Count > 1)
+                        else if (matches.Count > 1)
+                        {
+                            throw new Exception("Token exception! Too many matches!");
+                        }
+                    }
+
+                    if (!foundMatch)
                     {
-                        throw new Exception("Token exception! Too many matches!");
+                        throw new Exception($"Token exception! No match for {subStr} at {lineNumber}:{charNumber}");
                     }
                 }
 
-                if (!foundMatch)
+                if (tokens[tokens.Count - 1].type != LexemType.EndStatement)
                 {
-                    throw new Exception($"Token exception! No match for {subStr} at {lineNumber}:{charNumber}");
+                    tokens.Add(new Token
+                    {
+                        charNumber = line.Length, 
+                        lexem = eolLexem,
+                        lineNumber = lineNumber,
+                        raw = "\n"
+                    });
+                }
+                
+            }
+
+            return tokens;
+        }
+
+
+    }
+
+    public class Lexem
+    {
+        public readonly Regex regex;
+        public readonly int priority;
+        public readonly LexemType type;
+
+        public Lexem()
+        {
+        }
+
+        public Lexem(LexemType type, Regex regex)
+        {
+            this.type = type;
+            this.regex = regex;
+        }
+
+        public Lexem(int priority, LexemType type, Regex regex)
+        {
+            this.priority = priority;
+            this.type = type;
+            this.regex = regex;
+        }
+    }
+
+    [Serializable]
+    [DebuggerDisplay("{raw} ({type}:{lineNumber}:{charNumber})")]
+    public class Token
+    {
+        public int lineNumber;
+        public int charNumber;
+        public string raw;
+        public LexemType type => lexem.type;
+        public string Location => $"{lineNumber}:{charNumber}";
+
+        public Lexem lexem;
+    }
+
+    public class TokenStream
+    {
+        private readonly List<Token> _tokens;
+
+        public int Index { get; private set; }
+
+        public Token Current { get; private set; }
+        private int _maxIndex;
+        
+
+        public Token Peek => IsEof
+            ? new Token
+            {
+                lexem = new Lexem(LexemType.EOF, null)
+            }
+            : _tokens[Index];
+
+        public List<Token> PeekUntilEoS => PeekUntil(LexemType.EndStatement);
+        public List<Token> PeekUntil(LexemType type)
+        {
+            var res = _tokens.Skip(Index).TakeWhile(x => x.type != type).ToList();
+            return res;
+        }
+
+        public TokenStream(List<Token> tokens)
+        {
+            _tokens = tokens;
+            Current = _tokens[0];
+            _maxIndex = tokens.Count;
+        }
+
+        public TokenStream(List<Token> tokens, int startIndex, int maxIndex)
+        {
+            _tokens = tokens;
+            Index = startIndex;
+            Current = _tokens[startIndex];
+            _maxIndex = maxIndex;
+        }
+
+        // public Token GetNext(int ahead=0) => _tokens[Index + ahead];
+
+        public bool TryGet(LexemType type, out Token token, out int index)
+        {
+            token = null;
+            index = -1;
+            for (var i = Index; i < _maxIndex; i++)
+            {
+                if (_tokens[i].type == type)
+                {
+                    index = i;
+                    token = _tokens[i];
+                    return true;
                 }
             }
-            
+
+            return false;
         }
-        
-        return tokens;
-    }
-    
-    
-}
 
-public class Lexem
-{
-    public readonly Regex regex;
-    public readonly int priority;
-    public readonly LexemType type;
+        public Token Advance()
+        {
+            return Current = _tokens[Index++];
+        }
 
-    public Lexem()
-    {
-    }
 
-    public Lexem(LexemType type, Regex regex)
-    {
-        this.type = type;
-        this.regex = regex;
-    }
-    public Lexem(int priority, LexemType type, Regex regex)
-    {
-        this.priority = priority;
-        this.type = type;
-        this.regex = regex;
-    }
-}
+        public bool IsEof => Index >= _tokens.Count;
+        public TokenStream Slice(int start, int stop)
+        {
+            // var set = _tokens.Skip(start).Take((stop - start)).ToList();
+            // return new TokenStream(set);
+            return new TokenStream(_tokens, start, stop);
+        }
 
-[Serializable]
-public class Token
-{
-    public int lineNumber;
-    public int charNumber;
-    public string raw;
-    public LexemType type => lexem.type;
-    public Lexem lexem;
-}
+        public TokenStream Slice(int start) => Slice(start, _maxIndex);
 
-public class TokenStream
-{
-    private readonly List<Token> _tokens;
-    
-    public int Index { get; private set; }
-    
-    public Token Current { get; private set; }
+        public Token Get(int index) => _tokens[index];
 
-    public TokenStream(List<Token> tokens)
-    {
-        _tokens = tokens;
-        Current = _tokens[0];
+        public Token AdvanceTo(int closeIndex)
+        {
+            Index = closeIndex;
+            return Current = _tokens[Index];
+        }
     }
 
-    // public Token GetNext(int ahead=0) => _tokens[Index + ahead];
-    
-    
-    public Token Advance()
-    {
-        return Current = _tokens[Index++];
-    }
-
-    public bool IsEof => Index >= _tokens.Count;
 }
