@@ -5,10 +5,6 @@
 <!--        <ImplicitUsings>enable</ImplicitUsings>-->
 
     </PropertyGroup>
-
-    <ItemGroup>
-<!--      <PackageReference Include="Antlr4.Runtime.Standard" Version="4.13.0" />-->
-    </ItemGroup>
     
     <Target Name="CopyDll" AfterTargets="Build">
         <Message Text="Copying the dll!" Importance="high" />

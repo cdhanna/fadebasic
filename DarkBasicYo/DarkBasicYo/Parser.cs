@@ -73,11 +73,6 @@ namespace DarkBasicYo
                 var token = _stream.Advance();
                 switch (token.type)
                 {
-                    // case LexemType.KeywordEndWhile:
-                    //     return new EndWhileStatement(token);
-                    // case LexemType.EndStatement:
-                    //     // a ; character doesn't _do_ anything other than stop the statement.
-                    //     return null;
                     case LexemType.KeywordWhile:
 
                         // parse the condition expression...
@@ -106,9 +101,30 @@ namespace DarkBasicYo
                             endToken = _stream.Current
                         };
 
+                    case LexemType.KeywordScope:
+                        // we know this is going to be a declaration
+                        var subStatement = Inner();
+                        if (subStatement is DeclarationStatement declStatement)
+                        {
+                            var scopeType = DeclarationScopeType.Default;
+                            switch (token.raw.ToLowerInvariant())
+                            {
+                                case "global":
+                                    scopeType = DeclarationScopeType.Global;
+                                    break;
+                                case "local":
+                                    scopeType = DeclarationScopeType.Local;
+                                    break;
+                            }
+                            declStatement.scopeType = scopeType;
+                            return declStatement;
+                        }
+                        else
+                        {
+                            throw new ParserException("Expected declaration statement after Local", token);
+                        }
                         break;
                     case LexemType.VariableReal:
-                    // return ParseRealAssignment(token);
                     case LexemType.VariableGeneral:
 
                         var secondToken = _stream.Advance();
@@ -117,6 +133,8 @@ namespace DarkBasicYo
                         {
                             case LexemType.OpEqual:
                                 var expr = ParseWikiExpression();
+                                
+                                // we actually need to emit a declaration node and an assignment. 
                                 return new AssignmentStatement
                                 {
                                     startToken = token,
@@ -126,14 +144,16 @@ namespace DarkBasicYo
                                 };
                             case LexemType.KeywordAs:
                                 var type = ParseTypeReference();
+                                // TODO: if the type is an array, then we should make the scope global by default.
+                                var scopeType = DeclarationScopeType.Local;
                                 return new DeclarationStatement
                                 {
                                     startToken = token,
                                     endToken = _stream.Current,
                                     type = type,
+                                    scopeType = scopeType,
                                     variable = token.raw
                                 };
-                                break;
                             default:
                                 throw new Exception("parser exception! Unknown statement");
                         }
@@ -184,6 +204,27 @@ namespace DarkBasicYo
             var result = Inner();
             _stream.Advance(); // ignore the end statement.
             return result;
+        }
+
+        // private IStatementNode ParseVariableStatement()
+        // {
+        //     
+        // }
+
+        private DeclarationStatement ParseDeclaration()
+        {
+            var token = _stream.Current;
+            var type = ParseTypeReference();
+            // TODO: if the type is an array, then we should make the scope global by default.
+            var scopeType = DeclarationScopeType.Local;
+            return new DeclarationStatement
+            {
+                startToken = token,
+                endToken = _stream.Current,
+                type = type,
+                scopeType = scopeType,
+                variable = token.raw
+            };
         }
 
         private TypeReferenceNode ParseTypeReference()
@@ -293,7 +334,7 @@ namespace DarkBasicYo
             return lhs;
         }
 
-        public IExpressionNode ParseWikiTerm()
+        private IExpressionNode ParseWikiTerm()
         {
             var token = _stream.Advance();
             switch (token.type)

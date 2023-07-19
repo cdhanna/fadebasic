@@ -4,6 +4,8 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "DarkBasicYo", "DarkBasicYo\
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Tests", "Tests\Tests.csproj", "{F08EFE79-1EF3-440C-BB3E-50840E774E60}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "RosylnExample", "RosylnExample\RosylnExample.csproj", "{3E3E1140-B081-4D37-996C-A7C1B8C6B785}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -18,5 +20,9 @@ Global
 		{F08EFE79-1EF3-440C-BB3E-50840E774E60}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{F08EFE79-1EF3-440C-BB3E-50840E774E60}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{F08EFE79-1EF3-440C-BB3E-50840E774E60}.Release|Any CPU.Build.0 = Release|Any CPU
+		{3E3E1140-B081-4D37-996C-A7C1B8C6B785}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{3E3E1140-B081-4D37-996C-A7C1B8C6B785}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{3E3E1140-B081-4D37-996C-A7C1B8C6B785}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{3E3E1140-B081-4D37-996C-A7C1B8C6B785}.Release|Any CPU.Build.0 = Release|Any CPU
 	EndGlobalSection
 EndGlobal

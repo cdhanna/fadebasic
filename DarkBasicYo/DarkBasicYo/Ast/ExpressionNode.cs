@@ -4,7 +4,7 @@ using System.Collections.Generic;
 namespace DarkBasicYo.Ast
 {
 
-    public interface IExpressionNode
+    public interface IExpressionNode : IAstNode
     {
 
     }
@@ -54,23 +54,7 @@ namespace DarkBasicYo.Ast
             this.lhs = lhs;
             this.rhs = rhs;
             this.operationType = OperationUtil.Convert(op);
-            // switch (op.type)
-            // {
-            //     case LexemType.OpPlus:
-            //         operationType = OperationType.Add;
-            //         break;
-            //     case LexemType.OpMinus:
-            //         operationType = OperationType.Subtract;
-            //         break;
-            //     case LexemType.OpLt:
-            //         operationType = OperationType.LessThan;
-            //         break;
-            //     case LexemType.OpGt:
-            //         operationType = OperationType.GreaterThan;
-            //         break;
-            //     default:
-            //         throw new ParserException("Invalid operation, " + op.type, op);
-            // }
+           
         }
 
         protected override string GetString()

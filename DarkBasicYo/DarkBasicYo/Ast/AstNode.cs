@@ -1,11 +1,17 @@
 namespace DarkBasicYo.Ast
 {
-
-    public abstract class AstNode
+    public interface IAstNode
+    {
+        Token StartToken { get; }
+        Token EndToken { get; }
+    }
+    public abstract class AstNode : IAstNode
     {
         public Token startToken;
         public Token endToken;
 
+        public Token StartToken => startToken;
+        public Token EndToken => endToken;
         protected AstNode()
         {
 

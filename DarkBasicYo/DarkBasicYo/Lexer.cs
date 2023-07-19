@@ -33,6 +33,8 @@ namespace DarkBasicYo
         KeywordTypeString,
         KeywordTypeBoolean,
 
+        KeywordScope,
+
 
         WhiteSpace,
         ArgSplitter,
@@ -86,6 +88,8 @@ namespace DarkBasicYo
             new Lexem(LexemType.OpMinus, new Regex("^\\-")),
             new Lexem(LexemType.OpEqual, new Regex("^=")),
 
+            new Lexem(LexemType.KeywordScope, new Regex("^(local)|(global)")),
+            
             new Lexem(LexemType.KeywordIf, new Regex("^if")),
             new Lexem(LexemType.KeywordEndIf, new Regex("^endif")),
             new Lexem(LexemType.KeywordElse, new Regex("^else")),

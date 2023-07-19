@@ -4,7 +4,7 @@ using System.Linq;
 namespace DarkBasicYo.Ast
 {
 
-    public interface IStatementNode
+    public interface IStatementNode : IAstNode
     {
     }
     
@@ -22,7 +22,7 @@ namespace DarkBasicYo.Ast
 
     public class AssignmentStatement : AstNode, IStatementNode
     {
-        public IVariableNode variable;
+        public VariableRefNode variable;
         public IExpressionNode expression;
 
         public AssignmentStatement()

@@ -122,6 +122,8 @@ endwhile
 
     
     
+    
+    
     [Test]
     public void IntegerAssignment()
     {
@@ -196,6 +198,40 @@ endwhile
         var decl = prog.statements[0] as DeclarationStatement;
         Assert.That(decl.type.variableType, Is.EqualTo(VariableType.Integer));
         var code = prog.ToString();
-        Assert.That(code, Is.EqualTo("((decl x,(integer)))"));
+        Assert.That(code, Is.EqualTo("((decl local,x,(integer)))"));
+    }
+    
+    
+    [Test]
+    public void Decl_IntegerLocal()
+    {
+        var input = "local x AS INTEGER";
+        var parser = MakeParser(input);
+        var prog = parser.ParseProgram();
+        
+        Assert.That(prog.statements.Count, Is.EqualTo(1));
+        Assert.That(prog.statements[0], Is.AssignableTo<DeclarationStatement>());
+
+        var decl = prog.statements[0] as DeclarationStatement;
+        Assert.That(decl.type.variableType, Is.EqualTo(VariableType.Integer));
+        var code = prog.ToString();
+        Assert.That(code, Is.EqualTo("((decl local,x,(integer)))"));
+    }
+    
+    
+    [Test]
+    public void Decl_IntegerGlobal()
+    {
+        var input = "GLOBAL x AS INTEGER";
+        var parser = MakeParser(input);
+        var prog = parser.ParseProgram();
+        
+        Assert.That(prog.statements.Count, Is.EqualTo(1));
+        Assert.That(prog.statements[0], Is.AssignableTo<DeclarationStatement>());
+
+        var decl = prog.statements[0] as DeclarationStatement;
+        Assert.That(decl.type.variableType, Is.EqualTo(VariableType.Integer));
+        var code = prog.ToString();
+        Assert.That(code, Is.EqualTo("((decl global,x,(integer)))"));
     }
 }
