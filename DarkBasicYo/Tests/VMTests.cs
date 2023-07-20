@@ -93,6 +93,101 @@ public class VMTests
     
     
     [Test]
+    public void Store()
+    {
+        var vm = new VirtualMachine(new List<byte>
+        {
+            OpCodes.PUSH, TypeCodes.WORD, 0, 1, // 1
+            OpCodes.STORE, Registers.R0, // store in register 1
+        });
+        
+        var state = vm.Execute();
+        var res = state.MoveNext();
+        
+        Assert.IsTrue(state.Current.isComplete);
+        
+        Assert.That(vm.typeRegisters[0], Is.EqualTo(TypeCodes.WORD));
+        Assert.That(vm.dataRegisters[0], Is.EqualTo(1));
+    }
+    
+    
+    [Test]
+    public void StoreLoadAdd()
+    {
+        var vm = new VirtualMachine(new List<byte>
+        {
+            OpCodes.PUSH, TypeCodes.WORD, 0, 1, // 1
+            OpCodes.STORE, Registers.R0, // store in register 1
+            OpCodes.LOAD, Registers.R0, // pushes 1 onto the stack
+            OpCodes.LOAD, Registers.R0, // pushes 1 onto the stack again
+            OpCodes.ADD,
+            OpCodes.STORE, Registers.R1
+        });
+        
+        var state = vm.Execute();
+        var res = state.MoveNext();
+        
+        Assert.IsTrue(state.Current.isComplete);
+        
+        Assert.That(vm.typeRegisters[0], Is.EqualTo(TypeCodes.WORD));
+        Assert.That(vm.dataRegisters[0], Is.EqualTo(1));
+        
+        Assert.That(vm.typeRegisters[1], Is.EqualTo(TypeCodes.WORD));
+        Assert.That(vm.dataRegisters[1], Is.EqualTo(2));
+    }
+
+    
+    [Test]
+    public void StoreLoadAdd2()
+    {
+        var vm = new VirtualMachine(new List<byte>
+        {
+            OpCodes.PUSH, TypeCodes.WORD, 0, 3, // 2
+            OpCodes.STORE, Registers.R0, // store in register 1
+            OpCodes.LOAD, Registers.R0, // pushes 3 onto the stack
+            OpCodes.LOAD, Registers.R0, // pushes 3 onto the stack again
+            OpCodes.ADD,
+            OpCodes.STORE, Registers.R1,
+            OpCodes.LOAD, Registers.R0, // pushes 3 onto the stack again
+            OpCodes.LOAD, Registers.R1, // pushes 6 onto the stack again
+            OpCodes.MUL,
+            OpCodes.STORE, Registers.R0, // stores the result in r0
+        });
+        
+        var state = vm.Execute();
+        var res = state.MoveNext();
+        
+        Assert.IsTrue(state.Current.isComplete);
+        
+        Assert.That(vm.typeRegisters[0], Is.EqualTo(TypeCodes.WORD));
+        Assert.That(vm.dataRegisters[0], Is.EqualTo(18));
+        
+        Assert.That(vm.typeRegisters[1], Is.EqualTo(TypeCodes.WORD));
+        Assert.That(vm.dataRegisters[1], Is.EqualTo(6));
+    }
+
+    
+    [Test]
+    public void CastIntToWord()
+    {
+        var vm = new VirtualMachine(new List<byte>
+        {
+            OpCodes.PUSH, TypeCodes.INT, 0, 0, 0, 3, // 3
+            OpCodes.CAST, TypeCodes.WORD,
+            OpCodes.STORE, Registers.R0
+        });
+        
+        var state = vm.Execute();
+        var res = state.MoveNext();
+        
+        Assert.IsTrue(state.Current.isComplete);
+        
+        Assert.That(vm.typeRegisters[0], Is.EqualTo(TypeCodes.WORD));
+        Assert.That(vm.dataRegisters[0], Is.EqualTo(3));
+        
+    }
+    
+    [Test]
     public void Simple_TypeSize_Expansion()
     {
         var vm = new VirtualMachine(new List<byte>

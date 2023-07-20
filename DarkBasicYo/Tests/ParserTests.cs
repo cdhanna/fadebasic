@@ -47,7 +47,7 @@ print x";
         
         Assert.That(prog.statements.Count, Is.EqualTo(2));
         var code = prog.ToString();
-        Assert.That(code, Is.EqualTo("((= (x),(5)),(print (x)))"));
+        Assert.That(code, Is.EqualTo("((= (ref x),(5)),(print (ref x)))"));
     }
 
     
@@ -62,7 +62,7 @@ x = x - 1
         
         Assert.That(prog.statements.Count, Is.EqualTo(1));
         var code = prog.ToString();
-        Assert.That(code, Is.EqualTo("((= (x),(subtract (x),(1))))"));
+        Assert.That(code, Is.EqualTo("((= (ref x),(subtract (ref x),(1))))"));
     }
     
     
@@ -77,7 +77,7 @@ x = 1 + 2 > 3
         
         Assert.That(prog.statements.Count, Is.EqualTo(1));
         var code = prog.ToString();
-        Assert.That(code, Is.EqualTo("((= (x),(greaterthan (add (1),(2)),(3))))"));
+        Assert.That(code, Is.EqualTo("((= (ref x),(greaterthan (add (1),(2)),(3))))"));
     }
 
     [Test]
@@ -117,7 +117,7 @@ endwhile
         Assert.That(prog.statements.Count, Is.EqualTo(2));
         var code = prog.ToString();
         Console.WriteLine(code);
-        Assert.That(code, Is.EqualTo("((= (x),(5)),(while (greaterthan (x),(1)) (print (x)),(= (x),(subtract (x),(1)))))"));
+        Assert.That(code, Is.EqualTo("((= (ref x),(5)),(while (greaterthan (ref x),(1)) (print (ref x)),(= (ref x),(subtract (ref x),(1)))))"));
     }
 
     
@@ -151,7 +151,7 @@ endwhile
 
         var assignment = prog.statements[0] as AssignmentStatement;
         var code = prog.ToString();
-        Assert.That(code, Is.EqualTo("((= (x),(add (1),(2))))"));
+        Assert.That(code, Is.EqualTo("((= (ref x),(add (1),(2))))"));
     }
     
     [Test]
@@ -166,7 +166,7 @@ endwhile
 
         var assignment = prog.statements[0] as AssignmentStatement;
         var code = prog.ToString();
-        Assert.That(code, Is.EqualTo("((= (x#),(2.1)))"));
+        Assert.That(code, Is.EqualTo("((= (ref x#),(2.1)))"));
     }
     
     
@@ -182,7 +182,7 @@ endwhile
 
         var assignment = prog.statements[0] as AssignmentStatement;
         var code = prog.ToString();
-        Assert.That(code, Is.EqualTo("((= (x),(2.1)))"));
+        Assert.That(code, Is.EqualTo("((= (ref x),(2.1)))"));
     }
     
     [Test]

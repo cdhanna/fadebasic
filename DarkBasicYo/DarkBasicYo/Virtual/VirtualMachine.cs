@@ -8,9 +8,14 @@ using System.Runtime.CompilerServices;
 namespace DarkBasicYo.Virtual
 {
 
-    public static class OpCodeUtil
+    public static class Registers
     {
-        public const byte PUSH_TEMPLATE = 0x01;
+        // these numbers are just meaningless... Just for util purposes...
+        public const byte R0 = 0;
+        public const byte R1 = 1;
+        public const byte R2 = 2;
+        public const byte R3 = 3;
+        public const byte R4 = 4;
     }
 
     public static class TypeCodes
@@ -37,16 +42,20 @@ namespace DarkBasicYo.Virtual
             8  // dfloat
         };
 
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public static byte GetByteSize(byte typeCode) => SIZE_TABLE[typeCode];
     }
 
     public static class OpCodes
     {
         /// <summary>
-        /// The next value in the bytecode is a literal value that is stored.
+        /// Pushes the next literal value
         /// </summary>
         public const byte PUSH = 1;
         
+        /// <summary>
+        /// Expects to find two values in the stack 
+        /// </summary>
         public const byte ADD = 2;
         public const byte MUL = 3;
         public const byte DIVIDE = 4;
@@ -57,8 +66,20 @@ namespace DarkBasicYo.Virtual
         /// </summary>
         public const byte DBG_PRINT = 6;
 
+        /// <summary>
+        /// the next byte in the INS is the Address, and then it expects to find a value in the stack
+        /// </summary>
         public const byte STORE = 7;
+        
+        /// <summary>
+        /// the next byte in the INS is the address, and then this will push the register value onto the stack
+        /// </summary>
         public const byte LOAD = 8;
+        
+        /// <summary>
+        /// the next byte in the INS is the type code to cast the current stack value to. The stack item will be replaced with the cast value
+        /// </summary>
+        public const byte CAST = 9;
     }
 
     public class ExecutionState
@@ -66,6 +87,7 @@ namespace DarkBasicYo.Virtual
         public bool isComplete;
         
     }
+
     
     public class VirtualMachine
     {
@@ -76,6 +98,9 @@ namespace DarkBasicYo.Virtual
 
         public Stack<byte> stack = new Stack<byte>();
         
+        
+        public ulong[] dataRegisters; // parallel array with typeReg
+        public byte[] typeRegisters;  // parallel array with dataReg
 
         public VirtualMachine(IEnumerable<byte> program, StreamWriter standardOut=null)
         {
@@ -87,6 +112,13 @@ namespace DarkBasicYo.Virtual
             
             _standardOut = standardOut;
 
+            dataRegisters = new ulong[256];
+            typeRegisters = new byte[256];
+            for (var i = 0; i < dataRegisters.Length; i++)
+            {
+                dataRegisters[i] = 0;
+                typeRegisters[i] = 0;
+            }
         }
 
         public string ReadStdOut()
@@ -100,9 +132,19 @@ namespace DarkBasicYo.Virtual
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         private byte Advance() => program[instructionIndex++];
 
-        public IEnumerator<ExecutionState> Execute(int instructionBatchCount=1000)
+        public IEnumerator<ExecutionState> Execute(int instructionBatchCount = 1000)
         {
-            while (true)
+            // TODO: clean this up...
+            Execute2();
+            yield return new ExecutionState
+            {
+                isComplete = true
+            };
+        }
+
+        public void Execute2(int instructionBatchCount=1000)
+        {
+            // while (true)
             {
                 for (var i = 0; i < instructionBatchCount; i++)
                 {
@@ -111,13 +153,15 @@ namespace DarkBasicYo.Virtual
                     {
                         if (stack.Count > 0)
                         {
-                            throw new Exception("Left over stack");
+                            // throw new Exception("Left over stack");
                         }
-                        yield return new ExecutionState
-                        {
-                            isComplete = true
-                        }; // we are done!
-                        yield break;
+
+                        return;
+                        // yield return new ExecutionState
+                        // {
+                        //     isComplete = true
+                        // }; // we are done!
+                        // yield break;
                     }
 
 
@@ -127,13 +171,14 @@ namespace DarkBasicYo.Virtual
                     byte[] bBytes = new byte[] { };
                     byte[] cBytes = new byte[] { };
                     byte aTypeCode = 0, bTypeCode = 0, vTypeCode = 0;
-                    BigInteger a = 0, b = 0, x = 0;
+                    ulong data = 0;
+                    byte addr = 0, size =0;
                     switch (ins)
                     {
                         case OpCodes.PUSH:
                             var typeCode = Advance();
 
-                            var size = TypeCodes.GetByteSize(typeCode);
+                            size = TypeCodes.GetByteSize(typeCode);
                             for (var n = 0; n < size; n ++)
                             {
                                 var value = Advance();
@@ -152,16 +197,45 @@ namespace DarkBasicYo.Virtual
                             VmUtil.Multiply(vTypeCode, aBytes, bBytes, out cBytes);
                             VmUtil.Push(stack, cBytes, vTypeCode);
                             break;
+                        case OpCodes.DIVIDE:
+                            VmUtil.ReadTwoValues(stack, out vTypeCode, out aBytes, out bBytes);
+                            VmUtil.Divide(vTypeCode, aBytes, bBytes, out cBytes);
+                            VmUtil.Push(stack, cBytes, vTypeCode);
+                            break;
                         // case OpCodes.SUB:
                         //     a = stack.Pop();
                         //     b = stack.Pop();
                         //     stack.Push(a - b);
                         //     break;
-                        // case OpCodes.DIVIDE:
-                        //     a = stack.Pop();
-                        //     b = stack.Pop();
-                        //     stack.Push(a / b);
-                        //     break;
+                        case OpCodes.STORE:
+                            // read a register location, which is always 2 bytes.
+                            addr = Advance();
+                            VmUtil.Read(stack, out typeCode, out aBytes);
+                            VmUtil.Pad(8, aBytes, out aBytes);
+                            data = BitConverter.ToUInt64(aBytes, 0);
+
+                            dataRegisters[addr] = data;
+                            typeRegisters[addr] = typeCode;
+                            break;
+                        case OpCodes.LOAD:
+                            addr = Advance();
+
+                            typeCode = typeRegisters[addr];
+                            data = dataRegisters[addr];
+                            size = TypeCodes.GetByteSize(typeCode);
+                            aBytes = BitConverter.GetBytes(data);
+                            for (var n = size -1 ; n >= 0; n --)
+                            {
+                                stack.Push(aBytes[n]);
+                            }
+                            
+                            stack.Push(typeCode);
+                            break;
+                        case OpCodes.CAST:
+                            typeCode = Advance();
+                            
+                            VmUtil.Cast(stack, typeCode);
+                            break;
                         case OpCodes.DBG_PRINT:
 
                             aTypeCode = stack.Pop();
@@ -176,10 +250,10 @@ namespace DarkBasicYo.Virtual
 
                 // if there is anything left on the stack
                 var remaining = stack.Count;
-                yield return new ExecutionState
-                {
-                    isComplete = false
-                };
+                // yield return new ExecutionState
+                // {
+                //     isComplete = false
+                // };
             }
 
         }   

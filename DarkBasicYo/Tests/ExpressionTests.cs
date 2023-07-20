@@ -33,6 +33,7 @@ public class ExpressionTests
     //     Assert.That(str, Is.EqualTo("(mult (add (1),(2)),(3))"));
     // }
     
+    [TestCase("x", "(ref x)")]
     [TestCase("1", "(1)")]
     [TestCase("1+2", "(add (1),(2))")]
     [TestCase("(2)", "(2)")]

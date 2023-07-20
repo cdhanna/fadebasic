@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using DarkBasicYo;
 using DarkBasicYo.Virtual;
 
@@ -10,7 +11,7 @@ public class TokenVm
         var lexer = new Lexer();
         var tokens = lexer.Tokenize(src);
         var parser = new Parser(new TokenStream(tokens), StandardCommands.LimitedCommands);
-        var exprAst = parser.ParseWikiExpression();
+        var exprAst = parser.ParseProgram();
 
         compiler = new Compiler();
         compiler.Compile(exprAst);
@@ -33,6 +34,186 @@ public class TokenVm
         Assert.That(prog[5], Is.EqualTo(197));
     }
     
+    [Test]
+    public void TestDeclare_Registers()
+    {
+        var src = "x AS WORD; x = 12";
+        Setup(src, out _, out var prog);
+        
+        // Assert.That(prog.Count, Is.EqualTo(6)); // type code and 4 bytes for the int
+        Assert.That(prog[0], Is.EqualTo(OpCodes.PUSH));
+        Assert.That(prog[1], Is.EqualTo(TypeCodes.INT));
+        Assert.That(prog[2], Is.EqualTo(0));
+        Assert.That(prog[3], Is.EqualTo(0));
+        Assert.That(prog[4], Is.EqualTo(0));
+        Assert.That(prog[5], Is.EqualTo(12));
+        Assert.That(prog[6], Is.EqualTo(OpCodes.CAST));
+        Assert.That(prog[7], Is.EqualTo(TypeCodes.WORD));
+
+        Assert.That(prog[8], Is.EqualTo(OpCodes.STORE));
+        Assert.That(prog[9], Is.EqualTo(0));
+    }
+
+    
+    [Test]
+    public void TestDeclareAndAssign()
+    {
+        var src = "x as word; x = 3;";
+        Setup(src, out _, out var prog);
+        
+        var vm = new VirtualMachine(prog);
+        vm.Execute().MoveNext();
+        
+        Assert.That(vm.dataRegisters[0], Is.EqualTo(3));
+        Assert.That(vm.typeRegisters[0], Is.EqualTo(TypeCodes.WORD));
+    }
+
+    
+    [Test]
+    public void TestDeclareAndAssignToExpression()
+    {
+        var src = "x as word; x = 3 + 3;";
+        Setup(src, out _, out var prog);
+        
+        var vm = new VirtualMachine(prog);
+        vm.Execute().MoveNext();
+        
+        Assert.That(vm.dataRegisters[0], Is.EqualTo(6));
+        Assert.That(vm.typeRegisters[0], Is.EqualTo(TypeCodes.WORD));
+    }
+    
+    
+    [Test]
+    public void TestAutoDeclareAndAssignToExpression()
+    {
+        var src = "x = 3 * 2";
+        Setup(src, out _, out var prog);
+        
+        var vm = new VirtualMachine(prog);
+        vm.Execute().MoveNext();
+        
+        Assert.That(vm.dataRegisters[0], Is.EqualTo(6));
+        Assert.That(vm.typeRegisters[0], Is.EqualTo(TypeCodes.INT));
+    }
+    
+    
+    [Test]
+    public void MultipleVariablesAndSuch()
+    {
+        var src = @"
+x as word
+y as word
+x = 4.2
+y = 2
+x = x + y * 3
+";
+        Setup(src, out _, out var prog);
+        
+        var vm = new VirtualMachine(prog);
+        vm.Execute().MoveNext();
+        
+        Assert.That(vm.dataRegisters[0], Is.EqualTo(10));
+        Assert.That(vm.typeRegisters[0], Is.EqualTo(TypeCodes.WORD));
+        
+        Assert.That(vm.dataRegisters[1], Is.EqualTo(2));
+        Assert.That(vm.typeRegisters[1], Is.EqualTo(TypeCodes.WORD));
+    }
+
+    
+    [Test]
+    public void MultipleAutoVariablesAndSuch()
+    {
+        var src = @"
+x = 4
+y = 2
+x = x + y * 3
+";
+        Setup(src, out _, out var prog);
+        
+        var vm = new VirtualMachine(prog);
+        vm.Execute().MoveNext();
+        
+        Assert.That(vm.dataRegisters[0], Is.EqualTo(10));
+        Assert.That(vm.typeRegisters[0], Is.EqualTo(TypeCodes.INT));
+        
+        Assert.That(vm.dataRegisters[1], Is.EqualTo(2));
+        Assert.That(vm.typeRegisters[1], Is.EqualTo(TypeCodes.INT));
+    }
+
+    
+    [Test]
+    public void ExplicitFloat()
+    {
+        var src = @"x as float; x = 1.2";
+        Setup(src, out _, out var prog);
+        
+        var vm = new VirtualMachine(prog);
+        
+        vm.Execute2();
+
+        var outputRegisterValue = vm.dataRegisters[0];
+        var outputRegisterBytes = BitConverter.GetBytes(outputRegisterValue);
+        float output = BitConverter.ToSingle(outputRegisterBytes, 0);
+        
+        Assert.That(output, Is.EqualTo(1.2f));
+        Assert.That(vm.typeRegisters[0], Is.EqualTo(TypeCodes.REAL));
+    }
+
+    
+    [Test]
+    public void AutoFloat()
+    {
+        var src = @"x# = 1.2";
+        Setup(src, out _, out var prog);
+        
+        var vm = new VirtualMachine(prog);
+        vm.Execute2();
+
+        var outputRegisterValue = vm.dataRegisters[0];
+        var outputRegisterBytes = BitConverter.GetBytes(outputRegisterValue);
+        float output = BitConverter.ToSingle(outputRegisterBytes, 0);
+        
+        Assert.That(output, Is.EqualTo(1.2f));
+        Assert.That(vm.typeRegisters[0], Is.EqualTo(TypeCodes.REAL));
+    }
+
+    
+    [Test]
+    public void AutoFloatMath()
+    {
+        var src = @"
+x# = 5
+y# = 1
+z# = y# / x#
+x# = z#
+";
+        Setup(src, out _, out var prog);
+        
+        var vm = new VirtualMachine(prog);
+        vm.Execute2();
+
+        var outputRegisterValue = vm.dataRegisters[0];
+        var outputRegisterBytes = BitConverter.GetBytes(outputRegisterValue);
+        float output = BitConverter.ToSingle(outputRegisterBytes, 0);
+        
+        Assert.That(output, Is.EqualTo(.2f));
+        Assert.That(vm.typeRegisters[0], Is.EqualTo(TypeCodes.REAL));
+    }
+
+    
+    [Test]
+    public void TestDeclareAndAssignToExpressionToOverflow()
+    {
+        var src = "x as byte; x = 3 + 254;"; 
+        Setup(src, out _, out var prog);
+        
+        var vm = new VirtualMachine(prog);
+        vm.Execute().MoveNext();
+        
+        Assert.That(vm.typeRegisters[0], Is.EqualTo(TypeCodes.BYTE));
+        Assert.That(vm.dataRegisters[0], Is.EqualTo((3 + 254) % 256));
+    }
+
     
     [Test]
     public void TestIntAdd()
@@ -152,13 +333,18 @@ public class TokenVm
     [Test]
     public void Float_Mult()
     {
-        var src = "3.2 * 1.5";
+        var src = "x# = 3.2 * 1.5";
         Setup(src, out _, out var prog);
-        prog.Add(OpCodes.DBG_PRINT);
+        // prog.Add(OpCodes.DBG_PRINT);
         var vm = new VirtualMachine(prog);
-        vm.Execute().MoveNext();
-        var output = vm.ReadStdOut();
-        Assert.That(output, Is.EqualTo($"{TypeCodes.REAL} - 4.8\n"));
+        vm.Execute2();
+
+        var outputRegisterValue = vm.dataRegisters[0];
+        var outputRegisterBytes = BitConverter.GetBytes(outputRegisterValue);
+        float output = BitConverter.ToSingle(outputRegisterBytes, 0);
+        
+        Assert.That(output, Is.EqualTo(3.2f * 1.5f));
+        Assert.That(vm.typeRegisters[0], Is.EqualTo(TypeCodes.REAL));
     }
     
     

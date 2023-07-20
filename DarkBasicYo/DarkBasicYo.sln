@@ -6,6 +6,8 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Tests", "Tests\Tests.csproj
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "RosylnExample", "RosylnExample\RosylnExample.csproj", "{3E3E1140-B081-4D37-996C-A7C1B8C6B785}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Benchmarks", "Benchmarks\Benchmarks.csproj", "{AF14F090-F5D2-468B-A7CF-2F9181B0F32D}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -24,5 +26,9 @@ Global
 		{3E3E1140-B081-4D37-996C-A7C1B8C6B785}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{3E3E1140-B081-4D37-996C-A7C1B8C6B785}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{3E3E1140-B081-4D37-996C-A7C1B8C6B785}.Release|Any CPU.Build.0 = Release|Any CPU
+		{AF14F090-F5D2-468B-A7CF-2F9181B0F32D}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{AF14F090-F5D2-468B-A7CF-2F9181B0F32D}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{AF14F090-F5D2-468B-A7CF-2F9181B0F32D}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{AF14F090-F5D2-468B-A7CF-2F9181B0F32D}.Release|Any CPU.Build.0 = Release|Any CPU
 	EndGlobalSection
 EndGlobal

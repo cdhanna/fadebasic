@@ -1,11 +1,30 @@
 using System;
 using System.Collections.Generic;
+using System.Runtime.CompilerServices;
+using DarkBasicYo.Ast;
 
 namespace DarkBasicYo.Virtual
 {
     public static class VmUtil
     {
+        public static byte GetTypeCode(VariableType vt)
+        {
+            switch (vt)
+            {
+                case VariableType.Integer:
+                    return TypeCodes.INT;
+                case VariableType.Byte:
+                    return TypeCodes.BYTE;
+                case VariableType.Word:
+                    return TypeCodes.WORD;
+                case VariableType.Float:
+                    return TypeCodes.REAL;
+                default:
+                    throw new NotImplementedException("Unknown type code");
+            }
+        }
         
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public static object DbgConvert(byte typeCode, byte[] values)
         {
             switch (typeCode)
@@ -25,6 +44,7 @@ namespace DarkBasicYo.Virtual
             }
         }
 
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public static void Read(Stack<byte> stack, byte typeCode, out byte[] value)
         {
             var size = TypeCodes.GetByteSize(typeCode);
@@ -36,7 +56,13 @@ namespace DarkBasicYo.Virtual
             }
         }
         
+        public static void Read(Stack<byte> stack, out byte typeCode, out byte[] value)
+        {
+            typeCode = stack.Pop();
+            Read(stack, typeCode, out value);
+        }
         
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public static void Multiply(byte aTypeCode, byte[] a, byte[] b, out byte[] c)
         {
             switch (aTypeCode)
@@ -69,8 +95,43 @@ namespace DarkBasicYo.Virtual
                     throw new Exception("Unsupported add operation");
             }
         }
+        
+        
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public static void Divide(byte aTypeCode, byte[] a, byte[] b, out byte[] c)
+        {
+            switch (aTypeCode)
+            {
+                case TypeCodes.BYTE:
+                    byte aByte = a[0];
+                    byte bByte = b[0];
+                    byte sumByte = (byte)(aByte / bByte);
+                    c = new byte[] { sumByte };
+                    break;
+                case TypeCodes.WORD:
+                    short aShort = BitConverter.ToInt16(a, 0);
+                    short bShort = BitConverter.ToInt16(b, 0);
+                    short sumShort = (short)(aShort / bShort);
+                    c = BitConverter.GetBytes(sumShort);
+                    break;
+                case TypeCodes.INT:
+                    int aInt = BitConverter.ToInt32(a, 0);
+                    int bInt = BitConverter.ToInt32(b, 0);
+                    int sumInt = (int)(aInt / bInt);
+                    c = BitConverter.GetBytes(sumInt);
+                    break;
+                case TypeCodes.REAL:
+                    float aReal = BitConverter.ToSingle(a, 0);
+                    float bReal = BitConverter.ToSingle(b, 0);
+                    float sumReal = (bReal / aReal);
+                    c = BitConverter.GetBytes(sumReal);
+                    break;
+                default:
+                    throw new Exception("Unsupported add operation");
+            }
+        }
 
-
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public static void Add(byte aTypeCode, byte[] a, byte[] b, out byte[] c)
         {
             switch (aTypeCode)
@@ -103,7 +164,65 @@ namespace DarkBasicYo.Virtual
                     throw new Exception("Unsupported add operation");
             }
         }
+
+        public static void Cast(Stack<byte> stack, byte typeCode)
+        {
+            Read(stack, out var currentTypeCode, out var bytes);
+            if (currentTypeCode == typeCode)
+            {
+                Push(stack, bytes, typeCode);
+                return;
+            }
+
+            
+            // handle int conversions
+            if (currentTypeCode == TypeCodes.INT)
+            {
+                switch (typeCode)
+                {
+                    case TypeCodes.WORD:
+                        bytes = new byte[] { bytes[0], bytes[1] }; // take the last 2 parts of the int
+                        break;
+                    case TypeCodes.BYTE:
+                        bytes = new byte[] { bytes[0] };
+                        break;
+                    case TypeCodes.REAL:
+                        var actual = BitConverter.ToInt32(bytes, 0);
+                        var castFloat = (float)actual;
+                        bytes = BitConverter.GetBytes(castFloat);
+                        break;
+                    default:
+                        throw new NotImplementedException($"cast from int to typeCode=[{typeCode}] is not supported yet.");
+                }
+            }
+            else if (currentTypeCode == TypeCodes.REAL)
+            {
+                switch (typeCode)
+                {
+                    case TypeCodes.WORD:
+                        var actual = BitConverter.ToSingle(bytes, 0);
+                        var castWord = (ushort)actual;
+                        bytes = BitConverter.GetBytes(castWord);
+                        break;
+                    default:
+                        throw new NotImplementedException($"cast from float to typeCode=[{typeCode}] is not supported yet.");
+                }
+            }
+            else
+            {
+                throw new NotImplementedException($"casts from typeCode=[{currentTypeCode}] types are not supported");
+            }
+
+            Push(stack, bytes, typeCode);
+            // var expectedSize = TypeCodes.GetByteSize(typeCode);
+            // for (var n = expectedSize -1 ; n >= 0; n --)
+            // {
+            //     stack.Push(bytes[n]);
+            // }
+            // stack.Push(typeCode);
+        }
         
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public static void Push(Stack<byte> stack, byte[] values, byte typeCode)
         {
             var typeSize = TypeCodes.GetByteSize(typeCode);
@@ -114,7 +233,7 @@ namespace DarkBasicYo.Virtual
             stack.Push(typeCode);
         }
         
-
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public static void Pad(byte size, byte[] bytes, out byte[] output)
         {
             if (size == bytes.Length)
@@ -131,6 +250,7 @@ namespace DarkBasicYo.Virtual
             }
         }
 
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public static void ReadTwoValues(Stack<byte> stack, out byte typeCode, out byte[] aBytes, out byte[] bBytes)
         {
             var aTypeCode = stack.Pop();
