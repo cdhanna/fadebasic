@@ -8,12 +8,13 @@ public class TokenVm
 {
     void Setup(string src, out Compiler compiler, out List<byte> progam)
     {
+        var collection = TestCommands.Commands;
         var lexer = new Lexer();
-        var tokens = lexer.Tokenize(src);
-        var parser = new Parser(new TokenStream(tokens), StandardCommands.LimitedCommands);
+        var tokens = lexer.Tokenize(src, collection);
+        var parser = new Parser(new TokenStream(tokens), collection);
         var exprAst = parser.ParseProgram();
 
-        compiler = new Compiler();
+        compiler = new Compiler(collection);
         compiler.Compile(exprAst);
         progam = compiler.Program;
     }
@@ -357,5 +358,86 @@ x# = z#
         vm.Execute().MoveNext();
         var output = vm.ReadStdOut();
         Assert.That(output, Is.EqualTo($"{TypeCodes.REAL} - 4.2\n"));
+    }
+    
+    
+    
+     
+    [Test]
+    public void CallHost()
+    {
+        var src = "callTest";
+        Setup(src, out var compiler, out var prog);
+        var vm = new VirtualMachine(prog);
+        vm.hostMethods = compiler.methodTable;
+        vm.Execute2();
+    }
+
+    [Test]
+    public void CallHostAdd()
+    {
+        var src = "x = add 1 2";
+        Setup(src, out var compiler, out var prog);
+        var vm = new VirtualMachine(prog);
+        vm.hostMethods = compiler.methodTable;
+        vm.Execute2();
+        
+        Assert.That(vm.typeRegisters[0], Is.EqualTo(TypeCodes.INT));
+        Assert.That(vm.dataRegisters[0], Is.EqualTo(3));
+    }
+    
+    [Test]
+    public void CallHost_OpOrder()
+    {
+        var src = "x = min 5 8 + 1";
+        Setup(src, out var compiler, out var prog);
+        var vm = new VirtualMachine(prog);
+        vm.hostMethods = compiler.methodTable;
+        vm.Execute2();
+        
+        Assert.That(vm.typeRegisters[0], Is.EqualTo(TypeCodes.INT));
+        Assert.That(vm.dataRegisters[0], Is.EqualTo(5));
+    }
+    
+    
+    [Test]
+    public void CallHost_OpOrder2()
+    {
+        var src = "x = min 5 8 * 2";
+        Setup(src, out var compiler, out var prog);
+        var vm = new VirtualMachine(prog);
+        vm.hostMethods = compiler.methodTable;
+        vm.Execute2();
+        
+        Assert.That(vm.typeRegisters[0], Is.EqualTo(TypeCodes.INT));
+        Assert.That(vm.dataRegisters[0], Is.EqualTo(5));
+    }
+    
+    [Test]
+    public void CallHost_OpOrder3()
+    {
+        var src = "x = (min 5 8) * 2";
+        Setup(src, out var compiler, out var prog);
+        var vm = new VirtualMachine(prog)
+        {
+            hostMethods = compiler.methodTable
+        };
+        vm.Execute2();
+        
+        Assert.That(vm.typeRegisters[0], Is.EqualTo(TypeCodes.INT));
+        Assert.That(vm.dataRegisters[0], Is.EqualTo(10));
+    }
+    
+    [Test]
+    public void CallHost_OpOrder4()
+    {
+        var src = "x = 1 + min 5 8";
+        Setup(src, out var compiler, out var prog);
+        var vm = new VirtualMachine(prog);
+        vm.hostMethods = compiler.methodTable;
+        vm.Execute2();
+        
+        Assert.That(vm.typeRegisters[0], Is.EqualTo(TypeCodes.INT));
+        Assert.That(vm.dataRegisters[0], Is.EqualTo(6));
     }
 }

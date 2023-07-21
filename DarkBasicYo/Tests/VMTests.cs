@@ -348,6 +348,7 @@ public class VMTests
     }
 
     
+    
     [Test]
     public void SimpleHost_Call_NoArgsNoNothing()
     {

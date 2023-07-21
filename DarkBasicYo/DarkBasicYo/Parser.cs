@@ -47,30 +47,45 @@ namespace DarkBasicYo
             return program;
         }
 
-        // private IStatementNode ParseRealAssignment(Token startToken)
-        // {
-        //     var token = _stream.Advance();
-        //     switch (token.type)
-        //     {
-        //         case LexemType.OpEqual:
-        //             var expr = ParseExpression();
-        //             return new AssignmentStatement
-        //             {
-        //                 startToken = startToken,
-        //                 endToken = _stream.Current,
-        //                 variable = new VariableRefNode(token),
-        //                 expression = expr,
-        //             };
-        //         default:
-        //             throw new ParserException("Expected equals", token);
-        //     }
-        // }
+        private IStatementNode ParseStatementThatStartsWithScope(Token startToken)
+        {
+            // we know this must be a declaration node.
+        }
+        
+
 
         private IStatementNode ParseStatement()
         {
+            /*
+             * Valid:
+             * -----
+             * 
+             * x = 3
+             * x as byte
+             * local x as byte
+             * global x as byte
+             * dim x(3)
+             * dim x(3) as byte
+             * local dim x(3) as byte
+             * global dim x(3) as byte
+             * local dim x(3)
+             * global dim x(3)
+             * x(3) = 2
+             * x.y = 2
+             *
+             * Invalid:
+             * -------
+             *
+             * local x = 3
+             * dim x(3) = 1
+             * local x.y = 1
+             */
+            
+            
             IStatementNode Inner()
             {
                 var token = _stream.Advance();
+                IStatementNode subStatement = null;
                 switch (token.type)
                 {
                     case LexemType.KeywordWhile:
@@ -103,7 +118,7 @@ namespace DarkBasicYo
 
                     case LexemType.KeywordScope:
                         // we know this is going to be a declaration
-                        var subStatement = Inner();
+                        subStatement = Inner();
                         if (subStatement is DeclarationStatement declStatement)
                         {
                             var scopeType = DeclarationScopeType.Default;
@@ -124,6 +139,18 @@ namespace DarkBasicYo
                             throw new ParserException("Expected declaration statement after Local", token);
                         }
                         break;
+                    case LexemType.KeywordDeclareArray:
+                        subStatement = Inner();
+                        if (subStatement is DeclarationStatement declarationStatement)
+                        {
+                            throw new NotImplementedException("asdf");
+                        }
+                        else
+                        {
+                            throw new ParserException("Expected declaration statement after Local", token);
+                        }
+
+                        break;
                     case LexemType.VariableReal:
                     case LexemType.VariableGeneral:
 
@@ -131,6 +158,7 @@ namespace DarkBasicYo
 
                         switch (secondToken.type)
                         {
+                            
                             case LexemType.OpEqual:
                                 var expr = ParseWikiExpression();
                                 
@@ -155,7 +183,7 @@ namespace DarkBasicYo
                                     variable = token.raw
                                 };
                             default:
-                                throw new Exception("parser exception! Unknown statement");
+                                throw new Exception("parser exception! Unknown statement, " + secondToken.type);
                         }
 
                         break;
@@ -339,6 +367,31 @@ namespace DarkBasicYo
             var token = _stream.Advance();
             switch (token.type)
             {
+                case LexemType.CommandWord:
+                    
+                    if (!_commands.TryGetCommandDescriptor(token, out var command))
+                    {
+                        throw new Exception("Parser exception! unknown command " + token.raw);
+                    }
+
+                    // parse the args!
+                    var argExpressions = new List<IExpressionNode>();
+                    foreach (var argDescriptor in command.args)
+                    {
+                        // TODO: check for optional or arity?
+                        var argExpr = ParseWikiExpression();
+                        argExpressions.Add(argExpr);
+                    }
+
+                    return new CommandExpression()
+                    {
+                        startToken = token,
+                        endToken = _stream.Current,
+                        command = command,
+                        args = argExpressions
+                    };
+                    
+                    break;
                 case LexemType.ParenOpen:
                     var expr = ParseWikiExpression();
                     var closeToken = _stream.Advance(); // move past closing...

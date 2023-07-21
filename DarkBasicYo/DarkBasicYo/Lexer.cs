@@ -15,6 +15,9 @@ namespace DarkBasicYo
         KeywordRemStart,
         KeywordRemEnd,
         
+        KeywordDeclareArray,
+        KeywordUnDeclareArray,
+        
         KeywordIf,
         KeywordThen,
         KeywordEndIf,
@@ -94,6 +97,9 @@ namespace DarkBasicYo
             new Lexem(LexemType.KeywordEndIf, new Regex("^endif")),
             new Lexem(LexemType.KeywordElse, new Regex("^else")),
             new Lexem(LexemType.KeywordThen, new Regex("^then")),
+            
+            new Lexem(LexemType.KeywordDeclareArray, new Regex("^dim")),
+            new Lexem(LexemType.KeywordUnDeclareArray, new Regex("^undim")),
 
             new Lexem(LexemType.KeywordRem, new Regex("^rem")),
             new Lexem(LexemType.KeywordRem, new Regex("^`")),

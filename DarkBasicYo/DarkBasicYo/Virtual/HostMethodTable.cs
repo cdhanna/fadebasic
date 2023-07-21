@@ -28,10 +28,9 @@ namespace DarkBasicYo.Virtual
             };
         }
 
-        public static HostMethod BuildHostMethodViaReflection(Type clazz, string methodName)
+        public static HostMethod BuildHostMethodViaReflection(MethodInfo method)
         {
-            var method = clazz.GetMethod(methodName, BindingFlags.Static | BindingFlags.Public);
-
+            
             // we need to know what types of values to require on the stack,
             var parameters = method.GetParameters();
             var argTypeCodes = new List<byte>();
@@ -65,6 +64,12 @@ namespace DarkBasicYo.Virtual
                 argTypeCodes = argTypeCodes.ToArray(),
                 // argTypes = argTypes.ToArray()
             };
+        }
+
+        public static HostMethod BuildHostMethodViaReflection(Type clazz, string methodName)
+        {
+            var method = clazz.GetMethod(methodName, BindingFlags.Static | BindingFlags.Public);
+            return BuildHostMethodViaReflection(method);
         }
         
         public static void Execute(HostMethod method, VirtualMachine machine)

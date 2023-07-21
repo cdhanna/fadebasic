@@ -32,7 +32,7 @@ public class ParserTests
         Assert.That(((CommandStatement)prog.statements[0]).args.Count, Is.EqualTo(1));
 
         var code = prog.ToString();
-        Assert.That(code, Is.EqualTo("((print (12)))"));
+        Assert.That(code, Is.EqualTo("((call print (12)))"));
     }
     
     
@@ -47,8 +47,36 @@ print x";
         
         Assert.That(prog.statements.Count, Is.EqualTo(2));
         var code = prog.ToString();
-        Assert.That(code, Is.EqualTo("((= (ref x),(5)),(print (ref x)))"));
+        Assert.That(code, Is.EqualTo("((= (ref x),(5)),(call print (ref x)))"));
     }
+
+    
+    [Test]
+    public void CallHostStatement()
+    {
+        var input = @"callTest";
+        var tokenStream = new TokenStream(_lexer.Tokenize(input, TestCommands.Commands));
+        var parser = new Parser(tokenStream, TestCommands.Commands);
+        var prog = parser.ParseProgram();
+        
+        Assert.That(prog.statements.Count, Is.EqualTo(1));
+        var code = prog.ToString();
+        Assert.That(code, Is.EqualTo("((call callTest))"));
+    }
+
+    [Test]
+    public void CallHostStatement_Expr()
+    {
+        var input = @"x = 1 + add 2 3";
+        var tokenStream = new TokenStream(_lexer.Tokenize(input, TestCommands.Commands));
+        var parser = new Parser(tokenStream, TestCommands.Commands);
+        var prog = parser.ParseProgram();
+        
+        Assert.That(prog.statements.Count, Is.EqualTo(1));
+        var code = prog.ToString();
+        Assert.That(code, Is.EqualTo("((= (ref x),(add (1),(xcall add (2),(3)))))"));
+    }
+
 
     
     [Test]
@@ -123,6 +151,20 @@ endwhile
     
     
     
+    
+    [Test]
+    public void SimpleArray()
+    {
+        var input = @"dim x(10)";
+        var parser = MakeParser(input);
+        var prog = parser.ParseProgram();
+        
+        Assert.That(prog.statements.Count, Is.EqualTo(2));
+        var code = prog.ToString();
+        Console.WriteLine(code);
+        Assert.That(code, Is.EqualTo("((dim local,x,(integer),(10)))"));
+    }
+
     
     [Test]
     public void IntegerAssignment()

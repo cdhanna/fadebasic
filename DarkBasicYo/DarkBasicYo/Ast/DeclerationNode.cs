@@ -1,3 +1,5 @@
+using System.Collections.Generic;
+
 namespace DarkBasicYo.Ast
 {
 
@@ -14,9 +16,16 @@ namespace DarkBasicYo.Ast
         public TypeReferenceNode type;
         public DeclarationScopeType scopeType;
 
+        public List<int> dimensionRanks = new List<int>();
+
         protected override string GetString()
         {
-            return $"decl {scopeType.ToString().ToLowerInvariant()},{variable},{type}";
+            if (dimensionRanks.Count == 0)
+            {
+                return $"decl {scopeType.ToString().ToLowerInvariant()},{variable},{type}";
+            }
+
+            return $"dim {scopeType.ToString().ToLowerInvariant()},{variable},{type},({string.Join(",", dimensionRanks)})";
         }
     }
 }

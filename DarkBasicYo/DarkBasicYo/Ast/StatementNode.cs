@@ -16,7 +16,12 @@ namespace DarkBasicYo.Ast
 
         protected override string GetString()
         {
-            return $"{command.command} {string.Join(",", args.Select(x => x.ToString()))}";
+            var argString = string.Join(",", args.Select(x => x.ToString()));
+            if (!string.IsNullOrEmpty(argString))
+            {
+                argString = " " + argString;
+            }
+            return $"call {command.command}{argString}";
         }
     }
 

@@ -1,6 +1,8 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Linq.Expressions;
+using System.Reflection.Emit;
 using DarkBasicYo.Ast;
 
 namespace DarkBasicYo.Virtual
@@ -15,15 +17,31 @@ namespace DarkBasicYo.Virtual
     
     public class Compiler
     {
+        public readonly CommandCollection commands;
         private List<byte> _buffer = new List<byte>();
 
         public List<byte> Program => _buffer;
         public int registerCount;
 
         private Dictionary<string, CompiledVariable> _varToReg = new Dictionary<string, CompiledVariable>();
+        public HostMethodTable methodTable;
 
-        public Compiler()
+        private Dictionary<CommandDescriptor, int> _commandToPtr = new Dictionary<CommandDescriptor, int>();
+
+        public Compiler(CommandCollection commands)
         {
+            this.commands = commands;
+
+            var methods = new HostMethod[commands.Commands.Count];
+            for (var i = 0; i < commands.Commands.Count; i++)
+            {
+                methods[i] = HostMethodUtil.BuildHostMethodViaReflection(commands.Commands[i].method);
+                _commandToPtr[commands.Commands[i]] = i;
+            }
+            methodTable = new HostMethodTable
+            {
+                methods = methods
+            };
             
         }
 
@@ -45,11 +63,41 @@ namespace DarkBasicYo.Virtual
                 case AssignmentStatement assignmentStatement:
                     Compile(assignmentStatement);
                     break;
+                case CommandStatement commandStatement:
+                    Compile(commandStatement);
+                    break;
                 default:
                     throw new Exception("compiler exception: unhandled statement node");
             }
         }
 
+        public void Compile(CommandStatement commandStatement)
+        { 
+            // TODO: save local state?
+            
+            // put each expression on the stack.
+            foreach (var argExpr in commandStatement.args)
+            {
+                Compile(argExpr);
+            }
+            
+            // find the address of the method
+            if (!_commandToPtr.TryGetValue(commandStatement.command, out var commandAddress))
+            {
+                throw new Exception("compiler: could not find method address: " + commandStatement.command);
+            }
+            
+            _buffer.Add(OpCodes.PUSH);
+            _buffer.Add(TypeCodes.INT);
+            var bytes = BitConverter.GetBytes(commandAddress);
+            for (var i = bytes.Length -1; i >= 0; i--)
+            {
+                _buffer.Add(bytes[i]);
+            }
+
+            _buffer.Add(OpCodes.CALL_HOST);
+        }
+        
         public void Compile(DeclarationStatement declaration)
         {
             /*
@@ -102,6 +150,29 @@ namespace DarkBasicYo.Virtual
         {
             switch (expr)
             {
+                case CommandExpression commandExpr:
+                    foreach (var argExpr in commandExpr.args)
+                    {
+                        Compile(argExpr);
+                    }
+            
+                    // find the address of the method
+                    if (!_commandToPtr.TryGetValue(commandExpr.command, out var commandAddress))
+                    {
+                        throw new Exception("compiler: could not find method address: " + commandExpr.command);
+                    }
+            
+                    _buffer.Add(OpCodes.PUSH);
+                    _buffer.Add(TypeCodes.INT);
+                    var bytes = BitConverter.GetBytes(commandAddress);
+                    for (var i = bytes.Length -1; i >= 0; i--)
+                    {
+                        _buffer.Add(bytes[i]);
+                    }
+
+                    _buffer.Add(OpCodes.CALL_HOST);
+                    break;
+                
                 case LiteralRealExpression literalReal:
                     _buffer.Add(OpCodes.PUSH);
                     _buffer.Add(TypeCodes.REAL);

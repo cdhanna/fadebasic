@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 
 namespace DarkBasicYo.Ast
 {
@@ -40,6 +41,22 @@ namespace DarkBasicYo.Ast
             }
 
             return opType;
+        }
+    }
+
+    public class CommandExpression : AstNode, IExpressionNode
+    {
+        public CommandDescriptor command;
+        public List<IExpressionNode> args = new List<IExpressionNode>();
+
+        protected override string GetString()
+        {
+            var argString = string.Join(",", args.Select(x => x.ToString()));
+            if (!string.IsNullOrEmpty(argString))
+            {
+                argString = " " + argString;
+            }
+            return $"xcall {command.command}{argString}";
         }
     }
 
