@@ -25,6 +25,7 @@ namespace DarkBasicYo.Virtual
 
         public Stack<byte> stack = new Stack<byte>();
         public VmHeap heap = new VmHeap();
+        public HostMethodTable hostMethods = new HostMethodTable();
         
         public ulong[] dataRegisters; // parallel array with typeReg
         public byte[] typeRegisters;  // parallel array with dataReg
@@ -200,6 +201,13 @@ namespace DarkBasicYo.Virtual
                                 var b = aBytes[r];
                                 stack.Push(b);
                             }
+                            
+                            break;
+                        case OpCodes.CALL_HOST:
+                            
+                            VmUtil.ReadAsInt(stack, out var hostMethodPtr);
+                            hostMethods.FindMethod(hostMethodPtr, out var method);
+                            HostMethodUtil.Execute(method, this);
                             
                             break;
                         case OpCodes.DBG_PRINT:

@@ -6,7 +6,12 @@ namespace Tests;
 
 public class VMTests
 {
-    
+    [SetUp]
+    public void Setup()
+    {
+        TestMethods.wasCalled = false;
+        TestMethods.someInt = 0;
+    }
     
     [Test]
     public void SimplePush()
@@ -342,4 +347,126 @@ public class VMTests
         Assert.That(mem[5], Is.EqualTo(0));
     }
 
+    
+    [Test]
+    public void SimpleHost_Call_NoArgsNoNothing()
+    {
+        var vm = new VirtualMachine(new List<byte>
+        {
+            OpCodes.PUSH, TypeCodes.INT, 0, 0, 0, 1, // push the address onto the stack
+            OpCodes.CALL_HOST, 
+        });
+
+        var method = HostMethodUtil.BuildHostMethodViaReflection(typeof(TestMethods), nameof(TestMethods.Test));
+        vm.hostMethods.methods = new HostMethod[]
+        {
+            null, // fake out
+            method
+        };
+        vm.Execute2();
+        
+        Assert.IsTrue(TestMethods.wasCalled);
+    }
+
+    
+    [Test]
+    public void SimpleHost_Call_WithInt()
+    {
+        var vm = new VirtualMachine(new List<byte>
+        {
+            OpCodes.PUSH, TypeCodes.INT, 0, 0, 1, 10, // push the value for the int arg
+            OpCodes.PUSH, TypeCodes.INT, 0, 0, 0, 1, // push the address onto the stack
+            OpCodes.CALL_HOST, 
+        });
+
+        var method = HostMethodUtil.BuildHostMethodViaReflection(typeof(TestMethods), nameof(TestMethods.TestWithInt));
+        vm.hostMethods.methods = new HostMethod[]
+        {
+            null, // fake out
+            method
+        };
+        vm.Execute2();
+        
+        Assert.IsTrue(TestMethods.wasCalled);
+        Assert.That(TestMethods.someInt, Is.EqualTo(266));
+    }
+    
+    
+    [Test]
+    public void SimpleHost_Call_WithReturnInt()
+    {
+        var vm = new VirtualMachine(new List<byte>
+        {
+            OpCodes.PUSH, TypeCodes.INT, 0, 0, 1, 10, // push the value for the int arg
+            OpCodes.PUSH, TypeCodes.INT, 0, 0, 0, 1, // push the address onto the stack
+            OpCodes.CALL_HOST, 
+            OpCodes.STORE, Registers.R0
+        });
+
+        var method = HostMethodUtil.BuildHostMethodViaReflection(typeof(TestMethods), nameof(TestMethods.TestWithReturnValue));
+        vm.hostMethods.methods = new HostMethod[]
+        {
+            null, // fake out
+            method
+        };
+        vm.Execute2();
+        
+        Assert.IsTrue(TestMethods.wasCalled);
+       
+        Assert.That(vm.typeRegisters[0], Is.EqualTo(TypeCodes.INT));
+        Assert.That(vm.dataRegisters[0], Is.EqualTo(3));
+    }
+    
+    
+    [Test]
+    public void SimpleHost_Call_WithIntAndReturnInt()
+    {
+        var vm = new VirtualMachine(new List<byte>
+        {
+            OpCodes.PUSH, TypeCodes.INT, 0, 0, 1, 10, // push the value for the int arg
+            OpCodes.PUSH, TypeCodes.INT, 0, 0, 0, 0, // push the address onto the stack
+            OpCodes.CALL_HOST, 
+            OpCodes.STORE, Registers.R0
+        });
+
+        var method = HostMethodUtil.BuildHostMethodViaReflection(typeof(TestMethods), nameof(TestMethods.TestWithDoublesTheInt));
+        vm.hostMethods.methods = new HostMethod[]
+        {
+            method
+        };
+        vm.Execute2();
+        
+        Assert.IsTrue(TestMethods.wasCalled);
+       
+        Assert.That(vm.typeRegisters[0], Is.EqualTo(TypeCodes.INT));
+        Assert.That(vm.dataRegisters[0], Is.EqualTo(266*2));
+    }
+}
+
+public static class TestMethods
+{
+    public static bool wasCalled;
+    public static int someInt;
+    public static void Test()
+    {
+        wasCalled = true;
+    }
+
+    public static void TestWithInt(int a)
+    {
+        someInt = a;
+        wasCalled = true;
+    }
+    
+    public static int TestWithReturnValue()
+    {
+        wasCalled = true;
+        return 3;
+    }
+    
+    public static int TestWithDoublesTheInt(int a)
+    {
+        wasCalled = true;
+        return a * 2;
+    }
 }

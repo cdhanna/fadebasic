@@ -23,7 +23,7 @@ namespace DarkBasicYo.Virtual
         public const byte DWORD   = 0x05; // 4 bytes
         public const byte DINT    = 0x06; // 8 bytes
         public const byte DFLOAT  = 0x07; // 8 bytes
-        // public const byte STRING  = 0x09; // 4 bytes
+        public const byte VOID    = 0x08; // 0 bytes
 
         public static readonly byte[] SIZE_TABLE = new byte[]
         {
@@ -34,7 +34,8 @@ namespace DarkBasicYo.Virtual
             2, // word
             4, // dword
             8, // dint
-            8  // dfloat
+            8, // dfloat
+            0  // void
         };
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
@@ -95,5 +96,10 @@ namespace DarkBasicYo.Virtual
         /// Similar to PUSH, but the type code is not pushed at the end
         /// </summary>
         public const byte BPUSH = 13;
+
+        /// <summary>
+        /// Run a host function. The next value in the stack should be the address of the host function
+        /// </summary>
+        public const byte CALL_HOST = 14;
     }
 }
