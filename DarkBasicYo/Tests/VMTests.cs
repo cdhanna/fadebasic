@@ -251,4 +251,95 @@ public class VMTests
         
         Assert.That(c+d, Is.EqualTo(a + b));
     }
+    
+    
+    [Test]
+    public void SimpleAlloc()
+    {
+        var vm = new VirtualMachine(new List<byte>
+        {
+            OpCodes.PUSH, TypeCodes.INT, 0, 0, 0, 4, 
+            OpCodes.ALLOC, 
+            OpCodes.STORE, Registers.R0,
+            OpCodes.PUSH, TypeCodes.INT, 0, 0, 0, 4, 
+            OpCodes.ALLOC, 
+            OpCodes.STORE, Registers.R1,
+        });
+
+        vm.Execute2();
+        
+        Assert.That(vm.typeRegisters[0], Is.EqualTo(TypeCodes.INT));
+        Assert.That(vm.dataRegisters[0], Is.EqualTo(0));
+        
+        Assert.That(vm.typeRegisters[1], Is.EqualTo(TypeCodes.INT));
+        Assert.That(vm.dataRegisters[1], Is.EqualTo(4));
+    }
+    
+    
+    [Test]
+    public void SimpleAlloc_AndWrite()
+    {
+        var vm = new VirtualMachine(new List<byte>
+        {
+            OpCodes.PUSH, TypeCodes.WORD, 0, 3, // push a word onto the stack (no type code)
+            OpCodes.PUSH, TypeCodes.WORD, 0, 9, // push a second word onto the stack (no type code)
+            OpCodes.PUSH, TypeCodes.INT, 0, 0, 0, 6, // push a length of 4 (bytes) onto the stack
+            OpCodes.PUSH, TypeCodes.INT, 0, 0, 0, 6, // push a length of 4 (bytes) onto the stack
+            OpCodes.ALLOC, // allocate 6 bytes (pop)
+            OpCodes.STORE, Registers.R0,
+            OpCodes.LOAD, Registers.R0,
+            OpCodes.WRITE, // write the next 6 bytes (pop, pop-pop-pop-pop)
+            
+        });
+
+        vm.Execute2();
+
+        var mem = vm.heap.memory;
+        Assert.That(mem[0], Is.EqualTo(4));
+        Assert.That(mem[1], Is.EqualTo(9));
+        Assert.That(mem[2], Is.EqualTo(0));
+        
+        Assert.That(mem[3], Is.EqualTo(4));
+        Assert.That(mem[4], Is.EqualTo(3));
+        Assert.That(mem[5], Is.EqualTo(0));
+    }
+
+    
+    [Test]
+    public void SimpleAlloc_AndWrite_AndRead()
+    {
+        var vm = new VirtualMachine(new List<byte>
+        {
+            OpCodes.PUSH, TypeCodes.WORD, 0, 3, // push a word onto the stack (no type code)
+            OpCodes.PUSH, TypeCodes.WORD, 0, 9, // push a second word onto the stack (no type code)
+            OpCodes.PUSH, TypeCodes.INT, 0, 0, 0, 6, // push a length of 4 (bytes) onto the stack
+            OpCodes.PUSH, TypeCodes.INT, 0, 0, 0, 6, // push a length of 4 (bytes) onto the stack
+            OpCodes.ALLOC, // allocate 6 bytes (pop)
+            OpCodes.STORE, Registers.R0, // save the address of the data to r0
+            OpCodes.LOAD, Registers.R0, // load the address back up
+            OpCodes.WRITE, // write the next 6 bytes (pop, pop-pop-pop-pop)
+  
+            OpCodes.PUSH, TypeCodes.INT, 0, 0, 0, 6, // push a length of 4 (bytes) onto the stack
+            OpCodes.LOAD, Registers.R0, // load the address back up
+            OpCodes.READ, // read the data out of the heap
+            OpCodes.ADD, // add the stack values
+            OpCodes.STORE, Registers.R1 // store the sum in register 1
+            
+        });
+
+        vm.Execute2();
+        
+        Assert.That(vm.typeRegisters[1], Is.EqualTo(TypeCodes.WORD));
+        Assert.That(vm.dataRegisters[1], Is.EqualTo(12));
+        
+        var mem = vm.heap.memory;
+        Assert.That(mem[0], Is.EqualTo(4));
+        Assert.That(mem[1], Is.EqualTo(9));
+        Assert.That(mem[2], Is.EqualTo(0));
+        
+        Assert.That(mem[3], Is.EqualTo(4));
+        Assert.That(mem[4], Is.EqualTo(3));
+        Assert.That(mem[5], Is.EqualTo(0));
+    }
+
 }

@@ -44,6 +44,18 @@ namespace DarkBasicYo.Virtual
             }
         }
 
+        public static void ReadAsInt(Stack<byte> stack, out int result)
+        {
+            var typeCode = stack.Pop();
+            if (typeCode != TypeCodes.INT)
+            {
+                throw new Exception("vm exception: expected an int");
+            }
+                            
+            Read(stack, TypeCodes.INT, out var aBytes);
+            result = BitConverter.ToInt32(aBytes, 0);
+        }
+        
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public static void Read(Stack<byte> stack, byte typeCode, out byte[] value)
         {

@@ -8,79 +8,6 @@ using System.Runtime.CompilerServices;
 namespace DarkBasicYo.Virtual
 {
 
-    public static class Registers
-    {
-        // these numbers are just meaningless... Just for util purposes...
-        public const byte R0 = 0;
-        public const byte R1 = 1;
-        public const byte R2 = 2;
-        public const byte R3 = 3;
-        public const byte R4 = 4;
-    }
-
-    public static class TypeCodes
-    {
-        public const byte INT     = 0x00; // 4 bytes
-        public const byte REAL    = 0x01; // 4 bytes
-        public const byte BOOL    = 0x02; // 1 bytes
-        public const byte BYTE    = 0x03; // 1 bytes
-        public const byte WORD    = 0x04; // 2 bytes
-        public const byte DWORD   = 0x05; // 4 bytes
-        public const byte DINT    = 0x06; // 8 bytes
-        public const byte DFLOAT  = 0x07; // 8 bytes
-        // public const byte STRING  = 0x09; // 4 bytes
-
-        public static readonly byte[] SIZE_TABLE = new byte[]
-        {
-            4, // int
-            4, // real
-            1, // bool
-            1, // byte
-            2, // word
-            4, // dword
-            8, // dint
-            8  // dfloat
-        };
-
-        [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        public static byte GetByteSize(byte typeCode) => SIZE_TABLE[typeCode];
-    }
-
-    public static class OpCodes
-    {
-        /// <summary>
-        /// Pushes the next literal value
-        /// </summary>
-        public const byte PUSH = 1;
-        
-        /// <summary>
-        /// Expects to find two values in the stack 
-        /// </summary>
-        public const byte ADD = 2;
-        public const byte MUL = 3;
-        public const byte DIVIDE = 4;
-        public const byte SUB = 5;
-        
-        /// <summary>
-        /// A command that prints the current value of the stack
-        /// </summary>
-        public const byte DBG_PRINT = 6;
-
-        /// <summary>
-        /// the next byte in the INS is the Address, and then it expects to find a value in the stack
-        /// </summary>
-        public const byte STORE = 7;
-        
-        /// <summary>
-        /// the next byte in the INS is the address, and then this will push the register value onto the stack
-        /// </summary>
-        public const byte LOAD = 8;
-        
-        /// <summary>
-        /// the next byte in the INS is the type code to cast the current stack value to. The stack item will be replaced with the cast value
-        /// </summary>
-        public const byte CAST = 9;
-    }
 
     public class ExecutionState
     {
@@ -97,11 +24,13 @@ namespace DarkBasicYo.Virtual
         public int instructionIndex;
 
         public Stack<byte> stack = new Stack<byte>();
-        
+        public VmHeap heap = new VmHeap();
         
         public ulong[] dataRegisters; // parallel array with typeReg
         public byte[] typeRegisters;  // parallel array with dataReg
 
+        
+        
         public VirtualMachine(IEnumerable<byte> program, StreamWriter standardOut=null)
         {
             this.program = program.ToArray();
@@ -187,6 +116,7 @@ namespace DarkBasicYo.Virtual
                             
                             stack.Push(typeCode);
                             break;
+                        
                         case OpCodes.ADD:
                             VmUtil.ReadTwoValues(stack, out vTypeCode, out aBytes, out bBytes);
                             VmUtil.Add(vTypeCode, aBytes, bBytes, out cBytes);
@@ -233,8 +163,44 @@ namespace DarkBasicYo.Virtual
                             break;
                         case OpCodes.CAST:
                             typeCode = Advance();
-                            
                             VmUtil.Cast(stack, typeCode);
+                            break;
+                        
+                        case OpCodes.ALLOC:
+                            // next value is an int, we know this.
+                            VmUtil.ReadAsInt(stack, out var allocLength);
+                            heap.Allocate(allocLength, out var allocPtr);
+                            // push the address onto the stack
+                            bBytes = BitConverter.GetBytes(allocPtr);
+                            VmUtil.Push(stack, bBytes, TypeCodes.INT);
+                            
+                            break;
+                        case OpCodes.WRITE:
+                            
+                            VmUtil.ReadAsInt(stack, out var writePtr);
+                            VmUtil.ReadAsInt(stack, out var writeLength);
+
+                            bBytes = new byte[writeLength];
+                            for (var w = 0; w < writeLength; w++)
+                            {
+                                var b = stack.Pop();
+                                bBytes[w] = b;
+                            }
+                            
+                            heap.Write(writePtr, writeLength, bBytes);
+                            
+                            break;
+                        case OpCodes.READ:
+                            
+                            VmUtil.ReadAsInt(stack, out var readPtr);
+                            VmUtil.ReadAsInt(stack, out var readLength);
+                            heap.Read(readPtr, readLength, out aBytes);
+                            for (var r = readLength -1; r >= 0; r--)
+                            {
+                                var b = aBytes[r];
+                                stack.Push(b);
+                            }
+                            
                             break;
                         case OpCodes.DBG_PRINT:
 

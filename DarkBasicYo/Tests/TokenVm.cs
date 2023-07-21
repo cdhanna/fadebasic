@@ -102,7 +102,6 @@ public class TokenVm
     {
         var src = @"
 x as word
-y as word
 x = 4.2
 y = 2
 x = x + y * 3
@@ -116,7 +115,7 @@ x = x + y * 3
         Assert.That(vm.typeRegisters[0], Is.EqualTo(TypeCodes.WORD));
         
         Assert.That(vm.dataRegisters[1], Is.EqualTo(2));
-        Assert.That(vm.typeRegisters[1], Is.EqualTo(TypeCodes.WORD));
+        Assert.That(vm.typeRegisters[1], Is.EqualTo(TypeCodes.INT));
     }
 
     
