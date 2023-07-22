@@ -12,7 +12,7 @@ namespace DarkBasicYo
         public Token End { get; }
 
         public ParserException(string message, Token start, Token end = null)
-            : base($"Parse Exception: {message} at {start.Location}-{end?.Location}")
+            : base($"Parse Exception: {message} at {start.Location}-{end?.Location}(${start.lexem.type})")
         {
             Message = message;
             Start = start;
@@ -88,6 +88,8 @@ namespace DarkBasicYo
             var next = _stream.Advance();
             switch (next.type)
             {
+                case LexemType.VariableString:
+                case LexemType.VariableReal:
                 case LexemType.VariableGeneral:
                     // dim x
                     var openParenToken = _stream.Advance();
@@ -570,7 +572,7 @@ namespace DarkBasicYo
                 case LexemType.VariableReal:
                 case LexemType.VariableString:
                 case LexemType.VariableGeneral:
-                    return new VariableRefNode(token);
+                    return ParseVariableReference(token);
                 case LexemType.LiteralInt:
                     return new LiteralIntExpression(token);
                 case LexemType.LiteralReal:

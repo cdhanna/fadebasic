@@ -9,7 +9,7 @@ namespace DarkBasicYo.Virtual
 {
     public class CompiledVariable
     {
-        public int byteSize;
+        public byte byteSize;
         public byte typeCode;
         public string name;
         public byte registerAddress;
@@ -113,6 +113,32 @@ namespace DarkBasicYo.Virtual
                 byteSize = TypeCodes.GetByteSize(tc)
             };
 
+            if (declaration.ranks != null)
+            {
+                // this is an array! And we need to allocate memory.
+                
+                // OpCodes.PUSH, TypeCodes.INT, 0, 0, 0, 6,
+
+                if (declaration.ranks.Length != 1) throw new NotImplementedException("only support rank 1 arrays atm");
+
+                var rankExpr = declaration.ranks[0];
+                Compile(rankExpr); // compile the rank expr, so that the number of elements is on the stack.
+
+                var sizeOfElement = TypeCodes.GetByteSize(tc);
+                _buffer.Add(OpCodes.PUSH); // push the length
+                _buffer.Add(TypeCodes.INT);
+                _buffer.Add(0);
+                _buffer.Add(0);
+                _buffer.Add(0);
+                _buffer.Add(sizeOfElement);
+                
+                _buffer.Add(OpCodes.MUL); // multiply the length by the size, to get the entire byte-size of the requested array
+                _buffer.Add(OpCodes.ALLOC); // push the alloc instruction
+                
+                _buffer.Add(OpCodes.STORE);
+                _buffer.Add(_varToReg[declaration.variable].registerAddress);
+            }
+
             // later in this compiler, when we find the variable assignment, we'll know where to find it.
 
             // but we do not actually need to emit any code at this point.
@@ -127,40 +153,97 @@ namespace DarkBasicYo.Virtual
              * If it is an array, then it lives in memory.
              */
 
-            var variableRefNode = assignmentStatement.variable as VariableRefNode;
-            if (variableRefNode == null)
-            {
-                throw new NotImplementedException("We don't support this yet");
-            }
-            
-            if (!_varToReg.TryGetValue(variableRefNode.variableName, out var compiledVar))
-            {
-                // // ?
-                var tc = VmUtil.GetTypeCode(variableRefNode.DefaultTypeByName);
-                compiledVar = _varToReg[variableRefNode.variableName] = new CompiledVariable
-                {
-                    registerAddress = (byte)(registerCount++),
-                    name = variableRefNode.variableName,
-                    typeCode = tc,
-                    byteSize = TypeCodes.GetByteSize(tc)
-                };
-            }
             
             // compile the rhs of the assignment...
             Compile(assignmentStatement.expression);
 
-            // always cast the expression to the correct type code; slightly wasteful, could be better.
-            _buffer.Add(OpCodes.CAST);
-            _buffer.Add(compiledVar.typeCode);
+            CompiledVariable compiledVar = null;
+
+            switch (assignmentStatement.variable)
+            {
+                case ArrayIndexReference arrayRefNode:
+                    if (!_varToReg.TryGetValue(arrayRefNode.variableName, out compiledVar))
+                    {
+                        throw new Exception("Compiler: cannot access array since it not declared" +
+                                            arrayRefNode.variableName);
+                    }
+                    var sizeOfElement = compiledVar.byteSize;
+
+                    // always cast the expression to the correct type code; slightly wasteful, could be better.
+                    _buffer.Add(OpCodes.CAST);
+                    _buffer.Add(compiledVar.typeCode);
+                    _buffer.Add(OpCodes.DISCARD); // we don't actually want the type code to live on the heap
+                    
+                    // load the size up
+                    _buffer.Add(OpCodes.PUSH); // push the length
+                    _buffer.Add(TypeCodes.INT);
+                    _buffer.Add(0);
+                    _buffer.Add(0);
+                    _buffer.Add(0);
+                    _buffer.Add(sizeOfElement);
+                    
+                    // load the index onto the stack
+                    if (arrayRefNode.rankExpressions.Count != 1)
+                        throw new NotImplementedException("ranks of 1 required");
+                    Compile(arrayRefNode.rankExpressions[0]);
+      
+                    // get the size of the element onto the stack
+                    _buffer.Add(OpCodes.PUSH); // push the length
+                    _buffer.Add(TypeCodes.INT);
+                    _buffer.Add(0);
+                    _buffer.Add(0);
+                    _buffer.Add(0);
+                    _buffer.Add(sizeOfElement);
+                    
+                    // multiply the size of the element, and the index, to get the offset into the memory
+                    _buffer.Add(OpCodes.MUL);
+                    
+                    // load the array's ptr onto the stack, this is for the math of the offset
+                    _buffer.Add(OpCodes.LOAD); 
+                    _buffer.Add(compiledVar.registerAddress);
+
+                    // add the offset to the original pointer to get the write location
+                    _buffer.Add(OpCodes.ADD);
+                    
+                    // write! It'll find the ptr, then the size, and then the data itself
+                    _buffer.Add(OpCodes.WRITE);
+                    
+                    break;
+                case VariableRefNode variableRefNode:
+                    
+                    if (!_varToReg.TryGetValue(variableRefNode.variableName, out compiledVar))
+                    {
+                        // // ?
+                        var tc = VmUtil.GetTypeCode(variableRefNode.DefaultTypeByName);
+                        compiledVar = _varToReg[variableRefNode.variableName] = new CompiledVariable
+                        {
+                            registerAddress = (byte)(registerCount++),
+                            name = variableRefNode.variableName,
+                            typeCode = tc,
+                            byteSize = TypeCodes.GetByteSize(tc)
+                        };
+                    }
+            
+                    // always cast the expression to the correct type code; slightly wasteful, could be better.
+                    _buffer.Add(OpCodes.CAST);
+                    _buffer.Add(compiledVar.typeCode);
     
-            // store the value of the expression&cast in the desired register.
-            _buffer.Add(OpCodes.STORE);
-            _buffer.Add(compiledVar.registerAddress);
+                    // store the value of the expression&cast in the desired register.
+                    _buffer.Add(OpCodes.STORE);
+                    _buffer.Add(compiledVar.registerAddress);
+                    break;
+                default:
+                    throw new NotImplementedException("Unsupported reference assignment");
+            }
+         
+            
+            
         }
         
         
         public void Compile(IExpressionNode expr)
         {
+            CompiledVariable compiledVar = null;
             switch (expr)
             {
                 case CommandExpression commandExpr:
@@ -205,9 +288,61 @@ namespace DarkBasicYo.Virtual
                         _buffer.Add(value[i]);
                     }
                     break;
+                case ArrayIndexReference arrayRef:
+                    // need to fetch the value from the array...
+
+                    if (arrayRef.rankExpressions.Count != 1)
+                        throw new NotImplementedException("array reads on multi dimensional not supported");
+                    
+                    if (!_varToReg.TryGetValue(arrayRef.variableName, out compiledVar))
+                    {
+                        throw new Exception("compiler exception! the referenced array has not been declared yet " +
+                                            arrayRef.variableName);
+                    }
+                    
+                    var sizeOfElement = compiledVar.byteSize;
+
+                    
+                    // load the size up
+                    _buffer.Add(OpCodes.PUSH); // push the length
+                    _buffer.Add(TypeCodes.INT);
+                    _buffer.Add(0);
+                    _buffer.Add(0);
+                    _buffer.Add(0);
+                    _buffer.Add(sizeOfElement);
+                    
+                    // load the index onto the stack
+                    Compile(arrayRef.rankExpressions[0]);
+ 
+                    // get the size of the element onto the stack
+                    _buffer.Add(OpCodes.PUSH); // push the length
+                    _buffer.Add(TypeCodes.INT);
+                    _buffer.Add(0);
+                    _buffer.Add(0);
+                    _buffer.Add(0);
+                    _buffer.Add(sizeOfElement);
+                    
+                    // multiply the size of the element, and the index, to get the offset into the memory
+                    _buffer.Add(OpCodes.MUL);
+                    
+                    // load the array's ptr onto the stack, this is for the math of the offset
+                    _buffer.Add(OpCodes.LOAD); 
+                    _buffer.Add(compiledVar.registerAddress);
+
+                    // add the offset to the original pointer to get the write location
+                    _buffer.Add(OpCodes.ADD);
+                    
+                    // read, it'll find the ptr, size, and then place the data onto the stack
+                    _buffer.Add(OpCodes.READ);
+                    
+                    // we need to inject the type-code back into the stack, since it doesn't exist in heap
+                    _buffer.Add(OpCodes.BPUSH);
+                    _buffer.Add(compiledVar.typeCode);
+
+                    break;
                 case VariableRefNode variableRef:
                     // emit the read from register
-                    if (!_varToReg.TryGetValue(variableRef.variableName, out var compiledVar))
+                    if (!_varToReg.TryGetValue(variableRef.variableName, out compiledVar))
                     {
                         throw new Exception("compiler exception! the referenced variable has not been declared yet " +
                                             variableRef.variableName);

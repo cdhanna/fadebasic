@@ -1,21 +1,24 @@
 using System.Diagnostics;
 using DarkBasicYo;
+using DarkBasicYo.Ast;
 using DarkBasicYo.Virtual;
 
 namespace Tests;
 
 public class TokenVm
 {
+    private ProgramNode? _exprAst;
+
     void Setup(string src, out Compiler compiler, out List<byte> progam)
     {
         var collection = TestCommands.Commands;
         var lexer = new Lexer();
         var tokens = lexer.Tokenize(src, collection);
         var parser = new Parser(new TokenStream(tokens), collection);
-        var exprAst = parser.ParseProgram();
+        _exprAst = parser.ParseProgram();
 
         compiler = new Compiler(collection);
-        compiler.Compile(exprAst);
+        compiler.Compile(_exprAst);
         progam = compiler.Program;
     }
     
@@ -83,6 +86,223 @@ public class TokenVm
         Assert.That(vm.typeRegisters[0], Is.EqualTo(TypeCodes.WORD));
     }
     
+    
+    [Test]
+    public void Array_Math()
+    {
+        var src = @"
+dim x(4) as byte
+x(1) = 53
+y as byte
+y = x(1)
+";
+        // y as byte
+        // y = x(1)
+        Setup(src, out _, out var prog);
+        
+        var vm = new VirtualMachine(prog);
+        vm.Execute2();
+        Assert.That(vm.heap.Cursor, Is.EqualTo(4));
+
+        Assert.That(vm.dataRegisters[0], Is.EqualTo(0));
+        Assert.That(vm.typeRegisters[0], Is.EqualTo(TypeCodes.INT));
+        Assert.That(vm.dataRegisters[1], Is.EqualTo(53));
+        Assert.That(vm.typeRegisters[1], Is.EqualTo(TypeCodes.BYTE));
+
+    }
+
+    
+    [Test]
+    public void Array_Math2()
+    {
+        var src = @"
+dim x(4) as word
+x(0) = 1
+x(1) = 3
+x(2) = 5
+x(3) = 7
+y = (x(1) + x(0)) * x(2) * x(3) 
+";
+        Setup(src, out _, out var prog);
+        
+        var vm = new VirtualMachine(prog);
+        vm.Execute2();
+        // Assert.That(vm.heap.Cursor, Is.EqualTo(4));
+
+        Assert.That(vm.dataRegisters[0], Is.EqualTo(0));
+        Assert.That(vm.typeRegisters[0], Is.EqualTo(TypeCodes.INT));
+        Assert.That(vm.dataRegisters[1], Is.EqualTo(140));
+        Assert.That(vm.typeRegisters[1], Is.EqualTo(TypeCodes.INT)); // int, because y is not declared as a byte, so it is an int by default
+
+    }
+
+    
+    [Test]
+    public void Array_Math3()
+    {
+        var src = @"
+dim x(4)
+x(0) = 2
+x(1) = x(0) * 2
+x(2) = x(1) * x(0)
+x(3) = x(2) * x(1) * x(0)
+y = x(3)
+";
+        Setup(src, out _, out var prog);
+        
+        var vm = new VirtualMachine(prog);
+        vm.Execute2();
+        Assert.That(vm.heap.Cursor, Is.EqualTo(16));
+
+        Assert.That(vm.dataRegisters[0], Is.EqualTo(0));
+        Assert.That(vm.typeRegisters[0], Is.EqualTo(TypeCodes.INT));
+        Assert.That(vm.dataRegisters[1], Is.EqualTo(64));
+        Assert.That(vm.typeRegisters[1], Is.EqualTo(TypeCodes.INT)); // int, because y is not declared as a byte, so it is an int by default
+
+    }
+    
+    [Test]
+    public void Array_Math_Floats()
+    {
+        var src = @"
+dim x#(4)
+x#(0) = 1.2
+y# = x#(0)
+";
+        Setup(src, out _, out var prog);
+        
+        var vm = new VirtualMachine(prog);
+        vm.Execute2();
+        Assert.That(vm.heap.Cursor, Is.EqualTo(16));
+
+        Assert.That(vm.dataRegisters[0], Is.EqualTo(0));
+        Assert.That(vm.typeRegisters[0], Is.EqualTo(TypeCodes.INT));
+        
+        var outputRegisterValue = vm.dataRegisters[1];
+        var outputRegisterBytes = BitConverter.GetBytes(outputRegisterValue);
+        float output = BitConverter.ToSingle(outputRegisterBytes, 0);
+        Assert.That(output, Is.EqualTo(1.2f));
+
+        Assert.That(vm.typeRegisters[1], Is.EqualTo(TypeCodes.REAL)); // int, because y is not declared as a byte, so it is an int by default
+
+    }
+
+    
+    
+    [Test]
+    public void Array_Create()
+    {
+        var src = @"
+dim x(4)
+";
+        Setup(src, out _, out var prog);
+        
+        var vm = new VirtualMachine(prog);
+        vm.Execute2();
+        
+        Assert.That(vm.dataRegisters[0], Is.EqualTo(0));
+        Assert.That(vm.typeRegisters[0], Is.EqualTo(TypeCodes.INT));
+        
+        Assert.That(vm.heap.Cursor, Is.EqualTo(16));
+    }
+
+    
+    [Test]
+    public void Array_Create2()
+    {
+        var src = @"
+dim x(4) as word
+";
+        Setup(src, out _, out var prog);
+        
+        var vm = new VirtualMachine(prog);
+        vm.Execute2();
+        
+        Assert.That(vm.dataRegisters[0], Is.EqualTo(0));
+        Assert.That(vm.typeRegisters[0], Is.EqualTo(TypeCodes.INT));
+        
+        Assert.That(vm.heap.Cursor, Is.EqualTo(8));
+    }
+
+    
+    [Test]
+    public void Array_CreateAssign()
+    {
+        var src = @"
+dim x(5) as word
+x(1) = 12
+";
+        Setup(src, out _, out var prog);
+        
+        var vm = new VirtualMachine(prog);
+        vm.Execute2();
+        
+        Assert.That(vm.dataRegisters[0], Is.EqualTo(0));
+        Assert.That(vm.typeRegisters[0], Is.EqualTo(TypeCodes.INT));
+        
+        Assert.That(vm.heap.Cursor, Is.EqualTo(10));
+         
+        vm.heap.Read(2, 2, out var bytes);
+        var value = BitConverter.ToInt16(bytes, 0);
+        Assert.That(value, Is.EqualTo(12));
+    }
+
+    
+    [Test]
+    public void Array_CreateAssign2()
+    {
+        var src = @"
+dim x(5) as word
+x(1) = 12
+x(2) = 3 + 2
+";
+        Setup(src, out _, out var prog);
+        
+        var vm = new VirtualMachine(prog);
+        vm.Execute2();
+        
+        Assert.That(vm.dataRegisters[0], Is.EqualTo(0));
+        Assert.That(vm.typeRegisters[0], Is.EqualTo(TypeCodes.INT));
+        
+        Assert.That(vm.heap.Cursor, Is.EqualTo(10));
+         
+        vm.heap.Read(2, 2, out var bytes);
+        var value = BitConverter.ToInt16(bytes, 0);
+        Assert.That(value, Is.EqualTo(12));
+        
+        vm.heap.Read(4, 2, out bytes);
+        value = BitConverter.ToInt16(bytes, 0);
+        Assert.That(value, Is.EqualTo(5));
+    }
+
+    
+    [Test]
+    public void Array_CreateAssignRead()
+    {
+        var src = @"
+dim x(5) as word
+x(1) = 12
+x(2) = x(1) * 2
+";
+        Setup(src, out _, out var prog);
+        
+        var vm = new VirtualMachine(prog);
+        vm.Execute2();
+        
+        Assert.That(vm.dataRegisters[0], Is.EqualTo(0));
+        Assert.That(vm.typeRegisters[0], Is.EqualTo(TypeCodes.INT));
+        
+        Assert.That(vm.heap.Cursor, Is.EqualTo(10));
+         
+        vm.heap.Read(2, 2, out var bytes);
+        var value = BitConverter.ToInt16(bytes, 0);
+        Assert.That(value, Is.EqualTo(12));
+        
+        vm.heap.Read(4, 2, out bytes);
+        value = BitConverter.ToInt16(bytes, 0);
+        Assert.That(value, Is.EqualTo(24));
+    }
+
     
     [Test]
     public void TestAutoDeclareAndAssignToExpression()

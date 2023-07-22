@@ -169,6 +169,24 @@ x(1) = 2
     }
 
     
+    [Test]
+    public void ArrayAssignFlip()
+    {
+        var input = @"
+y = x(1)
+";
+        var parser = MakeParser(input);
+        var prog = parser.ParseProgram();
+        
+        Assert.That(prog.statements.Count, Is.EqualTo(1));
+        var code = prog.ToString();
+        Console.WriteLine(code);
+        Assert.That(code, Is.EqualTo(@"(
+(= (ref y),(ref x[(1)]))
+)".ReplaceLineEndings("")));
+    }
+
+    
     
     [Test]
     public void SimpleArray()

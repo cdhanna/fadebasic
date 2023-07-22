@@ -105,6 +105,10 @@ namespace DarkBasicYo.Virtual
                     byte addr = 0, size =0;
                     switch (ins)
                     {
+                        case OpCodes.BPUSH:
+                            var code = Advance();
+                            stack.Push(code);
+                            break;
                         case OpCodes.PUSH:
                             var typeCode = Advance();
 
@@ -139,7 +143,7 @@ namespace DarkBasicYo.Virtual
                         //     stack.Push(a - b);
                         //     break;
                         case OpCodes.STORE:
-                            // read a register location, which is always 2 bytes.
+                            // read a register location, which is always 1 byte.
                             addr = Advance();
                             VmUtil.Read(stack, out typeCode, out aBytes);
                             VmUtil.Pad(8, aBytes, out aBytes);
@@ -176,6 +180,9 @@ namespace DarkBasicYo.Virtual
                             VmUtil.Push(stack, bBytes, TypeCodes.INT);
                             
                             break;
+                        case OpCodes.DISCARD:
+                            stack.Pop();
+                            break;
                         case OpCodes.WRITE:
                             
                             VmUtil.ReadAsInt(stack, out var writePtr);
@@ -197,6 +204,7 @@ namespace DarkBasicYo.Virtual
                             VmUtil.ReadAsInt(stack, out var readLength);
                             heap.Read(readPtr, readLength, out aBytes);
                             for (var r = readLength -1; r >= 0; r--)
+                            // for (var r = 0; r < readLength; r ++)
                             {
                                 var b = aBytes[r];
                                 stack.Push(b);

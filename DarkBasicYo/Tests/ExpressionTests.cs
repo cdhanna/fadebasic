@@ -45,6 +45,8 @@ public class ExpressionTests
     [TestCase("1*2+3", "(add (mult (1),(2)),(3))")]
     [TestCase("1-2+3", "(subtract (1),(add (2),(3)))")]
     [TestCase("1+(2+3*(4+5)+6)", "(add (1),(add (2),(add (mult (3),(add (4),(5))),(6))))")]
+    [TestCase("x.y + 2", "(add ((ref x).(ref y)),(2))")]
+    [TestCase("(z(3).x + n.g(1)) * 2", "(mult (add ((ref z[(3)]).(ref x)),((ref n).(ref g[(1)]))),(2))")]
     public void GeneralExpression(string src, string expected)
     {
         var parser = BuildParser(src, out _);

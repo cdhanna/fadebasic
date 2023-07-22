@@ -101,5 +101,10 @@ namespace DarkBasicYo.Virtual
         /// Run a host function. The next value in the stack should be the address of the host function
         /// </summary>
         public const byte CALL_HOST = 14;
+
+        /// <summary>
+        /// Reads a value from the stack, and does nothing with it.
+        /// </summary>
+        public const byte DISCARD = 15; 
     }
 }

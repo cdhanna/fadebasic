@@ -220,9 +220,34 @@ namespace DarkBasicYo.Virtual
                         throw new NotImplementedException($"cast from float to typeCode=[{typeCode}] is not supported yet.");
                 }
             }
+            else if (currentTypeCode == TypeCodes.BYTE)
+            {
+                switch (typeCode)
+                {
+                    case TypeCodes.INT:
+                        var castInt = (int)bytes[0];
+                        bytes = BitConverter.GetBytes(castInt);
+                        break;
+                    default:
+                        throw new NotImplementedException($"cast from byte to typeCode=[{typeCode}] is not supported yet.");
+                }
+            }
+            else if (currentTypeCode == TypeCodes.WORD)
+            {
+                switch (typeCode)
+                {
+                    case TypeCodes.INT:
+                        short actualWord = BitConverter.ToInt16(bytes, 0);
+                        var castInt = (int)actualWord;
+                        bytes = BitConverter.GetBytes(castInt);
+                        break;
+                    default:
+                        throw new NotImplementedException($"cast from byte to typeCode=[{typeCode}] is not supported yet.");
+                }
+            }
             else
             {
-                throw new NotImplementedException($"casts from typeCode=[{currentTypeCode}] types are not supported");
+                throw new NotImplementedException($"casts from typeCode=[{currentTypeCode}] types are not supported. target=[{typeCode}]");
             }
 
             Push(stack, bytes, typeCode);

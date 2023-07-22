@@ -16,7 +16,6 @@ namespace DarkBasicYo.Ast
         public string variable;
         public TypeReferenceNode type;
         public DeclarationScopeType scopeType;
-
         public IExpressionNode[] ranks;
 
         public DeclarationStatement()

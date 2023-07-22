@@ -15,6 +15,7 @@ namespace DarkBasicYo.Virtual
         public byte[] memory;
         private int _cursor;
 
+        public int Cursor => _cursor;
         /// <summary>
         /// key: a ptr
         /// value: a length
@@ -44,7 +45,9 @@ namespace DarkBasicYo.Virtual
             memory = new byte[length];
             for (var i = ptr; i < ptr + length; i++)
             {
-                memory[i - ptr] = this.memory[i];
+                // var memAddr = length - (i - ptr) - 1;
+                var memAddr = i - ptr;
+                memory[memAddr] = this.memory[i];
             }
         }
 
