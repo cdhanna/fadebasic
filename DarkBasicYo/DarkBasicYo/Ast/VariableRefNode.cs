@@ -1,4 +1,6 @@
 using System;
+using System.Collections.Generic;
+using System.Linq;
 
 namespace DarkBasicYo.Ast
 {
@@ -6,6 +8,29 @@ namespace DarkBasicYo.Ast
     public interface IVariableNode : IExpressionNode
     {
 
+    }
+
+    public class StructFieldReference : AstNode, IVariableNode
+    {
+        public IVariableNode left;
+        public IVariableNode right;
+        
+        
+        protected override string GetString()
+        {
+            return $"{left}.{right}";
+        }
+    }
+    
+    public class ArrayIndexReference : AstNode, IVariableNode
+    {
+        public string variableName;
+        public List<IExpressionNode> rankExpressions = new List<IExpressionNode>();
+        
+        protected override string GetString()
+        {
+            return $"ref {variableName}[{string.Join(",", rankExpressions.Select(x => x.ToString()))}]";
+        }
     }
 
     public class VariableRefNode : AstNode, IVariableNode

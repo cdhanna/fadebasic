@@ -120,14 +120,27 @@ namespace DarkBasicYo.Virtual
 
         public void Compile(AssignmentStatement assignmentStatement)
         {
-            if (!_varToReg.TryGetValue(assignmentStatement.variable.variableName, out var compiledVar))
+            /*
+             * in order to assign, we need to know what we are assigning two, and find the correct place to put the result.
+             *
+             * If it is a simple variable, then it lives on a local register.
+             * If it is an array, then it lives in memory.
+             */
+
+            var variableRefNode = assignmentStatement.variable as VariableRefNode;
+            if (variableRefNode == null)
+            {
+                throw new NotImplementedException("We don't support this yet");
+            }
+            
+            if (!_varToReg.TryGetValue(variableRefNode.variableName, out var compiledVar))
             {
                 // // ?
-                var tc = VmUtil.GetTypeCode(assignmentStatement.variable.DefaultTypeByName);
-                compiledVar = _varToReg[assignmentStatement.variable.variableName] = new CompiledVariable
+                var tc = VmUtil.GetTypeCode(variableRefNode.DefaultTypeByName);
+                compiledVar = _varToReg[variableRefNode.variableName] = new CompiledVariable
                 {
                     registerAddress = (byte)(registerCount++),
-                    name = assignmentStatement.variable.variableName,
+                    name = variableRefNode.variableName,
                     typeCode = tc,
                     byteSize = TypeCodes.GetByteSize(tc)
                 };
@@ -136,13 +149,13 @@ namespace DarkBasicYo.Virtual
             // compile the rhs of the assignment...
             Compile(assignmentStatement.expression);
 
+            // always cast the expression to the correct type code; slightly wasteful, could be better.
             _buffer.Add(OpCodes.CAST);
             _buffer.Add(compiledVar.typeCode);
     
+            // store the value of the expression&cast in the desired register.
             _buffer.Add(OpCodes.STORE);
             _buffer.Add(compiledVar.registerAddress);
-            
-            // _buffer.Add((byte)addr);
         }
         
         

@@ -27,7 +27,7 @@ namespace DarkBasicYo.Ast
 
     public class AssignmentStatement : AstNode, IStatementNode
     {
-        public VariableRefNode variable;
+        public IVariableNode variable;
         public IExpressionNode expression;
 
         public AssignmentStatement()

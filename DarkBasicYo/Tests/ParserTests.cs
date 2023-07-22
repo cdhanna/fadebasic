@@ -145,11 +145,29 @@ endwhile
         Assert.That(prog.statements.Count, Is.EqualTo(2));
         var code = prog.ToString();
         Console.WriteLine(code);
-        Assert.That(code, Is.EqualTo("((= (ref x),(5)),(while (greaterthan (ref x),(1)) (print (ref x)),(= (ref x),(subtract (ref x),(1)))))"));
+        Assert.That(code, Is.EqualTo("((= (ref x),(5)),(while (greaterthan (ref x),(1)) (call print (ref x)),(= (ref x),(subtract (ref x),(1)))))"));
     }
 
     
-    
+    [Test]
+    public void ArrayAssign()
+    {
+        var input = @"
+dim x(10)
+x(1) = 2
+";
+        var parser = MakeParser(input);
+        var prog = parser.ParseProgram();
+        
+        Assert.That(prog.statements.Count, Is.EqualTo(2));
+        var code = prog.ToString();
+        Console.WriteLine(code);
+        Assert.That(code, Is.EqualTo(@"(
+(dim global,x,(integer),((10))),
+(= (ref x[(1)]),(2))
+)".ReplaceLineEndings("")));
+    }
+
     
     
     [Test]
@@ -159,12 +177,81 @@ endwhile
         var parser = MakeParser(input);
         var prog = parser.ParseProgram();
         
+        Assert.That(prog.statements.Count, Is.EqualTo(1));
+        var code = prog.ToString();
+        Console.WriteLine(code);
+        Assert.That(code, Is.EqualTo("((dim global,x,(integer),((10))))"));
+    }
+
+    
+    [Test]
+    public void SimpleDimLocal()
+    {
+        var input = @"local dim x(10)";
+        var parser = MakeParser(input);
+        var prog = parser.ParseProgram();
+        
+        Assert.That(prog.statements.Count, Is.EqualTo(1));
+        var code = prog.ToString();
+        Console.WriteLine(code);
+        Assert.That(code, Is.EqualTo("((dim local,x,(integer),((10))))"));
+    }
+
+    [Test]
+    public void SimpleDimTyped()
+    {
+        var input = @"dim x(10) as byte";
+        var parser = MakeParser(input);
+        var prog = parser.ParseProgram();
+        
+        Assert.That(prog.statements.Count, Is.EqualTo(1));
+        var code = prog.ToString();
+        Console.WriteLine(code);
+        Assert.That(code, Is.EqualTo("((dim global,x,(byte),((10))))"));
+    }
+    
+    [Test]
+    public void SimpleDimScopedTyped()
+    {
+        var input = @"local dim x(10,n) as word";
+        var parser = MakeParser(input);
+        var prog = parser.ParseProgram();
+        
+        Assert.That(prog.statements.Count, Is.EqualTo(1));
+        var code = prog.ToString();
+        Console.WriteLine(code);
+        Assert.That(code, Is.EqualTo("((dim local,x,(word),((10),(ref n))))"));
+    }
+
+    
+    [Test]
+    public void SimpleArrayMultiDimension()
+    {
+        var input = @"dim x(10,2)";
+        var parser = MakeParser(input);
+        var prog = parser.ParseProgram();
+        
+        Assert.That(prog.statements.Count, Is.EqualTo(1));
+        var code = prog.ToString();
+        Console.WriteLine(code);
+        Assert.That(code, Is.EqualTo("((dim global,x,(integer),((10),(2))))"));
+    }
+
+    [Test]
+    public void SimpleArrayMultiDimensionWithVars()
+    {
+        var input = @"
+y = 3
+dim x(y,y*2)";
+        var parser = MakeParser(input);
+        var prog = parser.ParseProgram();
+        
         Assert.That(prog.statements.Count, Is.EqualTo(2));
         var code = prog.ToString();
         Console.WriteLine(code);
-        Assert.That(code, Is.EqualTo("((dim local,x,(integer),(10)))"));
+        Assert.That(code, Is.EqualTo("((= (ref y),(3)),(dim global,x,(integer),((ref y),(mult (ref y),(2)))))"));
     }
-
+    
     
     [Test]
     public void IntegerAssignment()

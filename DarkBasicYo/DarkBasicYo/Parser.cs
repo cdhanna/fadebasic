@@ -46,12 +46,202 @@ namespace DarkBasicYo
             program.endToken = _stream.Current;
             return program;
         }
+        
 
-        private IStatementNode ParseStatementThatStartsWithScope(Token startToken)
+        private IStatementNode ParseStatementThatStartsWithScope(Token scopeToken)
         {
             // we know this must be a declaration node.
+
+            var next = _stream.Advance();
+            switch (next.type)
+            {
+                case LexemType.VariableGeneral:
+                    // we know we have something that looks like "local x", so the next token MUST be "as", and then there MUST be a type.
+                    var asToken = _stream.Advance();
+                    if (asToken.type != LexemType.KeywordAs)
+                    {
+                        throw new ParserException("expected keyword, as", scopeToken, asToken);
+                    }
+                    var typeReference = ParseTypeReference();
+                    return new DeclarationStatement(scopeToken, new VariableRefNode(next), typeReference);
+                    
+                case LexemType.KeywordDeclareArray:
+                    var decl = ParseDimStatement(next);
+                    return new DeclarationStatement(scopeToken, decl);
+                    throw new NotImplementedException("scope array");
+                    break;
+                default:
+                    throw new ParserException("Expected either variable or dim ", scopeToken, next);
+            }
         }
-        
+
+        // private IStatementNode ParseScopeVariableDecl(Token scopeToken, Token variableToken)
+        // {
+        //     // stuff that looks like local x as byte
+        //     
+        //     
+        // }
+
+        private DeclarationStatement ParseDimStatement(Token dimToken)
+        {
+            // dim
+            var next = _stream.Advance();
+            switch (next.type)
+            {
+                case LexemType.VariableGeneral:
+                    // dim x
+                    var openParenToken = _stream.Advance();
+                    if (openParenToken.type != LexemType.ParenOpen)
+                    {
+                        throw new ParserException("Expected open paren ", openParenToken);
+                    }
+
+                    var rankExpressions = new List<IExpressionNode>();
+                    for (var rankIndex = 0; rankIndex < 5; rankIndex++) // 5 is the magic "max dimension"
+                    {
+                        var rankExpression = ParseWikiExpression();
+                        rankExpressions.Add(rankExpression);
+                        var closeOrComma = _stream.Advance();
+                        var closeFound = false;
+                        switch (closeOrComma.type)
+                        {
+                            case LexemType.ParenClose:
+                                closeFound = true;
+                                break;
+                            case LexemType.ArgSplitter:
+                                if (rankIndex + 1 == 5)
+                                {
+                                    throw new ParserException("arrays can only have 5 dimensions", closeOrComma);
+                                }
+                                break;
+                            default:
+                                throw new ParserException("Expected close paren or comma", openParenToken);
+                        }
+
+                        if (closeFound)
+                        {
+                            break;
+                        }
+                    }
+
+                    // so far, we have dim x(n)
+                    // next, we _could_ have an AS, or it could be an end-of-statement
+
+                    if (_stream.Peek?.type == LexemType.KeywordAs)
+                    {
+                        _stream.Advance(); // discard the "as"
+                        var typeReference = ParseTypeReference();
+                        return new DeclarationStatement(dimToken, new VariableRefNode(next), typeReference,
+                            rankExpressions.ToArray());
+                    }
+                    
+                    return new DeclarationStatement(
+                        dimToken, 
+                        new VariableRefNode(next), 
+                        rankExpressions.ToArray());
+                    break;
+                default:
+                    throw new ParserException("Expected variable declaration ", next);
+            }
+        }
+
+        public IVariableNode ParseVariableReference(Token token=null)
+        {
+            if (token == null)
+            {
+                token = _stream.Advance();
+            }
+            switch (token.type)
+            {
+                case LexemType.VariableString:
+                case LexemType.VariableReal:
+                case LexemType.VariableGeneral:
+                    
+                    // cooool...
+
+                    var next = _stream.Peek;
+                    switch (next.type)
+                    {
+                        case LexemType.FieldSplitter:
+                            // ah, actually, this whole thing is a reference!
+                            _stream.Advance();
+
+                            var rhs = ParseVariableReference();
+                            return new StructFieldReference
+                            {
+                                startToken = token, endToken = _stream.Current,
+                                right = rhs, left = new VariableRefNode(token)
+                            };
+                            
+                            break;
+                        case LexemType.ParenOpen:
+                            _stream.Advance();
+                            var rankExpressions = new List<IExpressionNode>();
+                            for (var rankIndex = 0; rankIndex < 5; rankIndex++) // 5 is the magic "max dimension"
+                            {
+                                var rankExpression = ParseWikiExpression();
+                                rankExpressions.Add(rankExpression);
+                                var closeOrComma = _stream.Advance();
+                                var closeFound = false;
+                                switch (closeOrComma.type)
+                                {
+                                    case LexemType.ParenClose:
+                                        closeFound = true;
+                                        break;
+                                    case LexemType.ArgSplitter:
+                                        if (rankIndex + 1 == 5)
+                                        {
+                                            throw new ParserException("arrays can only have 5 dimensions", closeOrComma);
+                                        }
+                                        break;
+                                    default:
+                                        throw new ParserException("Expected close paren or comma", next);
+                                }
+
+                                if (closeFound)
+                                {
+                                    break;
+                                }
+                            }
+                            
+                            // we have the ranks, so we know its a array access at least.
+                            // but it could still be a nested thing
+
+                            var indexValue = new ArrayIndexReference
+                            {
+                                startToken = token,endToken = _stream.Current,
+                                rankExpressions = rankExpressions,
+                                variableName = token.raw
+                            };
+                            
+                            if (_stream.Peek?.type == LexemType.FieldSplitter)
+                            {
+                                _stream.Advance();
+
+                                var arrayRhs = ParseVariableReference();
+                                return new StructFieldReference
+                                {
+                                    startToken = token, endToken = _stream.Current,
+                                    right = arrayRhs, left = indexValue
+                                };
+
+                            }
+
+                            return indexValue;
+                            
+                            break;
+                        
+                        default:
+                            // okay, it is just a regular variable...
+                            return new VariableRefNode(token);
+                    }
+                    
+                    break;
+                default:
+                    throw new ParserException("expected a variable reference", token);
+            }
+            
+        }
 
 
         private IStatementNode ParseStatement()
@@ -79,11 +269,13 @@ namespace DarkBasicYo
              * local x = 3
              * dim x(3) = 1
              * local x.y = 1
+             * dim local
              */
             
             
             IStatementNode Inner()
             {
+                
                 var token = _stream.Advance();
                 IStatementNode subStatement = null;
                 switch (token.type)
@@ -117,48 +309,18 @@ namespace DarkBasicYo
                         };
 
                     case LexemType.KeywordScope:
-                        // we know this is going to be a declaration
-                        subStatement = Inner();
-                        if (subStatement is DeclarationStatement declStatement)
-                        {
-                            var scopeType = DeclarationScopeType.Default;
-                            switch (token.raw.ToLowerInvariant())
-                            {
-                                case "global":
-                                    scopeType = DeclarationScopeType.Global;
-                                    break;
-                                case "local":
-                                    scopeType = DeclarationScopeType.Local;
-                                    break;
-                            }
-                            declStatement.scopeType = scopeType;
-                            return declStatement;
-                        }
-                        else
-                        {
-                            throw new ParserException("Expected declaration statement after Local", token);
-                        }
-                        break;
+                        return ParseStatementThatStartsWithScope(token);
                     case LexemType.KeywordDeclareArray:
-                        subStatement = Inner();
-                        if (subStatement is DeclarationStatement declarationStatement)
-                        {
-                            throw new NotImplementedException("asdf");
-                        }
-                        else
-                        {
-                            throw new ParserException("Expected declaration statement after Local", token);
-                        }
-
-                        break;
+                        return ParseDimStatement(token);
                     case LexemType.VariableReal:
                     case LexemType.VariableGeneral:
 
+                        var reference = ParseVariableReference(token);
+                        
                         var secondToken = _stream.Advance();
 
                         switch (secondToken.type)
                         {
-                            
                             case LexemType.OpEqual:
                                 var expr = ParseWikiExpression();
                                 
@@ -167,7 +329,7 @@ namespace DarkBasicYo
                                 {
                                     startToken = token,
                                     endToken = _stream.Current,
-                                    variable = new VariableRefNode(token),
+                                    variable = reference,
                                     expression = expr,
                                 };
                             case LexemType.KeywordAs:

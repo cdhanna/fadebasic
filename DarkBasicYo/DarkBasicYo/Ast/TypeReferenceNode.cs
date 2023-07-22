@@ -17,6 +17,10 @@ namespace DarkBasicYo.Ast
             [LexemType.KeywordTypeString] = VariableType.String,
             [LexemType.KeywordTypeDoubleFloat] = VariableType.DoubleFloat,
             [LexemType.KeywordTypeDoubleInteger] = VariableType.DoubleInteger,
+            [LexemType.VariableGeneral] = VariableType.Integer,
+            [LexemType.VariableReal] = VariableType.Float,
+            [LexemType.VariableString] = VariableType.String,
+            
         };
 
         public VariableType variableType;
@@ -30,6 +34,7 @@ namespace DarkBasicYo.Ast
         {
             if (!_map.TryGetValue(type, out var variableType))
             {
+                
                 throw new NotImplementedException("Custom types are not supported yet :(");
             }
 

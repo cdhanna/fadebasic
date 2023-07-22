@@ -234,6 +234,25 @@ public class Tests
 
     
     [Test]
+    public void Tokenize_Comma()
+    {
+        var input = @"y,y * 2";
+
+        var lexer = new Lexer();
+        var tokens = lexer.Tokenize(input);
+        
+        Assert.That(tokens.Count, Is.EqualTo(6));
+        
+        Assert.That(tokens[0].type, Is.EqualTo(LexemType.VariableGeneral));
+        Assert.That(tokens[1].type, Is.EqualTo(LexemType.ArgSplitter));
+        Assert.That(tokens[2].type, Is.EqualTo(LexemType.VariableGeneral));
+        Assert.That(tokens[3].type, Is.EqualTo(LexemType.OpMultiply));
+        Assert.That(tokens[4].type, Is.EqualTo(LexemType.LiteralInt));
+        Assert.That(tokens[5].type, Is.EqualTo(LexemType.EndStatement));
+
+    }
+    
+    [Test]
     public void Tokenize_CaseInsensitiveKeywords()
     {
         var input = @"as As AS aS";

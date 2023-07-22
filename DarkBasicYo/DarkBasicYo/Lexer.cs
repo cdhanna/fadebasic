@@ -41,6 +41,7 @@ namespace DarkBasicYo
 
         WhiteSpace,
         ArgSplitter,
+        FieldSplitter,
         OpPlus,
         OpMultiply,
         OpDivide,
@@ -79,6 +80,7 @@ namespace DarkBasicYo
         {
             new Lexem(LexemType.EndStatement, new Regex("^;")),
             new Lexem(LexemType.ArgSplitter, new Regex("^,")),
+            new Lexem(LexemType.FieldSplitter, new Regex("^\\.")),
             
             new Lexem(LexemType.WhiteSpace, new Regex("^(\\s|\\t|\\n)+")),
             new Lexem(LexemType.ParenOpen, new Regex("^\\(")),
@@ -122,9 +124,9 @@ namespace DarkBasicYo
             new Lexem(-2, LexemType.LiteralReal, new Regex("^((\\d+\\.(\\d*))|(\\.\\d+))")),
             new Lexem(LexemType.LiteralInt, new Regex("^\\d+")),
             new Lexem(LexemType.LiteralString, new Regex("^\"(.*)\"")),
-            new Lexem(-2, LexemType.VariableString, new Regex("^([a-z,A-Z][a-z,A-Z,0-9,_]*)\\$")),
-            new Lexem(-2, LexemType.VariableReal, new Regex("^([a-z,A-Z][a-z,A-Z,0-9,_]*)#")),
-            new Lexem(2, LexemType.VariableGeneral, new Regex("^[a-z,A-Z][a-z,A-Z,0-9,_]*")),
+            new Lexem(-2, LexemType.VariableString, new Regex("^([a-zA-Z][a-zA-Z0-9_]*)\\$")),
+            new Lexem(-2, LexemType.VariableReal, new Regex("^([a-zA-Z][a-zA-Z0-9_]*)#")),
+            new Lexem(2, LexemType.VariableGeneral, new Regex("^[a-zA-Z][a-zA-Z0-9_]*")),
         };
 
 
