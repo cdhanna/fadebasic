@@ -105,6 +105,11 @@ namespace DarkBasicYo.Virtual
         /// <summary>
         /// Reads a value from the stack, and does nothing with it.
         /// </summary>
-        public const byte DISCARD = 15; 
+        public const byte DISCARD = 15;
+
+        /// <summary>
+        /// Reads a ptr value from the stack, and that ptr is used as a heap address. The result on the stack is the length (in bytes) of the allocation on the heap
+        /// </summary>
+        public const byte LENGTH = 16;
     }
 }

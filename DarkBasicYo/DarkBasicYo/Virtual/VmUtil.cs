@@ -228,6 +228,7 @@ namespace DarkBasicYo.Virtual
                         var castInt = (int)bytes[0];
                         bytes = BitConverter.GetBytes(castInt);
                         break;
+                    
                     default:
                         throw new NotImplementedException($"cast from byte to typeCode=[{typeCode}] is not supported yet.");
                 }

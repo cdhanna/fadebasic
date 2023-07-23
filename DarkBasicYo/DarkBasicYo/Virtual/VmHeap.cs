@@ -98,7 +98,13 @@ namespace DarkBasicYo.Virtual
             _allocations[ptr] = size;
             _cursor += size;
         }
-        
-        
+
+        public void GetAllocationSize(int ptr, out int size)
+        {
+            if (!_allocations.TryGetValue(ptr, out size))
+            {
+                throw new Exception("vm heap: invalid ptr cannot access allocation size, " + ptr);
+            }
+        }
     }
 }

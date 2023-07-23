@@ -211,6 +211,11 @@ namespace DarkBasicYo.Virtual
                             }
                             
                             break;
+                        case OpCodes.LENGTH:
+                            VmUtil.ReadAsInt(stack, out var readLengthPtr);
+                            heap.GetAllocationSize(readLengthPtr, out var readAllocLength);
+                            VmUtil.Push(stack, BitConverter.GetBytes(readAllocLength), TypeCodes.INT);
+                            break;
                         case OpCodes.CALL_HOST:
                             
                             VmUtil.ReadAsInt(stack, out var hostMethodPtr);
