@@ -123,7 +123,7 @@ namespace DarkBasicYo
 
             new Lexem(-2, LexemType.LiteralReal, new Regex("^((\\d+\\.(\\d*))|(\\.\\d+))")),
             new Lexem(LexemType.LiteralInt, new Regex("^\\d+")),
-            new Lexem(LexemType.LiteralString, new Regex("^\"(.*)\"")),
+            new Lexem(LexemType.LiteralString, new Regex("^\"(.*?)\"")),
             new Lexem(-2, LexemType.VariableString, new Regex("^([a-zA-Z][a-zA-Z0-9_]*)\\$")),
             new Lexem(-2, LexemType.VariableReal, new Regex("^([a-zA-Z][a-zA-Z0-9_]*)#")),
             new Lexem(2, LexemType.VariableGeneral, new Regex("^[a-zA-Z][a-zA-Z0-9_]*")),

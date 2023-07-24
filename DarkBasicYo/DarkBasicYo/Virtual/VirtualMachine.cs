@@ -100,17 +100,23 @@ namespace DarkBasicYo.Virtual
                     byte[] aBytes = new byte[] { };
                     byte[] bBytes = new byte[] { };
                     byte[] cBytes = new byte[] { };
-                    byte aTypeCode = 0, bTypeCode = 0, vTypeCode = 0;
+                    byte aTypeCode = 0, bTypeCode = 0, vTypeCode = 0, typeCode = 0;
                     ulong data = 0;
                     byte addr = 0, size =0;
                     switch (ins)
                     {
+                        case OpCodes.DUPE:
+                            // look at the stack, and push stuff onto it...
+                            VmUtil.Read(stack, out typeCode, out aBytes);
+                            VmUtil.Push(stack, aBytes, typeCode);
+                            VmUtil.Push(stack, aBytes, typeCode);
+                            break;
                         case OpCodes.BPUSH:
                             var code = Advance();
                             stack.Push(code);
                             break;
                         case OpCodes.PUSH:
-                            var typeCode = Advance();
+                            typeCode = Advance();
 
                             size = TypeCodes.GetByteSize(typeCode);
                             for (var n = 0; n < size; n ++)
@@ -121,10 +127,20 @@ namespace DarkBasicYo.Virtual
                             
                             stack.Push(typeCode);
                             break;
-                        
+                        case OpCodes.PUSH_TYPELESS:
+                            typeCode = Advance();
+
+                            size = TypeCodes.GetByteSize(typeCode);
+                            for (var n = 0; n < size; n ++)
+                            {
+                                var value = Advance();
+                                stack.Push(value);
+                            }
+                            
+                            break;
                         case OpCodes.ADD:
                             VmUtil.ReadTwoValues(stack, out vTypeCode, out aBytes, out bBytes);
-                            VmUtil.Add(vTypeCode, aBytes, bBytes, out cBytes);
+                            VmUtil.Add(heap, vTypeCode, aBytes, bBytes, out cBytes);
                             VmUtil.Push(stack, cBytes, vTypeCode);
                             break;
                         case OpCodes.MUL:
@@ -184,19 +200,10 @@ namespace DarkBasicYo.Virtual
                             stack.Pop();
                             break;
                         case OpCodes.WRITE:
-                            
-                            VmUtil.ReadAsInt(stack, out var writePtr);
-                            VmUtil.ReadAsInt(stack, out var writeLength);
-
-                            bBytes = new byte[writeLength];
-                            for (var w = 0; w < writeLength; w++)
-                            {
-                                var b = stack.Pop();
-                                bBytes[w] = b;
-                            }
-                            
-                            heap.Write(writePtr, writeLength, bBytes);
-                            
+                            VmUtil.WriteToHeap(stack, heap, false);
+                            break;
+                        case OpCodes.WRITE_PTR:
+                            VmUtil.WriteToHeap(stack, heap, true);
                             break;
                         case OpCodes.READ:
                             

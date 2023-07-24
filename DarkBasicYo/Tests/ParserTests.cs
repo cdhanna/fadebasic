@@ -37,6 +37,42 @@ public class ParserTests
     
     
     [Test]
+    public void String_Assign()
+    {
+        var input = "x$ = \"hello\"";
+        var parser = MakeParser(input);
+        var prog = parser.ParseProgram();
+        
+        var code = prog.ToString();
+        Assert.That(code, Is.EqualTo("((= (ref x$),(\"hello\")))"));
+    }
+
+
+    [Test]
+    public void String_Assign2()
+    {
+        var input = "x = \"hello\"";
+        var parser = MakeParser(input);
+        var prog = parser.ParseProgram();
+        
+        var code = prog.ToString();
+        Assert.That(code, Is.EqualTo("((= (ref x),(\"hello\")))"));
+    }
+
+    
+    [Test]
+    public void String_Declare()
+    {
+        var input = "x as string";
+        var parser = MakeParser(input);
+        var prog = parser.ParseProgram();
+        
+        var code = prog.ToString();
+        Assert.That(code, Is.EqualTo("((decl local,x,(string)))"));
+    }
+
+    
+    [Test]
     public void MultiStatement()
     {
         var input = @"

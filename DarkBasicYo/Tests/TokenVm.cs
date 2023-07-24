@@ -60,6 +60,101 @@ public class TokenVm
 
     
     [Test]
+    public void String_Concat()
+    {
+        var src = @"
+x$ = ""hello""
+y$ = ""world""
+z$ = x$ + y$
+";
+        Setup(src, out _, out var prog);
+        
+        var vm = new VirtualMachine(prog);
+        vm.Execute2();
+        
+        Assert.That(vm.dataRegisters[0], Is.EqualTo(0)); // the ptr to the string in memory
+        Assert.That(vm.typeRegisters[0], Is.EqualTo(TypeCodes.STRING));
+        
+        vm.heap.Read((int)vm.dataRegisters[0], "hello".Length * 4, out var memory);
+        var str = VmConverter.ToString(memory);
+        Assert.That(str, Is.EqualTo("hello"));
+        
+        
+        vm.heap.Read((int)vm.dataRegisters[1], "world".Length * 4, out memory);
+        str = VmConverter.ToString(memory);
+        Assert.That(str, Is.EqualTo("world"));
+        
+        vm.heap.Read((int)vm.dataRegisters[2], "helloworld".Length * 4, out memory);
+        str = VmConverter.ToString(memory);
+        Assert.That(str, Is.EqualTo("helloworld"));
+    }
+
+    
+    [Test]
+    public void String_Declare()
+    {
+        var src = "x as string; x = \"hello\" ";
+        Setup(src, out _, out var prog);
+        
+        var vm = new VirtualMachine(prog);
+        vm.Execute2();
+        
+        Assert.That(vm.dataRegisters[0], Is.EqualTo(0)); // the ptr to the string in memory
+        Assert.That(vm.typeRegisters[0], Is.EqualTo(TypeCodes.STRING));
+        
+        vm.heap.Read(0, "hello".Length * 4, out var memory);
+        var str = VmConverter.ToString(memory);
+        
+        Assert.That(str, Is.EqualTo("hello"));
+    }
+
+    
+    [Test]
+    public void String_Declare_Anon()
+    {
+        var src = "x$ = \"hello\" ";
+        Setup(src, out _, out var prog);
+        
+        var vm = new VirtualMachine(prog);
+        vm.Execute2();
+        
+        Assert.That(vm.dataRegisters[0], Is.EqualTo(0)); // the ptr to the string in memory
+        Assert.That(vm.typeRegisters[0], Is.EqualTo(TypeCodes.STRING));
+        
+        vm.heap.Read(0, "hello".Length * 4, out var memory);
+        var str = VmConverter.ToString(memory);
+        
+        Assert.That(str, Is.EqualTo("hello"));
+    }
+    [Test]
+    public void String_Declare3()
+    {
+        var src = "x$ = \"hello\"; y$ = \"world\" ";
+        Setup(src, out _, out var prog);
+        
+        var vm = new VirtualMachine(prog);
+        vm.Execute2();
+        
+        Assert.That(vm.dataRegisters[0], Is.EqualTo(0)); // the ptr to the string in memory
+        Assert.That(vm.typeRegisters[0], Is.EqualTo(TypeCodes.STRING));
+        Assert.That(vm.dataRegisters[1], Is.EqualTo("hello".Length*4)); // the ptr to the string in memory
+        Assert.That(vm.typeRegisters[1], Is.EqualTo(TypeCodes.STRING));
+
+        vm.heap.Read(0, "hello".Length * 4, out var memory);
+        var str = VmConverter.ToString(memory);
+        
+        Assert.That(str, Is.EqualTo("hello"));
+        
+        
+        vm.heap.Read("hello".Length * 4, "world".Length * 4, out memory);
+        str = VmConverter.ToString(memory);
+        
+        Assert.That(str, Is.EqualTo("world"));
+    }
+
+    
+    
+    [Test]
     public void TestDeclareAndAssign()
     {
         var src = "x as word; x = 3;";

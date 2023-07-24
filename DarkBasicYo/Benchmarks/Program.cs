@@ -2,5 +2,8 @@
 
 using BenchmarkDotNet.Running;
 using Benchmarks;
+using MoonSharp.Interpreter;
+
+// Script.RunString("a = 3 + 2");
 
 var summary = BenchmarkRunner.Run<Vms>();

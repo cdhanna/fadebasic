@@ -315,6 +315,7 @@ namespace DarkBasicYo
                     case LexemType.KeywordDeclareArray:
                         return ParseDimStatement(token);
                     case LexemType.VariableReal:
+                    case LexemType.VariableString:
                     case LexemType.VariableGeneral:
 
                         var reference = ParseVariableReference(token);
@@ -577,6 +578,8 @@ namespace DarkBasicYo
                     return new LiteralIntExpression(token);
                 case LexemType.LiteralReal:
                     return new LiteralRealExpression(token);
+                case LexemType.LiteralString:
+                    return new LiteralStringExpression(token);
                 default:
                     throw new ParserException("Cannot match single, " + token.type, token);
             }

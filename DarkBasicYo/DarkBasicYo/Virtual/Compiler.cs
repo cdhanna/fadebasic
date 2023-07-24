@@ -358,7 +358,30 @@ namespace DarkBasicYo.Virtual
 
                     _buffer.Add(OpCodes.CALL_HOST);
                     break;
-                
+                case LiteralStringExpression literalString:
+                    
+                    // allocate some memory for a string...
+                    var str = literalString.value;
+                    var strSize = str.Length * TypeCodes.GetByteSize(TypeCodes.INT);
+                    
+                    // push the string data...
+                    for (var i = str.Length - 1; i >= 0; i--)
+                    {
+                        var c = (uint)str[i];
+                        AddPushUInt(_buffer, c, includeTypeCode:false);
+                    }
+                    
+                    AddPushInt(_buffer, strSize); // SIZE, <Data>
+                    
+                    // this one will get used by the Write call
+                    _buffer.Add(OpCodes.DUPE); // SIZE, SIZE, <Data>
+
+                    // allocate a ptr to the stack
+                    _buffer.Add(OpCodes.ALLOC); // PTR, SIZE, <Data>
+                    
+                    _buffer.Add(OpCodes.WRITE_PTR); // consume the ptr, then the length, then the data
+                    
+                    break;
                 case LiteralRealExpression literalReal:
                     _buffer.Add(OpCodes.PUSH);
                     _buffer.Add(TypeCodes.REAL);
@@ -370,13 +393,13 @@ namespace DarkBasicYo.Virtual
                     break;
                 case LiteralIntExpression literalInt:
                     // push the literal value
-                    _buffer.Add(OpCodes.PUSH);
-                    _buffer.Add(TypeCodes.INT);
-                    var value = BitConverter.GetBytes(literalInt.value);
-                    for (var i = value.Length - 1; i >= 0; i--)
-                    {
-                        _buffer.Add(value[i]);
-                    }
+                    AddPushInt(_buffer, literalInt.value);
+                    // _buffer.Add(TypeCodes.INT);
+                    // var value = BitConverter.GetBytes(literalInt.value);
+                    // for (var i = value.Length - 1; i >= 0; i--)
+                    // {
+                    //     _buffer.Add(value[i]);
+                    // }
                     break;
                 case ArrayIndexReference arrayRef:
                     // need to fetch the value from the array...
@@ -483,6 +506,36 @@ namespace DarkBasicYo.Virtual
                     break;
                 default:
                     throw new Exception("compiler: unknown expression");
+            }
+        }
+
+        private static void AddPushInt(List<byte> buffer, int x)
+        {
+            buffer.Add(OpCodes.PUSH);
+            buffer.Add(TypeCodes.INT);
+            var value = BitConverter.GetBytes(x);
+            for (var i = value.Length - 1; i >= 0; i--)
+            {
+                buffer.Add(value[i]);
+            }
+        }
+        private static void AddPushUInt(List<byte> buffer, uint x, bool includeTypeCode=true)
+        {
+
+            if (includeTypeCode)
+            {
+                buffer.Add(OpCodes.PUSH);
+            }
+            else
+            {
+                buffer.Add(OpCodes.PUSH_TYPELESS);
+            }
+            buffer.Add(TypeCodes.INT);
+
+            var value = BitConverter.GetBytes(x);
+            for (var i = value.Length - 1; i >= 0; i--)
+            {
+                buffer.Add(value[i]);
             }
         }
     }

@@ -51,6 +51,14 @@ namespace DarkBasicYo.Virtual
             }
         }
 
+        public void Copy(int srcPtr, int dstPtr, int length)
+        {
+            for (var i = 0; i < length; i++)
+            {
+                memory[dstPtr + i] = memory[srcPtr + i];
+            }
+        }
+
         public void Allocate(byte typeCode, int arrayLength, out int ptr)
         {
             var size = arrayLength * TypeCodes.GetByteSize(typeCode);

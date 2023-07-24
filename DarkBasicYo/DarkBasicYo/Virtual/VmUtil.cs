@@ -19,6 +19,8 @@ namespace DarkBasicYo.Virtual
                     return TypeCodes.WORD;
                 case VariableType.Float:
                     return TypeCodes.REAL;
+                case VariableType.String:
+                    return TypeCodes.STRING;
                 default:
                     throw new NotImplementedException("Unknown type code");
             }
@@ -44,6 +46,35 @@ namespace DarkBasicYo.Virtual
             }
         }
 
+        public static void WriteToHeap(Stack<byte> stack, VmHeap heap, bool pushPtr)
+        {
+            // ReadAsInt(stack, out var writePtr);
+            var typeCode = stack.Pop();
+            if (typeCode != TypeCodes.INT)
+            {
+                throw new Exception("vm exception: expected an int for ptr");
+            }
+                            
+            Read(stack, TypeCodes.INT, out var aBytes);
+            var writePtr = BitConverter.ToInt32(aBytes, 0);
+            
+            ReadAsInt(stack, out var writeLength);
+
+            var bytes = new byte[writeLength];
+            for (var w = 0; w < writeLength; w++)
+            {
+                var b = stack.Pop();
+                bytes[w] = b;
+            }
+                            
+            heap.Write(writePtr, writeLength, bytes);
+
+            if (pushPtr)
+            {
+                Push(stack, aBytes, TypeCodes.INT);
+            }
+        }
+        
         public static void ReadAsInt(Stack<byte> stack, out int result)
         {
             var typeCode = stack.Pop();
@@ -144,10 +175,28 @@ namespace DarkBasicYo.Virtual
         }
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        public static void Add(byte aTypeCode, byte[] a, byte[] b, out byte[] c)
+        public static void Add(VmHeap heap, byte aTypeCode, byte[] a, byte[] b, out byte[] c)
         {
             switch (aTypeCode)
             {
+                case TypeCodes.STRING:
+                    /*
+                     * two pointers; we need to allocate a new string for the sum of the lengths;
+                     * then array copy the two strings into their respective positions
+                     */
+                    var aPtr = BitConverter.ToInt32(a, 0);
+                    var bPtr = BitConverter.ToInt32(b, 0);
+                    heap.GetAllocationSize(aPtr, out var aLength);
+                    heap.GetAllocationSize(bPtr, out var bLength);
+                    var sumLength = aLength + bLength;
+                    heap.Allocate(sumLength, out var sumPtr);
+                    
+                    // now write the two string bytes into sumPtr
+                    heap.Copy(bPtr, sumPtr, bLength);
+                    heap.Copy(aPtr, sumPtr + bLength, aLength);
+
+                    c = BitConverter.GetBytes(sumPtr);
+                    break;
                 case TypeCodes.BYTE:
                     byte aByte = a[0];
                     byte bByte = b[0];
@@ -202,6 +251,10 @@ namespace DarkBasicYo.Virtual
                         var actual = BitConverter.ToInt32(bytes, 0);
                         var castFloat = (float)actual;
                         bytes = BitConverter.GetBytes(castFloat);
+                        break;
+                    case TypeCodes.STRING:
+                        // a string type IS just an int ptr; so we don't need to convert anything!
+                        bytes = bytes;
                         break;
                     default:
                         throw new NotImplementedException($"cast from int to typeCode=[{typeCode}] is not supported yet.");

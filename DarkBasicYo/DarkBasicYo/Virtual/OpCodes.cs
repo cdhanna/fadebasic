@@ -24,6 +24,7 @@ namespace DarkBasicYo.Virtual
         public const byte DINT    = 0x06; // 8 bytes
         public const byte DFLOAT  = 0x07; // 8 bytes
         public const byte VOID    = 0x08; // 0 bytes
+        public const byte STRING  = 0x09; // 4 bytes (ptr)
 
         public static readonly byte[] SIZE_TABLE = new byte[]
         {
@@ -35,7 +36,8 @@ namespace DarkBasicYo.Virtual
             4, // dword
             8, // dint
             8, // dfloat
-            0  // void
+            0, // void
+            4, // string (int ptr)
         };
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
@@ -111,5 +113,20 @@ namespace DarkBasicYo.Virtual
         /// Reads a ptr value from the stack, and that ptr is used as a heap address. The result on the stack is the length (in bytes) of the allocation on the heap
         /// </summary>
         public const byte LENGTH = 16;
+
+        /// <summary>
+        /// Duplicates the current value on the stack, like a type-code qualified int or word
+        /// </summary>
+        public const byte DUPE = 17;
+
+        /// <summary>
+        /// Same as write, but pushes the original ptr back onto the stack
+        /// </summary>
+        public const byte WRITE_PTR = 19;
+
+        /// <summary>
+        /// Exactly the same as push, but it does not push the type code aftewards
+        /// </summary>
+        public const byte PUSH_TYPELESS = 18;
     }
 }

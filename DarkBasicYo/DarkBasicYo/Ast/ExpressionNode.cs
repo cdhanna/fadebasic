@@ -116,4 +116,20 @@ namespace DarkBasicYo.Ast
             return startToken.raw;
         }
     }
+
+    public class LiteralStringExpression : AstNode, IExpressionNode
+    {
+        public string value;
+
+        public LiteralStringExpression(Token token) : base(token)
+        {
+            value = token.raw.Substring(1, token.raw.Length - 2); // account for quotes
+        }
+
+
+        protected override string GetString()
+        {
+            return value;
+        }
+    }
 }

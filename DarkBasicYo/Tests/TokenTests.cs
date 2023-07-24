@@ -381,6 +381,26 @@ print x";
 
         
     }
+    [Test]
+    public void Tokenize_StringExpr()
+    {
+        var input = "\"a\" + \"b\" ";
+
+        var lexer = new Lexer();
+        var tokens = lexer.Tokenize(input);
+        
+        Assert.That(tokens.Count, Is.EqualTo(4));
+        
+        Assert.That(tokens[0].type, Is.EqualTo(LexemType.LiteralString));
+        Assert.That(tokens[0].raw, Is.EqualTo("\"a\""));
+        
+        Assert.That(tokens[1].type, Is.EqualTo(LexemType.OpPlus));
+        
+        Assert.That(tokens[2].type, Is.EqualTo(LexemType.LiteralString));
+        Assert.That(tokens[2].raw, Is.EqualTo("\"b\""));
+        
+        Assert.That(tokens[3].type, Is.EqualTo(LexemType.EndStatement));
+    }
     
     
     [Test]
