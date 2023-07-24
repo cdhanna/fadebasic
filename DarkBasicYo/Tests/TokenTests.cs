@@ -333,6 +333,53 @@ print x";
 
     }
     
+    
+    [Test]
+    public void Tokenize_Ptr_AddressOf()
+    {
+        var input = @"*";
+        var lexer = new Lexer();
+        var tokens = lexer.Tokenize(input);
+        Assert.That(tokens.Count, Is.EqualTo(2));
+        Assert.That(tokens[0].type, Is.EqualTo(LexemType.OpMultiply));
+        Assert.That(tokens[1].type, Is.EqualTo(LexemType.EndStatement));
+    }
+
+    [Test]
+    public void Tokenize_Ptr_AddressOfVar()
+    {
+        var input = @"*x$";
+        var lexer = new Lexer();
+        var tokens = lexer.Tokenize(input);
+        Assert.That(tokens.Count, Is.EqualTo(3));
+        Assert.That(tokens[0].type, Is.EqualTo(LexemType.OpMultiply));
+        Assert.That(tokens[1].type, Is.EqualTo(LexemType.VariableString));
+        Assert.That(tokens[2].type, Is.EqualTo(LexemType.EndStatement));
+    }
+
+    [Test]
+    public void Tokenize_Ptr_ValueAtAddress()
+    {
+        var input = @"&";
+        var lexer = new Lexer();
+        var tokens = lexer.Tokenize(input);
+        Assert.That(tokens.Count, Is.EqualTo(2));
+        Assert.That(tokens[0].type, Is.EqualTo(LexemType.OpAddressOf));
+        Assert.That(tokens[1].type, Is.EqualTo(LexemType.EndStatement));
+    }
+    [Test]
+    public void Tokenize_Ptr_ValueAtAddressValue()
+    {
+        var input = @"&x$";
+        var lexer = new Lexer();
+        var tokens = lexer.Tokenize(input);
+        Assert.That(tokens.Count, Is.EqualTo(3));
+        Assert.That(tokens[0].type, Is.EqualTo(LexemType.OpAddressOf));
+        Assert.That(tokens[1].type, Is.EqualTo(LexemType.VariableString));
+        Assert.That(tokens[2].type, Is.EqualTo(LexemType.EndStatement));
+    }
+
+    
     [Test]
     public void Tokenize_Reals()
     {

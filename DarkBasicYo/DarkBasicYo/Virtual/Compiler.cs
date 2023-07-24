@@ -336,6 +336,11 @@ namespace DarkBasicYo.Virtual
             // CompiledVariable compiledVar = null;
             switch (expr)
             {
+                case AddressExpression addrExpr:
+                    // compile the value of the expression, it should result in a memory ptr
+                    // Compile(addrExpr.expression);
+                    throw new NotImplementedException("uh oh, addressing is not supported yet");
+                    break;
                 case CommandExpression commandExpr:
                     foreach (var argExpr in commandExpr.args)
                     {

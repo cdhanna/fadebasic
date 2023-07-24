@@ -24,4 +24,10 @@ public class TestCommands
     {
         return Math.Min(a, b);
     }
+
+    [CommandName("refDbl")]
+    public static void Dbl(int a)
+    {
+        a *= 2;
+    }
 }

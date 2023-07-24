@@ -21,10 +21,12 @@ namespace DarkBasicYo.Virtual
 
         static HostMethodUtil()
         {
+           // var x= typeof(IntPtr);
             _typeToTypeCode = new Dictionary<Type, byte>
             {
                 [typeof(int)] = TypeCodes.INT,
-                [typeof(void)] = TypeCodes.VOID
+                [typeof(void)] = TypeCodes.VOID,
+                // [typeof(IntPtr)] = TypeCodes.INT
             };
         }
 
@@ -40,6 +42,11 @@ namespace DarkBasicYo.Virtual
                 var parameter = parameters[i];
                 var parameterType = parameter.ParameterType;
 
+                if (parameterType.IsByRef)
+                {
+                    
+                }
+                
                 if (!_typeToTypeCode.TryGetValue(parameterType, out var parameterTypeCode))
                 {
                     throw new Exception("HostMethodBuilder: unsupported arg type " + parameterType.Name);

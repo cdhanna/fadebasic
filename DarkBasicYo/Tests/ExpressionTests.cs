@@ -7,9 +7,9 @@ public class ExpressionTests
     public Parser BuildParser(string src, out List<Token> tokens)
     {
         var lexer = new Lexer();
-        tokens = lexer.Tokenize(src);
+        tokens = lexer.Tokenize(src, TestCommands.Commands);
         var stream = new TokenStream(tokens);
-        var parser = new Parser(stream, StandardCommands.LimitedCommands);
+        var parser = new Parser(stream, TestCommands.Commands);
         return parser;
     }
     
@@ -35,6 +35,11 @@ public class ExpressionTests
     
     [TestCase("\"a\"", "(\"a\")")]
     [TestCase("\"a\" + \"b\"  ", "(add (\"a\"),(\"b\"))")]
+    [TestCase("refDbl 2", "(xcall refDbl (2))")]
+    [TestCase("&x", "(addr (ref x))")]
+    [TestCase("*x", "(deref (ref x))")]
+    [TestCase("*(&x)", "(deref (addr (ref x)))")]
+    [TestCase("*&x", "(deref (addr (ref x)))")]
     [TestCase("x", "(ref x)")]
     [TestCase("1", "(1)")]
     [TestCase("1+2", "(add (1),(2))")]

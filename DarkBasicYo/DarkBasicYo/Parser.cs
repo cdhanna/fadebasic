@@ -580,6 +580,12 @@ namespace DarkBasicYo
                     return new LiteralRealExpression(token);
                 case LexemType.LiteralString:
                     return new LiteralStringExpression(token);
+                case LexemType.OpAddressOf:
+                    var addrExpr = ParseWikiExpression();
+                    return new AddressExpression(addrExpr, token);
+                case LexemType.OpMultiply:
+                    var deRefExpr = ParseWikiExpression();
+                    return new DereferenceExpression(deRefExpr, token);
                 default:
                     throw new ParserException("Cannot match single, " + token.type, token);
             }

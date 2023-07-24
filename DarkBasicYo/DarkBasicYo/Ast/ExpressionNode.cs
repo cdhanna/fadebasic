@@ -80,6 +80,40 @@ namespace DarkBasicYo.Ast
         }
     }
 
+    public class DereferenceExpression : AstNode, IExpressionNode
+    {
+        public IExpressionNode expression;
+
+        public DereferenceExpression(IExpressionNode expression, Token startToken)
+        {
+            this.expression = expression;
+            this.startToken = startToken;
+            this.endToken = this.expression.EndToken;
+        }
+        
+        protected override string GetString()
+        {
+            return $"deref {expression}";
+        }
+    }
+    
+    public class AddressExpression : AstNode, IExpressionNode
+    {
+        public IExpressionNode expression;
+        
+        public AddressExpression(IExpressionNode expression, Token startToken)
+        {
+            this.expression = expression;
+            this.startToken = startToken;
+            this.endToken = this.expression.EndToken;
+        }
+        
+        protected override string GetString()
+        {
+            return $"addr {expression}";
+        }
+    }
+
     public class LiteralIntExpression : AstNode, IExpressionNode
     {
         public int value;
@@ -129,7 +163,7 @@ namespace DarkBasicYo.Ast
 
         protected override string GetString()
         {
-            return value;
+            return startToken.raw;
         }
     }
 }

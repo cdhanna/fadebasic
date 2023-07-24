@@ -632,6 +632,26 @@ x = x + y * 3
 
     
     [Test]
+    public void Pointer()
+    {
+        var src = @"
+x = 4
+y = &x
+";
+        Setup(src, out _, out var prog);
+        
+        var vm = new VirtualMachine(prog);
+        vm.Execute().MoveNext();
+        
+        Assert.That(vm.dataRegisters[0], Is.EqualTo(4));
+        Assert.That(vm.typeRegisters[0], Is.EqualTo(TypeCodes.INT));
+        
+        Assert.That(vm.dataRegisters[1], Is.EqualTo(0));
+        Assert.That(vm.typeRegisters[1], Is.EqualTo(TypeCodes.INT));
+    }
+
+    
+    [Test]
     public void ExplicitFloat()
     {
         var src = @"x as float; x = 1.2";
