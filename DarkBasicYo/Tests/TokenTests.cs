@@ -431,7 +431,7 @@ print x";
     [Test]
     public void Tokenize_StringWithInnerQuote()
     {
-        var input = "1 \"hello \" world\" 2";
+        var input = "1 \"hello \\\" world\" 2";
 
         var lexer = new Lexer();
         var tokens = lexer.Tokenize(input);
@@ -439,7 +439,8 @@ print x";
         Assert.That(tokens.Count, Is.EqualTo(4));
         
         Assert.That(tokens[1].type, Is.EqualTo(LexemType.LiteralString));
-        Assert.That(tokens[1].raw, Is.EqualTo("\"hello \" world\""));
+        Assert.That(tokens[1].raw, Is.EqualTo("\"hello \\\" world\""));
+        
         
         
         Assert.That(tokens[0].type, Is.EqualTo(LexemType.LiteralInt));
