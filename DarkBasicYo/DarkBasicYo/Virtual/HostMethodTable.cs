@@ -123,11 +123,22 @@ namespace DarkBasicYo.Virtual
                     bytes = BitConverter.GetBytes(data);
                 }
                 //
-                // if (typeCode == TypeCodes.PTR_HEAP)
-                // {
-                //     var heapPtr = BitConverter.ToInt32(bytes, 0);
-                //     refHeaps[i] = heapPtr;
-                // }
+                if (typeCode == TypeCodes.PTR_HEAP)
+                {
+                    var heapPtr = BitConverter.ToInt32(bytes, 0);
+                    refHeaps[i] = heapPtr;
+                    
+                    // the heap does not store type info, which means we need to assume the next value on the stack is the type code.
+                    typeCode = machine.stack.Pop();
+
+                    // if it is a string, then the de-dupe happens later, but if it is a string, then we need to actually go do the lookup
+                    if (typeCode != TypeCodes.STRING)
+                    {
+                        var size = TypeCodes.GetByteSize(typeCode);
+                        machine.heap.Read(heapPtr, size, out bytes);
+                    }
+
+                }
 
                 if (typeCode == TypeCodes.VOID)
                 {
@@ -137,23 +148,6 @@ namespace DarkBasicYo.Virtual
                 }
                 
                 var expectedTypeCode = method.argTypeCodes[i];
-
-                
-                // if (typeCode == TypeCodes.PTR_HEAP)
-                // {
-                //     switch (expectedTypeCode)
-                //     {
-                //         case TypeCodes.STRING:
-                //             // time to get our string out of the heap
-                //             
-                //             break;
-                //         default:
-                //             throw new InvalidOperationException("ptrHeap is on the stack, but the function needs a " +
-                //                                                 expectedTypeCode);
-                //     }
-                // }
-
-                
                 if (expectedTypeCode == TypeCodes.STRING)
                 {
                     if (typeCode != TypeCodes.INT && typeCode != TypeCodes.STRING 
@@ -165,10 +159,17 @@ namespace DarkBasicYo.Virtual
                     
                     // read the string
                     var strPtr = (int)BitConverter.ToUInt32(bytes, 0);
-                    machine.heap.GetAllocationSize(strPtr, out var strSize);
-                    machine.heap.Read(strPtr, strSize, out var strBytes);
-                    var str = VmConverter.ToString(strBytes);
-                    argInstances[i] = str;
+                    if (machine.heap.TryGetAllocationSize(strPtr, out var strSize))
+                    {
+                        machine.heap.Read(strPtr, strSize, out var strBytes);
+                        var str = VmConverter.ToString(strBytes);
+                        argInstances[i] = str;
+                    }
+                    else
+                    {
+                        argInstances[i] = null;
+                    }
+                    
                     continue;
                 }
                 
@@ -192,9 +193,32 @@ namespace DarkBasicYo.Virtual
             // check for ref parameters that need to be restored...
             for (var i = 0; i < method.argTypeCodes.Length; i++)
             {
-                if (readTypeCodes[i] == TypeCodes.PTR_REG)
+                var data = argInstances[i];
+                if (readTypeCodes[i] == TypeCodes.PTR_HEAP)
                 {
-                    var data = argInstances[i];
+                    var heapAddr = refHeaps[i];
+                    switch (method.argTypeCodes[i])
+                    {
+                        case TypeCodes.STRING:
+                            // allocate the string, and assign its ptr to the heapAddr.
+                            var castStr = (string)data;
+                            
+                            VmConverter.FromString(castStr, out var strBytes);
+                            machine.heap.Allocate(strBytes.Length, out var strPtr);
+                            machine.heap.Write(strPtr, strBytes.Length, strBytes);
+                            machine.heap.Write(heapAddr, 4, BitConverter.GetBytes(strPtr));
+                            break;
+                        case TypeCodes.INT:
+                            var castInt = (int)data;
+                            var size = TypeCodes.GetByteSize(method.argTypeCodes[i]);
+                            var intBytes = BitConverter.GetBytes(castInt);
+                            machine.heap.Write(heapAddr, size, intBytes);
+                            break;
+                        default:
+                            throw new NotImplementedException("cannot go from heap ptr to type code");
+                    }
+                } else if (readTypeCodes[i] == TypeCodes.PTR_REG)
+                {
                     var regAddr = refRegisters[i];
                     switch (method.argTypeCodes[i])
                     {
@@ -216,21 +240,6 @@ namespace DarkBasicYo.Virtual
                                                               method.argTypeCodes[i]);
                     }
                 } 
-                // else if (readTypeCodes[i] == TypeCodes.PTR_HEAP)
-                // {
-                //
-                //     var data = argInstances[i];
-                //     switch (method.argTypeCodes[i])
-                //     {
-                //         case TypeCodes.STRING:
-                //             var castStr = (string)data;
-                //             break;
-                //         
-                //         default:
-                //             throw new NotImplementedException("cannot handle ref reserialization for type code " +
-                //                                               method.argTypeCodes[i]);
-                //     }
-                // }
             }
             
             switch (method.returnTypeCode)

@@ -114,14 +114,6 @@ namespace DarkBasicYo.Virtual
 
                     switch (variable.typeCode)
                     {
-                        // case TypeCodes.STRING:
-                        //     // this is a heap ptr! we need to push the address of the variable...
-                        //     _buffer.Add(OpCodes.LOAD);
-                        //     _buffer.Add(variable.registerAddress);
-                        //     // we need to cast this to a ptr_heap 
-                        //     _buffer.Add(OpCodes.CAST);
-                        //     _buffer.Add(TypeCodes.PTR_HEAP);
-                            // break;
                         default:
                             // anything else is a registry ptr!
                             var regAddr = variable.registerAddress;
@@ -129,6 +121,21 @@ namespace DarkBasicYo.Virtual
                             break;
                     }
                
+                    break;
+                
+                case ArrayIndexReference indexReference:
+                    // if we push the address, that isn't good enough, because it is not a register address...
+                    // we need to indicate that the value stored in the stack is actually not a registry ptr, but a heap ptr
+                    if (!_arrayVarToReg.TryGetValue(indexReference.variableName, out var compiledArrayVar))
+                    {
+                        throw new Exception("Compiler: cannot access array since it not declared" +
+                                            indexReference.variableName);
+                    }
+                    _buffer.Add(OpCodes.BPUSH);
+                    _buffer.Add(compiledArrayVar.typeCode);
+                    PushAddress(indexReference);
+                    _buffer.Add(OpCodes.CAST);
+                    _buffer.Add(TypeCodes.PTR_HEAP);
                     break;
                 default:
                     throw new NotImplementedException("cannot use the address of this expression " + expression);
@@ -305,6 +312,61 @@ namespace DarkBasicYo.Virtual
             // but we do not actually need to emit any code at this point.
         }
 
+        public void PushAddress(ArrayIndexReference arrayRefNode)
+        {
+            if (!_arrayVarToReg.TryGetValue(arrayRefNode.variableName, out var compiledArrayVar))
+            {
+                throw new Exception("Compiler: cannot access array since it not declared" +
+                                    arrayRefNode.variableName);
+            }
+
+            var sizeOfElement = compiledArrayVar.byteSize;
+
+   
+            // load the size up
+            // _buffer.Add(OpCodes.PUSH); // push the length
+            // _buffer.Add(TypeCodes.INT);
+            // _buffer.Add(0);
+            // _buffer.Add(0);
+            // _buffer.Add(0);
+            // _buffer.Add(sizeOfElement);
+
+            for (var i = 0; i < arrayRefNode.rankExpressions.Count; i++)
+            {
+                _buffer.Add(OpCodes.LOAD); // load the multiplier factor for the term
+                _buffer.Add(compiledArrayVar.rankIndexScalerRegisterAddresses[i]);
+
+                var expr = arrayRefNode.rankExpressions[i];
+                Compile(expr); // load the expression index
+
+                _buffer.Add(OpCodes.MUL);
+
+                if (i > 0)
+                {
+                    _buffer.Add(OpCodes.ADD);
+                }
+            }
+
+            // get the size of the element onto the stack
+            _buffer.Add(OpCodes.PUSH); // push the length
+            _buffer.Add(TypeCodes.INT);
+            _buffer.Add(0);
+            _buffer.Add(0);
+            _buffer.Add(0);
+            _buffer.Add(sizeOfElement);
+
+            // multiply the size of the element, and the index, to get the offset into the memory
+            _buffer.Add(OpCodes.MUL);
+
+            // load the array's ptr onto the stack, this is for the math of the offset
+            _buffer.Add(OpCodes.LOAD);
+            _buffer.Add(compiledArrayVar.registerAddress);
+
+            // add the offset to the original pointer to get the write location
+            _buffer.Add(OpCodes.ADD);
+
+        }
+
         public void Compile(AssignmentStatement assignmentStatement)
         {
             /*
@@ -326,13 +388,13 @@ namespace DarkBasicYo.Virtual
                         throw new Exception("Compiler: cannot access array since it not declared" +
                                             arrayRefNode.variableName);
                     }
-                    var sizeOfElement = compiledArrayVar.byteSize;
-
                     // always cast the expression to the correct type code; slightly wasteful, could be better.
                     _buffer.Add(OpCodes.CAST);
                     _buffer.Add(compiledArrayVar.typeCode);
                     _buffer.Add(OpCodes.DISCARD); // we don't actually want the type code to live on the heap
+
                     
+                    var sizeOfElement = compiledArrayVar.byteSize;
                     // load the size up
                     _buffer.Add(OpCodes.PUSH); // push the length
                     _buffer.Add(TypeCodes.INT);
@@ -340,41 +402,62 @@ namespace DarkBasicYo.Virtual
                     _buffer.Add(0);
                     _buffer.Add(0);
                     _buffer.Add(sizeOfElement);
-                    
-                    for (var i = 0; i < arrayRefNode.rankExpressions.Count ; i++)
-                    {
-                        _buffer.Add(OpCodes.LOAD); // load the multiplier factor for the term
-                        _buffer.Add(compiledArrayVar.rankIndexScalerRegisterAddresses[i]);
 
-                        var expr = arrayRefNode.rankExpressions[i];
-                        Compile(expr); // load the expression index
-                        
-                        _buffer.Add(OpCodes.MUL);
-
-                        if (i > 0)
-                        {
-                            _buffer.Add(OpCodes.ADD);
-                        }
-                    }
-      
-                    // get the size of the element onto the stack
-                    _buffer.Add(OpCodes.PUSH); // push the length
-                    _buffer.Add(TypeCodes.INT);
-                    _buffer.Add(0);
-                    _buffer.Add(0);
-                    _buffer.Add(0);
-                    _buffer.Add(sizeOfElement);
-                    
-                    // multiply the size of the element, and the index, to get the offset into the memory
-                    _buffer.Add(OpCodes.MUL);
-                    
-                    // load the array's ptr onto the stack, this is for the math of the offset
-                    _buffer.Add(OpCodes.LOAD); 
-                    _buffer.Add(compiledArrayVar.registerAddress);
-
-                    // add the offset to the original pointer to get the write location
-                    _buffer.Add(OpCodes.ADD);
-                    
+                    PushAddress(arrayRefNode);
+                    // if (!_arrayVarToReg.TryGetValue(arrayRefNode.variableName, out var compiledArrayVar))
+                    // {
+                    //     throw new Exception("Compiler: cannot access array since it not declared" +
+                    //                         arrayRefNode.variableName);
+                    // }
+                    // var sizeOfElement = compiledArrayVar.byteSize;
+                    //
+                    // // always cast the expression to the correct type code; slightly wasteful, could be better.
+                    // _buffer.Add(OpCodes.CAST);
+                    // _buffer.Add(compiledArrayVar.typeCode);
+                    // _buffer.Add(OpCodes.DISCARD); // we don't actually want the type code to live on the heap
+                    //
+                    // // load the size up
+                    // _buffer.Add(OpCodes.PUSH); // push the length
+                    // _buffer.Add(TypeCodes.INT);
+                    // _buffer.Add(0);
+                    // _buffer.Add(0);
+                    // _buffer.Add(0);
+                    // _buffer.Add(sizeOfElement);
+                    //
+                    // for (var i = 0; i < arrayRefNode.rankExpressions.Count ; i++)
+                    // {
+                    //     _buffer.Add(OpCodes.LOAD); // load the multiplier factor for the term
+                    //     _buffer.Add(compiledArrayVar.rankIndexScalerRegisterAddresses[i]);
+                    //
+                    //     var expr = arrayRefNode.rankExpressions[i];
+                    //     Compile(expr); // load the expression index
+                    //     
+                    //     _buffer.Add(OpCodes.MUL);
+                    //
+                    //     if (i > 0)
+                    //     {
+                    //         _buffer.Add(OpCodes.ADD);
+                    //     }
+                    // }
+                    //
+                    // // get the size of the element onto the stack
+                    // _buffer.Add(OpCodes.PUSH); // push the length
+                    // _buffer.Add(TypeCodes.INT);
+                    // _buffer.Add(0);
+                    // _buffer.Add(0);
+                    // _buffer.Add(0);
+                    // _buffer.Add(sizeOfElement);
+                    //
+                    // // multiply the size of the element, and the index, to get the offset into the memory
+                    // _buffer.Add(OpCodes.MUL);
+                    //
+                    // // load the array's ptr onto the stack, this is for the math of the offset
+                    // _buffer.Add(OpCodes.LOAD); 
+                    // _buffer.Add(compiledArrayVar.registerAddress);
+                    //
+                    // // add the offset to the original pointer to get the write location
+                    // _buffer.Add(OpCodes.ADD);
+                    //
                     // write! It'll find the ptr, then the size, and then the data itself
                     _buffer.Add(OpCodes.WRITE);
                     

@@ -108,5 +108,9 @@ namespace DarkBasicYo.Virtual
                 throw new Exception("vm heap: invalid ptr cannot access allocation size, " + ptr);
             }
         }
+        public bool TryGetAllocationSize(int ptr, out int size)
+        {
+            return _allocations.TryGetValue(ptr, out size);
+        }
     }
 }

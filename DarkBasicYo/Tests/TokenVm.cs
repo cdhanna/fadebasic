@@ -792,6 +792,82 @@ x# = z#
 
     
     [Test]
+    public void CallHost_RefType_Int_FromArrayMulti()
+    {
+        var src = @"
+dim x(3,2)
+inc x(1,1)
+y = x(1,1)   
+";
+  
+        Setup(src, out var compiler, out var prog);
+        var vm = new VirtualMachine(prog);
+        vm.hostMethods = compiler.methodTable;
+        vm.Execute2();
+        Assert.That(vm.typeRegisters[5], Is.EqualTo(TypeCodes.INT));
+        Assert.That(vm.dataRegisters[5], Is.EqualTo(1));
+    }
+
+    
+    [Test]
+    public void CallHost_RefType_Int_FromArray()
+    {
+        var src = @"
+dim x(3)
+inc x(1)
+y = x(1)   
+";
+  
+        Setup(src, out var compiler, out var prog);
+        var vm = new VirtualMachine(prog);
+        vm.hostMethods = compiler.methodTable;
+        vm.Execute2();
+        Assert.That(vm.typeRegisters[3], Is.EqualTo(TypeCodes.INT));
+        Assert.That(vm.dataRegisters[3], Is.EqualTo(1));
+    }
+
+    
+    [Test]
+    public void CallHost_RefType_Int_FromArray2()
+    {
+        var src = @"
+dim x(3)
+inc x(1), 2
+inc x(2), 3
+refDbl x(1)
+y = x(1) + x(2)
+";
+  
+        Setup(src, out var compiler, out var prog);
+        var vm = new VirtualMachine(prog);
+        vm.hostMethods = compiler.methodTable;
+        vm.Execute2();
+        Assert.That(vm.typeRegisters[3], Is.EqualTo(TypeCodes.INT));
+        Assert.That(vm.dataRegisters[3], Is.EqualTo(7));
+    }
+
+    
+    [Test]
+    public void CallHost_RefType_String_FromArray()
+    {
+        var src = @"
+dim x$(3)
+tuna x$(1)
+y$ = x$(1)      
+";
+  
+        Setup(src, out var compiler, out var prog);
+        var vm = new VirtualMachine(prog);
+        vm.hostMethods = compiler.methodTable;
+        vm.Execute2();
+        Assert.That(vm.typeRegisters[3], Is.EqualTo(TypeCodes.STRING));
+        vm.heap.Read((int)vm.dataRegisters[3], "tuna".Length * 4, out var memory);
+        var str = VmConverter.ToString(memory);
+        Assert.That(str, Is.EqualTo("tuna"));
+    }
+
+    
+    [Test]
     public void CallHost_StringArg()
     {
         var src = "x = len \"hello\"";
@@ -802,6 +878,36 @@ x# = z#
         Assert.That(vm.typeRegisters[0], Is.EqualTo(TypeCodes.INT));
         Assert.That(vm.dataRegisters[0], Is.EqualTo("hello".Length));
     }
+    
+    
+    [Test]
+    public void CallHost_StringArg_FromArray()
+    {
+        var src = @"
+dim x$(3)
+x$(1) = ""hello""
+y = len x$(1)
+z$ = reverse x$(1)
+x$(2) = reverse x$(1)
+w$ = x$(2)
+";
+        Setup(src, out var compiler, out var prog);
+        var vm = new VirtualMachine(prog);
+        vm.hostMethods = compiler.methodTable;
+        vm.Execute2();
+        Assert.That(vm.typeRegisters[3], Is.EqualTo(TypeCodes.INT));
+        Assert.That(vm.dataRegisters[3], Is.EqualTo("hello".Length));
+        Assert.That(vm.typeRegisters[4], Is.EqualTo(TypeCodes.STRING));
+        vm.heap.Read((int)vm.dataRegisters[4], "hello".Length * 4, out var memory);
+        var str = VmConverter.ToString(memory);
+        Assert.That(str, Is.EqualTo("olleh"));
+        
+        Assert.That(vm.typeRegisters[5], Is.EqualTo(TypeCodes.STRING));
+        vm.heap.Read((int)vm.dataRegisters[5], "hello".Length * 4, out memory);
+        str = VmConverter.ToString(memory);
+        Assert.That(str, Is.EqualTo("olleh"));
+    }
+
     
     [Test]
     public void CallHost_StringReturn()

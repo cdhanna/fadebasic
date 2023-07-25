@@ -252,6 +252,7 @@ namespace DarkBasicYo.Virtual
                         var castFloat = (float)actual;
                         bytes = BitConverter.GetBytes(castFloat);
                         break;
+                    case TypeCodes.PTR_HEAP:
                     case TypeCodes.STRING:
                         // a string type IS just an int ptr; so we don't need to convert anything!
                         bytes = bytes;
@@ -325,6 +326,7 @@ namespace DarkBasicYo.Virtual
             // }
             // stack.Push(typeCode);
         }
+        
         
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public static void Push(Stack<byte> stack, byte[] values, byte typeCode)
