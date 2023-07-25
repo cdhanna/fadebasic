@@ -103,7 +103,7 @@ print x";
     [Test]
     public void CallHostStatement_Expr()
     {
-        var input = @"x = 1 + add 2 3";
+        var input = @"x = 1 + add 2,3";
         var tokenStream = new TokenStream(_lexer.Tokenize(input, TestCommands.Commands));
         var parser = new Parser(tokenStream, TestCommands.Commands);
         var prog = parser.ParseProgram();

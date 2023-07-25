@@ -82,9 +82,9 @@ namespace DarkBasicYo.Ast
 
     public class DereferenceExpression : AstNode, IExpressionNode
     {
-        public IExpressionNode expression;
+        public IVariableNode expression;
 
-        public DereferenceExpression(IExpressionNode expression, Token startToken)
+        public DereferenceExpression(IVariableNode expression, Token startToken)
         {
             this.expression = expression;
             this.startToken = startToken;
@@ -93,24 +93,24 @@ namespace DarkBasicYo.Ast
         
         protected override string GetString()
         {
-            return $"deref {expression}";
+            return $"derefExpr {expression}";
         }
     }
     
     public class AddressExpression : AstNode, IExpressionNode
     {
-        public IExpressionNode expression;
+        public IVariableNode variableNode;
         
-        public AddressExpression(IExpressionNode expression, Token startToken)
+        public AddressExpression(IVariableNode variableNode, Token startToken)
         {
-            this.expression = expression;
+            this.variableNode = variableNode;
             this.startToken = startToken;
-            this.endToken = this.expression.EndToken;
+            this.endToken = this.variableNode.EndToken;
         }
         
         protected override string GetString()
         {
-            return $"addr {expression}";
+            return $"addr {variableNode}";
         }
     }
 

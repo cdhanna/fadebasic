@@ -47,7 +47,9 @@ namespace DarkBasicYo
                 {
                     // TODO: get name and other optional info
                     name = parameter.Name,
-                    type = VariableType.Integer
+                    type = VariableType.Integer,
+                    isRef = parameter.ParameterType.IsByRef,
+                    isOptional = parameter.IsOptional
                 };
                 args.Add(arg);
             }
@@ -111,6 +113,8 @@ namespace DarkBasicYo
     {
         public string name;
         public VariableType type;
+        public bool isRef;
+        public bool isOptional;
 
         // public int arity = 1; // TODO: ? 
         // public bool optional; // TODO: ?

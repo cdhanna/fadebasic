@@ -17,5 +17,19 @@ namespace DarkBasicYo.Virtual
 
             return sb.ToString();
         }
+
+        public static void FromString(string str, out byte[] bytes)
+        {
+            bytes = new byte[str.Length * 4];
+            for (var i = 0; i < str.Length; i++)
+            {
+                var c = (int)str[i];
+                var charBytes = BitConverter.GetBytes(c);
+                for (var x = 0; x < charBytes.Length; x++)
+                {
+                    bytes[(i * 4) + x] = charBytes[x];
+                }
+            }
+        }
     }
 }

@@ -6,11 +6,6 @@ namespace DarkBasicYo.Virtual
 {
     public class VmHeap
     {
-        struct Allocation
-        {
-            
-        }
-        
         
         public byte[] memory;
         private int _cursor;
@@ -24,7 +19,6 @@ namespace DarkBasicYo.Virtual
         /// </summary>
         private Dictionary<int, int> _allocations = new Dictionary<int, int>();
 
-        // private Dictionary<int, int> _ptrToFreed = new Dictionary<int, int>();
         private Dictionary<int, Stack<int>> _lengthToPtrs = new Dictionary<int, Stack<int>>();
 
         public VmHeap(int initialCapacity=128)

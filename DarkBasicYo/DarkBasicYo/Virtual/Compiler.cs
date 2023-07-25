@@ -84,16 +84,96 @@ namespace DarkBasicYo.Virtual
                     throw new Exception("compiler exception: unhandled statement node");
             }
         }
+        
+        public void Compile(AddressExpression expression)
+        {
+            // we need to find the address of the given expression... 
+            switch (expression.variableNode)
+            {
+                case VariableRefNode refNode:
+
+                    // this is a register address...
+                    if (!_varToReg.TryGetValue(refNode.variableName, out var variable))
+                    {
+                        var fakeDeclStatement = new DeclarationStatement
+                        {
+                            startToken = expression.startToken,
+                            endToken = expression.endToken,
+                            ranks = null,
+                            scopeType = DeclarationScopeType.Local,
+                            variable = refNode.variableName,
+                            type = new TypeReferenceNode(refNode.DefaultTypeByName, refNode.startToken)
+                        };
+                        Compile(fakeDeclStatement);
+                        if (!_varToReg.TryGetValue(refNode.variableName, out variable))
+                        {
+                            throw new Exception(
+                                "Compiler exception: cannot use reference to a variable that does not exist " + refNode);
+                        }
+                    }
+
+                    switch (variable.typeCode)
+                    {
+                        // case TypeCodes.STRING:
+                        //     // this is a heap ptr! we need to push the address of the variable...
+                        //     _buffer.Add(OpCodes.LOAD);
+                        //     _buffer.Add(variable.registerAddress);
+                        //     // we need to cast this to a ptr_heap 
+                        //     _buffer.Add(OpCodes.CAST);
+                        //     _buffer.Add(TypeCodes.PTR_HEAP);
+                            // break;
+                        default:
+                            // anything else is a registry ptr!
+                            var regAddr = variable.registerAddress;
+                            AddPush(_buffer, new byte[]{regAddr}, TypeCodes.PTR_REG);
+                            break;
+                    }
+               
+                    break;
+                default:
+                    throw new NotImplementedException("cannot use the address of this expression " + expression);
+            }
+        }
 
         public void Compile(CommandStatement commandStatement)
         { 
             // TODO: save local state?
             
             // put each expression on the stack.
-            foreach (var argExpr in commandStatement.args)
+            for (var i = 0; i < commandStatement.command.args.Count; i++)
             {
-                Compile(argExpr);
+                if (i >= commandStatement.args.Count)
+                {
+                    if (commandStatement.command.args[i].isOptional)
+                    {
+                        AddPush(_buffer, new byte[]{}, TypeCodes.VOID);
+                        continue;
+                    }
+                    else
+                    {
+                        throw new Exception("Compiler: not enough arg expressions to meet the needs of the function");
+                    }
+                }
+                
+                
+                var argExpr = commandStatement.args[i];
+                var argDesc = commandStatement.command.args[i];
+                if (argDesc.isRef)
+                {
+                    var argAddr = argExpr as AddressExpression;
+                    
+                    if (argAddr == null)
+                        throw new Exception(
+                            "Compiler exception: cannot use a ref parameter with an expr that isn't an address expr");
+
+                    Compile(argAddr);
+                }
+                else
+                {
+                    Compile(argExpr);
+                }
             }
+            
             
             // find the address of the method
             if (!_commandToPtr.TryGetValue(commandStatement.command, out var commandAddress))
@@ -336,32 +416,47 @@ namespace DarkBasicYo.Virtual
             // CompiledVariable compiledVar = null;
             switch (expr)
             {
-                case AddressExpression addrExpr:
-                    // compile the value of the expression, it should result in a memory ptr
-                    // Compile(addrExpr.expression);
-                    throw new NotImplementedException("uh oh, addressing is not supported yet");
-                    break;
                 case CommandExpression commandExpr:
-                    foreach (var argExpr in commandExpr.args)
+                    Compile(new CommandStatement
                     {
-                        Compile(argExpr);
-                    }
-            
-                    // find the address of the method
-                    if (!_commandToPtr.TryGetValue(commandExpr.command, out var commandAddress))
-                    {
-                        throw new Exception("compiler: could not find method address: " + commandExpr.command);
-                    }
-            
-                    _buffer.Add(OpCodes.PUSH);
-                    _buffer.Add(TypeCodes.INT);
-                    var bytes = BitConverter.GetBytes(commandAddress);
-                    for (var i = bytes.Length -1; i >= 0; i--)
-                    {
-                        _buffer.Add(bytes[i]);
-                    }
-
-                    _buffer.Add(OpCodes.CALL_HOST);
+                        args = commandExpr.args,
+                        command = commandExpr.command,
+                        startToken = commandExpr.startToken,
+                        endToken = commandExpr.endToken
+                    });
+                    // for (var i = 0; i < commandExpr.command.args.Count; i++)
+                    // {
+                    //     var argExpr = commandExpr.args[i];
+                    //     switch (argExpr)
+                    //     {
+                    //         case AddressExpression addrArg:
+                    //             break;
+                    //         default:
+                    //             Compile(argExpr);
+                    //             break;
+                    //     }
+                    // }
+                    // // foreach (var argExpr in commandExpr.args)
+                    // // {
+                    // //     
+                    // //     Compile(argExpr);
+                    // // }
+                    //
+                    // // find the address of the method
+                    // if (!_commandToPtr.TryGetValue(commandExpr.command, out var commandAddress))
+                    // {
+                    //     throw new Exception("compiler: could not find method address: " + commandExpr.command);
+                    // }
+                    //
+                    // _buffer.Add(OpCodes.PUSH);
+                    // _buffer.Add(TypeCodes.INT);
+                    // var bytes = BitConverter.GetBytes(commandAddress);
+                    // for (var i = bytes.Length -1; i >= 0; i--)
+                    // {
+                    //     _buffer.Add(bytes[i]);
+                    // }
+                    //
+                    // _buffer.Add(OpCodes.CALL_HOST);
                     break;
                 case LiteralStringExpression literalString:
                     
@@ -386,6 +481,8 @@ namespace DarkBasicYo.Virtual
                     
                     _buffer.Add(OpCodes.WRITE_PTR); // consume the ptr, then the length, then the data
                     
+                    _buffer.Add(OpCodes.CAST);
+                    _buffer.Add(TypeCodes.STRING);
                     break;
                 case LiteralRealExpression literalReal:
                     _buffer.Add(OpCodes.PUSH);
@@ -514,6 +611,15 @@ namespace DarkBasicYo.Virtual
             }
         }
 
+        private static void AddPush(List<byte> buffer, byte[] value, byte typeCode)
+        {
+            buffer.Add(OpCodes.PUSH);
+            buffer.Add(typeCode);
+            for (var i = value.Length - 1; i >= 0; i--)
+            {
+                buffer.Add(value[i]);
+            }
+        }
         private static void AddPushInt(List<byte> buffer, int x)
         {
             buffer.Add(OpCodes.PUSH);

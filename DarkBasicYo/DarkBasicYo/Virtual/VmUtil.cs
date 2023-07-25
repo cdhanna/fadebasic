@@ -298,7 +298,20 @@ namespace DarkBasicYo.Virtual
                     default:
                         throw new NotImplementedException($"cast from byte to typeCode=[{typeCode}] is not supported yet.");
                 }
-            }
+            } 
+            // else if (currentTypeCode == TypeCodes.STRING)
+            // {
+            //     switch (typeCode)
+            //     {
+            //         case TypeCodes.PTR_HEAP:
+            //             // this is just a semantic change, so its easy, we literally just need to change the type code
+            //             // aka; do nothing.
+            //             break;
+            //         default:
+            //             throw new NotImplementedException(
+            //                 $"cast from string to typeCode=[{typeCode}] is not supported yet.");
+            //     }
+            // }
             else
             {
                 throw new NotImplementedException($"casts from typeCode=[{currentTypeCode}] types are not supported. target=[{typeCode}]");

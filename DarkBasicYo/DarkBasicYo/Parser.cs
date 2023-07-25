@@ -155,6 +155,10 @@ namespace DarkBasicYo
             }
             switch (token.type)
             {
+                case LexemType.OpMultiply:
+                    var ptrExpression = ParseVariableReference();
+                    return new DeReference(ptrExpression, token);
+                
                 case LexemType.VariableString:
                 case LexemType.VariableReal:
                 case LexemType.VariableGeneral:
@@ -243,6 +247,49 @@ namespace DarkBasicYo
                     throw new ParserException("expected a variable reference", token);
             }
             
+        }
+
+        private List<IExpressionNode> ParseCommandArgs(Token token, CommandDescriptor command)
+        {
+            var argExpressions = new List<IExpressionNode>();
+            for (var i = 0; i < command.args.Count; i++)
+            {
+                
+                var argDescriptor = command.args[i];
+                
+                if (i > 0)
+                {
+                    // expect an arg separator
+                    var commaToken = _stream.Peek;
+                    if (commaToken.type != LexemType.ArgSplitter)
+                    {
+                        if (argDescriptor.isOptional)
+                        {
+                            return argExpressions;
+                        }
+                        throw new ParserException("Expected a comma to separate args", commaToken);
+                    }
+
+                    _stream.Advance(); // discard the ,
+                }
+                
+                
+                // TODO: check for optional or arity?
+                if (argDescriptor.isRef)
+                {
+                    var variableReference = ParseVariableReference();
+                    argExpressions.Add(new AddressExpression(variableReference, token));
+                }
+                else
+                {
+                    var argExpr = ParseWikiExpression();
+                    argExpressions.Add(argExpr);
+                }
+
+            
+            }
+
+            return argExpressions;
         }
 
 
@@ -362,13 +409,34 @@ namespace DarkBasicYo
                         }
 
                         // parse the args!
-                        var argExpressions = new List<IExpressionNode>();
-                        foreach (var argDescriptor in command.args)
-                        {
-                            // TODO: check for optional or arity?
-                            var argExpr = ParseWikiExpression();
-                            argExpressions.Add(argExpr);
-                        }
+                        var argExpressions = ParseCommandArgs(token, command);
+                        // var argExpressions = new List<IExpressionNode>();
+                        // for (var i = 0 ; i < command.args.Count; i ++)
+                        // {
+                        //     var argDescriptor = command.args[i];
+                        //     // TODO: check for optional or arity?
+                        //     if (argDescriptor.isRef)
+                        //     {
+                        //         var variableReference = ParseVariableReference();
+                        //         argExpressions.Add(new AddressExpression(variableReference, token));
+                        //     }
+                        //     else
+                        //     {
+                        //         var argExpr = ParseWikiExpression();
+                        //         argExpressions.Add(argExpr);
+                        //     }
+                        //
+                        //     if (i != command.args.Count - 1)
+                        //     {
+                        //         // expect an arg separator
+                        //         var commaToken = _stream.Advance();
+                        //         if (commaToken.type != LexemType.ArgSplitter)
+                        //         {
+                        //             throw new ParserException("Expected a comma to separate args", commaToken);
+                        //         }
+                        //     }
+                        //
+                        // }
 
                         return new CommandStatement
                         {
@@ -540,13 +608,26 @@ namespace DarkBasicYo
                     }
 
                     // parse the args!
-                    var argExpressions = new List<IExpressionNode>();
-                    foreach (var argDescriptor in command.args)
-                    {
-                        // TODO: check for optional or arity?
-                        var argExpr = ParseWikiExpression();
-                        argExpressions.Add(argExpr);
-                    }
+                    var argExpressions = ParseCommandArgs(token, command);
+
+                    // var argExpressions = new List<IExpressionNode>();
+                    // foreach (var argDescriptor in command.args)
+                    // {
+                    //     // TODO: check for optional or arity?
+                    //
+                    //     if (argDescriptor.isRef)
+                    //     {
+                    //         // parse a very specific type of expression, it must be a variable...
+                    //         var variableReference = ParseVariableReference();
+                    //         argExpressions.Add(new AddressExpression(variableReference, token));
+                    //     }
+                    //     else
+                    //     {
+                    //         var argExpr = ParseWikiExpression();
+                    //         argExpressions.Add(argExpr);
+                    //     }
+                    //     
+                    // }
 
                     return new CommandExpression()
                     {
@@ -580,11 +661,8 @@ namespace DarkBasicYo
                     return new LiteralRealExpression(token);
                 case LexemType.LiteralString:
                     return new LiteralStringExpression(token);
-                case LexemType.OpAddressOf:
-                    var addrExpr = ParseWikiExpression();
-                    return new AddressExpression(addrExpr, token);
                 case LexemType.OpMultiply:
-                    var deRefExpr = ParseWikiExpression();
+                    var deRefExpr = ParseVariableReference();
                     return new DereferenceExpression(deRefExpr, token);
                 default:
                     throw new ParserException("Cannot match single, " + token.type, token);

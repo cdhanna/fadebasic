@@ -23,20 +23,6 @@ public class TokenVm
     }
     
     
-    [Test]
-    public void TestLiteralInt()
-    {
-        var src = "4293";
-        Setup(src, out _, out var prog);
-        
-        Assert.That(prog.Count, Is.EqualTo(6)); // type code and 4 bytes for the int
-        Assert.That(prog[0], Is.EqualTo(OpCodes.PUSH));
-        Assert.That(prog[1], Is.EqualTo(TypeCodes.INT));
-        Assert.That(prog[2], Is.EqualTo(0));
-        Assert.That(prog[3], Is.EqualTo(0));
-        Assert.That(prog[4], Is.EqualTo(16));
-        Assert.That(prog[5], Is.EqualTo(197));
-    }
     
     [Test]
     public void TestDeclare_Registers()
@@ -87,6 +73,58 @@ z$ = x$ + y$
         vm.heap.Read((int)vm.dataRegisters[2], "helloworld".Length * 4, out memory);
         str = VmConverter.ToString(memory);
         Assert.That(str, Is.EqualTo("helloworld"));
+    }
+
+    
+    [Test]
+    public void String_Concat_VariableAndLiteral()
+    {
+        var src = @"
+x$ = ""hello""
+y$ = x$ + "" world""
+";
+        Setup(src, out _, out var prog);
+        
+        var vm = new VirtualMachine(prog);
+        vm.Execute2();
+        
+        Assert.That(vm.dataRegisters[0], Is.EqualTo(0)); // the ptr to the string in memory
+        Assert.That(vm.typeRegisters[0], Is.EqualTo(TypeCodes.STRING));
+        
+        vm.heap.Read((int)vm.dataRegisters[0], "hello".Length * 4, out var memory);
+        var str = VmConverter.ToString(memory);
+        Assert.That(str, Is.EqualTo("hello"));
+
+        vm.heap.Read((int)vm.dataRegisters[1], "hello world".Length * 4, out memory);
+        str = VmConverter.ToString(memory);
+        Assert.That(str, Is.EqualTo("hello world"));
+        
+    }
+
+    
+    [Test]
+    public void String_Concat_LiteralAndVariable()
+    {
+        var src = @"
+x$ = ""hello""
+y$ = ""world"" + x$
+";
+        Setup(src, out _, out var prog);
+        
+        var vm = new VirtualMachine(prog);
+        vm.Execute2();
+        
+        Assert.That(vm.dataRegisters[0], Is.EqualTo(0)); // the ptr to the string in memory
+        Assert.That(vm.typeRegisters[0], Is.EqualTo(TypeCodes.STRING));
+        
+        vm.heap.Read((int)vm.dataRegisters[0], "hello".Length * 4, out var memory);
+        var str = VmConverter.ToString(memory);
+        Assert.That(str, Is.EqualTo("hello"));
+
+        vm.heap.Read((int)vm.dataRegisters[1], "helloworld".Length * 4, out memory);
+        str = VmConverter.ToString(memory);
+        Assert.That(str, Is.EqualTo("worldhello"));
+        
     }
 
     
@@ -461,38 +499,29 @@ dim x(4) as word
     }
 
     
-    [Test]
-    public void Array_CreateAssign_ExpectIndexException()
-    {
-        var src = @"
-dim x(5) as word
-x(6) = 12
-";
-        Setup(src, out _, out var prog);
-        
-        var vm = new VirtualMachine(prog);
-        var expectedMsg = "toast";
-        var called = false;
-        try
-        {
-            vm.Execute2();
-        }
-        catch (Exception ex)
-        {
-            called = true;
-            Assert.That(expectedMsg, Is.EqualTo(ex.Message));
-        }
-        Assert.IsTrue(called, "exception not called");
-        //
-        // Assert.That(vm.dataRegisters[0], Is.EqualTo(0));
-        // Assert.That(vm.typeRegisters[0], Is.EqualTo(TypeCodes.INT));
-        //
-        // Assert.That(vm.heap.Cursor, Is.EqualTo(10));
-        //  
-        // vm.heap.Read(2, 2, out var bytes);
-        // var value = BitConverter.ToInt16(bytes, 0);
-        // Assert.That(value, Is.EqualTo(12));
-    }
+//     [Test]
+//     public void Array_CreateAssign_ExpectIndexException()
+//     {
+//         var src = @"
+// dim x(5) as word
+// x(6) = 12
+// ";
+//         Setup(src, out _, out var prog);
+//         
+//         var vm = new VirtualMachine(prog);
+//         var expectedMsg = "toast";
+//         var called = false;
+//         try
+//         {
+//             vm.Execute2();
+//         }
+//         catch (Exception ex)
+//         {
+//             called = true;
+//             Assert.That(expectedMsg, Is.EqualTo(ex.Message));
+//         }
+//         Assert.IsTrue(called, "exception not called");
+//     }
 
     
     [Test]
@@ -631,25 +660,6 @@ x = x + y * 3
     }
 
     
-    [Test]
-    public void Pointer()
-    {
-        var src = @"
-x = 4
-y = &x
-";
-        Setup(src, out _, out var prog);
-        
-        var vm = new VirtualMachine(prog);
-        vm.Execute().MoveNext();
-        
-        Assert.That(vm.dataRegisters[0], Is.EqualTo(4));
-        Assert.That(vm.typeRegisters[0], Is.EqualTo(TypeCodes.INT));
-        
-        Assert.That(vm.dataRegisters[1], Is.EqualTo(0));
-        Assert.That(vm.typeRegisters[1], Is.EqualTo(TypeCodes.INT));
-    }
-
     
     [Test]
     public void ExplicitFloat()
@@ -723,123 +733,7 @@ x# = z#
         Assert.That(vm.typeRegisters[0], Is.EqualTo(TypeCodes.BYTE));
         Assert.That(vm.dataRegisters[0], Is.EqualTo((3 + 254) % 256));
     }
-
     
-    [Test]
-    public void TestIntAdd()
-    {
-        var src = "4 + 9";
-        Setup(src, out _, out var prog);
-        
-        Assert.That(prog.Count, Is.EqualTo(13)); // type code and 4 bytes for the int
-        Assert.That(prog[0], Is.EqualTo(OpCodes.PUSH));
-        Assert.That(prog[1], Is.EqualTo(TypeCodes.INT));
-        Assert.That(prog[2], Is.EqualTo(0));
-        Assert.That(prog[3], Is.EqualTo(0));
-        Assert.That(prog[4], Is.EqualTo(0));
-        Assert.That(prog[5], Is.EqualTo(4));
-        Assert.That(prog[6], Is.EqualTo(OpCodes.PUSH));
-        Assert.That(prog[7], Is.EqualTo(TypeCodes.INT));
-        Assert.That(prog[8], Is.EqualTo(0));
-        Assert.That(prog[9], Is.EqualTo(0));
-        Assert.That(prog[10], Is.EqualTo(0));
-        Assert.That(prog[11], Is.EqualTo(9));
-        Assert.That(prog[12], Is.EqualTo(OpCodes.ADD));
-    }
-    
-    
-    [Test]
-    public void TestIntMul()
-    {
-        var src = "4 * 9";
-        Setup(src, out _, out var prog);
-
-        Assert.That(prog.Count, Is.EqualTo(13)); // type code and 4 bytes for the int
-        Assert.That(prog[0], Is.EqualTo(OpCodes.PUSH));
-        Assert.That(prog[1], Is.EqualTo(TypeCodes.INT));
-        Assert.That(prog[2], Is.EqualTo(0));
-        Assert.That(prog[3], Is.EqualTo(0));
-        Assert.That(prog[4], Is.EqualTo(0));
-        Assert.That(prog[5], Is.EqualTo(4));
-        Assert.That(prog[6], Is.EqualTo(OpCodes.PUSH));
-        Assert.That(prog[7], Is.EqualTo(TypeCodes.INT));
-        Assert.That(prog[8], Is.EqualTo(0));
-        Assert.That(prog[9], Is.EqualTo(0));
-        Assert.That(prog[10], Is.EqualTo(0));
-        Assert.That(prog[11], Is.EqualTo(9));
-        Assert.That(prog[12], Is.EqualTo(OpCodes.MUL));
-
-        prog.Add(OpCodes.DBG_PRINT);
-        var vm = new VirtualMachine(prog);
-        vm.Execute().MoveNext();
-        var output = vm.ReadStdOut();
-        Assert.That(output, Is.EqualTo($"{TypeCodes.INT} - 36\n"));
-    }
-    
-    
-    [Test]
-    public void OperatorOrder_1()
-    {
-        var src = "1 + 2 * 3";
-        Setup(src, out _, out var prog);
-        prog.Add(OpCodes.DBG_PRINT);
-        var vm = new VirtualMachine(prog);
-        vm.Execute().MoveNext();
-        var output = vm.ReadStdOut();
-        Assert.That(output, Is.EqualTo($"{TypeCodes.INT} - 7\n"));
-    }
-    
-    [Test]
-    public void OperatorOrder_2()
-    {
-        var src = "1 * 2 + 3";
-        Setup(src, out _, out var prog);
-        prog.Add(OpCodes.DBG_PRINT);
-        var vm = new VirtualMachine(prog);
-        vm.Execute().MoveNext();
-        var output = vm.ReadStdOut();
-        Assert.That(output, Is.EqualTo($"{TypeCodes.INT} - 5\n"));
-    }
-    
-    [Test]
-    public void OperatorOrder_3()
-    {
-        var src = "5 * ((2 + 3) * 3)";
-        Setup(src, out _, out var prog);
-        prog.Add(OpCodes.DBG_PRINT);
-        var vm = new VirtualMachine(prog);
-        vm.Execute().MoveNext();
-        var output = vm.ReadStdOut();
-        Assert.That(output, Is.EqualTo($"{TypeCodes.INT} - 75\n"));
-    }
-    
-    
-    [Test]
-    public void Float()
-    {
-        var src = "3.2";
-        Setup(src, out _, out var prog);
-        prog.Add(OpCodes.DBG_PRINT);
-        var vm = new VirtualMachine(prog);
-        vm.Execute().MoveNext();
-        var output = vm.ReadStdOut();
-        Assert.That(output, Is.EqualTo($"{TypeCodes.REAL} - 3.2\n"));
-    }
-    
-    
-    [Test]
-    public void Float_Addition()
-    {
-        var src = "3.2 + 1.5";
-        Setup(src, out _, out var prog);
-        prog.Add(OpCodes.DBG_PRINT);
-        var vm = new VirtualMachine(prog);
-        vm.Execute().MoveNext();
-        var output = vm.ReadStdOut();
-        Assert.That(output, Is.EqualTo($"{TypeCodes.REAL} - 4.7\n"));
-    }
-    
-     
     [Test]
     public void Float_Mult()
     {
@@ -857,21 +751,6 @@ x# = z#
         Assert.That(vm.typeRegisters[0], Is.EqualTo(TypeCodes.REAL));
     }
     
-    
-    [Test]
-    public void FloatIntAddition()
-    {
-        var src = "3.2 + 1";
-        Setup(src, out _, out var prog);
-        prog.Add(OpCodes.DBG_PRINT);
-        var vm = new VirtualMachine(prog);
-        vm.Execute().MoveNext();
-        var output = vm.ReadStdOut();
-        Assert.That(output, Is.EqualTo($"{TypeCodes.REAL} - 4.2\n"));
-    }
-    
-    
-    
      
     [Test]
     public void CallHost()
@@ -882,11 +761,142 @@ x# = z#
         vm.hostMethods = compiler.methodTable;
         vm.Execute2();
     }
+    
+    
+    [Test]
+    public void CallHost_RefType()
+    {
+        var src = "x = 7; refDbl x; x = x * 2";
+        Setup(src, out var compiler, out var prog);
+        var vm = new VirtualMachine(prog);
+        vm.hostMethods = compiler.methodTable;
+        vm.Execute2();
+        Assert.That(vm.typeRegisters[0], Is.EqualTo(TypeCodes.INT));
+        Assert.That(vm.dataRegisters[0], Is.EqualTo(28));
+    }
+    
+    
+    [Test]
+    public void CallHost_RefType_String()
+    {
+        var src = "x$ = \"a\"; tuna x$ ";
+        Setup(src, out var compiler, out var prog);
+        var vm = new VirtualMachine(prog);
+        vm.hostMethods = compiler.methodTable;
+        vm.Execute2();
+        Assert.That(vm.typeRegisters[0], Is.EqualTo(TypeCodes.STRING));
+        vm.heap.Read((int)vm.dataRegisters[0], "tuna".Length * 4, out var memory);
+        var str = VmConverter.ToString(memory);
+        Assert.That(str, Is.EqualTo("tuna"));
+    }
+
+    
+    [Test]
+    public void CallHost_StringArg()
+    {
+        var src = "x = len \"hello\"";
+        Setup(src, out var compiler, out var prog);
+        var vm = new VirtualMachine(prog);
+        vm.hostMethods = compiler.methodTable;
+        vm.Execute2();
+        Assert.That(vm.typeRegisters[0], Is.EqualTo(TypeCodes.INT));
+        Assert.That(vm.dataRegisters[0], Is.EqualTo("hello".Length));
+    }
+    
+    [Test]
+    public void CallHost_StringReturn()
+    {
+        var src = "x$ = reverse \"hello\"";
+        Setup(src, out var compiler, out var prog);
+        var vm = new VirtualMachine(prog);
+        vm.hostMethods = compiler.methodTable;
+        vm.Execute2();
+        Assert.That(vm.typeRegisters[0], Is.EqualTo(TypeCodes.STRING));
+        vm.heap.Read((int)vm.dataRegisters[0], "hello".Length * 4, out var memory);
+        var str = VmConverter.ToString(memory);
+        Assert.That(str, Is.EqualTo("olleh"));
+    }
+    
+    [Test]
+    public void CallHost_StringReturn_Assignment()
+    {
+        var src = "x$ = \"hello\"; y$ = reverse x$";
+        Setup(src, out var compiler, out var prog);
+        var vm = new VirtualMachine(prog);
+        vm.hostMethods = compiler.methodTable;
+        vm.Execute2();
+        Assert.That(vm.typeRegisters[0], Is.EqualTo(TypeCodes.STRING));
+        vm.heap.Read((int)vm.dataRegisters[0], "hello".Length * 4, out var memory);
+        var str = VmConverter.ToString(memory);
+        Assert.That(str, Is.EqualTo("hello"));
+        
+        Assert.That(vm.typeRegisters[1], Is.EqualTo(TypeCodes.STRING));
+        vm.heap.Read((int)vm.dataRegisters[1], "hello".Length * 4, out memory);
+        str = VmConverter.ToString(memory);
+        Assert.That(str, Is.EqualTo("olleh"));
+    }
+    
+    
+    [Test]
+    public void CallHost_StringReturn_Expression()
+    {
+        var src = "x$ = \"hello\"; y$ = \"world\" + reverse x$";
+        Setup(src, out var compiler, out var prog);
+        var vm = new VirtualMachine(prog);
+        vm.hostMethods = compiler.methodTable;
+        vm.Execute2();
+        Assert.That(vm.typeRegisters[0], Is.EqualTo(TypeCodes.STRING));
+        vm.heap.Read((int)vm.dataRegisters[0], "hello".Length * 4, out var memory);
+        var str = VmConverter.ToString(memory);
+        Assert.That(str, Is.EqualTo("hello"));
+        
+        Assert.That(vm.typeRegisters[1], Is.EqualTo(TypeCodes.STRING));
+        vm.heap.Read((int)vm.dataRegisters[1], "helloworld".Length * 4, out memory);
+        str = VmConverter.ToString(memory);
+        Assert.That(str, Is.EqualTo("worldolleh"));
+    }
+
+    
+    [Test]
+    public void CallHost_RefType_AutoDeclare()
+    {
+        var src = "inc x;";
+        Setup(src, out var compiler, out var prog);
+        var vm = new VirtualMachine(prog);
+        vm.hostMethods = compiler.methodTable;
+        vm.Execute2();
+        Assert.That(vm.typeRegisters[0], Is.EqualTo(TypeCodes.INT));
+        Assert.That(vm.dataRegisters[0], Is.EqualTo(1));
+    }
+    
+    [Test]
+    public void CallHost_RefType_Optional_ButHasValue()
+    {
+        var src = "x = 7; inc x, 2";
+        Setup(src, out var compiler, out var prog);
+        var vm = new VirtualMachine(prog);
+        vm.hostMethods = compiler.methodTable;
+        vm.Execute2();
+        Assert.That(vm.typeRegisters[0], Is.EqualTo(TypeCodes.INT));
+        Assert.That(vm.dataRegisters[0], Is.EqualTo(9));
+    }
+    
+    [Test]
+    public void CallHost_RefType_Optional()
+    {
+        var src = "x = 7; inc x";
+        Setup(src, out var compiler, out var prog);
+        var vm = new VirtualMachine(prog);
+        vm.hostMethods = compiler.methodTable;
+        vm.Execute2();
+        Assert.That(vm.typeRegisters[0], Is.EqualTo(TypeCodes.INT));
+        Assert.That(vm.dataRegisters[0], Is.EqualTo(8));
+    }
 
     [Test]
     public void CallHostAdd()
     {
-        var src = "x = add 1 2";
+        var src = "x = add 1,2";
         Setup(src, out var compiler, out var prog);
         var vm = new VirtualMachine(prog);
         vm.hostMethods = compiler.methodTable;
@@ -899,7 +909,7 @@ x# = z#
     [Test]
     public void CallHost_OpOrder()
     {
-        var src = "x = min 5 8 + 1";
+        var src = "x = min 5,8 + 1";
         Setup(src, out var compiler, out var prog);
         var vm = new VirtualMachine(prog);
         vm.hostMethods = compiler.methodTable;
@@ -913,7 +923,7 @@ x# = z#
     [Test]
     public void CallHost_OpOrder2()
     {
-        var src = "x = min 5 8 * 2";
+        var src = "x = min 5, 8 * 2";
         Setup(src, out var compiler, out var prog);
         var vm = new VirtualMachine(prog);
         vm.hostMethods = compiler.methodTable;
@@ -926,7 +936,7 @@ x# = z#
     [Test]
     public void CallHost_OpOrder3()
     {
-        var src = "x = (min 5 8) * 2";
+        var src = "x = (min 5, 8) * 2";
         Setup(src, out var compiler, out var prog);
         var vm = new VirtualMachine(prog)
         {

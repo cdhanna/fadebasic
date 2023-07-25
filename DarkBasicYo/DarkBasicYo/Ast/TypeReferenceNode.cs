@@ -30,11 +30,15 @@ namespace DarkBasicYo.Ast
             variableType = Convert(token.type);
         }
 
+        public TypeReferenceNode(VariableType type, Token token) : base(token)
+        {
+            variableType = type;
+        }
+
         public static VariableType Convert(LexemType type)
         {
             if (!_map.TryGetValue(type, out var variableType))
             {
-                
                 throw new NotImplementedException("Custom types are not supported yet :(");
             }
 

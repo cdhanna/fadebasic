@@ -10,6 +10,22 @@ namespace DarkBasicYo.Ast
 
     }
 
+    public class DeReference : AstNode, IVariableNode
+    {
+        public readonly IVariableNode ptrExpression;
+
+        public DeReference(IVariableNode ptrExpression, Token start)
+        {
+            this.ptrExpression = ptrExpression;
+            startToken = start;
+            endToken = this.ptrExpression.EndToken;
+        }
+        protected override string GetString()
+        {
+            return $"deref {ptrExpression}";
+        }
+    }
+    
     public class StructFieldReference : AstNode, IVariableNode
     {
         public IVariableNode left;

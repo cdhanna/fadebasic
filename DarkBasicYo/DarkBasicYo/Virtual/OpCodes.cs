@@ -15,16 +15,18 @@ namespace DarkBasicYo.Virtual
 
     public static class TypeCodes
     {
-        public const byte INT     = 0x00; // 4 bytes
-        public const byte REAL    = 0x01; // 4 bytes
-        public const byte BOOL    = 0x02; // 1 bytes
-        public const byte BYTE    = 0x03; // 1 bytes
-        public const byte WORD    = 0x04; // 2 bytes
-        public const byte DWORD   = 0x05; // 4 bytes
-        public const byte DINT    = 0x06; // 8 bytes
-        public const byte DFLOAT  = 0x07; // 8 bytes
-        public const byte VOID    = 0x08; // 0 bytes
-        public const byte STRING  = 0x09; // 4 bytes (ptr)
+        public const byte INT      = 0x00; // 4 bytes
+        public const byte REAL     = 0x01; // 4 bytes
+        public const byte BOOL     = 0x02; // 1 bytes
+        public const byte BYTE     = 0x03; // 1 bytes
+        public const byte WORD     = 0x04; // 2 bytes
+        public const byte DWORD    = 0x05; // 4 bytes
+        public const byte DINT     = 0x06; // 8 bytes
+        public const byte DFLOAT   = 0x07; // 8 bytes
+        public const byte VOID     = 0x08; // 0 bytes
+        public const byte STRING   = 0x09; // 4 bytes (ptr)
+        public const byte PTR_REG  = 0x0A; // 1 byte (registry ptr)
+        // public const byte PTR_HEAP = 0x0B; // 4 bytes (heap ptr)
 
         public static readonly byte[] SIZE_TABLE = new byte[]
         {
@@ -38,6 +40,8 @@ namespace DarkBasicYo.Virtual
             8, // dfloat
             0, // void
             4, // string (int ptr)
+            1, // ptr_reg
+            // 4, // ptr_heap
         };
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]

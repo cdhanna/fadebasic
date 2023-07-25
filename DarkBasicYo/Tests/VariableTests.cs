@@ -21,6 +21,7 @@ public class VariableTests
     [TestCase("x.y", "((ref x).(ref y))")]
     [TestCase("x.y(1)", "((ref x).(ref y[(1)]))")]
     [TestCase("x.y.z", "((ref x).((ref y).(ref z)))")]
+    [TestCase("*ptr", "(deref (ref ptr))")]
     public void GeneralVariable(string src, string expected)
     {
         var parser = BuildParser(src, out _);
