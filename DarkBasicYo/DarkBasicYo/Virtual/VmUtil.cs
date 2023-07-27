@@ -21,6 +21,8 @@ namespace DarkBasicYo.Virtual
                     return TypeCodes.REAL;
                 case VariableType.String:
                     return TypeCodes.STRING;
+                case VariableType.Struct:
+                    return TypeCodes.STRUCT;
                 default:
                     throw new NotImplementedException("Unknown type code");
             }
@@ -253,6 +255,7 @@ namespace DarkBasicYo.Virtual
                         bytes = BitConverter.GetBytes(castFloat);
                         break;
                     case TypeCodes.PTR_HEAP:
+                    case TypeCodes.STRUCT:
                     case TypeCodes.STRING:
                         // a string type IS just an int ptr; so we don't need to convert anything!
                         bytes = bytes;
@@ -300,19 +303,17 @@ namespace DarkBasicYo.Virtual
                         throw new NotImplementedException($"cast from byte to typeCode=[{typeCode}] is not supported yet.");
                 }
             } 
-            // else if (currentTypeCode == TypeCodes.STRING)
-            // {
-            //     switch (typeCode)
-            //     {
-            //         case TypeCodes.PTR_HEAP:
-            //             // this is just a semantic change, so its easy, we literally just need to change the type code
-            //             // aka; do nothing.
-            //             break;
-            //         default:
-            //             throw new NotImplementedException(
-            //                 $"cast from string to typeCode=[{typeCode}] is not supported yet.");
-            //     }
-            // }
+            else if (currentTypeCode == TypeCodes.STRUCT)
+            {
+                switch (typeCode)
+                {
+                    case TypeCodes.INT:
+                        bytes = bytes;
+                        break;
+                    default:
+                        throw new NotImplementedException($"cast from struct ptr to typeCode=[{typeCode}] is not supported yet.");
+                }
+            }
             else
             {
                 throw new NotImplementedException($"casts from typeCode=[{currentTypeCode}] types are not supported. target=[{typeCode}]");

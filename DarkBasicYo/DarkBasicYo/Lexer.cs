@@ -23,6 +23,10 @@ namespace DarkBasicYo
         KeywordEndIf,
         KeywordElse,
         
+        
+        KeywordType,
+        KeywordEndType,
+        
         KeywordWhile,
         KeywordEndWhile,
         KeywordAs,
@@ -107,6 +111,9 @@ namespace DarkBasicYo
             new Lexem(LexemType.KeywordRem, new Regex("^`")),
             new Lexem(LexemType.KeywordRemStart, new Regex("^remstart")),
             new Lexem(LexemType.KeywordRemEnd, new Regex("^remend")),
+            
+            new Lexem(LexemType.KeywordType, new Regex("^type")),
+            new Lexem(LexemType.KeywordEndType, new Regex("^endtype")),
             
             new Lexem(LexemType.KeywordWhile, new Regex("^while")),
             new Lexem(LexemType.KeywordEndWhile, new Regex("^endwhile")),

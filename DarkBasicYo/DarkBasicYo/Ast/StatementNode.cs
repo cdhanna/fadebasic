@@ -7,6 +7,41 @@ namespace DarkBasicYo.Ast
     public interface IStatementNode : IAstNode
     {
     }
+
+    public class TypeDefinitionMember : AstNode
+    {
+        public VariableRefNode name;
+        public ITypeReferenceNode type;
+        public TypeDefinitionMember(Token start, Token end, VariableRefNode name, ITypeReferenceNode type)
+        {
+            startToken = start;
+            endToken = end;
+            this.name = name;
+            this.type = type;
+        }
+        
+        protected override string GetString()
+        {
+            return $"{name} as {type}";
+        }
+    }
+
+    public class TypeDefinitionStatement : AstNode, IStatementNode
+    {
+        public List<TypeDefinitionMember> declarations;
+        public VariableRefNode name;
+        public TypeDefinitionStatement(Token start, Token end, VariableRefNode name, List<TypeDefinitionMember> declarations)
+        {
+            startToken = start;
+            endToken = end;
+            this.name = name;
+            this.declarations = declarations;
+        }
+        protected override string GetString()
+        {
+            return $"type {name.variableName} {string.Join(",", declarations.Select(x => x.ToString()))}";
+        }
+    }
     
 
     public class CommandStatement : AstNode, IStatementNode

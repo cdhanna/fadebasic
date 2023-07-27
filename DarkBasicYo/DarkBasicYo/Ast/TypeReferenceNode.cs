@@ -4,7 +4,31 @@ using System.Collections.Generic;
 namespace DarkBasicYo.Ast
 {
 
-    public class TypeReferenceNode : AstNode
+    public interface ITypeReferenceNode : IAstNode
+    {
+        VariableType variableType { get; }
+    }
+    
+    public class StructTypeReferenceNode : AstNode, ITypeReferenceNode
+    {
+        public VariableRefNode variableNode;
+        
+        public StructTypeReferenceNode(VariableRefNode variableRefNode)
+        {
+            variableNode = variableRefNode;
+            startToken = variableNode.startToken;
+            endToken = variableRefNode.endToken;
+        }
+        
+        protected override string GetString()
+        {
+            return $"typeRef {variableNode.variableName}";
+        }
+
+        public VariableType variableType => VariableType.Struct;
+    }
+    
+    public class TypeReferenceNode : AstNode, ITypeReferenceNode
     {
         private static readonly Dictionary<LexemType, VariableType> _map = new Dictionary<LexemType, VariableType>
         {
@@ -23,7 +47,7 @@ namespace DarkBasicYo.Ast
             
         };
 
-        public VariableType variableType;
+        public VariableType variableType { get; private set; }
 
         public TypeReferenceNode(Token token) : base(token)
         {

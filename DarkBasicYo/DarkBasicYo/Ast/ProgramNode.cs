@@ -11,10 +11,14 @@ namespace DarkBasicYo.Ast
         }
 
         public List<IStatementNode> statements = new List<IStatementNode>();
+        public List<TypeDefinitionStatement> typeDefinitions = new List<TypeDefinitionStatement>();
 
         protected override string GetString()
         {
-            return $"{string.Join(",", statements.Select(x => x.ToString()))}";
+            List<IStatementNode> allStatements = new List<IStatementNode>();
+            allStatements.AddRange(typeDefinitions);
+            allStatements.AddRange(statements);
+            return $"{string.Join(",", allStatements.Select(x => x.ToString()))}";
         }
     }
 }

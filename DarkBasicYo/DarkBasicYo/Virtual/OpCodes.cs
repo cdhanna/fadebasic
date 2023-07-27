@@ -27,6 +27,8 @@ namespace DarkBasicYo.Virtual
         public const byte STRING   = 0x09; // 4 bytes (ptr)
         public const byte PTR_REG  = 0x0A; // 1 byte (registry ptr)
         public const byte PTR_HEAP = 0x0B; // 4 bytes (heap ptr)
+        public const byte STRUCT   = 0x0C; // 4 bytes (ptr)
+        
 
         public static readonly byte[] SIZE_TABLE = new byte[]
         {
@@ -42,6 +44,7 @@ namespace DarkBasicYo.Virtual
             4, // string (int ptr)
             1, // ptr_reg
             4, // ptr_heap
+            4, // struct (int ptr)
         };
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]

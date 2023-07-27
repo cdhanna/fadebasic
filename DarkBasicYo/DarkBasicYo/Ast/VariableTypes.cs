@@ -11,6 +11,7 @@ namespace DarkBasicYo.Ast
         Float,
         DoubleFloat,
         String,
-        Boolean
+        Boolean,
+        Struct
     }
 }

@@ -38,11 +38,11 @@ public class TestCommands
     }
     
     
-    // [CommandName("setTuna")]
-    // public static void Tuna(ref string variable)
-    // {
-    //     variable = "tuna";
-    // }
+    [CommandName("print")]
+    public static void Tuna(string variable)
+    {
+        Console.WriteLine(variable);
+    }
 
     [CommandName("len")]
     public static int Length(string x)

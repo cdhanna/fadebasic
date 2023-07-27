@@ -68,7 +68,7 @@ namespace DarkBasicYo
             return default;
         }
 
-        public virtual T Visit(TypeReferenceNode typeReferenceNode)
+        public virtual T Visit(ITypeReferenceNode typeReferenceNode)
         {
             return default;
         }

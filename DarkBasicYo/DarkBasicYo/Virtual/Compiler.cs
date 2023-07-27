@@ -12,17 +12,32 @@ namespace DarkBasicYo.Virtual
         public byte byteSize;
         public byte typeCode;
         public string name;
+        public string structType;
         public byte registerAddress;
     }
 
     public class CompiledArrayVariable
     {
-        public byte byteSize;
+        public int byteSize;
         public byte typeCode;
         public string name;
+        public CompiledType structType;
         public byte registerAddress;
         public byte[] rankSizeRegisterAddresses; // an array where the index is the rank, and the value is the ptr to a register whose value holds the size of the rank
         public byte[] rankIndexScalerRegisterAddresses; // an array where the index is the rank, and the value is the ptr to a register whose value holds the multiplier factor for the rank's indexing
+    }
+
+    public class CompiledType
+    {
+        public int byteSize;
+        public Dictionary<string, CompiledTypeMember> fields = new Dictionary<string, CompiledTypeMember>();
+    }
+
+    public struct CompiledTypeMember
+    {
+        public int Offset, Length;
+        public byte TypeCode;
+        public CompiledType Type;
     }
     
     public class Compiler
@@ -37,7 +52,9 @@ namespace DarkBasicYo.Virtual
 
         private Dictionary<string, CompiledArrayVariable> _arrayVarToReg =
             new Dictionary<string, CompiledArrayVariable>();
-        
+
+        private Dictionary<string, CompiledType> _types = new Dictionary<string, CompiledType>();
+
         public HostMethodTable methodTable;
 
         private Dictionary<CommandDescriptor, int> _commandToPtr = new Dictionary<CommandDescriptor, int>();
@@ -61,10 +78,65 @@ namespace DarkBasicYo.Virtual
 
         public void Compile(ProgramNode program)
         {
+            foreach (var typeDef in program.typeDefinitions)
+            {
+                Compile(typeDef);
+            }
+            
             foreach (var statement in program.statements)
             {
                 Compile(statement);
             }
+        }
+
+        public void Compile(TypeDefinitionStatement typeDefinition)
+        {
+            /*
+             * compile all the type definitions first!
+             * for each type, we need to pre-compute the offset _per_ field
+             * and we need to calculate the total size for the struct
+             */
+            var typeName = typeDefinition.name.variableName;
+            var type = new CompiledType();
+            int totalSize = 0;
+            foreach (var decl in typeDefinition.declarations)
+            {
+                var fieldOffset = totalSize;
+                var typeMember = new CompiledTypeMember
+                {
+                    Offset = fieldOffset
+                };
+
+                int size = 0;
+                switch (decl.type)
+                {
+                    case TypeReferenceNode typeRef:
+                        var tc = VmUtil.GetTypeCode(typeRef.variableType);
+                        size = TypeCodes.GetByteSize(tc);
+                        typeMember.Length = size;
+                        totalSize += size;
+                        typeMember.TypeCode = tc;
+                        break;
+                    case StructTypeReferenceNode structTypeRef:
+                        if (!_types.TryGetValue(structTypeRef.variableNode.variableName, out var structType))
+                        {
+                            throw new Exception("Referencing type that does not exist yet. " + structTypeRef.variableNode);
+                        }
+
+                        size = structType.byteSize;
+                        typeMember.Length = size;
+                        totalSize += size;
+                        typeMember.TypeCode = TypeCodes.STRUCT;
+                        typeMember.Type = structType;
+                        break;
+                }
+                
+                type.fields.Add(decl.name.variableName, typeMember);
+            }
+
+            type.byteSize = totalSize;
+            
+            _types[typeName] = type;
         }
 
         public void Compile(IStatementNode statement)
@@ -207,16 +279,54 @@ namespace DarkBasicYo.Virtual
             // then, we need to reserve a register for the variable.
             var tc = VmUtil.GetTypeCode(declaration.type.variableType);
 
+          
+            
             if (declaration.ranks == null || declaration.ranks.Length == 0)
             {
                 // this is a normal variable decl.
-                _varToReg[declaration.variable] = new CompiledVariable
+                var compiledVar = _varToReg[declaration.variable] = new CompiledVariable
                 {
                     registerAddress = (byte)(registerCount++),
                     name = declaration.variable,
                     typeCode = tc,
                     byteSize = TypeCodes.GetByteSize(tc)
                 };
+
+                if (tc == TypeCodes.STRUCT)
+                {
+
+                    switch (declaration.type)
+                    {
+                        case StructTypeReferenceNode structTypeNode:
+
+                            if (!_types.TryGetValue(structTypeNode.variableNode.variableName, out var structType))
+                            {
+                                throw new Exception("Compiler: unknown type ref " + structTypeNode.variableNode);
+                            }
+
+                            // save the type information on the variable, for lookup later.
+                            compiledVar.structType = structTypeNode.variableNode.variableName;
+
+                            // we need to allocate some memory for this instance!
+                            AddPushInt(_buffer, structType.byteSize);
+                            
+                            // call alloc, which expects to find the length on the stack, and the ptr is returned.
+                            _buffer.Add(OpCodes.ALLOC);
+                    
+                            // cast the ptr to a struct type-code
+                            _buffer.Add(OpCodes.CAST);
+                            _buffer.Add(TypeCodes.STRUCT);
+                            
+                            // the ptr will be stored in the register for this variable
+                            _buffer.Add(OpCodes.STORE);
+                            _buffer.Add(compiledVar.registerAddress);
+                            break;
+                
+                        default:
+                            throw new Exception("compiler cannot handle non struct type ref ");
+                    }
+  
+                }
             }
             else
             {
@@ -230,6 +340,21 @@ namespace DarkBasicYo.Virtual
                     typeCode = tc,
                     byteSize = TypeCodes.GetByteSize(tc)
                 };
+
+                if (tc == TypeCodes.STRUCT)
+                {
+                    // ah, the byteSize is _NOT_ just the size of the element, it is the size of the struct!
+                    var arrayStructRefNode = declaration.type as StructTypeReferenceNode;
+                    if (arrayStructRefNode == null) throw new Exception("array struct needs correct node type");
+                    var typeName = arrayStructRefNode.variableNode.variableName;
+                    if (!_types.TryGetValue(typeName, out var structType))
+                    {
+                        throw new Exception("Compiler: unknown type ref " + typeName);
+                    }
+
+                    arrayVar.byteSize = structType.byteSize;
+                    arrayVar.structType = structType;
+                }
                 
                 // this is an array! we need to save each rank's length
                 for (var i = declaration.ranks.Length -1; i >= 0; i--)
@@ -291,13 +416,8 @@ namespace DarkBasicYo.Virtual
                     _buffer.Add(OpCodes.MUL);
                 }
                 
-                var sizeOfElement = TypeCodes.GetByteSize(tc);
-                _buffer.Add(OpCodes.PUSH); // push the length
-                _buffer.Add(TypeCodes.INT);
-                _buffer.Add(0);
-                _buffer.Add(0);
-                _buffer.Add(0);
-                _buffer.Add(sizeOfElement);
+                var sizeOfElement = arrayVar.byteSize;
+                AddPushInt(_buffer, sizeOfElement);
                 
                 _buffer.Add(OpCodes.MUL); // multiply the length by the size, to get the entire byte-size of the requested array
                 _buffer.Add(OpCodes.ALLOC); // push the alloc instruction
@@ -348,12 +468,13 @@ namespace DarkBasicYo.Virtual
             }
 
             // get the size of the element onto the stack
-            _buffer.Add(OpCodes.PUSH); // push the length
-            _buffer.Add(TypeCodes.INT);
-            _buffer.Add(0);
-            _buffer.Add(0);
-            _buffer.Add(0);
-            _buffer.Add(sizeOfElement);
+            AddPushInt(_buffer, sizeOfElement);
+            // _buffer.Add(OpCodes.PUSH); // push the length
+            // _buffer.Add(TypeCodes.INT);
+            // _buffer.Add(0);
+            // _buffer.Add(0);
+            // _buffer.Add(0);
+            // _buffer.Add(sizeOfElement);
 
             // multiply the size of the element, and the index, to get the offset into the memory
             _buffer.Add(OpCodes.MUL);
@@ -392,72 +513,11 @@ namespace DarkBasicYo.Virtual
                     _buffer.Add(OpCodes.CAST);
                     _buffer.Add(compiledArrayVar.typeCode);
                     _buffer.Add(OpCodes.DISCARD); // we don't actually want the type code to live on the heap
-
                     
                     var sizeOfElement = compiledArrayVar.byteSize;
-                    // load the size up
-                    _buffer.Add(OpCodes.PUSH); // push the length
-                    _buffer.Add(TypeCodes.INT);
-                    _buffer.Add(0);
-                    _buffer.Add(0);
-                    _buffer.Add(0);
-                    _buffer.Add(sizeOfElement);
+                    AddPushInt(_buffer, sizeOfElement);
 
                     PushAddress(arrayRefNode);
-                    // if (!_arrayVarToReg.TryGetValue(arrayRefNode.variableName, out var compiledArrayVar))
-                    // {
-                    //     throw new Exception("Compiler: cannot access array since it not declared" +
-                    //                         arrayRefNode.variableName);
-                    // }
-                    // var sizeOfElement = compiledArrayVar.byteSize;
-                    //
-                    // // always cast the expression to the correct type code; slightly wasteful, could be better.
-                    // _buffer.Add(OpCodes.CAST);
-                    // _buffer.Add(compiledArrayVar.typeCode);
-                    // _buffer.Add(OpCodes.DISCARD); // we don't actually want the type code to live on the heap
-                    //
-                    // // load the size up
-                    // _buffer.Add(OpCodes.PUSH); // push the length
-                    // _buffer.Add(TypeCodes.INT);
-                    // _buffer.Add(0);
-                    // _buffer.Add(0);
-                    // _buffer.Add(0);
-                    // _buffer.Add(sizeOfElement);
-                    //
-                    // for (var i = 0; i < arrayRefNode.rankExpressions.Count ; i++)
-                    // {
-                    //     _buffer.Add(OpCodes.LOAD); // load the multiplier factor for the term
-                    //     _buffer.Add(compiledArrayVar.rankIndexScalerRegisterAddresses[i]);
-                    //
-                    //     var expr = arrayRefNode.rankExpressions[i];
-                    //     Compile(expr); // load the expression index
-                    //     
-                    //     _buffer.Add(OpCodes.MUL);
-                    //
-                    //     if (i > 0)
-                    //     {
-                    //         _buffer.Add(OpCodes.ADD);
-                    //     }
-                    // }
-                    //
-                    // // get the size of the element onto the stack
-                    // _buffer.Add(OpCodes.PUSH); // push the length
-                    // _buffer.Add(TypeCodes.INT);
-                    // _buffer.Add(0);
-                    // _buffer.Add(0);
-                    // _buffer.Add(0);
-                    // _buffer.Add(sizeOfElement);
-                    //
-                    // // multiply the size of the element, and the index, to get the offset into the memory
-                    // _buffer.Add(OpCodes.MUL);
-                    //
-                    // // load the array's ptr onto the stack, this is for the math of the offset
-                    // _buffer.Add(OpCodes.LOAD); 
-                    // _buffer.Add(compiledArrayVar.registerAddress);
-                    //
-                    // // add the offset to the original pointer to get the write location
-                    // _buffer.Add(OpCodes.ADD);
-                    //
                     // write! It'll find the ptr, then the size, and then the data itself
                     _buffer.Add(OpCodes.WRITE);
                     
@@ -485,6 +545,76 @@ namespace DarkBasicYo.Virtual
                     _buffer.Add(OpCodes.STORE);
                     _buffer.Add(compiledVar.registerAddress);
                     break;
+                case StructFieldReference fieldReferenceNode:
+
+                    switch (fieldReferenceNode.left)
+                    {
+                        case ArrayIndexReference arrayRefNode:
+                            
+                            // we need to find the start index of the array element,
+                            // and then add the offset for the field access part (the right side)
+                            if (!_arrayVarToReg.TryGetValue(arrayRefNode.variableName, out var compiledLeftArrayVar))
+                            {
+                                throw new Exception("Compiler: cannot access array since it not declared" +
+                                                    arrayRefNode.variableName);
+                            }
+                            
+                            
+                            _buffer.Add(OpCodes.DISCARD); // we don't actually want the type code to live on the heap
+
+                            var rightType = compiledLeftArrayVar.structType;
+                            ComputeStructOffsets(rightType, fieldReferenceNode.right, out var rightOffset, out var rightLength, out _);
+
+                            // load the write-length
+                            AddPushInt(_buffer, rightLength);
+                            
+                            // load the offset of the right side
+                            AddPushInt(_buffer, rightOffset);
+                            
+                            // load the array pointer
+                            PushAddress(arrayRefNode);
+                            
+                            // add the pointer and the offset together
+                            _buffer.Add(OpCodes.ADD);
+                            
+                            // write the data at the array index, by the offset, 
+                            _buffer.Add(OpCodes.WRITE);
+                            break;
+                        
+                        case VariableRefNode variableRef:
+                            if (!_varToReg.TryGetValue(variableRef.variableName, out compiledVar))
+                            {
+                                throw new Exception("compiler exception! the referenced variable has not been declared yet " +
+                                                    variableRef.variableName);
+                            }
+                            
+                            _buffer.Add(OpCodes.DISCARD); // we don't actually want the type code to live on the heap
+                            
+                            // load up the compiled type info 
+                            var type = _types[compiledVar.structType];
+                            ComputeStructOffsets(type, fieldReferenceNode.right, out var offset, out var length, out _);
+
+                            // push the length of the write segment
+                            AddPushInt(_buffer, length);
+                            
+                            // load the base address of the variable
+                            _buffer.Add(OpCodes.LOAD);
+                            _buffer.Add(compiledVar.registerAddress);
+                            
+                            // load the offset of the right side
+                            AddPushInt(_buffer, offset);
+                            
+                            // sum them, then the result is the ptr on the stack
+                            _buffer.Add(OpCodes.ADD);
+                            
+                            // pull the ptr, length, then data, and return the ptr.
+                            _buffer.Add(OpCodes.WRITE);
+                            
+                            break;
+                        default:
+                            throw new NotImplementedException("unhandled left side of operation");
+                    }
+                    break;
                 default:
                     throw new NotImplementedException("Unsupported reference assignment");
             }
@@ -492,7 +622,54 @@ namespace DarkBasicYo.Virtual
             
             
         }
-        
+
+        public void ComputeStructOffsets(CompiledType baseType, IVariableNode right, out int offset, out int writeLength, out byte typeCode)
+        {
+            writeLength = 0;
+            offset = 0;
+
+            switch (right)
+            {
+                case VariableRefNode variableRefNode:
+                    var name = variableRefNode.variableName;
+                    if (!baseType.fields.TryGetValue(name, out var member))
+                    {
+                        throw new Exception("Compiler: unknown member access " + name);
+                    }
+
+                    writeLength = member.Length;
+                    offset += member.Offset;
+                    typeCode = member.TypeCode;
+                    break;
+                case StructFieldReference structRef:
+
+                    switch (structRef.left)
+                    {
+                        case VariableRefNode leftVariableRefNode:
+                            var leftName = leftVariableRefNode.variableName;
+                            if (!baseType.fields.TryGetValue(leftName, out var leftMember))
+                            {
+                                throw new Exception("Compiler: unknown member access " + leftName);
+                            }
+                            
+                            ComputeStructOffsets(leftMember.Type, structRef.right, out offset, out writeLength, out typeCode);
+                            offset += leftMember.Offset;
+                            
+                            break;
+                        default:
+                            throw new NotImplementedException("Cannot compute offsets for left");
+                    }
+                    // look up the field member of the left side, and then recursively call this function on the right.
+                    // if (!baseType.fields.TryGetValue(name, out var leftMember))
+                    // {
+                    //     throw new Exception("Compiler: unknown member access " + name);
+                    // }
+                    
+                    break;
+                default:
+                    throw new NotImplementedException("Cannot compute offsets");
+            }
+        }
         
         public void Compile(IExpressionNode expr)
         {
@@ -507,39 +684,6 @@ namespace DarkBasicYo.Virtual
                         startToken = commandExpr.startToken,
                         endToken = commandExpr.endToken
                     });
-                    // for (var i = 0; i < commandExpr.command.args.Count; i++)
-                    // {
-                    //     var argExpr = commandExpr.args[i];
-                    //     switch (argExpr)
-                    //     {
-                    //         case AddressExpression addrArg:
-                    //             break;
-                    //         default:
-                    //             Compile(argExpr);
-                    //             break;
-                    //     }
-                    // }
-                    // // foreach (var argExpr in commandExpr.args)
-                    // // {
-                    // //     
-                    // //     Compile(argExpr);
-                    // // }
-                    //
-                    // // find the address of the method
-                    // if (!_commandToPtr.TryGetValue(commandExpr.command, out var commandAddress))
-                    // {
-                    //     throw new Exception("compiler: could not find method address: " + commandExpr.command);
-                    // }
-                    //
-                    // _buffer.Add(OpCodes.PUSH);
-                    // _buffer.Add(TypeCodes.INT);
-                    // var bytes = BitConverter.GetBytes(commandAddress);
-                    // for (var i = bytes.Length -1; i >= 0; i--)
-                    // {
-                    //     _buffer.Add(bytes[i]);
-                    // }
-                    //
-                    // _buffer.Add(OpCodes.CALL_HOST);
                     break;
                 case LiteralStringExpression literalString:
                     
@@ -579,12 +723,6 @@ namespace DarkBasicYo.Virtual
                 case LiteralIntExpression literalInt:
                     // push the literal value
                     AddPushInt(_buffer, literalInt.value);
-                    // _buffer.Add(TypeCodes.INT);
-                    // var value = BitConverter.GetBytes(literalInt.value);
-                    // for (var i = value.Length - 1; i >= 0; i--)
-                    // {
-                    //     _buffer.Add(value[i]);
-                    // }
                     break;
                 case ArrayIndexReference arrayRef:
                     // need to fetch the value from the array...
@@ -599,51 +737,43 @@ namespace DarkBasicYo.Virtual
 
                     
                     // load the size up
-                    _buffer.Add(OpCodes.PUSH); // push the length
-                    _buffer.Add(TypeCodes.INT);
-                    _buffer.Add(0);
-                    _buffer.Add(0);
-                    _buffer.Add(0);
-                    _buffer.Add(sizeOfElement);
-                    
+                    AddPushInt(_buffer, sizeOfElement);
+
+                    PushAddress(arrayRef);
+
                     // load the index onto the stack
-                    for (var i = 0; i < arrayRef.rankExpressions.Count ; i++)
-                    {
-                        // load the multiplier factor for the term
-                        _buffer.Add(OpCodes.LOAD); 
-                        _buffer.Add(arrayVar.rankIndexScalerRegisterAddresses[i]);
-
-                        // load the expression index
-                        var subExpr = arrayRef.rankExpressions[i];
-                        Compile(subExpr); 
-                        
-                        // multiply the expression index by the multiplier factor
-                        _buffer.Add(OpCodes.MUL);
-
-                        if (i > 0)
-                        {
-                            // and if this isn't our first, add it to the previous value
-                            _buffer.Add(OpCodes.ADD);
-                        }
-                    }
- 
-                    // get the size of the element onto the stack
-                    _buffer.Add(OpCodes.PUSH); // push the length
-                    _buffer.Add(TypeCodes.INT);
-                    _buffer.Add(0);
-                    _buffer.Add(0);
-                    _buffer.Add(0);
-                    _buffer.Add(sizeOfElement);
-                    
-                    // multiply the size of the element, and the index, to get the offset into the memory
-                    _buffer.Add(OpCodes.MUL);
-                    
-                    // load the array's ptr onto the stack, this is for the math of the offset
-                    _buffer.Add(OpCodes.LOAD); 
-                    _buffer.Add(arrayVar.registerAddress);
-
-                    // add the offset to the original pointer to get the write location
-                    _buffer.Add(OpCodes.ADD);
+                    // for (var i = 0; i < arrayRef.rankExpressions.Count ; i++)
+                    // {
+                    //     // load the multiplier factor for the term
+                    //     _buffer.Add(OpCodes.LOAD); 
+                    //     _buffer.Add(arrayVar.rankIndexScalerRegisterAddresses[i]);
+                    //
+                    //     // load the expression index
+                    //     var subExpr = arrayRef.rankExpressions[i];
+                    //     Compile(subExpr); 
+                    //     
+                    //     // multiply the expression index by the multiplier factor
+                    //     _buffer.Add(OpCodes.MUL);
+                    //
+                    //     if (i > 0)
+                    //     {
+                    //         // and if this isn't our first, add it to the previous value
+                    //         _buffer.Add(OpCodes.ADD);
+                    //     }
+                    // }
+                    //
+                    // // get the size of the element onto the stack
+                    // AddPushInt(_buffer, sizeOfElement);
+                    //
+                    // // multiply the size of the element, and the index, to get the offset into the memory
+                    // _buffer.Add(OpCodes.MUL);
+                    //
+                    // // load the array's ptr onto the stack, this is for the math of the offset
+                    // _buffer.Add(OpCodes.LOAD); 
+                    // _buffer.Add(arrayVar.registerAddress);
+                    //
+                    // // add the offset to the original pointer to get the write location
+                    // _buffer.Add(OpCodes.ADD);
                     
                     // read, it'll find the ptr, size, and then place the data onto the stack
                     _buffer.Add(OpCodes.READ);
@@ -652,6 +782,80 @@ namespace DarkBasicYo.Virtual
                     _buffer.Add(OpCodes.BPUSH);
                     _buffer.Add(arrayVar.typeCode);
 
+                    break;
+                case StructFieldReference structRef:
+                    // we need to load up the pointer, and read from the address...
+                    switch (structRef.left)
+                    {
+                        case VariableRefNode variableRef:
+
+                            if (!_varToReg.TryGetValue(variableRef.variableName, out var typeCompiledVar))
+                            {
+                                throw new Exception(
+                                    "compiler exception! the referenced variable has not been declared yet " +
+                                    variableRef.variableName);
+                            }
+
+                            if (!_types.TryGetValue(typeCompiledVar.structType, out var type))
+                            {
+                                throw new Exception("Unknown type reference " + type);
+                            }
+
+                            ComputeStructOffsets(type, structRef.right, out var readOffset, out var readLength, out var readTypeCode);
+                            
+                            // push the size of the read operation
+                            AddPushInt(_buffer, readLength);
+                            
+                            // push the read offset, so that we can add it to the ptr
+                            AddPushInt(_buffer, readOffset);
+                            
+                            // push the ptr of the variable, and cast it to an int for easy math
+                            _buffer.Add(OpCodes.LOAD);
+                            _buffer.Add(typeCompiledVar.registerAddress);
+                            _buffer.Add(OpCodes.CAST);
+                            _buffer.Add(TypeCodes.INT);
+                            
+                            // add those two op codes back together...
+                            _buffer.Add(OpCodes.ADD);
+                            
+                            // read the summed ptr, then the length
+                            _buffer.Add(OpCodes.READ);
+                            
+                            // we need to inject the type-code back into the stack, since it doesn't exist in heap
+                            _buffer.Add(OpCodes.BPUSH);
+                            _buffer.Add(readTypeCode);
+                            
+                            break;
+                        case ArrayIndexReference arrayRefNode:
+                            if (!_arrayVarToReg.TryGetValue(arrayRefNode.variableName, out var leftArrayVar))
+                            {
+                                throw new Exception("compiler exception! the referenced array has not been declared yet " +
+                                                    arrayRefNode.variableName);
+                            }
+                            
+                            var rightType = leftArrayVar.structType;
+                            ComputeStructOffsets(rightType, structRef.right, out var rightOffset, out var rightLength, out var rightTypeCode);
+
+                            // load the write-length
+                            AddPushInt(_buffer, rightLength);
+                            
+                            // load the offset of the right side
+                            AddPushInt(_buffer, rightOffset);
+                            
+                            // load the array pointer
+                            PushAddress(arrayRefNode);
+                            
+                            // add the pointer and the offset together
+                            _buffer.Add(OpCodes.ADD);
+                            
+                            // write the data at the array index, by the offset, 
+                            _buffer.Add(OpCodes.READ);
+                            _buffer.Add(OpCodes.BPUSH);
+                            _buffer.Add(rightTypeCode);
+                            break;
+                        default:
+                            throw new NotImplementedException("Cannot eval left based nested struct pointer");
+                    }
                     break;
                 case VariableRefNode variableRef:
                     // emit the read from register

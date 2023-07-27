@@ -751,7 +751,366 @@ x# = z#
         Assert.That(vm.typeRegisters[0], Is.EqualTo(TypeCodes.REAL));
     }
     
+    
+    [Test]
+    public void Type_Instantiate()
+    {
+        var src = @"
+type egg 
+x
+endtype
+
+y as egg
+";
+        Setup(src, out var compiler, out var prog);
+        var vm = new VirtualMachine(prog);
+        vm.hostMethods = compiler.methodTable;
+        vm.Execute2();
+        
+        Assert.That(vm.heap.Cursor, Is.EqualTo(4)); // size of the only field in egg, int, 4.
+        Assert.That(vm.typeRegisters[0], Is.EqualTo(TypeCodes.STRUCT));
+    }
+
+    
+    [Test]
+    public void Type_Instantiate_Assign()
+    {
+        var src = @"
+type egg 
+x
+endtype
+
+y as egg
+y.x = 53
+";
+        Setup(src, out var compiler, out var prog);
+        var vm = new VirtualMachine(prog);
+        vm.hostMethods = compiler.methodTable;
+        vm.Execute2();
+        
+        Assert.That(vm.heap.Cursor, Is.EqualTo(4)); // size of the only field in egg, int, 4.
+        Assert.That(vm.typeRegisters[0], Is.EqualTo(TypeCodes.STRUCT));
+        
+        vm.heap.Read((int)vm.dataRegisters[0], 4, out var memory);
+        var data = BitConverter.ToInt32(memory);
+        Assert.That(data, Is.EqualTo(53));
+    }
+    
+    
+    [Test]
+    public void Type_Instantiate_AssignExpression()
+    {
+        var src = @"
+type egg 
+x
+endtype
+
+y as egg
+y.x = 53
+y.x = y.x + y.x
+";
+        Setup(src, out var compiler, out var prog);
+        var vm = new VirtualMachine(prog);
+        vm.hostMethods = compiler.methodTable;
+        vm.Execute2();
+        
+        Assert.That(vm.heap.Cursor, Is.EqualTo(4)); // size of the only field in egg, int, 4.
+        Assert.That(vm.typeRegisters[0], Is.EqualTo(TypeCodes.STRUCT));
+        
+        vm.heap.Read((int)vm.dataRegisters[0], 4, out var memory);
+        var data = BitConverter.ToInt32(memory);
+        Assert.That(data, Is.EqualTo(106));
+    }
+
+    
+    [Test]
+    public void Type_Instantiate_MultipleFields()
+    {
+        var src = @"
+type egg 
+x
+z
+endtype
+
+y as egg
+y.x = 53
+y.z = 10
+w = y.x + y.z
+";
+        Setup(src, out var compiler, out var prog);
+        var vm = new VirtualMachine(prog);
+        vm.hostMethods = compiler.methodTable;
+        vm.Execute2();
+        
+        Assert.That(vm.heap.Cursor, Is.EqualTo(8)); 
+        Assert.That(vm.typeRegisters[0], Is.EqualTo(TypeCodes.STRUCT));
+        
+        Assert.That(vm.typeRegisters[1], Is.EqualTo(TypeCodes.INT));
+        Assert.That(vm.dataRegisters[1], Is.EqualTo(63));
+    }
      
+    [Test]
+    public void Type_Instantiate_StringField2()
+    {
+        var src = @"
+type egg 
+x
+z$
+endtype
+
+y as egg
+y.x = 50
+y.z$ = ""hello""
+w = y.x + len y.z$
+";
+        Setup(src, out var compiler, out var prog);
+        var vm = new VirtualMachine(prog);
+        vm.hostMethods = compiler.methodTable;
+        vm.Execute2();
+        
+        
+        Assert.That(vm.heap.Cursor, Is.EqualTo(4 + 4 + "hello".Length*4)); // a '4' comes from y.x, and the other '4' is the ptr to z$
+        Assert.That(vm.typeRegisters[0], Is.EqualTo(TypeCodes.STRUCT));
+        
+        Assert.That(vm.typeRegisters[1], Is.EqualTo(TypeCodes.INT));
+        Assert.That(vm.dataRegisters[1], Is.EqualTo(55));
+    }
+    
+    
+    [Test]
+    public void Type_Instantiate_Nested()
+    {
+        var src = @"
+type egg 
+color
+endtype
+
+type chicken
+e as egg
+n 
+endtype
+
+albert as chicken
+";
+        Setup(src, out var compiler, out var prog);
+        var vm = new VirtualMachine(prog);
+        vm.hostMethods = compiler.methodTable;
+        vm.Execute2();
+        
+        
+        Assert.That(vm.heap.Cursor, Is.EqualTo(8));
+        Assert.That(vm.typeRegisters[0], Is.EqualTo(TypeCodes.STRUCT));
+        
+        // Assert.That(vm.typeRegisters[1], Is.EqualTo(TypeCodes.INT));
+        // Assert.That(vm.dataRegisters[1], Is.EqualTo(55));
+    }
+
+    
+    [Test]
+    public void Type_Instantiate_Nested_Assign()
+    {
+        var src = @"
+type egg 
+color
+endtype
+
+type chicken
+e as egg
+n 
+endtype
+
+albert as chicken
+albert.e.color = 3
+albert.n = 4
+test = albert.e.color * albert.n
+";
+        Setup(src, out var compiler, out var prog);
+        var vm = new VirtualMachine(prog);
+        vm.hostMethods = compiler.methodTable;
+        vm.Execute2();
+        
+        
+        Assert.That(vm.heap.Cursor, Is.EqualTo(8));
+        Assert.That(vm.typeRegisters[0], Is.EqualTo(TypeCodes.STRUCT));
+        
+        Assert.That(vm.typeRegisters[1], Is.EqualTo(TypeCodes.INT));
+        Assert.That(vm.dataRegisters[1], Is.EqualTo(12));
+    }
+    
+    
+    [Test]
+    public void Type_Instantiate_Array()
+    {
+        var src = @"
+TYPE egg 
+    color
+ENDTYPE
+
+DIM x(3) AS egg
+";
+        Setup(src, out var compiler, out var prog);
+        var vm = new VirtualMachine(prog);
+        vm.hostMethods = compiler.methodTable;
+        vm.Execute2();
+        
+        
+        Assert.That(vm.heap.Cursor, Is.EqualTo(12));
+        // Assert.That(vm.typeRegisters[0], Is.EqualTo(TypeCodes.STRUCT));
+        
+    }
+
+    
+    [Test]
+    public void Type_Instantiate_Array_HalfSize()
+    {
+        var src = @"
+TYPE egg 
+    color AS WORD
+ENDTYPE
+
+DIM x(3) AS egg
+";
+        Setup(src, out var compiler, out var prog);
+        var vm = new VirtualMachine(prog);
+        vm.hostMethods = compiler.methodTable;
+        vm.Execute2();
+        
+        
+        Assert.That(vm.heap.Cursor, Is.EqualTo(6));
+        // Assert.That(vm.typeRegisters[0], Is.EqualTo(TypeCodes.STRUCT));
+        
+    }
+    
+    [Test]
+    public void Type_Instantiate_Array_Assign()
+    {
+        var src = @"
+TYPE egg 
+    color AS WORD
+ENDTYPE
+
+DIM x(3) AS egg
+x(1).color = 3
+";
+        Setup(src, out var compiler, out var prog);
+        var vm = new VirtualMachine(prog);
+        vm.hostMethods = compiler.methodTable;
+        vm.Execute2();
+        
+        
+        Assert.That(vm.heap.Cursor, Is.EqualTo(6));
+        
+        vm.heap.Read(1 * 2, 2, out var mem);
+        var data = BitConverter.ToInt16(mem, 0);
+        
+        Assert.That(data, Is.EqualTo(3));
+
+    }
+    
+    
+    [Test]
+    public void Type_Instantiate_MultiArray_Assign()
+    {
+        var src = @"
+TYPE egg 
+    color AS WORD
+ENDTYPE
+
+DIM x(3,2) AS egg
+x(1,1).color = 3
+";
+        Setup(src, out var compiler, out var prog);
+        var vm = new VirtualMachine(prog);
+        vm.hostMethods = compiler.methodTable;
+        vm.Execute2();
+        
+        
+        Assert.That(vm.heap.Cursor, Is.EqualTo(12));
+        
+        vm.heap.Read((1 + 2 * 1) * 2, 2, out var mem);
+        var data = BitConverter.ToInt16(mem, 0);
+        
+        Assert.That(data, Is.EqualTo(3));
+
+    }
+
+    
+    [Test]
+    public void Type_Instantiate_ArrayMultiField_Assign()
+    {
+        var src = @"
+TYPE egg 
+    color AS WORD
+    derp
+ENDTYPE
+
+DIM x(3) AS egg
+x(2).derp = 3
+y = x(2).derp
+";
+        Setup(src, out var compiler, out var prog);
+        var vm = new VirtualMachine(prog);
+        vm.hostMethods = compiler.methodTable;
+        vm.Execute2();
+        
+        
+        Assert.That(vm.heap.Cursor, Is.EqualTo(18));
+        
+        Assert.That(vm.dataRegisters[3], Is.EqualTo(3));
+
+    }
+
+    
+    [Test]
+    public void Type_Instantiate_MultiArray_MultiField_Assign()
+    {
+        var src = @"
+TYPE egg 
+    color AS WORD
+    derp
+ENDTYPE
+
+DIM x(3,4) AS egg
+x(2,3).derp = 3
+y = x(2,3).derp
+";
+        Setup(src, out var compiler, out var prog);
+        var vm = new VirtualMachine(prog);
+        vm.hostMethods = compiler.methodTable;
+        vm.Execute2();
+        
+        Assert.That(vm.heap.Cursor, Is.EqualTo(6*12));
+        Assert.That(vm.dataRegisters[3], Is.EqualTo(3));
+    }
+
+    
+    [Test]
+    public void Type_Instantiate_ArrayMultiField_Assign2()
+    {
+        var src = @"
+TYPE egg 
+    color AS WORD
+    derp
+ENDTYPE
+
+DIM x(3) AS egg
+x(2).derp = 3
+x(1).color = 2
+y = x(2).derp * x(1).color
+";
+        Setup(src, out var compiler, out var prog);
+        var vm = new VirtualMachine(prog);
+        vm.hostMethods = compiler.methodTable;
+        vm.Execute2();
+        
+        
+        Assert.That(vm.heap.Cursor, Is.EqualTo(18));
+        
+        Assert.That(vm.dataRegisters[3], Is.EqualTo(6));
+
+    }
+
+    
     [Test]
     public void CallHost()
     {

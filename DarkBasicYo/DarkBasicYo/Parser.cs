@@ -39,7 +39,15 @@ namespace DarkBasicYo
             while (!_stream.IsEof)
             {
                 var statement = ParseStatement();
-                program.statements.Add(statement);
+                switch (statement)
+                {
+                    case TypeDefinitionStatement typeStatement:
+                        program.typeDefinitions.Add(typeStatement);
+                        break;
+                    default:
+                        program.statements.Add(statement);
+                        break;
+                }
             }
 
 
@@ -402,7 +410,6 @@ namespace DarkBasicYo
 
                     case LexemType.CommandWord:
                         // resolve the command using the command index....
-
                         if (!_commands.TryGetCommandDescriptor(token, out var command))
                         {
                             throw new Exception("Parser exception! unknown command " + token.raw);
@@ -410,34 +417,6 @@ namespace DarkBasicYo
 
                         // parse the args!
                         var argExpressions = ParseCommandArgs(token, command);
-                        // var argExpressions = new List<IExpressionNode>();
-                        // for (var i = 0 ; i < command.args.Count; i ++)
-                        // {
-                        //     var argDescriptor = command.args[i];
-                        //     // TODO: check for optional or arity?
-                        //     if (argDescriptor.isRef)
-                        //     {
-                        //         var variableReference = ParseVariableReference();
-                        //         argExpressions.Add(new AddressExpression(variableReference, token));
-                        //     }
-                        //     else
-                        //     {
-                        //         var argExpr = ParseWikiExpression();
-                        //         argExpressions.Add(argExpr);
-                        //     }
-                        //
-                        //     if (i != command.args.Count - 1)
-                        //     {
-                        //         // expect an arg separator
-                        //         var commaToken = _stream.Advance();
-                        //         if (commaToken.type != LexemType.ArgSplitter)
-                        //         {
-                        //             throw new ParserException("Expected a comma to separate args", commaToken);
-                        //         }
-                        //     }
-                        //
-                        // }
-
                         return new CommandStatement
                         {
                             startToken = token,
@@ -446,6 +425,9 @@ namespace DarkBasicYo
                             args = argExpressions
                         };
 
+                    case LexemType.KeywordType:
+                        return ParseTypeDefinition(token);
+                        
                         break;
                     default:
                         throw new ParserException($"Unknown token type=[{token.type}]", token);
@@ -467,28 +449,73 @@ namespace DarkBasicYo
             return result;
         }
 
-        // private IStatementNode ParseVariableStatement()
-        // {
-        //     
-        // }
-
-        private DeclarationStatement ParseDeclaration()
+        private TypeDefinitionMember ParseTypeMember()
         {
-            var token = _stream.Current;
-            var type = ParseTypeReference();
-            // TODO: if the type is an array, then we should make the scope global by default.
-            var scopeType = DeclarationScopeType.Local;
-            return new DeclarationStatement
+            var token = _stream.Advance();
+            switch (token.type)
             {
-                startToken = token,
-                endToken = _stream.Current,
-                type = type,
-                scopeType = scopeType,
-                variable = token.raw
-            };
+                case LexemType.VariableString:
+                case LexemType.VariableReal:
+                case LexemType.VariableGeneral:
+                    var variable = new VariableRefNode(token);
+                    // optionally, we can parse an "AS TYPE" style expression...
+                    if (_stream.Peek.type == LexemType.KeywordAs)
+                    {
+                        _stream.Advance(); // discard the "AS"
+                        var type = ParseTypeReference();
+                        return new TypeDefinitionMember(token, _stream.Current, variable, type);
+                    }
+                    else
+                    {
+                        return new TypeDefinitionMember(token, _stream.Current, variable,
+                            new TypeReferenceNode(_stream.Current));
+                    }
+                    break;
+                default:
+                    throw new ParserException("Expected a variable name", token);
+            }
         }
 
-        private TypeReferenceNode ParseTypeReference()
+        private TypeDefinitionStatement ParseTypeDefinition(Token start)
+        {
+            var nameToken = _stream.Advance();
+            switch (nameToken.type)
+            {
+                case LexemType.VariableGeneral:
+
+                    var members = new List<TypeDefinitionMember>();
+                    var name = new VariableRefNode(nameToken);
+
+                    var lookingForMembers = true;
+                    while (lookingForMembers)
+                    {
+                        var peek = _stream.Peek;
+                        switch (peek.type)
+                        {
+                            case LexemType.EOF:
+                                throw new ParserException("Hit end of file without a closing type statement", peek);
+                            case LexemType.EndStatement:
+                                _stream.Advance();
+                                break;
+                            case LexemType.KeywordEndType:
+                                _stream.Advance();
+                                lookingForMembers = false;
+                                break;
+                            default:
+                                var member = ParseTypeMember();
+                                members.Add(member);
+                                break;
+                        }
+                    }
+
+                    return new TypeDefinitionStatement(start, _stream.Current, name, members);
+                    break;
+                default:
+                    throw new ParserException("expected a type name", nameToken);
+            }
+        }
+
+        private ITypeReferenceNode ParseTypeReference()
         {
             var token = _stream.Advance();
             switch (token.type)
@@ -503,8 +530,11 @@ namespace DarkBasicYo
                 case LexemType.KeywordTypeDoubleFloat:
                 case LexemType.KeywordTypeDoubleInteger:
                     return new TypeReferenceNode(token);
+                
+                case LexemType.VariableGeneral:
+                    return new StructTypeReferenceNode(new VariableRefNode(token));
                 default:
-                    throw new Exception("Parser exception! Expected type reference");
+                    throw new ParserException("Parser exception! Expected type reference, but found " + token.type, token);
             }
         }
 

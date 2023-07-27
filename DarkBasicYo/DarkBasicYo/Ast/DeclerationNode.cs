@@ -14,7 +14,7 @@ namespace DarkBasicYo.Ast
     public class DeclarationStatement : AstNode, IStatementNode
     {
         public string variable;
-        public TypeReferenceNode type;
+        public ITypeReferenceNode type;
         public DeclarationScopeType scopeType;
         public IExpressionNode[] ranks;
 
@@ -43,7 +43,7 @@ namespace DarkBasicYo.Ast
             SetScope(scopeToken);
         }
 
-        public DeclarationStatement(Token scopeToken, VariableRefNode variableNode, TypeReferenceNode type)
+        public DeclarationStatement(Token scopeToken, VariableRefNode variableNode, ITypeReferenceNode type)
         {
             this.variable = variableNode.variableName;
             this.type = type;
@@ -52,7 +52,7 @@ namespace DarkBasicYo.Ast
             SetScope(scopeToken);
         }
 
-        public DeclarationStatement(Token startToken, VariableRefNode variableNode, TypeReferenceNode type, IExpressionNode[] ranks)
+        public DeclarationStatement(Token startToken, VariableRefNode variableNode, ITypeReferenceNode type, IExpressionNode[] ranks)
         {
             this.variable = variableNode.variableName;
             this.type = type;

@@ -12,7 +12,7 @@ public class ParserTests
     public void Setup()
     {
         _lexer = new Lexer();
-        _commands = StandardCommands.LimitedCommands;
+        _commands = TestCommands.Commands;
     }
 
     TokenStream Tokenize(string input) => new TokenStream(_lexer.Tokenize(input, _commands));
@@ -307,6 +307,149 @@ dim x(y,y*2)";
         Assert.That(code, Is.EqualTo("((= (ref y),(3)),(dim global,x,(integer),((ref y),(mult (ref y),(2)))))"));
     }
     
+    
+    
+    [Test]
+    public void Type_Easy()
+    {
+        var input = @"
+type egg
+x as integer
+endtype";
+        var parser = MakeParser(input);
+        var prog = parser.ParseProgram();
+        
+        Assert.That(prog.typeDefinitions.Count, Is.EqualTo(1));
+        var code = prog.ToString();
+        Console.WriteLine(code);
+        Assert.That(code, Is.EqualTo(@"(
+(type egg ((ref x) as (integer)))
+)".ReplaceLineEndings("")));
+    }
+
+    
+    [Test]
+    public void Type_AnonField()
+    {
+        var input = @"
+type egg
+x
+y
+endtype";
+        var parser = MakeParser(input);
+        var prog = parser.ParseProgram();
+        
+        Assert.That(prog.typeDefinitions.Count, Is.EqualTo(1));
+        var code = prog.ToString();
+        Console.WriteLine(code);
+        Assert.That(code, Is.EqualTo(@"(
+(type egg ((ref x) as (integer)),((ref y) as (integer)))
+)".ReplaceLineEndings("")));
+    }
+    
+    
+    [Test]
+    public void Type_AnonField_String()
+    {
+        var input = @"
+type egg
+y$
+endtype";
+        var parser = MakeParser(input);
+        var prog = parser.ParseProgram();
+        
+        Assert.That(prog.typeDefinitions.Count, Is.EqualTo(1));
+        var code = prog.ToString();
+        Console.WriteLine(code);
+        Assert.That(code, Is.EqualTo(@"(
+(type egg ((ref y$) as (string)))
+)".ReplaceLineEndings("")));
+    }
+    
+    
+    [Test]
+    public void Type_Nested()
+    {
+        var input = @"
+type chicken
+x as egg
+endtype
+type egg
+y$
+endtype";
+        var parser = MakeParser(input);
+        var prog = parser.ParseProgram();
+        
+        var code = prog.ToString();
+        Console.WriteLine(code);
+        Assert.That(code, Is.EqualTo(@"(
+(type chicken ((ref x) as (typeRef egg))),
+(type egg ((ref y$) as (string)))
+)".ReplaceLineEndings("")));
+    }
+
+    
+    [Test]
+    public void Type_Assignment()
+    {
+        var input = @"
+type hotdog
+x
+endtype
+y as hotdog
+y.x = 2
+";
+        var parser = MakeParser(input);
+        var prog = parser.ParseProgram();
+        
+        var code = prog.ToString();
+        Console.WriteLine(code);
+        Assert.That(code, Is.EqualTo(@"(
+(type hotdog ((ref x) as (integer))),
+(decl local,y,(typeRef hotdog)),
+(= ((ref y).(ref x)),(2))
+)".ReplaceLineEndings("")));
+    }
+
+    
+    [Test]
+    public void Type_AfterOtherStuff()
+    {
+        var input = @"
+y = 2
+type hotdog
+x
+endtype
+";
+        var parser = MakeParser(input);
+        var prog = parser.ParseProgram();
+        
+        var code = prog.ToString();
+        Console.WriteLine(code);
+        Assert.That(code, Is.EqualTo(@"(
+(type hotdog ((ref x) as (integer))),
+(= (ref y),(2))
+)".ReplaceLineEndings("")));
+    }
+
+    
+    
+    [Test]
+    public void AssignmentWithCommandAndField()
+    {
+        var input = @"
+x = a.b + len a.c
+";
+        var parser = MakeParser(input);
+        var prog = parser.ParseProgram();
+        
+        var code = prog.ToString();
+        Console.WriteLine(code);
+        Assert.That(code, Is.EqualTo(@"(
+(= (ref x),(add ((ref a).(ref b)),(xcall len ((ref a).(ref c)))))
+)".ReplaceLineEndings("")));
+    }
+
     
     [Test]
     public void IntegerAssignment()
