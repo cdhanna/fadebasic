@@ -135,5 +135,26 @@ namespace DarkBasicYo.Virtual
         /// Exactly the same as push, but it does not push the type code aftewards
         /// </summary>
         public const byte PUSH_TYPELESS = 18;
+
+        /// <summary>
+        /// Does nothing. Used as a place holder for label instructions.
+        /// </summary>
+        public const byte NOOP = 20;
+        
+        /// <summary>
+        /// the next value on the stack is the Instruction ptr to jump to
+        /// </summary>
+        public const byte JUMP = 21;
+
+        /// <summary>
+        /// Similar to JUMP, but will push the existing INS ptr onto the method-stack before jumping
+        /// </summary>
+        public const byte JUMP_HISTORY = 22;
+
+        /// <summary>
+        /// pops a value off the method-call stack, and changes the instruction ptr to that new value
+        /// </summary>
+        public const byte RETURN = 23;
+
     }
 }

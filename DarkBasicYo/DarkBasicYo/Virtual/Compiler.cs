@@ -39,6 +39,12 @@ namespace DarkBasicYo.Virtual
         public byte TypeCode;
         public CompiledType Type;
     }
+
+    public struct LabelReplacement
+    {
+        public int InstructionIndex;
+        public string Label;
+    }
     
     public class Compiler
     {
@@ -59,6 +65,8 @@ namespace DarkBasicYo.Virtual
 
         private Dictionary<CommandDescriptor, int> _commandToPtr = new Dictionary<CommandDescriptor, int>();
 
+        private List<LabelReplacement> _labelReplacements = new List<LabelReplacement>();
+        private Dictionary<string, int> _labelToInstructionIndex = new Dictionary<string, int>();
         public Compiler(CommandCollection commands)
         {
             this.commands = commands;
@@ -78,6 +86,7 @@ namespace DarkBasicYo.Virtual
 
         public void Compile(ProgramNode program)
         {
+
             foreach (var typeDef in program.typeDefinitions)
             {
                 Compile(typeDef);
@@ -86,6 +95,23 @@ namespace DarkBasicYo.Virtual
             foreach (var statement in program.statements)
             {
                 Compile(statement);
+            }
+            
+            // replace all label instructions...
+            foreach (var replacement in _labelReplacements)
+            {
+                // TODO: look up in labelTable
+                if (!_labelToInstructionIndex.TryGetValue(replacement.Label, out var location))
+                {
+                    throw new Exception("Compiler: unknown label location " + replacement.Label);
+                }
+
+                var locationBytes = BitConverter.GetBytes(location);
+                for (var i = 0; i < locationBytes.Length; i++)
+                {
+                    // offset by 2, because of the opcode, and the type code
+                    _buffer[replacement.InstructionIndex + 2 + i] = locationBytes[(locationBytes.Length -1) - i];
+                }
             }
         }
 
@@ -152,12 +178,71 @@ namespace DarkBasicYo.Virtual
                 case CommandStatement commandStatement:
                     Compile(commandStatement);
                     break;
+                case LabelDeclarationNode labelStatement:
+                    Compile(labelStatement);
+                    break;
+                case GotoStatement gotoStatement:
+                    Compile(gotoStatement);
+                    break;
+                case GoSubStatement goSubStatement:
+                    Compile(goSubStatement);
+                    break;
+                case ReturnStatement returnStatement:
+                    Compile(returnStatement);
+                    break;
+                case EndProgramStatement endProgramStatement:
+                    Compile(endProgramStatement);
+                    break;
                 default:
                     throw new Exception("compiler exception: unhandled statement node");
             }
         }
+
+        public void Compile(LabelDeclarationNode labelStatement)
+        {
+            // take note of instruction number... 
+            _labelToInstructionIndex[labelStatement.label] = _buffer.Count;
+            _buffer.Add(OpCodes.NOOP);
+        }
+
+        private void Compile(ReturnStatement returnStatement)
+        {
+            _buffer.Add(OpCodes.RETURN);
+        }
+
+        private void Compile(EndProgramStatement endProgramStatement)
+        {
+            // jump to the end of the instruction pointer space, a hack?
+            AddPushInt(_buffer, int.MaxValue);
+            _buffer.Add(OpCodes.JUMP);
+        }
         
-        public void Compile(AddressExpression expression)
+        private void Compile(GoSubStatement goSubStatement)
+        {
+
+            _labelReplacements.Add(new LabelReplacement
+            {
+                InstructionIndex = _buffer.Count,
+                Label = goSubStatement.label
+            });
+            AddPushInt(_buffer, int.MaxValue);
+            _buffer.Add(OpCodes.JUMP_HISTORY);
+            
+        }
+        
+        private void Compile(GotoStatement gotoStatement)
+        {
+            // identify the instruction ID of the label
+            _labelReplacements.Add(new LabelReplacement
+            {
+                InstructionIndex = _buffer.Count,
+                Label = gotoStatement.label
+            });
+            AddPushInt(_buffer, int.MaxValue);
+            _buffer.Add(OpCodes.JUMP);
+        }
+        
+        private void Compile(AddressExpression expression)
         {
             // we need to find the address of the given expression... 
             switch (expression.variableNode)

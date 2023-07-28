@@ -42,8 +42,59 @@ namespace DarkBasicYo.Ast
             return $"type {name.variableName} {string.Join(",", declarations.Select(x => x.ToString()))}";
         }
     }
-    
 
+    public class EndProgramStatement : AstNode, IStatementNode
+    {
+        public EndProgramStatement(Token token) : base(token){}
+        protected override string GetString()
+        {
+            return "end";
+        }
+    }
+    
+    public class GotoStatement : AstNode, IStatementNode
+    {
+        public string label;
+        public GotoStatement(Token startToken, Token labelToken) : base(startToken, labelToken)
+        {
+            label = labelToken.raw;
+        }
+
+        protected override string GetString()
+        {
+            return $"goto {label}";
+        }
+    }
+    
+    
+    public class ReturnStatement : AstNode, IStatementNode
+    {
+        public ReturnStatement(Token startToken) : base(startToken)
+        {
+        }
+
+        protected override string GetString()
+        {
+            return $"ret";
+        }
+    }
+
+
+    public class GoSubStatement : AstNode, IStatementNode
+    {
+        public string label;
+        public GoSubStatement(Token startToken, Token labelToken) : base(startToken, labelToken)
+        {
+            label = labelToken.raw;
+        }
+
+        protected override string GetString()
+        {
+            return $"gosub {label}";
+        }
+    }
+
+    
     public class CommandStatement : AstNode, IStatementNode
     {
         public CommandDescriptor command;

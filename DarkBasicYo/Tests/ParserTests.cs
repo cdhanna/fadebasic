@@ -308,6 +308,67 @@ dim x(y,y*2)";
     }
     
     
+    [Test]
+    public void Goto_Simple()
+    {
+        var input = @"
+Label:
+GOTO Label
+";
+        var parser = MakeParser(input);
+        var prog = parser.ParseProgram();
+        
+        Assert.That(prog.statements.Count, Is.EqualTo(2));
+        var code = prog.ToString();
+        Console.WriteLine(code);
+        Assert.That(code, Is.EqualTo(@"(
+(label label),
+(goto label)
+)".ReplaceLineEndings("")));
+    }
+
+    
+    [Test]
+    public void GoSub_WithoutReturn()
+    {
+        var input = @"
+GOSUB Label
+
+Label:
+";
+        var parser = MakeParser(input);
+        var prog = parser.ParseProgram();
+        
+        Assert.That(prog.statements.Count, Is.EqualTo(2));
+        var code = prog.ToString();
+        Console.WriteLine(code);
+        Assert.That(code, Is.EqualTo(@"(
+(gosub label),
+(label label)
+)".ReplaceLineEndings("")));
+    }
+
+    [Test]
+    public void GoSub_WithReturn()
+    {
+        var input = @"
+GOSUB Label
+
+Label:
+RETURN
+";
+        var parser = MakeParser(input);
+        var prog = parser.ParseProgram();
+        
+        Assert.That(prog.statements.Count, Is.EqualTo(3));
+        var code = prog.ToString();
+        Console.WriteLine(code);
+        Assert.That(code, Is.EqualTo(@"(
+(gosub label),
+(label label),
+(ret)
+)".ReplaceLineEndings("")));
+    }
     
     [Test]
     public void Type_Easy()

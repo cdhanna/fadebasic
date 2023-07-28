@@ -44,6 +44,14 @@ namespace DarkBasicYo
                     case TypeDefinitionStatement typeStatement:
                         program.typeDefinitions.Add(typeStatement);
                         break;
+                    case LabelDeclarationNode labelStatement:
+                        program.labels.Add(new LabelDefinition
+                        {
+                            statementIndex = program.statements.Count + 1,
+                            node = labelStatement
+                        });
+                        program.statements.Add(labelStatement);
+                        break;
                     default:
                         program.statements.Add(statement);
                         break;
@@ -365,6 +373,14 @@ namespace DarkBasicYo
                             endToken = _stream.Current
                         };
 
+                    case LexemType.KeywordGoto:
+                        return ParseGoto(token);
+                    case LexemType.KeywordGoSub:
+                        return ParseGoSub(token);
+                    case LexemType.KeywordReturn:
+                        return ParseReturn(token);
+                    case LexemType.KeywordEnd:
+                        return new EndProgramStatement(token);
                     case LexemType.KeywordScope:
                         return ParseStatementThatStartsWithScope(token);
                     case LexemType.KeywordDeclareArray:
@@ -379,6 +395,9 @@ namespace DarkBasicYo
 
                         switch (secondToken.type)
                         {
+                            case LexemType.Colon:
+                                return new LabelDeclarationNode(token, secondToken);
+                                break;
                             case LexemType.OpEqual:
                                 var expr = ParseWikiExpression();
                                 
@@ -449,6 +468,36 @@ namespace DarkBasicYo
             return result;
         }
 
+        private GotoStatement ParseGoto(Token gotoToken)
+        {
+            var next = _stream.Advance();
+            switch (next.type)
+            {
+                case LexemType.VariableGeneral:
+                    return new GotoStatement(gotoToken, next);
+                    
+                default:
+                    throw new ParserException("Expected label for goto statement", gotoToken, next);
+            }
+        }
+        private GoSubStatement ParseGoSub(Token gotoToken)
+        {
+            var next = _stream.Advance();
+            switch (next.type)
+            {
+                case LexemType.VariableGeneral:
+                    return new GoSubStatement(gotoToken, next);
+                    
+                default:
+                    throw new ParserException("Expected label for goto statement", gotoToken, next);
+            }
+        }
+        
+        private ReturnStatement ParseReturn(Token token)
+        {
+            return new ReturnStatement(token);
+        }
+        
         private TypeDefinitionMember ParseTypeMember()
         {
             var token = _stream.Advance();
@@ -542,15 +591,31 @@ namespace DarkBasicYo
         {
             switch (token.type)
             {
+                case LexemType.KeywordNot:
+                    return 5;
+                case LexemType.KeywordAnd:
+                    return 6;
+                case LexemType.KeywordOr:
+                    return 7;
                 case LexemType.OpGt:
                 case LexemType.OpLt:
-                    return 1;
-                case LexemType.OpMultiply:
-                case LexemType.OpDivide:
-                    return 3;
+                case LexemType.OpGte:
+                case LexemType.OpLte:
+                case LexemType.OpEqual:
+                case LexemType.OpNotEqual:
+                    return 10;
                 case LexemType.OpMinus:
                 case LexemType.OpPlus:
-                    return 2;
+                    return 20;
+        
+                case LexemType.OpMultiply:
+                case LexemType.OpDivide:
+                    return 30;
+                
+                case LexemType.OpMod:
+                case LexemType.OpPower:
+                    return 40;
+           
                 default:
                     throw new ParserException("Invalid lexem type for op order", token);
             }
@@ -567,6 +632,7 @@ namespace DarkBasicYo
                 case LexemType.OpPlus:
                 case LexemType.OpMultiply:
                 case LexemType.OpEqual:
+                case LexemType.OpNotEqual:
                     return true;
                 default:
                     throw new ParserException("Invalid lexem type for op assoc", token);

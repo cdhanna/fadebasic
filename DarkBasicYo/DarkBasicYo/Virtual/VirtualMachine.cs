@@ -26,6 +26,7 @@ namespace DarkBasicYo.Virtual
         public Stack<byte> stack = new Stack<byte>();
         public VmHeap heap = new VmHeap();
         public HostMethodTable hostMethods = new HostMethodTable();
+        public Stack<int> methodStack = new Stack<int>();
         
         public ulong[] dataRegisters; // parallel array with typeReg
         public byte[] typeRegisters;  // parallel array with dataReg
@@ -103,8 +104,30 @@ namespace DarkBasicYo.Virtual
                     byte aTypeCode = 0, bTypeCode = 0, vTypeCode = 0, typeCode = 0;
                     ulong data = 0;
                     byte addr = 0, size =0;
+                    int insPtr;
                     switch (ins)
                     {
+                        case OpCodes.JUMP:
+                            // the next instruction is the instruction ptr
+                            VmUtil.ReadAsInt(stack, out insPtr);
+                            instructionIndex = insPtr;
+                            break;
+                        case OpCodes.JUMP_HISTORY:
+                            // the next instruction is the instruction ptr
+                            VmUtil.ReadAsInt(stack, out insPtr);
+                            methodStack.Push(instructionIndex) ;
+                            instructionIndex = insPtr;
+                            break;
+                        case OpCodes.RETURN:
+                            if (methodStack.Count != 0)
+                            {
+                                /*
+                                 * the use case to allow a return on an empty stack is
+                                 * using GOSUB and not adding an END statement before the program hits the labels.
+                                 */
+                                instructionIndex = methodStack.Pop();
+                            }
+                            break;
                         case OpCodes.DUPE:
                             // look at the stack, and push stuff onto it...
                             VmUtil.Read(stack, out typeCode, out aBytes);
@@ -236,6 +259,9 @@ namespace DarkBasicYo.Virtual
                             VmUtil.Read(stack, aTypeCode, out var bytes);
                             var dbgValue = VmUtil.DbgConvert(aTypeCode, bytes);
                             _standardOut.WriteLine(aTypeCode + " - " + dbgValue);
+                            break;
+                        case OpCodes.NOOP:
+                            // do nothing! Its a no-op!
                             break;
                         default:
                             throw new Exception("Unknown op code: " + ins);

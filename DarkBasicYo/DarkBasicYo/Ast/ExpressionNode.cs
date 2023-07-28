@@ -16,8 +16,15 @@ namespace DarkBasicYo.Ast
         Subtract,
         Divide,
         Mult,
+        Negate,
+        Mod,
+        RaisePower,
         LessThan,
-        GreaterThan
+        GreaterThan,
+        LessThanOrEqualTo,
+        GreaterThanOrEqualTo,
+        EqualTo,
+        NotEqualTo,
     }
 
     public static class OperationUtil
@@ -41,6 +48,40 @@ namespace DarkBasicYo.Ast
             }
 
             return opType;
+        }
+
+        public static string ToString(OperationType type)
+        {
+            switch (type)
+            {
+                case OperationType.Add:
+                    return "+";
+                case OperationType.Subtract:
+                    return "-";
+                case OperationType.Divide:
+                    return "/";
+                case OperationType.Mult:
+                    return "*";
+                case OperationType.Negate:
+                    return "neg";
+                case OperationType.Mod:
+                    return "%";
+                case OperationType.GreaterThan:
+                    return "?>";
+                case OperationType.LessThanOrEqualTo:
+                    return "?<=";
+                case OperationType.GreaterThanOrEqualTo:
+                    return "?>=";
+                case OperationType.LessThan:
+                    return "?<";
+                case OperationType.EqualTo:
+                    return "?=";
+                case OperationType.NotEqualTo:
+                    return "?!=";
+                
+                default:
+                    throw new NotImplementedException("no string value for " + type);
+            }
         }
     }
 
@@ -76,7 +117,7 @@ namespace DarkBasicYo.Ast
 
         protected override string GetString()
         {
-            return $"{operationType.ToString().ToLowerInvariant()} {lhs},{rhs}";
+            return $"{OperationUtil.ToString(operationType)} {lhs},{rhs}";
         }
     }
 

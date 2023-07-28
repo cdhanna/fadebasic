@@ -191,6 +191,109 @@ y$ = ""world"" + x$
     }
 
     
+    [Test]
+    public void Goto_Simple()
+    {
+        var src = @"
+x = 1;
+GOTO Skip
+x = 2;
+Skip:
+x = 3;
+
+";
+        Setup(src, out _, out var prog);
+        
+        var vm = new VirtualMachine(prog);
+        vm.Execute().MoveNext();
+        
+        Assert.That(vm.dataRegisters[0], Is.EqualTo(3));
+        Assert.That(vm.typeRegisters[0], Is.EqualTo(TypeCodes.INT));
+    }
+
+    
+    [Test]
+    public void GoSub_Simple()
+    {
+        var src = @"
+x = 1;
+
+Gosub Sub
+Gosub Sub
+Gosub Sub
+
+Sub:
+x = x + 1
+Return
+
+";
+        Setup(src, out _, out var prog);
+        
+        var vm = new VirtualMachine(prog);
+        vm.Execute().MoveNext();
+        
+        Assert.That(vm.dataRegisters[0], Is.EqualTo(5)); // starts as 1, add 3 times, then hit the definition itself.
+        Assert.That(vm.typeRegisters[0], Is.EqualTo(TypeCodes.INT));
+    }
+
+    
+    [Test]
+    public void GoSub_End()
+    {
+        var src = @"
+x = 1;
+
+Gosub Sub
+Gosub Sub
+Gosub Sub
+END
+
+Sub:
+x = x + 1
+Return
+
+";
+        Setup(src, out _, out var prog);
+        
+        var vm = new VirtualMachine(prog);
+        vm.Execute().MoveNext();
+        
+        Assert.That(vm.dataRegisters[0], Is.EqualTo(4)); // starts as 1, add 3 times, then hit the definition itself.
+        Assert.That(vm.typeRegisters[0], Is.EqualTo(TypeCodes.INT));
+    }
+
+    
+    [Test]
+    public void GoSub_Example()
+    {
+        var src = @"
+x = 1;
+y = 0;
+GOSUB Double
+GOSUB Double
+END
+
+Double:
+x = x * 2
+GOSUB Trace
+Return
+
+Trace:
+y = y + 1
+Return
+";
+        Setup(src, out _, out var prog);
+        
+        var vm = new VirtualMachine(prog);
+        vm.Execute().MoveNext();
+        
+        Assert.That(vm.dataRegisters[0], Is.EqualTo(4)); // starts as 1, add 3 times, then hit the definition itself.
+        Assert.That(vm.typeRegisters[0], Is.EqualTo(TypeCodes.INT));
+        
+        Assert.That(vm.dataRegisters[1], Is.EqualTo(2)); // starts as 1, add 3 times, then hit the definition itself.
+        Assert.That(vm.typeRegisters[1], Is.EqualTo(TypeCodes.INT));
+    }
+
     
     [Test]
     public void TestDeclareAndAssign()
@@ -910,16 +1013,16 @@ albert as chicken
     public void Type_Instantiate_Nested_Assign()
     {
         var src = @"
-type egg 
-color
-endtype
+TYPE egg 
+    color
+ENDTYPE
 
-type chicken
-e as egg
-n 
-endtype
+TYPE chicken
+    e AS egg
+    n 
+ENDTYPE
 
-albert as chicken
+albert AS chicken
 albert.e.color = 3
 albert.n = 4
 test = albert.e.color * albert.n

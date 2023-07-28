@@ -23,7 +23,11 @@ namespace DarkBasicYo
         KeywordEndIf,
         KeywordElse,
         
-        
+        KeywordGoto,
+        KeywordGoSub,
+        KeywordReturn,
+        KeywordEnd,
+
         KeywordType,
         KeywordEndType,
         
@@ -41,7 +45,12 @@ namespace DarkBasicYo
         KeywordTypeBoolean,
 
         KeywordScope,
+        
+        KeywordAnd,
+        KeywordOr,
+        KeywordNot,
 
+        Colon,
 
         WhiteSpace,
         ArgSplitter,
@@ -49,10 +58,15 @@ namespace DarkBasicYo
         OpPlus,
         OpMultiply,
         OpDivide,
+        OpMinus,
+        OpPower,
+        OpMod,
         OpGt,
         OpLt,
-        OpMinus,
+        OpGte,
+        OpLte,
         OpEqual,
+        OpNotEqual,
         ParenOpen,
         ParenClose,
         LiteralReal,
@@ -90,12 +104,22 @@ namespace DarkBasicYo
             new Lexem(LexemType.ParenOpen, new Regex("^\\(")),
             new Lexem(LexemType.ParenClose, new Regex("^\\)")),
             new Lexem(LexemType.OpPlus, new Regex("^\\+")),
+            new Lexem(LexemType.OpMinus, new Regex("^\\-")),
             new Lexem(LexemType.OpMultiply, new Regex("^\\*")),
             new Lexem(LexemType.OpDivide, new Regex("^\\/")),
-            new Lexem(LexemType.OpGt, new Regex("^\\>")),
-            new Lexem(LexemType.OpLt, new Regex("^\\<")),
-            new Lexem(LexemType.OpMinus, new Regex("^\\-")),
+            new Lexem(LexemType.OpGt, new Regex("^>")),
+            new Lexem(LexemType.OpLt, new Regex("^<")),
+            new Lexem(LexemType.OpLte, new Regex("^<=")),
+            new Lexem(LexemType.OpGte, new Regex("^>=")),
+            new Lexem(LexemType.OpMod, new Regex("^mod")),
+            new Lexem(LexemType.OpPower, new Regex("^\\^")),
             new Lexem(LexemType.OpEqual, new Regex("^=")),
+            new Lexem(LexemType.OpNotEqual, new Regex("^<>")),
+            new Lexem(LexemType.KeywordAnd, new Regex("^and")),
+            new Lexem(LexemType.KeywordOr, new Regex("^or")),
+            new Lexem(LexemType.KeywordNot, new Regex("^not")),
+            
+            new Lexem(LexemType.Colon, new Regex("^:")),
 
             new Lexem(LexemType.KeywordScope, new Regex("^(local)|(global)")),
             
@@ -103,6 +127,11 @@ namespace DarkBasicYo
             new Lexem(LexemType.KeywordEndIf, new Regex("^endif")),
             new Lexem(LexemType.KeywordElse, new Regex("^else")),
             new Lexem(LexemType.KeywordThen, new Regex("^then")),
+            new Lexem(LexemType.KeywordEnd, new Regex("^end")),
+            
+            new Lexem(LexemType.KeywordGoto, new Regex("^goto")),
+            new Lexem(LexemType.KeywordGoSub, new Regex("^gosub")),
+            new Lexem(LexemType.KeywordReturn, new Regex("^return")),
             
             new Lexem(LexemType.KeywordDeclareArray, new Regex("^dim")),
             new Lexem(LexemType.KeywordUnDeclareArray, new Regex("^undim")),
