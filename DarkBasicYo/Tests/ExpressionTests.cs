@@ -63,6 +63,8 @@ public class ExpressionTests
     [TestCase("a / b", "(/ (ref a),(ref b))")]
     [TestCase("a mod b", "(% (ref a),(ref b))")]
     [TestCase("a ^ b", "(^ (ref a),(ref b))")]
+    [TestCase("-a", "(neg (ref a))")]
+    [TestCase("b - -a", "(- (ref b),(neg (ref a)))")]
     public void GeneralExpression(string src, string expected)
     {
         var parser = BuildParser(src, out _);

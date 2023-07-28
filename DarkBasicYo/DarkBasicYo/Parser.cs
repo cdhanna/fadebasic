@@ -650,6 +650,11 @@ namespace DarkBasicYo
                 case LexemType.OpLt:
                 case LexemType.OpGt:
                 case LexemType.OpEqual:
+                case LexemType.OpGte:
+                case LexemType.OpLte:
+                case LexemType.OpNotEqual:
+                case LexemType.OpPower:
+                case LexemType.OpMod:
                     return true;
                 default:
                     return false;
@@ -705,26 +710,6 @@ namespace DarkBasicYo
 
                     // parse the args!
                     var argExpressions = ParseCommandArgs(token, command);
-
-                    // var argExpressions = new List<IExpressionNode>();
-                    // foreach (var argDescriptor in command.args)
-                    // {
-                    //     // TODO: check for optional or arity?
-                    //
-                    //     if (argDescriptor.isRef)
-                    //     {
-                    //         // parse a very specific type of expression, it must be a variable...
-                    //         var variableReference = ParseVariableReference();
-                    //         argExpressions.Add(new AddressExpression(variableReference, token));
-                    //     }
-                    //     else
-                    //     {
-                    //         var argExpr = ParseWikiExpression();
-                    //         argExpressions.Add(argExpr);
-                    //     }
-                    //     
-                    // }
-
                     return new CommandExpression()
                     {
                         startToken = token,
@@ -760,6 +745,9 @@ namespace DarkBasicYo
                 case LexemType.OpMultiply:
                     var deRefExpr = ParseVariableReference();
                     return new DereferenceExpression(deRefExpr, token);
+                case LexemType.OpMinus:
+                    var negateExpr = ParseWikiExpression();
+                    return new UnaryOperationExpression(UnaryOperationType.Negate, negateExpr, token, _stream.Current);
                 default:
                     throw new ParserException("Cannot match single, " + token.type, token);
             }

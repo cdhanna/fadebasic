@@ -973,6 +973,18 @@ namespace DarkBasicYo.Virtual
                         case OperationType.Divide:
                             _buffer.Add(OpCodes.DIVIDE);
                             break;
+                        case OperationType.GreaterThan:
+                            _buffer.Add(OpCodes.GT);
+                            break;
+                        case OperationType.LessThan:
+                            _buffer.Add(OpCodes.LT);
+                            break;
+                        case OperationType.GreaterThanOrEqualTo:
+                            _buffer.Add(OpCodes.GTE);
+                            break;
+                        case OperationType.LessThanOrEqualTo:
+                            _buffer.Add(OpCodes.LTE);
+                            break;
                         default:
                             throw new NotImplementedException("unknown compiled op code: " + op.operationType);
                     }

@@ -65,11 +65,22 @@ namespace DarkBasicYo.Virtual
         public const byte MUL = 3;
         public const byte DIVIDE = 4;
         public const byte SUB = 5;
+        public const byte GT = 24;
+        public const byte LT = 25;
+        public const byte GTE = 26;
+        public const byte LTE = 27;
+        public const byte EQ = 28;
+        public const byte NEQ = 29;
+        public const byte MOD = 30;
+        public const byte POWER = 31;
+        public const byte AND = 32;
+        public const byte OR = 33;
+        public const byte NOT = 34;
         
         /// <summary>
         /// A command that prints the current value of the stack
         /// </summary>
-        public const byte DBG_PRINT = 6;
+        public const byte DBG_PRINT = 100;
 
         /// <summary>
         /// the next byte in the INS is the Address, and then it expects to find a value in the stack
@@ -102,7 +113,7 @@ namespace DarkBasicYo.Virtual
         public const byte WRITE = 12;
 
         /// <summary>
-        /// Similar to PUSH, but the type code is not pushed at the end
+        /// Push a single byte onto the stack, from the INS 
         /// </summary>
         public const byte BPUSH = 13;
 

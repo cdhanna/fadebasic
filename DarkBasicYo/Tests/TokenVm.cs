@@ -191,6 +191,25 @@ y$ = ""world"" + x$
     }
 
     
+    
+    [TestCase("x = 3 > 2", 1)]
+    [TestCase("x = 3 > 4", 0)]
+    [TestCase("x = 3 > 3", 0)]
+    [TestCase("x = 3 < 3", 0)]
+    [TestCase("x = 3 < 4", 1)]
+    [TestCase("x = 3 < 2", 0)]
+    [TestCase("x = 3 >= 2", 1)]
+    [TestCase("x = 3 <= 2", 0)]
+    public void Expression_Conditionals_Literal_Ints(string src, int expected)
+    {
+        Setup(src, out _, out var prog);
+        var vm = new VirtualMachine(prog);
+        vm.Execute().MoveNext();
+        Assert.That(vm.dataRegisters[0], Is.EqualTo(expected));
+        Assert.That(vm.typeRegisters[0], Is.EqualTo(TypeCodes.INT));
+    }
+
+    
     [Test]
     public void Goto_Simple()
     {

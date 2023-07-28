@@ -141,7 +141,72 @@ namespace DarkBasicYo.Virtual
             }
         }
         
-        
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public static void GreaterThan(byte aTypeCode, byte[] a, byte[] b, out byte[] c)
+        {
+            switch (aTypeCode)
+            {
+                case TypeCodes.BYTE:
+                    byte aByte = a[0];
+                    byte bByte = b[0];
+                    byte sumByte = (byte)(aByte > bByte ? 1 : 0);
+                    c = new byte[] { sumByte };
+                    break;
+                case TypeCodes.WORD:
+                    short aShort = BitConverter.ToInt16(a, 0);
+                    short bShort = BitConverter.ToInt16(b, 0);
+                    short sumShort = (short)(aShort > bShort ? 1 : 0);
+                    c = BitConverter.GetBytes(sumShort);
+                    break;
+                case TypeCodes.INT:
+                    int aInt = BitConverter.ToInt32(a, 0);
+                    int bInt = BitConverter.ToInt32(b, 0);
+                    int sumInt = (int)(aInt > bInt ? 1 : 0);
+                    c = BitConverter.GetBytes(sumInt);
+                    break;
+                case TypeCodes.REAL:
+                    float aReal = BitConverter.ToSingle(a, 0);
+                    float bReal = BitConverter.ToSingle(b, 0);
+                    float sumReal = (bReal > aReal ? 1 : 0);
+                    c = BitConverter.GetBytes(sumReal);
+                    break;
+                default:
+                    throw new Exception("Unsupported add operation");
+            }
+        }
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public static void GreaterThanOrEqualTo(byte aTypeCode, byte[] a, byte[] b, out byte[] c)
+        {
+            switch (aTypeCode)
+            {
+                case TypeCodes.BYTE:
+                    byte aByte = a[0];
+                    byte bByte = b[0];
+                    byte sumByte = (byte)(aByte >= bByte ? 1 : 0);
+                    c = new byte[] { sumByte };
+                    break;
+                case TypeCodes.WORD:
+                    short aShort = BitConverter.ToInt16(a, 0);
+                    short bShort = BitConverter.ToInt16(b, 0);
+                    short sumShort = (short)(aShort >= bShort ? 1 : 0);
+                    c = BitConverter.GetBytes(sumShort);
+                    break;
+                case TypeCodes.INT:
+                    int aInt = BitConverter.ToInt32(a, 0);
+                    int bInt = BitConverter.ToInt32(b, 0);
+                    int sumInt = (int)(aInt >= bInt ? 1 : 0);
+                    c = BitConverter.GetBytes(sumInt);
+                    break;
+                case TypeCodes.REAL:
+                    float aReal = BitConverter.ToSingle(a, 0);
+                    float bReal = BitConverter.ToSingle(b, 0);
+                    float sumReal = (bReal >= aReal ? 1 : 0);
+                    c = BitConverter.GetBytes(sumReal);
+                    break;
+                default:
+                    throw new Exception("Unsupported add operation");
+            }
+        }
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public static void Divide(byte aTypeCode, byte[] a, byte[] b, out byte[] c)
         {
@@ -243,6 +308,10 @@ namespace DarkBasicYo.Virtual
             {
                 switch (typeCode)
                 {
+                    // case TypeCodes.BOOL:
+                    //     var boolByte = (byte)((bytes[0] > 0 || bytes[1] > 0 || bytes[2] > 0 || bytes[3] > 0) ? 1 : 0);
+                    //     bytes = new byte[] { boolByte };
+                    //     break;
                     case TypeCodes.WORD:
                         bytes = new byte[] { bytes[0], bytes[1] }; // take the last 2 parts of the int
                         break;

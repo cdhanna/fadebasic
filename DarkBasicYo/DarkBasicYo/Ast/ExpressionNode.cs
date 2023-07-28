@@ -10,13 +10,17 @@ namespace DarkBasicYo.Ast
 
     }
 
+    public enum UnaryOperationType
+    {
+        Negate,
+    }
+    
     public enum OperationType
     {
         Add,
         Subtract,
         Divide,
         Mult,
-        Negate,
         Mod,
         RaisePower,
         LessThan,
@@ -38,6 +42,13 @@ namespace DarkBasicYo.Ast
                 [LexemType.OpMultiply] = OperationType.Mult,
                 [LexemType.OpGt] = OperationType.GreaterThan,
                 [LexemType.OpLt] = OperationType.LessThan,
+                [LexemType.OpLte] = OperationType.LessThanOrEqualTo,
+                [LexemType.OpGte] = OperationType.GreaterThanOrEqualTo,
+                [LexemType.OpNotEqual] = OperationType.NotEqualTo,
+                [LexemType.OpEqual] = OperationType.EqualTo,
+                [LexemType.OpMod] = OperationType.Mod,
+                [LexemType.OpPower] = OperationType.RaisePower,
+                // [LexemType.] = OperationType.RaisePower,
             };
 
         public static OperationType Convert(Token token)
@@ -48,6 +59,17 @@ namespace DarkBasicYo.Ast
             }
 
             return opType;
+        }
+
+        public static string ToString(UnaryOperationType type)
+        {
+            switch (type)
+            {
+                case UnaryOperationType.Negate:
+                    return "neg";
+                default:
+                    throw new NotImplementedException("unknown unary operation string");
+            }
         }
 
         public static string ToString(OperationType type)
@@ -62,8 +84,6 @@ namespace DarkBasicYo.Ast
                     return "/";
                 case OperationType.Mult:
                     return "*";
-                case OperationType.Negate:
-                    return "neg";
                 case OperationType.Mod:
                     return "%";
                 case OperationType.GreaterThan:
@@ -78,7 +98,8 @@ namespace DarkBasicYo.Ast
                     return "?=";
                 case OperationType.NotEqualTo:
                     return "?!=";
-                
+                case OperationType.RaisePower:
+                    return "^";
                 default:
                     throw new NotImplementedException("no string value for " + type);
             }
@@ -98,6 +119,23 @@ namespace DarkBasicYo.Ast
                 argString = " " + argString;
             }
             return $"xcall {command.command}{argString}";
+        }
+    }
+
+    public class UnaryOperationExpression : AstNode, IExpressionNode
+    {
+        public UnaryOperationType operationType;
+        public IExpressionNode rhs;
+        public UnaryOperationExpression(UnaryOperationType op, IExpressionNode rhs, Token start, Token end)
+        {
+            startToken = start;
+            endToken = end;
+            operationType = op;
+            this.rhs = rhs;
+        }
+        protected override string GetString()
+        {
+            return $"{OperationUtil.ToString(operationType)} {rhs}";
         }
     }
 

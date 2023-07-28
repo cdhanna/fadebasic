@@ -491,6 +491,32 @@ print x";
 
     }
 
+    
+    [Test]
+    public void Tokenize_Power()
+    {
+        var input = @"a ^ 2";
+
+        var lexer = new Lexer();
+        var tokens = lexer.Tokenize(input);
+        
+        Assert.That(tokens.Count, Is.EqualTo(4));
+        
+        Assert.That(tokens[0].type, Is.EqualTo(LexemType.VariableGeneral));
+        Assert.That(tokens[0].raw, Is.EqualTo("a"));
+        
+        Assert.That(tokens[1].type, Is.EqualTo(LexemType.OpPower));
+        Assert.That(tokens[1].raw, Is.EqualTo("^"));
+        
+        
+        Assert.That(tokens[2].type, Is.EqualTo(LexemType.LiteralInt));
+        Assert.That(tokens[2].raw, Is.EqualTo("2"));
+        
+        Assert.That(tokens[3].type, Is.EqualTo(LexemType.EndStatement));
+
+    }
+
+    
     [Test]
     public void Tokenize_NumbersAndWhiteSpace()
     {

@@ -176,6 +176,26 @@ namespace DarkBasicYo.Virtual
                             VmUtil.Divide(vTypeCode, aBytes, bBytes, out cBytes);
                             VmUtil.Push(stack, cBytes, vTypeCode);
                             break;
+                        case OpCodes.GT:
+                            VmUtil.ReadTwoValues(stack, out vTypeCode, out aBytes, out bBytes);
+                            VmUtil.GreaterThan(vTypeCode, bBytes, aBytes, out cBytes);
+                            VmUtil.Push(stack, cBytes, vTypeCode);
+                            break;
+                        case OpCodes.GTE:
+                            VmUtil.ReadTwoValues(stack, out vTypeCode, out aBytes, out bBytes);
+                            VmUtil.GreaterThanOrEqualTo(vTypeCode, bBytes, aBytes, out cBytes);
+                            VmUtil.Push(stack, cBytes, vTypeCode);
+                            break;
+                        case OpCodes.LT:
+                            VmUtil.ReadTwoValues(stack, out vTypeCode, out aBytes, out bBytes);
+                            VmUtil.GreaterThan(vTypeCode, aBytes, bBytes, out cBytes);
+                            VmUtil.Push(stack, cBytes, vTypeCode);
+                            break;
+                        case OpCodes.LTE:
+                            VmUtil.ReadTwoValues(stack, out vTypeCode, out aBytes, out bBytes);
+                            VmUtil.GreaterThanOrEqualTo(vTypeCode, aBytes, bBytes, out cBytes);
+                            VmUtil.Push(stack, cBytes, vTypeCode);
+                            break;
                         // case OpCodes.SUB:
                         //     a = stack.Pop();
                         //     b = stack.Pop();
