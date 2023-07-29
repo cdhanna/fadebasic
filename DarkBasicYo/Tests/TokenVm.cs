@@ -199,13 +199,277 @@ y$ = ""world"" + x$
     [TestCase("x = 3 < 4", 1)]
     [TestCase("x = 3 < 2", 0)]
     [TestCase("x = 3 >= 2", 1)]
+    [TestCase("x = 3 >= 4", 0)]
+    [TestCase("x = 3 >= 3", 1)]
     [TestCase("x = 3 <= 2", 0)]
+    [TestCase("x = 3 <= 3", 1)]
+    [TestCase("x = 3 <= 4", 1)]
+    [TestCase("x = 3 = 4", 0)]
+    [TestCase("x = 3 = 3", 1)]
+    [TestCase("x = NOT 1", 0)]
+    [TestCase("x = NOT 0", 1)]
+    [TestCase("x = 3 <> 3", 0)]
+    [TestCase("x = 3 <> 2", 1)]
+    [TestCase("x = 3 <> 4", 1)]
+    [TestCase("x = NOT 3 > 2", 0)]
+    [TestCase("x = NOT NOT 3 > 2", 1)]
+    [TestCase("x = NOT(2*2>2+3)", 1)]
+    [TestCase("x = 3>2 AND 3>1", 1)]
+    [TestCase("x = 3>2 AND 3>5", 0)]
+    [TestCase("x = 3>2 AND NOT 3>5", 1)]
+    [TestCase("x = NOT 3>2 AND 0", 0)]
+    [TestCase("x = NOT (3>2 AND 0)", 1)]
+    [TestCase("x = NOT 3>2 AND 1", 0)]
+    [TestCase("x = NOT (3>2 AND 1)", 0)]
+    [TestCase("x = (NOT 3>2) AND 1", 0)]
+    [TestCase("x = NOT (NOT 1 AND 0)", 1)]
+    [TestCase("x = NOT (NOT 3>2 AND 3>5)", 1)]
+    [TestCase("x = (NOT 3>2) OR 1", 1)]
     public void Expression_Conditionals_Literal_Ints(string src, int expected)
     {
         Setup(src, out _, out var prog);
         var vm = new VirtualMachine(prog);
         vm.Execute().MoveNext();
         Assert.That(vm.dataRegisters[0], Is.EqualTo(expected));
+        Assert.That(vm.typeRegisters[0], Is.EqualTo(TypeCodes.INT));
+    }
+
+    [TestCase("x# = 3 > 2", 1)]
+    [TestCase("x# = 3 > 4", 0)]
+    [TestCase("x# = 3 > 3", 0)]
+    [TestCase("x# = 3 < 3", 0)]
+    [TestCase("x# = 3 < 4", 1)]
+    [TestCase("x# = 3 < 2", 0)]
+    [TestCase("x# = 3 >= 2", 1)]
+    [TestCase("x# = 3 >= 4", 0)]
+    [TestCase("x# = 3 >= 3", 1)]
+    [TestCase("x# = 3 <= 2", 0)]
+    [TestCase("x# = 3 <= 3", 1)]
+    [TestCase("x# = 3 <= 4", 1)]
+    [TestCase("x# = 3 = 4", 0)]
+    [TestCase("x# = 3 = 3", 1)]
+    [TestCase("x# = NOT 1", 0)]
+    [TestCase("x# = NOT 0", 1)]
+    [TestCase("x# = 3 <> 3", 0)]
+    [TestCase("x# = 3 <> 2", 1)]
+    [TestCase("x# = 3 <> 4", 1)]
+    [TestCase("x# = NOT 3 > 2", 0)]
+    [TestCase("x# = NOT NOT 3 > 2", 1)]
+    [TestCase("x# = NOT(2*2>2+3)", 1)]
+    public void Expression_Conditionals_Literal_Floats(string src, int expected)
+    {
+        Setup(src, out _, out var prog);
+        var vm = new VirtualMachine(prog);
+        vm.Execute().MoveNext();
+        var outputRegisterValue = vm.dataRegisters[0];
+        var outputRegisterBytes = BitConverter.GetBytes(outputRegisterValue);
+        float output = BitConverter.ToSingle(outputRegisterBytes, 0);
+        
+        Assert.That(output, Is.EqualTo(expected));
+        Assert.That(vm.typeRegisters[0], Is.EqualTo(TypeCodes.REAL));
+    }
+    
+    
+    
+    [Test]
+    public void IfStatement_Simple()
+    {
+        var src = @"
+x = 0
+IF 1
+x = 1
+ENDIF
+";
+        Setup(src, out _, out var prog);
+        
+        var vm = new VirtualMachine(prog);
+        vm.Execute().MoveNext();
+        
+        Assert.That(vm.dataRegisters[0], Is.EqualTo(1)); 
+        Assert.That(vm.typeRegisters[0], Is.EqualTo(TypeCodes.INT));
+    }
+
+    
+    [Test]
+    public void IfStatement_Simple_NoEntrance()
+    {
+        var src = @"
+x = 1
+IF 0
+x = 0
+ENDIF
+";
+        Setup(src, out _, out var prog);
+        
+        var vm = new VirtualMachine(prog);
+        vm.Execute().MoveNext();
+        
+        Assert.That(vm.dataRegisters[0], Is.EqualTo(1)); 
+        Assert.That(vm.typeRegisters[0], Is.EqualTo(TypeCodes.INT));
+    }
+
+    
+    [Test]
+    public void IfStatement_ConditionalExpression()
+    {
+        var src = @"
+x = 1
+IF x = 1
+x = 2
+ENDIF
+";
+        Setup(src, out _, out var prog);
+        
+        var vm = new VirtualMachine(prog);
+        vm.Execute().MoveNext();
+        
+        Assert.That(vm.dataRegisters[0], Is.EqualTo(2)); 
+        Assert.That(vm.typeRegisters[0], Is.EqualTo(TypeCodes.INT));
+    }
+
+    [Test]
+    public void IfStatement_ConditionalExpression2()
+    {
+        var src = @"
+x = 1
+IF x = 1 AND 2 > 3
+x = 2
+ENDIF
+";
+        Setup(src, out _, out var prog);
+        
+        var vm = new VirtualMachine(prog);
+        vm.Execute().MoveNext();
+        
+        Assert.That(vm.dataRegisters[0], Is.EqualTo(1)); 
+        Assert.That(vm.typeRegisters[0], Is.EqualTo(TypeCodes.INT));
+    }
+
+    
+    
+    [Test]
+    public void IfStatement_Else()
+    {
+        var src = @"
+x = 1
+IF x > 1
+    x = 2
+ELSE
+    x = 3
+ENDIF
+";
+        Setup(src, out _, out var prog);
+        
+        var vm = new VirtualMachine(prog);
+        vm.Execute().MoveNext();
+        
+        Assert.That(vm.dataRegisters[0], Is.EqualTo(3)); 
+        Assert.That(vm.typeRegisters[0], Is.EqualTo(TypeCodes.INT));
+    }
+
+    
+    [Test]
+    public void IfStatement_ElseEmpty()
+    {
+        var src = @"
+x = 1
+IF x > 1
+    x = 2
+ELSE
+ENDIF
+";
+        Setup(src, out _, out var prog);
+        
+        var vm = new VirtualMachine(prog);
+        vm.Execute().MoveNext();
+        
+        Assert.That(vm.dataRegisters[0], Is.EqualTo(1)); 
+        Assert.That(vm.typeRegisters[0], Is.EqualTo(TypeCodes.INT));
+    }
+
+    [Test]
+    public void IfStatement_EmptyIf()
+    {
+        var src = @"
+x = 1
+IF x > 1
+ELSE
+    x = 2
+ENDIF
+";
+        Setup(src, out _, out var prog);
+        
+        var vm = new VirtualMachine(prog);
+        vm.Execute().MoveNext();
+        
+        Assert.That(vm.dataRegisters[0], Is.EqualTo(2)); 
+        Assert.That(vm.typeRegisters[0], Is.EqualTo(TypeCodes.INT));
+    }
+
+    
+    [Test]
+    public void IfStatement_NoFallThrough()
+    {
+        var src = @"
+x = 1
+IF x = 1
+    x = 2
+ELSE
+    x = 3
+ENDIF
+";
+        Setup(src, out _, out var prog);
+        
+        var vm = new VirtualMachine(prog);
+        vm.Execute().MoveNext();
+        
+        Assert.That(vm.dataRegisters[0], Is.EqualTo(2)); 
+        Assert.That(vm.typeRegisters[0], Is.EqualTo(TypeCodes.INT));
+    }
+    
+    
+    [Test]
+    public void IfStatement_OneLinger()
+    {
+        var src = @"
+x = 1
+IF x = 1 THEN x = 2
+";
+        Setup(src, out _, out var prog);
+        
+        var vm = new VirtualMachine(prog);
+        vm.Execute().MoveNext();
+        
+        Assert.That(vm.dataRegisters[0], Is.EqualTo(2)); 
+        Assert.That(vm.typeRegisters[0], Is.EqualTo(TypeCodes.INT));
+    }
+
+    
+    [Test]
+    public void IfStatement_Nested()
+    {
+        var src = @"
+x = 1
+y = 0
+IF x = 1
+    x = 2
+    IF x > 1
+        x = 3
+        y = y + 1
+    ENDIF
+    IF x > 1
+        x = 4
+        y = y + 1
+    ENDIF
+ENDIF
+";
+        Setup(src, out _, out var prog);
+        
+        var vm = new VirtualMachine(prog);
+        vm.Execute().MoveNext();
+        
+        Assert.That(vm.dataRegisters[0], Is.EqualTo(4)); 
+        Assert.That(vm.dataRegisters[1], Is.EqualTo(2)); 
         Assert.That(vm.typeRegisters[0], Is.EqualTo(TypeCodes.INT));
     }
 

@@ -112,6 +112,14 @@ namespace DarkBasicYo.Virtual
                             VmUtil.ReadAsInt(stack, out insPtr);
                             instructionIndex = insPtr;
                             break;
+                        case OpCodes.JUMP_GT_ZERO:
+                            VmUtil.ReadAsInt(stack, out insPtr);
+                            VmUtil.ReadAsInt(stack, out var jumpValue);
+                            if (jumpValue > 0)
+                            {
+                                instructionIndex = insPtr;
+                            }
+                            break;
                         case OpCodes.JUMP_HISTORY:
                             // the next instruction is the instruction ptr
                             VmUtil.ReadAsInt(stack, out insPtr);
@@ -161,6 +169,11 @@ namespace DarkBasicYo.Virtual
                             }
                             
                             break;
+                        case OpCodes.NOT:
+                            VmUtil.Read(stack, out typeCode, out aBytes);
+                            VmUtil.Not(typeCode, aBytes, out cBytes);
+                            VmUtil.Push(stack, cBytes, typeCode);
+                            break;
                         case OpCodes.ADD:
                             VmUtil.ReadTwoValues(stack, out vTypeCode, out aBytes, out bBytes);
                             VmUtil.Add(heap, vTypeCode, aBytes, bBytes, out cBytes);
@@ -194,6 +207,11 @@ namespace DarkBasicYo.Virtual
                         case OpCodes.LTE:
                             VmUtil.ReadTwoValues(stack, out vTypeCode, out aBytes, out bBytes);
                             VmUtil.GreaterThanOrEqualTo(vTypeCode, aBytes, bBytes, out cBytes);
+                            VmUtil.Push(stack, cBytes, vTypeCode);
+                            break;
+                        case OpCodes.EQ:
+                            VmUtil.ReadTwoValues(stack, out vTypeCode, out aBytes, out bBytes);
+                            VmUtil.EqualTo(vTypeCode, aBytes, bBytes, out cBytes);
                             VmUtil.Push(stack, cBytes, vTypeCode);
                             break;
                         // case OpCodes.SUB:

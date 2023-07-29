@@ -141,6 +141,38 @@ namespace DarkBasicYo.Virtual
             }
         }
         
+        
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public static void Not(byte aTypeCode, byte[] a, out byte[] c)
+        {
+            switch (aTypeCode)
+            {
+                case TypeCodes.BYTE:
+                    byte aByte = a[0];
+                    byte sumByte = (byte)(aByte > 0 ? 0 : 1);
+                    c = new byte[] { sumByte };
+                    break;
+                case TypeCodes.WORD:
+                    short aShort = BitConverter.ToInt16(a, 0);
+                    short sumShort = (short)(aShort >0 ? 0 : 1);
+                    c = BitConverter.GetBytes(sumShort);
+                    break;
+                case TypeCodes.INT:
+                    int aInt = BitConverter.ToInt32(a, 0);
+                    int sumInt = (int)(aInt > 0 ? 0 : 1);
+                    c = BitConverter.GetBytes(sumInt);
+                    break;
+                case TypeCodes.REAL:
+                    float aReal = BitConverter.ToSingle(a, 0);
+                    float sumReal = (aReal > 0 ? 0 : 1);
+                    c = BitConverter.GetBytes(sumReal);
+                    break;
+                default:
+                    throw new Exception("Unsupported not operation");
+            }
+        }
+
+        
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public static void GreaterThan(byte aTypeCode, byte[] a, byte[] b, out byte[] c)
         {
@@ -207,6 +239,39 @@ namespace DarkBasicYo.Virtual
                     throw new Exception("Unsupported add operation");
             }
         }
+        
+        
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public static void EqualTo(byte aTypeCode, byte[] a, byte[] b, out byte[] c)
+        {
+            switch (aTypeCode)
+            {
+                case TypeCodes.BYTE:
+                case TypeCodes.WORD:
+                case TypeCodes.INT:
+                    var equal = 1;
+                    for (var i = 0; i < a.Length; i++)
+                    {
+                        if (a[i] != b[i])
+                        {
+                            equal = 0;
+                            break;
+                        }
+                    }
+                    c = BitConverter.GetBytes(equal);
+                    break;
+                case TypeCodes.REAL:
+                    float aReal = BitConverter.ToSingle(a, 0);
+                    float bReal = BitConverter.ToSingle(b, 0);
+                    float sumReal = ((Math.Abs(bReal - aReal) <= float.Epsilon) ? 1 : 0);
+                    c = BitConverter.GetBytes(sumReal);
+                    break;
+                default:
+                    throw new Exception("Unsupported add operation");
+            }
+        }
+
+        
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public static void Divide(byte aTypeCode, byte[] a, byte[] b, out byte[] c)
         {

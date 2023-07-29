@@ -65,8 +65,19 @@ public class ExpressionTests
     [TestCase("a ^ b", "(^ (ref a),(ref b))")]
     [TestCase("-a", "(neg (ref a))")]
     [TestCase("b - -a", "(- (ref b),(neg (ref a)))")]
+    [TestCase("3 AND 2", "(and (3),(2))")]
+    [TestCase("3 AND 2+1", "(and (3),(+ (2),(1)))")]
+    [TestCase("(3 AND 2)+1", "(+ (and (3),(2)),(1))")]
+    [TestCase("NOT 4 AND 3", "(and (! (4)),(3))")]
+    [TestCase("NOT (4 AND 3)", "(! (and (4),(3)))")]
+    [TestCase("NOT 3>2 AND 3", "(and (! (?> (3),(2))),(3))")]
+    [TestCase("NOT (3>2 AND 3)", "(! (and (?> (3),(2)),(3)))")]
+    [TestCase("NOT 3 AND NOT 2 AND 1", "(and (! (3)),(and (! (2)),(1)))")]
+    [TestCase("NOT (NOT 3>2 AND 3>5)", "(! (and (! (?> (3),(2))),(?> (3),(5))))")]
+    [TestCase("NOT 3>2 AND 0", "(and (! (?> (3),(2))),(0))")]
     public void GeneralExpression(string src, string expected)
     {
+        
         var parser = BuildParser(src, out _);
         var expr = parser.ParseWikiExpression();
         var str = expr.ToString();

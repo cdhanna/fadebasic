@@ -110,7 +110,7 @@ print x";
         
         Assert.That(prog.statements.Count, Is.EqualTo(1));
         var code = prog.ToString();
-        Assert.That(code, Is.EqualTo("((= (ref x),(add (1),(xcall add (2),(3)))))"));
+        Assert.That(code, Is.EqualTo("((= (ref x),(+ (1),(xcall add (2),(3)))))"));
     }
 
 
@@ -126,7 +126,7 @@ x = x - 1
         
         Assert.That(prog.statements.Count, Is.EqualTo(1));
         var code = prog.ToString();
-        Assert.That(code, Is.EqualTo("((= (ref x),(subtract (ref x),(1))))"));
+        Assert.That(code, Is.EqualTo("((= (ref x),(- (ref x),(1))))"));
     }
     
     
@@ -141,7 +141,7 @@ x = 1 + 2 > 3
         
         Assert.That(prog.statements.Count, Is.EqualTo(1));
         var code = prog.ToString();
-        Assert.That(code, Is.EqualTo("((= (ref x),(greaterthan (add (1),(2)),(3))))"));
+        Assert.That(code, Is.EqualTo("((= (ref x),(?> (+ (1),(2)),(3))))"));
     }
 
     [Test]
@@ -181,7 +181,7 @@ endwhile
         Assert.That(prog.statements.Count, Is.EqualTo(2));
         var code = prog.ToString();
         Console.WriteLine(code);
-        Assert.That(code, Is.EqualTo("((= (ref x),(5)),(while (greaterthan (ref x),(1)) (call print (ref x)),(= (ref x),(subtract (ref x),(1)))))"));
+        Assert.That(code, Is.EqualTo("((= (ref x),(5)),(while (?> (ref x),(1)) (call print (ref x)),(= (ref x),(- (ref x),(1)))))"));
     }
 
     
@@ -304,7 +304,7 @@ dim x(y,y*2)";
         Assert.That(prog.statements.Count, Is.EqualTo(2));
         var code = prog.ToString();
         Console.WriteLine(code);
-        Assert.That(code, Is.EqualTo("((= (ref y),(3)),(dim global,x,(integer),((ref y),(mult (ref y),(2)))))"));
+        Assert.That(code, Is.EqualTo("((= (ref y),(3)),(dim global,x,(integer),((ref y),(* (ref y),(2)))))"));
     }
     
     
@@ -496,6 +496,189 @@ endtype
     
     
     [Test]
+    public void IfStatement_Then()
+    {
+        var input = @"
+IF 3 THEN x = 1
+";
+        var parser = MakeParser(input);
+        var prog = parser.ParseProgram();
+        
+        Assert.That(prog.statements.Count, Is.EqualTo(1));
+        var code = prog.ToString();
+        Console.WriteLine(code);
+        Assert.That(code, Is.EqualTo(@"(
+(if (3) ((= (ref x),(1))))
+)".ReplaceLineEndings("")));
+    }
+
+    
+    [Test]
+    public void IfStatement_Then_WithNextStatement()
+    {
+        var input = @"
+IF 3 THEN x = 1
+x = 2
+";
+        var parser = MakeParser(input);
+        var prog = parser.ParseProgram();
+        
+        Assert.That(prog.statements.Count, Is.EqualTo(2));
+        var code = prog.ToString();
+        Console.WriteLine(code);
+        Assert.That(code, Is.EqualTo(@"(
+(if (3) ((= (ref x),(1)))),
+(= (ref x),(2))
+)".ReplaceLineEndings("")));
+    }
+
+    
+    [Test]
+    public void Assign()
+    {
+        var input = @"
+x = 2
+";
+        var parser = MakeParser(input);
+        var prog = parser.ParseProgram();
+        
+        Assert.That(prog.statements.Count, Is.EqualTo(1));
+        var code = prog.ToString();
+        Console.WriteLine(code);
+        Assert.That(code, Is.EqualTo(@"(
+(= (ref x),(2))
+)".ReplaceLineEndings("")));
+    }
+    
+    
+    
+    [Test]
+    public void OtherIfStatement_Easy()
+    {
+        var input = @"
+IF 3 THEN x = 1: x = 2 ELSE x = 3
+";
+        var parser = MakeParser(input);
+        var prog = parser.ParseProgram();
+        
+        Assert.That(prog.statements.Count, Is.EqualTo(1));
+        var code = prog.ToString();
+        Console.WriteLine(code);
+        Assert.That(code, Is.EqualTo(@"(
+(if (3) ((= (ref x),(1)),(= (ref x),(2))) ((= (ref x),(3)))
+)".ReplaceLineEndings("")));
+    }
+
+    
+    [Test]
+    public void IfStatement_Else()
+    {
+        var input = @"
+IF 3
+    x = 1
+ELSE 
+    x = 2
+ENDIF
+";
+        var parser = MakeParser(input);
+        var prog = parser.ParseProgram();
+        
+        Assert.That(prog.statements.Count, Is.EqualTo(1));
+        var code = prog.ToString();
+        Console.WriteLine(code);
+        Assert.That(code, Is.EqualTo(@"(
+(if (3) ((= (ref x),(1))) ((= (ref x),(2)))
+)".ReplaceLineEndings("")));
+    }
+
+
+    
+    [Test]
+    public void IfStatement_Easy()
+    {
+        var input = @"
+IF 3
+    x = 1
+ENDIF
+";
+        var parser = MakeParser(input);
+        var prog = parser.ParseProgram();
+        
+        Assert.That(prog.statements.Count, Is.EqualTo(1));
+        var code = prog.ToString();
+        Console.WriteLine(code);
+        Assert.That(code, Is.EqualTo(@"(
+(if (3) ((= (ref x),(1))))
+)".ReplaceLineEndings("")));
+    }
+    
+    
+    [Test]
+    public void IfStatement_Nested()
+    {
+        var input = @"
+IF 3
+    x = 1
+    IF 4
+        x = 2
+    ENDIF
+ENDIF
+";
+        var parser = MakeParser(input);
+        var prog = parser.ParseProgram();
+        
+        Assert.That(prog.statements.Count, Is.EqualTo(1));
+        var code = prog.ToString();
+        Console.WriteLine(code);
+        Assert.That(code, Is.EqualTo(@"(
+(if (3) ((= (ref x),(1)),(if (4) ((= (ref x),(2))))))
+)".ReplaceLineEndings("")));
+    }
+
+    
+    [Test]
+    public void IfStatement_MultiStatements()
+    {
+        var input = @"
+IF 3
+    x = 1
+    x = 2
+ENDIF
+";
+        var parser = MakeParser(input);
+        var prog = parser.ParseProgram();
+        
+        Assert.That(prog.statements.Count, Is.EqualTo(1));
+        var code = prog.ToString();
+        Console.WriteLine(code);
+        Assert.That(code, Is.EqualTo(@"(
+(if (3) ((= (ref x),(1)),(= (ref x),(2))))
+)".ReplaceLineEndings("")));
+    }
+
+    
+    [Test]
+    public void IfStatement_Conditional()
+    {
+        var input = @"
+IF a+b>10 AND c
+    x = 1
+ENDIF
+";
+        var parser = MakeParser(input);
+        var prog = parser.ParseProgram();
+        
+        Assert.That(prog.statements.Count, Is.EqualTo(1));
+        var code = prog.ToString();
+        Console.WriteLine(code);
+        Assert.That(code, Is.EqualTo(@"(
+(if (and (?> (+ (ref a),(ref b)),(10)),(ref c)) ((= (ref x),(1))))
+)".ReplaceLineEndings("")));
+    }
+
+    
+    
+    [Test]
     public void AssignmentWithCommandAndField()
     {
         var input = @"
@@ -507,7 +690,7 @@ x = a.b + len a.c
         var code = prog.ToString();
         Console.WriteLine(code);
         Assert.That(code, Is.EqualTo(@"(
-(= (ref x),(add ((ref a).(ref b)),(xcall len ((ref a).(ref c)))))
+(= (ref x),(+ ((ref a).(ref b)),(xcall len ((ref a).(ref c)))))
 )".ReplaceLineEndings("")));
     }
 
@@ -539,7 +722,7 @@ x = a.b + len a.c
 
         var assignment = prog.statements[0] as AssignmentStatement;
         var code = prog.ToString();
-        Assert.That(code, Is.EqualTo("((= (ref x),(add (1),(2))))"));
+        Assert.That(code, Is.EqualTo("((= (ref x),(+ (1),(2))))"));
     }
     
     [Test]
@@ -588,6 +771,7 @@ x = a.b + len a.c
         var code = prog.ToString();
         Assert.That(code, Is.EqualTo("((decl local,x,(integer)))"));
     }
+    
     
     
     [Test]

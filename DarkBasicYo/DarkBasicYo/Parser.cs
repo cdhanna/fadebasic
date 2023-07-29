@@ -311,33 +311,6 @@ namespace DarkBasicYo
 
         private IStatementNode ParseStatement()
         {
-            /*
-             * Valid:
-             * -----
-             * 
-             * x = 3
-             * x as byte
-             * local x as byte
-             * global x as byte
-             * dim x(3)
-             * dim x(3) as byte
-             * local dim x(3) as byte
-             * global dim x(3) as byte
-             * local dim x(3)
-             * global dim x(3)
-             * x(3) = 2
-             * x.y = 2
-             *
-             * Invalid:
-             * -------
-             *
-             * local x = 3
-             * dim x(3) = 1
-             * local x.y = 1
-             * dim local
-             */
-            
-            
             IStatementNode Inner()
             {
                 
@@ -345,6 +318,9 @@ namespace DarkBasicYo
                 IStatementNode subStatement = null;
                 switch (token.type)
                 {
+                    
+                    case LexemType.KeywordIf:
+                        return ParseIfStatement(token);
                     case LexemType.KeywordWhile:
 
                         // parse the condition expression...
@@ -464,10 +440,73 @@ namespace DarkBasicYo
             }
 
             var result = Inner();
-            _stream.Advance(); // ignore the end statement.
+            //
+            // if (_stream.IsEof)
+            // {
+            //     return result;
+            // }
+          
+            if (_stream.Peek.type == LexemType.EndStatement)
+            {
+                _stream.Advance(); // ignore the end statement.
+
+            }
+            
             return result;
         }
 
+        private IfStatement ParseIfStatement(Token ifToken)
+        {
+            // the next term is an expression.
+            var condition = ParseWikiExpression();
+            
+            // and then there is a split
+            var next = _stream.Advance();
+            var positiveStatements = new List<IStatementNode>();
+            var negativeStatements = new List<IStatementNode>();
+            var statements = positiveStatements;
+            switch (next.type)
+            {
+                case LexemType.KeywordThen:
+                    
+                    // there is ONE statement...
+                    var statement = ParseStatement();
+                    return new IfStatement(ifToken, _stream.Current, condition, new List<IStatementNode> { statement });
+                    
+                default:
+
+                    var looking = true;
+                    while (looking)
+                    {
+                        var nextToken = _stream.Peek;
+                        switch (nextToken.type)
+                        {
+                            case LexemType.EOF:
+                                throw new ParserException("Hit end of file without a closing type statement", nextToken);
+                            case LexemType.EndStatement:
+                                _stream.Advance();
+                                break;
+                            case LexemType.KeywordEndIf:
+                                _stream.Advance();
+                                looking = false;
+                                break;
+                            case LexemType.KeywordElse:
+                                _stream.Advance(); // skip else block
+                                statements = negativeStatements;
+                                break;
+                            default:
+                                var member = ParseStatement();
+                                statements.Add(member);
+                                break; 
+                        }
+                    }
+
+                    return new IfStatement(ifToken, _stream.Current, condition, positiveStatements, negativeStatements);
+                    
+            }
+
+        }
+        
         private GotoStatement ParseGoto(Token gotoToken)
         {
             var next = _stream.Advance();
@@ -633,6 +672,8 @@ namespace DarkBasicYo
                 case LexemType.OpMultiply:
                 case LexemType.OpEqual:
                 case LexemType.OpNotEqual:
+                case LexemType.KeywordAnd:
+                case LexemType.KeywordOr:
                     return true;
                 default:
                     throw new ParserException("Invalid lexem type for op assoc", token);
@@ -655,6 +696,8 @@ namespace DarkBasicYo
                 case LexemType.OpNotEqual:
                 case LexemType.OpPower:
                 case LexemType.OpMod:
+                case LexemType.KeywordAnd:
+                case LexemType.KeywordOr:
                     return true;
                 default:
                     return false;
@@ -748,6 +791,30 @@ namespace DarkBasicYo
                 case LexemType.OpMinus:
                     var negateExpr = ParseWikiExpression();
                     return new UnaryOperationExpression(UnaryOperationType.Negate, negateExpr, token, _stream.Current);
+                case LexemType.KeywordNot:
+
+                    var peek = _stream.Peek;
+                    var notExpr = ParseWikiExpression();
+                    if (peek.type != LexemType.ParenOpen)
+                    {
+                        // if the not expression is a binary op, and it has a right side with a higher op...
+                        switch (notExpr)
+                        {
+                            case BinaryOperandExpression binOp:
+                                if (binOp.operationType == OperationType.And || binOp.operationType == OperationType.Or)
+                                {
+                                    // ah, then we should flip-arro
+                                    var oldLhs = binOp.lhs;
+                                    binOp.lhs = new UnaryOperationExpression(UnaryOperationType.Not, oldLhs, token,
+                                        _stream.Current);
+                                    return binOp;
+                                }
+
+                                break;
+                        }
+                    }
+
+                    return new UnaryOperationExpression(UnaryOperationType.Not, notExpr, token, _stream.Current);
                 default:
                     throw new ParserException("Cannot match single, " + token.type, token);
             }

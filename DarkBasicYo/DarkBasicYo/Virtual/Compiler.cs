@@ -193,12 +193,91 @@ namespace DarkBasicYo.Virtual
                 case EndProgramStatement endProgramStatement:
                     Compile(endProgramStatement);
                     break;
+                case IfStatement ifStatement:
+                    Compile(ifStatement);
+                    break;
                 default:
-                    throw new Exception("compiler exception: unhandled statement node");
+                    throw new Exception("compiler exception: unhandled statement node " + statement);
             }
         }
 
-        public void Compile(LabelDeclarationNode labelStatement)
+        private void Compile(IfStatement ifStatement)
+        {
+            /*
+             * <condition value>
+             * PUSH addr of Success:
+             * JUMP_GT_ZERO
+             * PUSH addr of Else
+             * JUMP
+             * Success:
+             *  positive-if-statements
+             *  JUMP Final:
+             * Else:
+             *  else-if-statements
+             * Final:
+             */
+            
+            // first, compile the evaluation of the condition
+            Compile(ifStatement.condition);
+            
+            // cast the expression to an int
+            _buffer.Add(OpCodes.CAST);
+            _buffer.Add(TypeCodes.INT);
+            
+            // then, put a fake value in for the if-statement success jump... We'll fix it later.
+            var successJumpIndex = _buffer.Count;
+            AddPushInt(_buffer, int.MaxValue);
+            
+            // then, do the jump-gt-zero
+            _buffer.Add(OpCodes.JUMP_GT_ZERO);
+            
+            // if we didn't jump, then we need to load up the ELSE block
+            var elseJumpIndex = _buffer.Count;
+            AddPushInt(_buffer, int.MaxValue);
+
+            // and then jump to the else block
+            _buffer.Add(OpCodes.JUMP);
+
+            // now it is time to start compiling the actual statements...
+            
+            // keep track of the first index of the success
+            var successJumpValue = _buffer.Count;
+
+            foreach (var successStatement in ifStatement.positiveStatements)
+            {
+                Compile(successStatement);
+            }
+
+            // at the end of the successful statements, we need to jump to the end
+            var endJumpIndex = _buffer.Count;
+            AddPushInt(_buffer, int.MaxValue);
+            _buffer.Add(OpCodes.JUMP);
+
+            // this is where the else statements begin
+            var elseJumpValue = _buffer.Count;
+            _buffer.Add(OpCodes.NOOP);
+            foreach (var elseStatement in ifStatement.negativeStatements)
+            {
+                Compile(elseStatement);
+            }
+
+            var endJumpValue = _buffer.Count;
+            _buffer.Add(OpCodes.NOOP);
+            
+            // now go back and fill in the success ptr
+            var successJumpBytes = BitConverter.GetBytes(successJumpValue);
+            var elseJumpBytes = BitConverter.GetBytes(elseJumpValue);
+            var endJumpBytes = BitConverter.GetBytes(endJumpValue);
+            for (var i = 0; i < successJumpBytes.Length; i++)
+            {
+                // offset by 2, because of the opcode, and the type code
+                _buffer[successJumpIndex + 2 + i] = successJumpBytes[(successJumpBytes.Length -1) - i];
+                _buffer[elseJumpIndex + 2 + i] = elseJumpBytes[(successJumpBytes.Length -1) - i];
+                _buffer[endJumpIndex + 2 + i] = endJumpBytes[(successJumpBytes.Length -1) - i];
+            }
+        }
+        
+        private void Compile(LabelDeclarationNode labelStatement)
         {
             // take note of instruction number... 
             _labelToInstructionIndex[labelStatement.label] = _buffer.Count;
@@ -954,6 +1033,18 @@ namespace DarkBasicYo.Virtual
                     _buffer.Add(compiledVar.registerAddress);
                     
                     break;
+                case UnaryOperationExpression unary:
+                    Compile(unary.rhs);
+                    switch (unary.operationType)
+                    {
+                        case UnaryOperationType.Not:
+                            _buffer.Add(OpCodes.NOT);
+                            break;
+                        default:
+                            throw new Exception("Compiler: unsupported unary operaton " + unary.operationType);
+                    }
+
+                    break;
                 case BinaryOperandExpression op:
                     
                     // TODO: At this point, we could decide _which_ add/mul method to call given the type.
@@ -984,6 +1075,25 @@ namespace DarkBasicYo.Virtual
                             break;
                         case OperationType.LessThanOrEqualTo:
                             _buffer.Add(OpCodes.LTE);
+                            break;
+                        case OperationType.EqualTo:
+                            _buffer.Add(OpCodes.EQ);
+                            break;
+                        case OperationType.NotEqualTo:
+                            _buffer.Add(OpCodes.EQ);
+                            _buffer.Add(OpCodes.NOT);
+                            break;
+                        case OperationType.And:
+                            _buffer.Add(OpCodes.MUL);
+                            // push '1' onto the stack
+                            AddPushInt(_buffer, 1);
+                            _buffer.Add(OpCodes.GTE);
+                            break;
+                        case OperationType.Or:
+                            _buffer.Add(OpCodes.ADD);
+                            // push '1' onto the stack
+                            AddPushInt(_buffer, 1);
+                            _buffer.Add(OpCodes.GTE);
                             break;
                         default:
                             throw new NotImplementedException("unknown compiled op code: " + op.operationType);

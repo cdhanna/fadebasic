@@ -167,5 +167,11 @@ namespace DarkBasicYo.Virtual
         /// </summary>
         public const byte RETURN = 23;
 
+        /// <summary>
+        /// pops an address, then pops a value. If the value is greater than zero, then the Instruction
+        /// pointer is set to the address; otherwise nothing happens
+        /// </summary>
+        public const byte JUMP_GT_ZERO = 35;
+
     }
 }

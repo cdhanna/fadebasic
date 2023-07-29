@@ -138,6 +138,36 @@ namespace DarkBasicYo.Ast
         }
     }
 
+    public class IfStatement : AstNode, IStatementNode
+    {
+        public IExpressionNode condition;
+        public List<IStatementNode> positiveStatements;
+        public List<IStatementNode> negativeStatements;
+        public IfStatement(Token start, Token end, IExpressionNode condition, List<IStatementNode> positiveStatements, List<IStatementNode> negativeStatements) : base(start, end)
+        {
+            this.condition = condition;
+            this.positiveStatements = positiveStatements;
+            this.negativeStatements = negativeStatements;
+        }
+        public IfStatement(Token start, Token end, IExpressionNode condition, List<IStatementNode> positiveStatements) : base(start, end)
+        {
+            this.condition = condition;
+            this.positiveStatements = positiveStatements;
+            this.negativeStatements = new List<IStatementNode>();
+        }
+        
+        protected override string GetString()
+        {
+            var negativeStr = "";
+            if (negativeStatements.Count > 0)
+            {
+                negativeStr = $" ({string.Join(",", negativeStatements)}";
+            }
+            
+            return $"if {condition} ({string.Join(",", positiveStatements)}){negativeStr}";
+        }
+    }
+
     public class EndWhileStatement : AstNode, IStatementNode
     {
         public EndWhileStatement(Token token) : base(token)

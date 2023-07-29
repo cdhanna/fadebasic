@@ -96,7 +96,7 @@ namespace DarkBasicYo
 
         public static List<Lexem> Lexems = new List<Lexem>
         {
-            new Lexem(LexemType.EndStatement, new Regex("^;")),
+            new Lexem(LexemType.EndStatement, new Regex("^:")),
             new Lexem(LexemType.ArgSplitter, new Regex("^,")),
             new Lexem(LexemType.FieldSplitter, new Regex("^\\.")),
             

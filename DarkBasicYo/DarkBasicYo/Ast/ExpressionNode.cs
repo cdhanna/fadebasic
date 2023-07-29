@@ -13,6 +13,7 @@ namespace DarkBasicYo.Ast
     public enum UnaryOperationType
     {
         Negate,
+        Not
     }
     
     public enum OperationType
@@ -29,6 +30,8 @@ namespace DarkBasicYo.Ast
         GreaterThanOrEqualTo,
         EqualTo,
         NotEqualTo,
+        And,
+        Or
     }
 
     public static class OperationUtil
@@ -48,7 +51,8 @@ namespace DarkBasicYo.Ast
                 [LexemType.OpEqual] = OperationType.EqualTo,
                 [LexemType.OpMod] = OperationType.Mod,
                 [LexemType.OpPower] = OperationType.RaisePower,
-                // [LexemType.] = OperationType.RaisePower,
+                [LexemType.KeywordAnd] = OperationType.And,
+                [LexemType.KeywordOr] = OperationType.Or,
             };
 
         public static OperationType Convert(Token token)
@@ -67,6 +71,8 @@ namespace DarkBasicYo.Ast
             {
                 case UnaryOperationType.Negate:
                     return "neg";
+                case UnaryOperationType.Not:
+                    return "!";
                 default:
                     throw new NotImplementedException("unknown unary operation string");
             }
@@ -100,6 +106,10 @@ namespace DarkBasicYo.Ast
                     return "?!=";
                 case OperationType.RaisePower:
                     return "^";
+                case OperationType.And:
+                    return "and";
+                case OperationType.Or:
+                    return "or";
                 default:
                     throw new NotImplementedException("no string value for " + type);
             }
