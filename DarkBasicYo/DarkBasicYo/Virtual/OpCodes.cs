@@ -62,10 +62,10 @@ namespace DarkBasicYo.Virtual
         /// Expects to find two values in the stack 
         /// </summary>
         public const byte ADD = 2;
-        public const byte ADD2 = 200;
+        public const byte ADD2 = 52;
         public const byte MUL = 3;
-        public const byte MUL2 = 201;
         public const byte DIVIDE = 4;
+        public const byte BREAKPOINT = 255;
         public const byte ABS = 5;
         public const byte GT = 24;
         public const byte LT = 25;

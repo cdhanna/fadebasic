@@ -73,6 +73,7 @@ namespace DarkBasicYo.Virtual
             };
         }
 
+        public static int jc = 0;
         public void Execute2(int instructionBatchCount=1000)
         {
             // while (true)
@@ -125,6 +126,7 @@ namespace DarkBasicYo.Virtual
                             VmUtil.ReadAsInt(stack, out var jumpValue2);
                             if (jumpValue2 >= 0)
                             {
+                                jc++;
                                 instructionIndex = insPtr;
                             }
                             break;
@@ -197,17 +199,11 @@ namespace DarkBasicYo.Virtual
                             VmUtil.Add(heap, vTypeCode, aBytes, bBytes, out cBytes);
                             VmUtil.Push(stack, cBytes, vTypeCode);
                             break;
+                        case OpCodes.BREAKPOINT:
+                            break;
                         case OpCodes.MUL:
                             VmUtil.ReadTwoValues(stack, out vTypeCode, out aBytes, out bBytes);
                             VmUtil.Multiply(vTypeCode, aBytes, bBytes, out cBytes);
-                            VmUtil.Push(stack, cBytes, vTypeCode);
-                            break;
-                        case OpCodes.MUL2:
-                            VmUtil.ReadTwoValues(stack, out vTypeCode, out aBytes, out bBytes);
-                            VmUtil.Multiply(vTypeCode, aBytes, bBytes, out cBytes);
-
-                            var cInt = BitConverter.ToInt32(cBytes, 0);
-                            
                             VmUtil.Push(stack, cBytes, vTypeCode);
                             break;
                         case OpCodes.DIVIDE:

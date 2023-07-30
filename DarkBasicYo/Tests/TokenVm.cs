@@ -515,6 +515,80 @@ NEXT
 
     
     [Test]
+    public void For_Simple_Expression()
+    {
+        var src = @"
+x = 0
+y = 0
+a = 10
+FOR x = 1 TO a
+ y = y + 1
+NEXT
+";
+        Setup(src, out _, out var prog);
+        
+        var vm = new VirtualMachine(prog);
+        vm.Execute2();
+        
+        Assert.That(vm.dataRegisters[0], Is.EqualTo(11));
+        Assert.That(vm.typeRegisters[0], Is.EqualTo(TypeCodes.INT));
+        
+        Assert.That(vm.dataRegisters[1], Is.EqualTo(10));
+        Assert.That(vm.typeRegisters[1], Is.EqualTo(TypeCodes.INT));
+    }
+
+    [Test]
+    public void For_Simple_Exit()
+    {
+        var src = @"x = 0
+y = 1
+FOR x = 1 TO 100
+    y = y * x
+    IF y > 20
+        EXIT
+    ENDIF
+NEXT
+";
+        Setup(src, out _, out var prog);
+        
+        var vm = new VirtualMachine(prog);
+        vm.Execute2();
+        
+        Assert.That(vm.dataRegisters[0], Is.EqualTo(4));
+        Assert.That(vm.typeRegisters[0], Is.EqualTo(TypeCodes.INT));
+        
+        Assert.That(vm.dataRegisters[1], Is.EqualTo(24));
+        Assert.That(vm.typeRegisters[1], Is.EqualTo(TypeCodes.INT));
+    }
+    
+        
+    [Test]
+    public void For_Sequences()
+    {
+        var src = @"
+x = 0
+y = 0
+FOR x = 1 TO 3
+ y = y + 1
+NEXT
+FOR x = 1 TO 3
+ y = y + 1
+NEXT
+";
+        Setup(src, out _, out var prog);
+        
+        var vm = new VirtualMachine(prog);
+        vm.Execute().MoveNext();
+        
+        Assert.That(vm.dataRegisters[0], Is.EqualTo(4));
+        Assert.That(vm.typeRegisters[0], Is.EqualTo(TypeCodes.INT));
+        
+        Assert.That(vm.dataRegisters[1], Is.EqualTo(6));
+        Assert.That(vm.typeRegisters[1], Is.EqualTo(TypeCodes.INT));
+    }
+
+    
+    [Test]
     public void For_Simple_Negative()
     {
         var src = @"
@@ -540,6 +614,83 @@ NEXT
         Assert.That(vm.typeRegisters[1], Is.EqualTo(TypeCodes.INT));
     }
 
+    
+    [Test]
+    public void For_Nested()
+    {
+        var src = @"
+c = 0
+FOR x = 0 TO 4
+    FOR y = 0 TO 2
+        c = c + 1
+        n = 1
+    NEXT
+    c = c * 4
+NEXT
+";
+        Setup(src, out _, out var prog);
+
+        var ast = _exprAst.ToString();
+        var vm = new VirtualMachine(prog);
+        vm.Execute().MoveNext();
+
+        var n = VirtualMachine.jc;
+        var c = 0;
+        for (var x = 0; x <= 4; x++)
+        {
+            for (var y = 0; y <= 2; y ++)
+            {
+                c++;
+            }
+
+            c *= 4;
+        }
+
+        Assert.That(vm.dataRegisters[0], Is.EqualTo(c));
+        Assert.That(vm.typeRegisters[0], Is.EqualTo(TypeCodes.INT));
+        
+    }
+    
+    
+    [Test]
+    public void For_Nested_LotsOfOtherVariablesAround()
+    {
+        var src = @"
+c = 0
+f = 1
+FOR x = 0 TO 4
+    l = 1
+    FOR y = 0 TO 2
+        c = c + 1
+        n = 1
+    NEXT
+    k = 1
+    c = c * 4
+NEXT
+";
+        Setup(src, out _, out var prog);
+
+        var ast = _exprAst.ToString();
+        var vm = new VirtualMachine(prog);
+        vm.Execute().MoveNext();
+
+        var n = VirtualMachine.jc;
+        var c = 0;
+        for (var x = 0; x <= 4; x++)
+        {
+            for (var y = 0; y <= 2; y ++)
+            {
+                c++;
+            }
+            c *= 4;
+        }
+
+        Assert.That(vm.dataRegisters[0], Is.EqualTo(c));
+        Assert.That(vm.typeRegisters[0], Is.EqualTo(TypeCodes.INT));
+        
+    }
+
+    
     
     [Test]
     public void While_Simple()

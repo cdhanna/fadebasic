@@ -226,26 +226,7 @@ namespace DarkBasicYo.Virtual
 
         private void Compile(ForStatement forStatement)
         {
-            // throw new NotImplementedException();
-            
-            /*
-             * Assignment
-             *
-             * Loop:
-             * <condition> 
-             * PUSH addr of success
-             * JUMP_GT_ZERO
-             * PUSH addr of exit
-             * JUMP
-             * Success:
-             *  positive-statements
-             *  eval variable iterator
-             *  eval stepExpr
-             *  ADD
-             *  JUMP Loop:
-             * Exit:
-             */
-            
+           
             // for later, we'll need a statement that adds the step expr
             var stepAssignment = new AssignmentStatement
             {
@@ -269,32 +250,27 @@ namespace DarkBasicYo.Virtual
             // to calculate the condition, we need a loop-counter variable, which will start at zero...
             AddPushInt(_buffer, 0);
 
-            // and we'll need to access it later after the math, so dupe it.
-            _buffer.Add(OpCodes.DUPE);
+            // and we'll need it later, so lock it into a register...
+            _buffer.Add(OpCodes.STORE);
+            var reg = (byte)(registerCount++);
+            _buffer.Add(reg);
 
             // then, keep track of the start of the for-loop, this is where we'll come back to
             var forLoopValue = _buffer.Count;
-            
+            // _buffer.Add(OpCodes.NOOP);
             // the expression for the condition is 
             //  (f - i) - (loopCount * stepExpr) >= 0
-            // 
             
-            // (0 - 10) - (2 * -3) = -10 - -6 = -4
-            // -10 - -6 = -4
-            // 10 - -6 = 16
-            // 10 - 6 = 4
-            
-            
-            // (3 - 1) - (0 * 1) = 2 - 0
-            
+            // load it back out again
+            _buffer.Add(OpCodes.LOAD);
+            _buffer.Add(reg);
             
             // push stepExpr
             Compile(forStatement.stepValueExpression);
             
             // multiply
             _buffer.Add(OpCodes.MUL);
-            // _buffer.Add(OpCodes.ABS);
-
+            _buffer.Add(OpCodes.ABS);
             
             // push f
             Compile(forStatement.endValueExpression);
@@ -306,23 +282,20 @@ namespace DarkBasicYo.Virtual
             AddPushInt(_buffer, -1);
             _buffer.Add(OpCodes.MUL);
             _buffer.Add(OpCodes.ADD);
-
+            _buffer.Add(OpCodes.ABS);
+            
             // subtract
             AddPushInt(_buffer, -1);
             _buffer.Add(OpCodes.MUL);
-            _buffer.Add(OpCodes.ADD2);
+            _buffer.Add(OpCodes.ADD);
             // negate, because we did (loopCount * stepExpr) - (f - i)
             AddPushInt(_buffer, -1);
-            _buffer.Add(OpCodes.MUL2);
+            _buffer.Add(OpCodes.MUL);
             
-            _buffer.Add(OpCodes.ABS);
-
             // cast the condition to an int
             _buffer.Add(OpCodes.CAST);
             _buffer.Add(TypeCodes.INT);
-            
 
-            
             // then, put a fake value in for the for-statement success jump... We'll fix it later.
             var successJumpIndex = _buffer.Count;
             AddPushInt(_buffer, int.MaxValue);
@@ -350,13 +323,20 @@ namespace DarkBasicYo.Virtual
             //  (2) - update x,
             //  (3) - jump back to the start of the loop
             
-            // the only thing on the stack is the loop counter, so add one
+            // put 1 on the stack, because we'll add it to the loopCounter
             AddPushInt(_buffer, 1);
+            
+            // load the loopCounter variable
+            _buffer.Add(OpCodes.LOAD);
+            _buffer.Add(reg);
+            
+            // put 1+loopCounter onto the stack
             _buffer.Add(OpCodes.ADD);
             
-            // dupe the loopCount again, so that we can use it multiple times
-            _buffer.Add(OpCodes.DUPE);
-            
+            // and then save it on the register
+            _buffer.Add(OpCodes.STORE);
+            _buffer.Add(reg);
+
             // now to update the value of x, we need to add the stepExpr to it.
             Compile(stepAssignment); // NOTE: there could be a bug here, because we are looping on a deterministic math operation, but simulating the interpolated variable
             
@@ -365,7 +345,6 @@ namespace DarkBasicYo.Virtual
             _buffer.Add(OpCodes.JUMP);
             
             var endJumpValue = _buffer.Count;
-            _buffer.Add(OpCodes.NOOP);
             
             // now go back and fill in the success ptr
             var successJumpBytes = BitConverter.GetBytes(successJumpValue);
@@ -381,9 +360,10 @@ namespace DarkBasicYo.Virtual
                 }
             }
             
-            // there is a stale loopCount variable on the stack that we need to kill
-            _buffer.Add(OpCodes.DISCARD);
-            
+            // we don't need the register anymore
+            registerCount--;
+            _buffer.Add(OpCodes.BREAKPOINT);
+
         }
         
         private void Compile(WhileStatement whileStatement)

@@ -138,7 +138,7 @@ namespace DarkBasicYo
             new Lexem(LexemType.KeywordEndIf, new Regex("^endif")),
             new Lexem(LexemType.KeywordElse, new Regex("^else")),
             new Lexem(LexemType.KeywordThen, new Regex("^then")),
-            new Lexem(LexemType.KeywordEnd, new Regex("^end")),
+            new Lexem(1,LexemType.KeywordEnd, new Regex("^end")),
             new Lexem(LexemType.KeywordExit, new Regex("^exit")),
             
             new Lexem(LexemType.KeywordGoto, new Regex("^goto")),
