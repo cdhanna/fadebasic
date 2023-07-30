@@ -160,7 +160,10 @@ namespace DarkBasicYo.Ast
             this.lhs = lhs;
             this.rhs = rhs;
             this.operationType = OperationUtil.Convert(op);
-           
+        }
+
+        public BinaryOperandExpression()
+        {
         }
 
         protected override string GetString()
@@ -213,6 +216,11 @@ namespace DarkBasicYo.Ast
             {
                 throw new Exception("Parser exception! Expected int, but found " + token.raw);
             }
+        }
+
+        public LiteralIntExpression(Token token, int value) : base(token)
+        {
+            this.value = value;
         }
 
         protected override string GetString()

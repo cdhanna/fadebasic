@@ -27,7 +27,7 @@ public class TokenVm
     [Test]
     public void TestDeclare_Registers()
     {
-        var src = "x AS WORD; x = 12";
+        var src = "x AS WORD: x = 12";
         Setup(src, out _, out var prog);
         
         // Assert.That(prog.Count, Is.EqualTo(6)); // type code and 4 bytes for the int
@@ -131,7 +131,7 @@ y$ = ""world"" + x$
     [Test]
     public void String_Declare()
     {
-        var src = "x as string; x = \"hello\" ";
+        var src = "x as string: x = \"hello\" ";
         Setup(src, out _, out var prog);
         
         var vm = new VirtualMachine(prog);
@@ -167,7 +167,7 @@ y$ = ""world"" + x$
     [Test]
     public void String_Declare3()
     {
-        var src = "x$ = \"hello\"; y$ = \"world\" ";
+        var src = "x$ = \"hello\": y$ = \"world\" ";
         Setup(src, out _, out var prog);
         
         var vm = new VirtualMachine(prog);
@@ -269,6 +269,23 @@ y$ = ""world"" + x$
         Assert.That(vm.typeRegisters[0], Is.EqualTo(TypeCodes.REAL));
     }
     
+    
+    [Test]
+    public void Comments()
+    {
+        var src = @"
+x = 1
+` x = 2
+";
+        Setup(src, out _, out var prog);
+        
+        var vm = new VirtualMachine(prog);
+        vm.Execute().MoveNext();
+        
+        Assert.That(vm.dataRegisters[0], Is.EqualTo(1)); 
+        Assert.That(vm.typeRegisters[0], Is.EqualTo(TypeCodes.INT));
+    }
+
     
     
     [Test]
@@ -472,17 +489,162 @@ ENDIF
         Assert.That(vm.dataRegisters[1], Is.EqualTo(2)); 
         Assert.That(vm.typeRegisters[0], Is.EqualTo(TypeCodes.INT));
     }
+    
+    
+    [Test]
+    public void For_Simple()
+    {
+        var src = @"
+x = 0
+y = 0
+FOR x = 1 TO 3
+ y = y + x
+NEXT
+";
+        Setup(src, out _, out var prog);
+        
+        var vm = new VirtualMachine(prog);
+        vm.Execute().MoveNext();
+        
+        Assert.That(vm.dataRegisters[0], Is.EqualTo(4));
+        Assert.That(vm.typeRegisters[0], Is.EqualTo(TypeCodes.INT));
+        
+        Assert.That(vm.dataRegisters[1], Is.EqualTo(6));
+        Assert.That(vm.typeRegisters[1], Is.EqualTo(TypeCodes.INT));
+    }
+
+    
+    [Test]
+    public void For_Simple_Negative()
+    {
+        var src = @"
+x = 0
+y = 0
+FOR x = 10 TO 0 STEP -3
+ y = y + x
+NEXT
+";
+        Setup(src, out _, out var prog);
+        
+        var vm = new VirtualMachine(prog);
+        vm.Execute().MoveNext();
+        
+        var outputRegisterValue = vm.dataRegisters[0];
+        var outputRegisterBytes = BitConverter.GetBytes(outputRegisterValue);
+        int output = BitConverter.ToInt32(outputRegisterBytes, 0);
+
+        Assert.That(output, Is.EqualTo(-2));
+        Assert.That(vm.typeRegisters[0], Is.EqualTo(TypeCodes.INT));
+        
+        Assert.That(vm.dataRegisters[1], Is.EqualTo(22));
+        Assert.That(vm.typeRegisters[1], Is.EqualTo(TypeCodes.INT));
+    }
+
+    
+    [Test]
+    public void While_Simple()
+    {
+        var src = @"
+x = 1
+WHILE x < 3
+    x = x + 1
+ENDWHILE
+";
+        Setup(src, out _, out var prog);
+        
+        var vm = new VirtualMachine(prog);
+        vm.Execute().MoveNext();
+        
+        Assert.That(vm.dataRegisters[0], Is.EqualTo(3));
+        Assert.That(vm.typeRegisters[0], Is.EqualTo(TypeCodes.INT));
+    }
+
+
+    [Test]
+    public void While_Simple2()
+    {
+        var src = @"
+x = 1
+y = 0
+WHILE x <= 5
+    x = x + 1
+    y = y + x
+ENDWHILE
+";
+        Setup(src, out _, out var prog);
+        
+        var vm = new VirtualMachine(prog);
+        vm.Execute().MoveNext();
+        
+        Assert.That(vm.dataRegisters[0], Is.EqualTo(6));
+        Assert.That(vm.dataRegisters[1], Is.EqualTo(20));
+        Assert.That(vm.typeRegisters[0], Is.EqualTo(TypeCodes.INT));
+    }
+
+    
+
+    [Test]
+    public void While_Exit()
+    {
+        var src = @"
+x = 1
+WHILE x < 50
+    x = x + 1
+    IF x = 3
+        EXIT
+    ENDIF
+ENDWHILE
+x = x * 2
+";
+        Setup(src, out _, out var prog);
+        
+        var vm = new VirtualMachine(prog);
+        vm.Execute().MoveNext();
+        
+        Assert.That(vm.dataRegisters[0], Is.EqualTo(6));
+        Assert.That(vm.typeRegisters[0], Is.EqualTo(TypeCodes.INT));
+    }
+    
+    
+    [Test]
+    public void While_Nested()
+    {
+        var src = @"
+x = 1
+WHILE x < 50
+    x = x + 1
+    IF x = 3
+        WHILE x < 10
+            x = x + 2
+            EXIT
+            x = x + 100 `won't hit
+        ENDWHILE
+        x = x + 1
+        EXIT
+        x = x + 100 `won't hit
+    ENDIF
+ENDWHILE
+x = x * 2
+";
+        Setup(src, out _, out var prog);
+        
+        var vm = new VirtualMachine(prog);
+        vm.Execute().MoveNext();
+        
+        Assert.That(vm.dataRegisters[0], Is.EqualTo(12));
+        Assert.That(vm.typeRegisters[0], Is.EqualTo(TypeCodes.INT));
+    }
 
     
     [Test]
     public void Goto_Simple()
     {
         var src = @"
-x = 1;
+x = 1
 GOTO Skip
-x = 2;
+x = 2
 Skip:
-x = 3;
+x = 3
 
 ";
         Setup(src, out _, out var prog);
@@ -495,11 +657,12 @@ x = 3;
     }
 
     
+    
     [Test]
     public void GoSub_Simple()
     {
         var src = @"
-x = 1;
+x = 1
 
 Gosub Sub
 Gosub Sub
@@ -524,7 +687,7 @@ Return
     public void GoSub_End()
     {
         var src = @"
-x = 1;
+x = 1
 
 Gosub Sub
 Gosub Sub
@@ -550,8 +713,8 @@ Return
     public void GoSub_Example()
     {
         var src = @"
-x = 1;
-y = 0;
+x = 1
+y = 0
 GOSUB Double
 GOSUB Double
 END
@@ -581,7 +744,7 @@ Return
     [Test]
     public void TestDeclareAndAssign()
     {
-        var src = "x as word; x = 3;";
+        var src = "x as word: x = 3";
         Setup(src, out _, out var prog);
         
         var vm = new VirtualMachine(prog);
@@ -595,7 +758,7 @@ Return
     [Test]
     public void TestDeclareAndAssignToExpression()
     {
-        var src = "x as word; x = 3 + 3;";
+        var src = "x as word: x = 3 + 3";
         Setup(src, out _, out var prog);
         
         var vm = new VirtualMachine(prog);
@@ -1048,9 +1211,101 @@ x = x + y * 3
     
     
     [Test]
+    public void NegativeNumber()
+    {
+        var src = @"
+x = -4
+";
+        Setup(src, out _, out var prog);
+        
+        var vm = new VirtualMachine(prog);
+        vm.Execute().MoveNext();
+        
+        var outputRegisterValue = vm.dataRegisters[0];
+        var outputRegisterBytes = BitConverter.GetBytes(outputRegisterValue);
+        int output = BitConverter.ToInt32(outputRegisterBytes, 0);
+
+        Assert.That(output, Is.EqualTo(-4));
+        Assert.That(vm.typeRegisters[0], Is.EqualTo(TypeCodes.INT));
+    }
+
+    
+    [Test]
+    public void NegativeNumber_Float()
+    {
+        var src = @"
+x as float
+x = -4
+";
+        Setup(src, out _, out var prog);
+        
+        var vm = new VirtualMachine(prog);
+        vm.Execute().MoveNext();
+        
+        var outputRegisterValue = vm.dataRegisters[0];
+        var outputRegisterBytes = BitConverter.GetBytes(outputRegisterValue);
+        float output = BitConverter.ToSingle(outputRegisterBytes, 0);
+
+        Assert.That(output, Is.EqualTo(-4));
+        Assert.That(vm.typeRegisters[0], Is.EqualTo(TypeCodes.REAL));
+    }
+    
+    [Test]
+    public void Subtraction()
+    {
+        var src = @"
+x = 3 - 1
+";
+        Setup(src, out _, out var prog);
+        
+        var vm = new VirtualMachine(prog);
+        vm.Execute().MoveNext();
+        
+        Assert.That(vm.dataRegisters[0], Is.EqualTo(2));
+        Assert.That(vm.typeRegisters[0], Is.EqualTo(TypeCodes.INT));
+    }
+    
+    
+    [Test]
+    public void Subtraction_Neg()
+    {
+        var src = @"
+x = 3 - -1
+";
+        Setup(src, out _, out var prog);
+        
+        var vm = new VirtualMachine(prog);
+        vm.Execute().MoveNext();
+        
+        Assert.That(vm.dataRegisters[0], Is.EqualTo(4));
+        Assert.That(vm.typeRegisters[0], Is.EqualTo(TypeCodes.INT));
+    }
+    
+    
+    [Test]
+    public void Subtraction_Parens()
+    {
+        var src = @"
+x = (4-5) - (2 - 1)
+";
+        Setup(src, out _, out var prog);
+        
+        var vm = new VirtualMachine(prog);
+        vm.Execute().MoveNext();
+        
+        var outputRegisterValue = vm.dataRegisters[0];
+        var outputRegisterBytes = BitConverter.GetBytes(outputRegisterValue);
+        int output = BitConverter.ToInt32(outputRegisterBytes, 0);
+
+        Assert.That(output, Is.EqualTo(-2));
+        Assert.That(vm.typeRegisters[0], Is.EqualTo(TypeCodes.INT));
+    }
+
+    
+    [Test]
     public void ExplicitFloat()
     {
-        var src = @"x as float; x = 1.2";
+        var src = @"x as float: x = 1.2";
         Setup(src, out _, out var prog);
         
         var vm = new VirtualMachine(prog);
@@ -1110,7 +1365,7 @@ x# = z#
     [Test]
     public void TestDeclareAndAssignToExpressionToOverflow()
     {
-        var src = "x as byte; x = 3 + 254;"; 
+        var src = "x as byte: x = 3 + 254"; 
         Setup(src, out _, out var prog);
         
         var vm = new VirtualMachine(prog);
@@ -1511,7 +1766,7 @@ y = x(2).derp * x(1).color
     [Test]
     public void CallHost_RefType()
     {
-        var src = "x = 7; refDbl x; x = x * 2";
+        var src = "x = 7: refDbl x: x = x * 2";
         Setup(src, out var compiler, out var prog);
         var vm = new VirtualMachine(prog);
         vm.hostMethods = compiler.methodTable;
@@ -1524,7 +1779,7 @@ y = x(2).derp * x(1).color
     [Test]
     public void CallHost_RefType_String()
     {
-        var src = "x$ = \"a\"; tuna x$ ";
+        var src = "x$ = \"a\": tuna x$ ";
         Setup(src, out var compiler, out var prog);
         var vm = new VirtualMachine(prog);
         vm.hostMethods = compiler.methodTable;
@@ -1691,7 +1946,7 @@ w$ = x$(2)
     [Test]
     public void CallHost_StringReturn_Expression()
     {
-        var src = "x$ = \"hello\"; y$ = \"world\" + reverse x$";
+        var src = "x$ = \"hello\": y$ = \"world\" + reverse x$";
         Setup(src, out var compiler, out var prog);
         var vm = new VirtualMachine(prog);
         vm.hostMethods = compiler.methodTable;
@@ -1711,7 +1966,7 @@ w$ = x$(2)
     [Test]
     public void CallHost_RefType_AutoDeclare()
     {
-        var src = "inc x;";
+        var src = "inc x:";
         Setup(src, out var compiler, out var prog);
         var vm = new VirtualMachine(prog);
         vm.hostMethods = compiler.methodTable;
@@ -1723,7 +1978,7 @@ w$ = x$(2)
     [Test]
     public void CallHost_RefType_Optional_ButHasValue()
     {
-        var src = "x = 7; inc x, 2";
+        var src = "x = 7: inc x, 2";
         Setup(src, out var compiler, out var prog);
         var vm = new VirtualMachine(prog);
         vm.hostMethods = compiler.methodTable;
@@ -1735,7 +1990,7 @@ w$ = x$(2)
     [Test]
     public void CallHost_RefType_Optional()
     {
-        var src = "x = 7; inc x";
+        var src = "x = 7: inc x";
         Setup(src, out var compiler, out var prog);
         var vm = new VirtualMachine(prog);
         vm.hostMethods = compiler.methodTable;

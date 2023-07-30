@@ -120,6 +120,14 @@ namespace DarkBasicYo.Virtual
                                 instructionIndex = insPtr;
                             }
                             break;
+                        case OpCodes.JUMP_GTE_ZERO:
+                            VmUtil.ReadAsInt(stack, out insPtr);
+                            VmUtil.ReadAsInt(stack, out var jumpValue2);
+                            if (jumpValue2 >= 0)
+                            {
+                                instructionIndex = insPtr;
+                            }
+                            break;
                         case OpCodes.JUMP_HISTORY:
                             // the next instruction is the instruction ptr
                             VmUtil.ReadAsInt(stack, out insPtr);
@@ -174,7 +182,17 @@ namespace DarkBasicYo.Virtual
                             VmUtil.Not(typeCode, aBytes, out cBytes);
                             VmUtil.Push(stack, cBytes, typeCode);
                             break;
+                        case OpCodes.ABS:
+                            VmUtil.Read(stack, out typeCode, out aBytes);
+                            VmUtil.Abs(typeCode, aBytes, out cBytes);
+                            VmUtil.Push(stack, cBytes, typeCode);
+                            break;
                         case OpCodes.ADD:
+                            VmUtil.ReadTwoValues(stack, out vTypeCode, out aBytes, out bBytes);
+                            VmUtil.Add(heap, vTypeCode, aBytes, bBytes, out cBytes);
+                            VmUtil.Push(stack, cBytes, vTypeCode);
+                            break;
+                        case OpCodes.ADD2:
                             VmUtil.ReadTwoValues(stack, out vTypeCode, out aBytes, out bBytes);
                             VmUtil.Add(heap, vTypeCode, aBytes, bBytes, out cBytes);
                             VmUtil.Push(stack, cBytes, vTypeCode);
@@ -182,6 +200,14 @@ namespace DarkBasicYo.Virtual
                         case OpCodes.MUL:
                             VmUtil.ReadTwoValues(stack, out vTypeCode, out aBytes, out bBytes);
                             VmUtil.Multiply(vTypeCode, aBytes, bBytes, out cBytes);
+                            VmUtil.Push(stack, cBytes, vTypeCode);
+                            break;
+                        case OpCodes.MUL2:
+                            VmUtil.ReadTwoValues(stack, out vTypeCode, out aBytes, out bBytes);
+                            VmUtil.Multiply(vTypeCode, aBytes, bBytes, out cBytes);
+
+                            var cInt = BitConverter.ToInt32(cBytes, 0);
+                            
                             VmUtil.Push(stack, cBytes, vTypeCode);
                             break;
                         case OpCodes.DIVIDE:
@@ -214,11 +240,6 @@ namespace DarkBasicYo.Virtual
                             VmUtil.EqualTo(vTypeCode, aBytes, bBytes, out cBytes);
                             VmUtil.Push(stack, cBytes, vTypeCode);
                             break;
-                        // case OpCodes.SUB:
-                        //     a = stack.Pop();
-                        //     b = stack.Pop();
-                        //     stack.Push(a - b);
-                        //     break;
                         case OpCodes.STORE:
                             // read a register location, which is always 1 byte.
                             addr = Advance();

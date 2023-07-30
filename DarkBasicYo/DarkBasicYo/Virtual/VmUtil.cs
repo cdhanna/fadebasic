@@ -174,6 +174,32 @@ namespace DarkBasicYo.Virtual
 
         
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public static void Abs(byte aTypeCode, byte[] a, out byte[] c)
+        {
+            switch (aTypeCode)
+            {
+                case TypeCodes.BYTE:
+                    // for things that are "unsigned", there is no point
+                    c = a;
+                    break;
+                
+                case TypeCodes.INT:
+                    int aInt = BitConverter.ToInt32(a, 0);
+                    int sumInt = Math.Abs(aInt);
+                    c = BitConverter.GetBytes(sumInt);
+                    break;
+                case TypeCodes.REAL:
+                    float aReal = BitConverter.ToSingle(a, 0);
+                    float sumReal = Math.Abs(aReal);
+                    c = BitConverter.GetBytes(sumReal);
+                    break;
+                default:
+                    throw new Exception("Unsupported not operation");
+            }
+        }
+
+        
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public static void GreaterThan(byte aTypeCode, byte[] a, byte[] b, out byte[] c)
         {
             switch (aTypeCode)
@@ -357,7 +383,8 @@ namespace DarkBasicYo.Virtual
                     throw new Exception("Unsupported add operation");
             }
         }
-
+        
+        
         public static void Cast(Stack<byte> stack, byte typeCode)
         {
             Read(stack, out var currentTypeCode, out var bytes);

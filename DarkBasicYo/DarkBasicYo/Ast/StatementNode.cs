@@ -127,6 +127,45 @@ namespace DarkBasicYo.Ast
         }
     }
 
+    public class ExitLoopStatement : AstNode, IStatementNode
+    {
+        public ExitLoopStatement(Token token) : base(token, token)
+        {
+            
+        }
+        protected override string GetString()
+        {
+            return "break";
+        }
+    }
+
+    public class ForStatement : AstNode, IStatementNode
+    {
+        public IVariableNode variableNode;
+        public IExpressionNode startValueExpression;
+        public IExpressionNode endValueExpression;
+        public IExpressionNode stepValueExpression;
+
+        public List<IStatementNode> statements;
+
+        public ForStatement(Token start, Token end, IVariableNode variable, IExpressionNode startValue,
+            IExpressionNode endValue, IExpressionNode stepValue, List<IStatementNode> statements)
+        {
+            startToken = start;
+            endToken = end;
+            variableNode = variable;
+            startValueExpression = startValue;
+            endValueExpression = endValue;
+            stepValueExpression = stepValue;
+            this.statements = statements;
+        }
+        
+        protected override string GetString()
+        {
+            return $"for {variableNode},{startValueExpression},{endValueExpression},{stepValueExpression},({string.Join(",", statements.Select(x => x.ToString()))})";
+        }
+    }
+    
     public class WhileStatement : AstNode, IStatementNode
     {
         public IExpressionNode condition;
@@ -165,6 +204,20 @@ namespace DarkBasicYo.Ast
             }
             
             return $"if {condition} ({string.Join(",", positiveStatements)}){negativeStr}";
+        }
+    }
+
+    public class CommentStatement : AstNode, IStatementNode
+    {
+        public string comment;
+        public CommentStatement(Token token, string comment) : base(token, token)
+        {
+            this.comment = comment;
+        }
+
+        protected override string GetString()
+        {
+            return $"rem{comment}";
         }
     }
 

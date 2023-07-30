@@ -252,6 +252,28 @@ public class Tests
 
     }
     
+    
+    [Test]
+    public void Tokenize_RemStart_RemEnd()
+    {
+        var input = @"
+Remstart
+okay
+Remend
+";
+
+        var lexer = new Lexer();
+        var tokens = lexer.Tokenize(input);
+        
+        Assert.That(tokens.Count, Is.EqualTo(2));
+        
+        Assert.That(tokens[0].type, Is.EqualTo(LexemType.KeywordRemStart));
+        Assert.That(tokens[1].type, Is.EqualTo(LexemType.KeywordRemEnd));
+        // Assert.That(tokens[2].type, Is.EqualTo(LexemType.EndStatement));
+
+    }
+
+    
     [Test]
     public void Tokenize_CaseInsensitiveKeywords()
     {
@@ -474,9 +496,9 @@ print x";
 
     
     [Test]
-    public void Tokenize_EndStatement()
+    public void Tokenize_Label()
     {
-        var input = @"tuna;";
+        var input = @"tuna:";
 
         var lexer = new Lexer();
         var tokens = lexer.Tokenize(input);
@@ -487,7 +509,6 @@ print x";
         Assert.That(tokens[0].raw, Is.EqualTo("tuna"));
         
         Assert.That(tokens[1].type, Is.EqualTo(LexemType.EndStatement));
-        Assert.That(tokens[1].raw, Is.EqualTo(";"));
 
     }
 

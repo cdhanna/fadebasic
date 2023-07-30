@@ -62,15 +62,17 @@ namespace DarkBasicYo.Virtual
         /// Expects to find two values in the stack 
         /// </summary>
         public const byte ADD = 2;
+        public const byte ADD2 = 200;
         public const byte MUL = 3;
+        public const byte MUL2 = 201;
         public const byte DIVIDE = 4;
-        public const byte SUB = 5;
+        public const byte ABS = 5;
         public const byte GT = 24;
         public const byte LT = 25;
         public const byte GTE = 26;
         public const byte LTE = 27;
         public const byte EQ = 28;
-        public const byte NEQ = 29;
+        // public const byte NEQ = 29;
         public const byte MOD = 30;
         public const byte POWER = 31;
         public const byte AND = 32;
@@ -173,5 +175,11 @@ namespace DarkBasicYo.Virtual
         /// </summary>
         public const byte JUMP_GT_ZERO = 35;
 
+        /// <summary>
+        /// pops an address, then pops a value. If the value is greater than or equal to zero, then the Instruction
+        /// pointer is set to the address; otherwise nothing happens
+        /// </summary>
+        public const byte JUMP_GTE_ZERO = 36;
+        
     }
 }

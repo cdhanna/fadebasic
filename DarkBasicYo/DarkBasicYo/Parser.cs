@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Text;
 using DarkBasicYo.Ast;
 
 namespace DarkBasicYo
@@ -309,7 +310,7 @@ namespace DarkBasicYo
         }
 
 
-        private IStatementNode ParseStatement()
+        private IStatementNode ParseStatement(bool consumeEndOfStatement=true)
         {
             IStatementNode Inner()
             {
@@ -318,37 +319,36 @@ namespace DarkBasicYo
                 IStatementNode subStatement = null;
                 switch (token.type)
                 {
-                    
+                    case LexemType.KeywordRemStart:
+
+                        var remToken = _stream.Peek;
+                        switch (remToken.type)
+                        {
+                            case LexemType.EndStatement:
+                                _stream.Advance(); // move past the rem.
+                                break;
+                        }
+                        remToken = _stream.Peek;
+                        switch (remToken.type)
+                        {
+                            case LexemType.KeywordRemEnd:
+                                _stream.Advance(); // move past the rem.
+                                break;
+                        }
+
+                        return new CommentStatement(token, token.raw);
+                        // return new CommentStatement(token, token.raw.Substring("remstart".Length, token.raw.Length - ("remstartremend".Length)));
+                        break;
+                    case LexemType.KeywordRem when token.raw[0] == '`':
+                        return new CommentStatement(token, token.raw.Substring(1));
+                    case LexemType.KeywordRem:
+                        return new CommentStatement(token, token.raw.Substring(3));
                     case LexemType.KeywordIf:
                         return ParseIfStatement(token);
                     case LexemType.KeywordWhile:
-
-                        // parse the condition expression...
-                        var whileConditionExpr = ParseWikiExpression();
-                        // parse the statements until there is an end-while.
-
-                        // ignore the EoS
-                        _stream.Advance();
-                        
-                        var whileStatements = new List<IStatementNode>();
-                        IStatementNode endStatement = null;
-                        while (_stream.Peek.type != LexemType.KeywordEndWhile)
-                        {
-                            var statement = ParseStatement();
-                            whileStatements.Add(statement);
-                        }
-
-                        // discard the endwhile token.
-                        _stream.Advance();
-
-                        return new WhileStatement
-                        {
-                            condition = whileConditionExpr,
-                            statements = whileStatements,
-                            startToken = token,
-                            endToken = _stream.Current
-                        };
-
+                        return ParseWhileStatement(token);
+                    case LexemType.KeywordFor:
+                        return ParseForStatement(token);
                     case LexemType.KeywordGoto:
                         return ParseGoto(token);
                     case LexemType.KeywordGoSub:
@@ -357,10 +357,14 @@ namespace DarkBasicYo
                         return ParseReturn(token);
                     case LexemType.KeywordEnd:
                         return new EndProgramStatement(token);
+                    case LexemType.KeywordExit:
+                        return new ExitLoopStatement(token);
                     case LexemType.KeywordScope:
                         return ParseStatementThatStartsWithScope(token);
                     case LexemType.KeywordDeclareArray:
                         return ParseDimStatement(token);
+                    // case LexemType.Label:
+                    //     return new LabelDeclarationNode(token);
                     case LexemType.VariableReal:
                     case LexemType.VariableString:
                     case LexemType.VariableGeneral:
@@ -371,7 +375,7 @@ namespace DarkBasicYo
 
                         switch (secondToken.type)
                         {
-                            case LexemType.Colon:
+                            case LexemType.EndStatement when secondToken.raw == ":":
                                 return new LabelDeclarationNode(token, secondToken);
                                 break;
                             case LexemType.OpEqual:
@@ -445,16 +449,117 @@ namespace DarkBasicYo
             // {
             //     return result;
             // }
-          
-            if (_stream.Peek.type == LexemType.EndStatement)
-            {
-                _stream.Advance(); // ignore the end statement.
 
+            switch (_stream.Peek.type)
+            {
+                case LexemType.EndStatement when consumeEndOfStatement:
+                    _stream.Advance();
+                    break;
+                default:
+                    break;
             }
             
             return result;
         }
 
+        private ForStatement ParseForStatement(Token forToken)
+        {
+            var variable = ParseVariableReference();
+            
+            // next token must be an equal token.
+            var equalToken = _stream.Advance();
+            if (equalToken.type != LexemType.OpEqual)
+            {
+                throw new ParserException("Expected to find equal symbol", equalToken);
+            }
+
+            var startExpr = ParseWikiExpression();
+            // next token must be a TO token
+            var toToken = _stream.Advance();
+            if (toToken.type != LexemType.KeywordTo)
+            {
+                throw new ParserException("Expected to find TO symbol", toToken);
+            }
+
+            var endExpr = ParseWikiExpression();
+            // optionally, there may be a step token
+            IExpressionNode stepExpr = null;
+
+            switch (_stream.Peek.type)
+            {
+                case LexemType.KeywordStep:
+                    // discard step token
+                    _stream.Advance();
+                    stepExpr = ParseWikiExpression();
+                    break;
+                default:
+                    stepExpr = new LiteralIntExpression(endExpr.StartToken, 1);
+                    break;
+            }
+            
+            // now it is time to parse the statements!
+            var statements = new List<IStatementNode>();
+            var looking = true;
+            while (looking)
+            {
+                var nextToken = _stream.Peek;
+                switch (nextToken.type)
+                {
+                    case LexemType.EOF:
+                        throw new ParserException("Hit end of file without a closing NEXT statement", nextToken);
+                    case LexemType.EndStatement:
+                        _stream.Advance();
+                        break;
+                    case LexemType.KeywordNext:
+                        _stream.Advance();
+                        looking = false;
+                        break;
+                    default:
+                        var member = ParseStatement();
+                        statements.Add(member);
+                        break; 
+                }
+            }
+
+            return new ForStatement(
+                forToken, _stream.Current, variable, startExpr, endExpr, stepExpr, statements);
+        }
+
+        private WhileStatement ParseWhileStatement(Token whileToken)
+        {
+            var condition = ParseWikiExpression();
+            var statements = new List<IStatementNode>();
+            var looking = true;
+            while (looking)
+            {
+                var nextToken = _stream.Peek;
+                switch (nextToken.type)
+                {
+                    case LexemType.EOF:
+                        throw new ParserException("Hit end of file without a closing endWhile statement", nextToken);
+                    case LexemType.EndStatement:
+                        _stream.Advance();
+                        break;
+                    case LexemType.KeywordEndWhile:
+                        _stream.Advance();
+                        looking = false;
+                        break;
+                    default:
+                        var member = ParseStatement();
+                        statements.Add(member);
+                        break; 
+                }
+            }
+
+            return new WhileStatement
+            {
+                startToken = whileToken,
+                endToken = _stream.Current,
+                statements = statements,
+                condition = condition
+            };
+        }
+        
         private IfStatement ParseIfStatement(Token ifToken)
         {
             // the next term is an expression.
@@ -465,17 +570,48 @@ namespace DarkBasicYo
             var positiveStatements = new List<IStatementNode>();
             var negativeStatements = new List<IStatementNode>();
             var statements = positiveStatements;
+            var looking = true;
+
             switch (next.type)
             {
                 case LexemType.KeywordThen:
                     
                     // there is ONE statement...
-                    var statement = ParseStatement();
-                    return new IfStatement(ifToken, _stream.Current, condition, new List<IStatementNode> { statement });
+                    // var statement = ParseStatement();
+                    // return new IfStatement(ifToken, _stream.Current, condition, new List<IStatementNode> { statement });
                     
+                    while (looking)
+                    {
+                        var nextToken = _stream.Peek;
+                        switch (nextToken.type)
+                        {
+                            case LexemType.EndStatement when nextToken.raw == ":":
+                                _stream.Advance();
+                                break;
+                            case LexemType.EndStatement:
+                            case LexemType.EOF:
+                                looking = false;
+                                break;
+                                // throw new ParserException("Hit end of file without a closing type statement", nextToken);
+                            case LexemType.KeywordEndIf:
+                                _stream.Advance();
+                                looking = false;
+                                break;
+                            case LexemType.KeywordElse:
+                                _stream.Advance(); // skip else block
+                                statements = negativeStatements;
+                                break;
+                            default:
+                                var member = ParseStatement(consumeEndOfStatement: false);
+                                statements.Add(member);
+                                break; 
+                        }
+                    }
+
+                    return new IfStatement(ifToken, _stream.Current, condition, positiveStatements, negativeStatements);
+                
                 default:
 
-                    var looking = true;
                     while (looking)
                     {
                         var nextToken = _stream.Peek;

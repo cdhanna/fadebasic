@@ -161,7 +161,7 @@ x = -3 - -1
         
         Assert.That(prog.statements.Count, Is.EqualTo(1));
         var code = prog.ToString();
-        Assert.That(code, Is.EqualTo("((= (x),(add (6),(subtract (666),(add (6),(greaterthan (6666666),(6)))))))"));
+        Assert.That(code, Is.EqualTo("((= (ref x),(add (6),(subtract (666),(add (6),(greaterthan (6666666),(6)))))))"));
     }
 
     
@@ -185,6 +185,83 @@ endwhile
     }
 
     
+    [Test]
+    public void WhileExit()
+    {
+        var input = @"
+x= 5
+while x > 1
+exit
+endwhile
+";
+        var parser = MakeParser(input);
+        var prog = parser.ParseProgram();
+        
+        Assert.That(prog.statements.Count, Is.EqualTo(2));
+        var code = prog.ToString();
+        Console.WriteLine(code);
+        Assert.That(code, Is.EqualTo("((= (ref x),(5)),(while (?> (ref x),(1)) (break)))"));
+    }
+
+    
+    [Test]
+    public void ForLoop_Next()
+    {
+        var input = @"
+FOR x = 1 to 10
+ y = x
+NEXT
+";
+        var parser = MakeParser(input);
+        var prog = parser.ParseProgram();
+        
+        Assert.That(prog.statements.Count, Is.EqualTo(1));
+        var code = prog.ToString();
+        Console.WriteLine(code);
+        Assert.That(code, Is.EqualTo(@"(
+(for (ref x),(1),(10),(1),((= (ref y),(ref x))))
+)".ReplaceLineEndings("")));
+    }
+
+    
+    [Test]
+    public void ForLoop_Next_Step()
+    {
+        var input = @"
+FOR x = 1 to 10 step 4
+ y = x
+NEXT
+";
+        var parser = MakeParser(input);
+        var prog = parser.ParseProgram();
+        
+        Assert.That(prog.statements.Count, Is.EqualTo(1));
+        var code = prog.ToString();
+        Console.WriteLine(code);
+        Assert.That(code, Is.EqualTo(@"(
+(for (ref x),(1),(10),(4),((= (ref y),(ref x))))
+)".ReplaceLineEndings("")));
+    }
+
+    
+    [Test]
+    public void ForLoop_ArrayIndex()
+    {
+        var input = @"
+FOR x(3) = 1 to 10 step 4
+ y = x
+NEXT
+";
+        var parser = MakeParser(input);
+        var prog = parser.ParseProgram();
+        
+        Assert.That(prog.statements.Count, Is.EqualTo(1));
+        var code = prog.ToString();
+        Console.WriteLine(code);
+        Assert.That(code, Is.EqualTo(@"(
+(for (ref x[(3)]),(1),(10),(4),((= (ref y),(ref x))))
+)".ReplaceLineEndings("")));
+    }
     
     [Test]
     public void ArrayAssign()
@@ -550,7 +627,65 @@ x = 2
 )".ReplaceLineEndings("")));
     }
     
+    [Test]
+    public void RemStart()
+    {
+        var input = @"
+REMSTART hello
+blah blah
+nothing
+REMEND
+x = 1
+";
+        var parser = MakeParser(input);
+        var prog = parser.ParseProgram();
+        
+        Assert.That(prog.statements.Count, Is.EqualTo(2));
+        var code = prog.ToString();
+        Console.WriteLine(code);
+        Assert.That(code, Is.EqualTo("((rem hello\nblah blah\nnothing\n),(= (ref x),(1)))"));
+    }
     
+    [TestCase("REM")]
+    [TestCase("`")]
+    public void Rem(string commentPhrase)
+    {
+        var input = $@"
+{commentPhrase} hello x = 1 this is a "" line
+x = 1
+";
+        var parser = MakeParser(input);
+        var prog = parser.ParseProgram();
+        
+        Assert.That(prog.statements.Count, Is.EqualTo(2));
+        var code = prog.ToString();
+        Console.WriteLine(code);
+        Assert.That(code, Is.EqualTo(@"(
+(rem hello x = 1 this is a "" line),
+(= (ref x),(1))
+)".ReplaceLineEndings("")));
+    }
+
+    [TestCase("REM")]
+    [TestCase("`")]
+    public void RemMidLine(string commentPhrase)
+    {
+        var input = $@"
+x = 1 {commentPhrase} what
+x = 2
+";
+        var parser = MakeParser(input);
+        var prog = parser.ParseProgram();
+        
+        Assert.That(prog.statements.Count, Is.EqualTo(3));
+        var code = prog.ToString();
+        Console.WriteLine(code);
+        Assert.That(code, Is.EqualTo(@"(
+(= (ref x),(1)),
+(rem what),
+(= (ref x),(2))
+)".ReplaceLineEndings("")));
+    }
     
     [Test]
     public void OtherIfStatement_Easy()
@@ -707,7 +842,7 @@ x = a.b + len a.c
 
         var assignment = prog.statements[0] as AssignmentStatement;
         var code = prog.ToString();
-        Assert.That(code, Is.EqualTo("((= (x),(2)))"));
+        Assert.That(code, Is.EqualTo("((= (ref x),(2)))"));
     }
     
     [Test]

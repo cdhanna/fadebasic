@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Linq;
+using System.Text;
 using System.Text.RegularExpressions;
 
 namespace DarkBasicYo
@@ -18,6 +19,11 @@ namespace DarkBasicYo
         KeywordDeclareArray,
         KeywordUnDeclareArray,
         
+        KeywordFor, 
+        KeywordTo, 
+        KeywordStep, 
+        KeywordNext,
+        
         KeywordIf,
         KeywordThen,
         KeywordEndIf,
@@ -33,6 +39,7 @@ namespace DarkBasicYo
         
         KeywordWhile,
         KeywordEndWhile,
+        KeywordExit,
         KeywordAs,
         KeywordTypeInteger,
         KeywordTypeByte,
@@ -50,7 +57,7 @@ namespace DarkBasicYo
         KeywordOr,
         KeywordNot,
 
-        Colon,
+        // Colon,
 
         WhiteSpace,
         ArgSplitter,
@@ -118,8 +125,12 @@ namespace DarkBasicYo
             new Lexem(LexemType.KeywordAnd, new Regex("^and")),
             new Lexem(LexemType.KeywordOr, new Regex("^or")),
             new Lexem(LexemType.KeywordNot, new Regex("^not")),
+            new Lexem(LexemType.KeywordFor, new Regex("^for")),
+            new Lexem(LexemType.KeywordTo, new Regex("^to")),
+            new Lexem(LexemType.KeywordStep, new Regex("^step")),
+            new Lexem(LexemType.KeywordNext, new Regex("^next")),
             
-            new Lexem(LexemType.Colon, new Regex("^:")),
+            // new Lexem(LexemType.Colon, new Regex("^:")),
 
             new Lexem(LexemType.KeywordScope, new Regex("^(local)|(global)")),
             
@@ -128,6 +139,7 @@ namespace DarkBasicYo
             new Lexem(LexemType.KeywordElse, new Regex("^else")),
             new Lexem(LexemType.KeywordThen, new Regex("^then")),
             new Lexem(LexemType.KeywordEnd, new Regex("^end")),
+            new Lexem(LexemType.KeywordExit, new Regex("^exit")),
             
             new Lexem(LexemType.KeywordGoto, new Regex("^goto")),
             new Lexem(LexemType.KeywordGoSub, new Regex("^gosub")),
@@ -136,10 +148,10 @@ namespace DarkBasicYo
             new Lexem(LexemType.KeywordDeclareArray, new Regex("^dim")),
             new Lexem(LexemType.KeywordUnDeclareArray, new Regex("^undim")),
 
-            new Lexem(LexemType.KeywordRem, new Regex("^rem")),
-            new Lexem(LexemType.KeywordRem, new Regex("^`")),
-            new Lexem(LexemType.KeywordRemStart, new Regex("^remstart")),
-            new Lexem(LexemType.KeywordRemEnd, new Regex("^remend")),
+            new Lexem(LexemType.KeywordRem, new Regex("^(rem)(.*)$")),
+            new Lexem(LexemType.KeywordRem, new Regex("^`(.*)$")),
+            new Lexem(-2, LexemType.KeywordRemStart, new Regex("^remstart(.*)$")),
+            new Lexem(-2, LexemType.KeywordRemEnd, new Regex("^remend")),
             
             new Lexem(LexemType.KeywordType, new Regex("^type")),
             new Lexem(LexemType.KeywordEndType, new Regex("^endtype")),
@@ -165,6 +177,7 @@ namespace DarkBasicYo
             new Lexem(-2, LexemType.VariableString, new Regex("^([a-zA-Z][a-zA-Z0-9_]*)\\$")),
             new Lexem(-2, LexemType.VariableReal, new Regex("^([a-zA-Z][a-zA-Z0-9_]*)#")),
             new Lexem(2, LexemType.VariableGeneral, new Regex("^[a-zA-Z][a-zA-Z0-9_]*")),
+            // new Lexem(-2, LexemType.Label, new Regex("^[a-zA-Z][a-zA-Z0-9_]*:")),
         };
 
 
@@ -200,10 +213,43 @@ namespace DarkBasicYo
             var lines = input.Split(new string[]{"\n"}, StringSplitOptions.RemoveEmptyEntries);
 
             var eolLexem = new Lexem(LexemType.EndStatement, null);
-            
+
+            Token remBlockToken = null;
+            var remBlockSb = new StringBuilder();
             for (var lineNumber = 0; lineNumber < lines.Length; lineNumber++)
             {
                 var line = lines[lineNumber];
+
+                if (remBlockToken == null && line.ToLowerInvariant().StartsWith("remstart"))
+                {
+                    remBlockToken = new Token
+                    {
+                        lexem = new Lexem(LexemType.KeywordRemStart, null),
+                        charNumber = 0,
+                        lineNumber = lineNumber,
+                    };
+                    remBlockSb.Clear();
+                    remBlockSb.AppendLine(line.Substring("remstart".Length));
+                    continue;
+
+                } else if (remBlockToken != null && (line.ToLowerInvariant().StartsWith("remend") || lineNumber == lines.Length - 1))
+                {
+                    remBlockToken.raw = remBlockSb.ToString();
+                    tokens.Add(remBlockToken);
+                    tokens.Add(new Token
+                    {
+                        lexem = new Lexem(LexemType.KeywordRemEnd, null),
+                        charNumber = 0,
+                        lineNumber = lineNumber,
+                        raw = line
+                    });
+                    remBlockToken = null;
+                    continue;
+                } else if (remBlockToken != null)
+                {
+                    remBlockSb.AppendLine(line);
+                    continue;
+                }
 
                 for (var charNumber = 0; charNumber < line.Length; charNumber = charNumber)
                 {
