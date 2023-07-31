@@ -204,6 +204,43 @@ namespace DarkBasicYo.Ast
         }
     }
 
+    public class SwitchStatement : AstNode, IStatementNode
+    {
+        public IExpressionNode expression;
+        public List<CaseStatement> cases;
+        public DefaultCaseStatement defaultCase;
+        
+        protected override string GetString()
+        {
+            var statements = new List<IStatementNode>();
+            statements.AddRange(cases);
+            if (defaultCase != null)
+            {
+                statements.Add(defaultCase);
+            }
+            return $"switch {expression} ({string.Join(",", statements.Select(x => x.ToString()))})";
+        }
+    }
+
+    public class CaseStatement : AstNode, IStatementNode
+    {
+        public List<ILiteralNode> values;
+        public List<IStatementNode> statements;
+        protected override string GetString()
+        {
+            return $"case {string.Join(",", values.Select(x => x.ToString()))} ({string.Join(",", statements.Select((x => x.ToString())))})";
+        }
+    }
+
+    public class DefaultCaseStatement : AstNode, IStatementNode
+    {
+        public List<IStatementNode> statements;
+        protected override string GetString()
+        {
+            return $"case default ({string.Join(",", statements.Select((x => x.ToString())))})";
+        }
+    }
+
 
     public class IfStatement : AstNode, IStatementNode
     {

@@ -10,6 +10,11 @@ namespace DarkBasicYo.Ast
 
     }
 
+    public interface ILiteralNode : IExpressionNode
+    {
+        
+    }
+
     public enum UnaryOperationType
     {
         Negate,
@@ -206,7 +211,7 @@ namespace DarkBasicYo.Ast
         }
     }
 
-    public class LiteralIntExpression : AstNode, IExpressionNode
+    public class LiteralIntExpression : AstNode, ILiteralNode
     {
         public int value;
 
@@ -230,7 +235,7 @@ namespace DarkBasicYo.Ast
     }
 
 
-    public class LiteralRealExpression : AstNode, IExpressionNode
+    public class LiteralRealExpression : AstNode, ILiteralNode
     {
         public float value;
 
@@ -248,7 +253,7 @@ namespace DarkBasicYo.Ast
         }
     }
 
-    public class LiteralStringExpression : AstNode, IExpressionNode
+    public class LiteralStringExpression : AstNode, ILiteralNode
     {
         public string value;
 

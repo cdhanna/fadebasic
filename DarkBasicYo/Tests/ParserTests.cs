@@ -687,6 +687,146 @@ x = 2
 )".ReplaceLineEndings("")));
     }
     
+    
+    [Test]
+    public void Switch_Easy()
+    {
+        var input = @"
+SELECT x
+    CASE 1
+        x = 1
+    ENDCASE
+ENDSELECT
+";
+        var parser = MakeParser(input);
+        var prog = parser.ParseProgram();
+        
+        Assert.That(prog.statements.Count, Is.EqualTo(1));
+        var code = prog.ToString();
+        Console.WriteLine(code);
+        Assert.That(code, Is.EqualTo(@"(
+(switch (ref x) ((case (1) ((= (ref x),(1))))))
+)".ReplaceLineEndings("")));
+    }
+    
+    
+    [Test]
+    public void Switch_Default()
+    {
+        var input = @"
+SELECT x
+    CASE DEFAULT
+        x = 1
+    ENDCASE
+ENDSELECT
+";
+        var parser = MakeParser(input);
+        var prog = parser.ParseProgram();
+        
+        Assert.That(prog.statements.Count, Is.EqualTo(1));
+        var code = prog.ToString();
+        Console.WriteLine(code);
+        Assert.That(code, Is.EqualTo(@"(
+(switch (ref x) ((case default ((= (ref x),(1))))))
+)".ReplaceLineEndings("")));
+    }
+
+     
+    [Test]
+    public void Switch_DefaultAndCase()
+    {
+        var input = @"
+SELECT x
+    CASE DEFAULT
+        x = 1
+    ENDCASE
+    CASE 1
+        x = 1
+    ENDCASE
+ENDSELECT
+";
+        var parser = MakeParser(input);
+        var prog = parser.ParseProgram();
+        
+        Assert.That(prog.statements.Count, Is.EqualTo(1));
+        var code = prog.ToString();
+        Console.WriteLine(code);
+        Assert.That(code, Is.EqualTo(@"(
+(switch (ref x) ((case (1) ((= (ref x),(1)))),(case default ((= (ref x),(1))))))
+)".ReplaceLineEndings("")));
+    }
+
+    
+    [Test]
+    public void Switch_MultipleCases()
+    {
+        var input = @"
+SELECT x
+    CASE 1
+        x = 1
+    ENDCASE
+    CASE 2
+        x = 2
+    ENDCASE
+ENDSELECT
+";
+        var parser = MakeParser(input);
+        var prog = parser.ParseProgram();
+        
+        Assert.That(prog.statements.Count, Is.EqualTo(1));
+        var code = prog.ToString();
+        Console.WriteLine(code);
+        Assert.That(code, Is.EqualTo(@"(
+(switch (ref x) ((case (1) ((= (ref x),(1)))),(case (2) ((= (ref x),(2))))))
+)".ReplaceLineEndings("")));
+    }
+
+    
+    [Test]
+    public void Switch_Multiple_Values()
+    {
+        var input = @"
+SELECT x
+    CASE 1, 2, 5
+        x = 1
+    ENDCASE
+ENDSELECT
+";
+        var parser = MakeParser(input);
+        var prog = parser.ParseProgram();
+        
+        Assert.That(prog.statements.Count, Is.EqualTo(1));
+        var code = prog.ToString();
+        Console.WriteLine(code);
+        Assert.That(code, Is.EqualTo(@"(
+(switch (ref x) ((case (1),(2),(5) ((= (ref x),(1))))))
+)".ReplaceLineEndings("")));
+    }
+    
+    [Test]
+    public void Switch_Multiple_ValuesOnMultipleLines()
+    {
+        var input = @"
+SELECT x
+    CASE    1, 
+            2
+            ,5
+        x = 1
+    ENDCASE
+ENDSELECT
+";
+        var parser = MakeParser(input);
+        var prog = parser.ParseProgram();
+        
+        Assert.That(prog.statements.Count, Is.EqualTo(1));
+        var code = prog.ToString();
+        Console.WriteLine(code);
+        Assert.That(code, Is.EqualTo(@"(
+(switch (ref x) ((case (1),(2),(5) ((= (ref x),(1))))))
+)".ReplaceLineEndings("")));
+    }
+
+    
     [Test]
     public void OtherIfStatement_Easy()
     {

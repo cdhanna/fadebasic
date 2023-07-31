@@ -353,6 +353,8 @@ namespace DarkBasicYo
                         return ParseForStatement(token);
                     case LexemType.KeywordDo:
                         return ParseDoLoopStatement(token);
+                    case LexemType.KeywordSelect:
+                        return ParseSwitchStatement(token);
                     case LexemType.KeywordGoto:
                         return ParseGoto(token);
                     case LexemType.KeywordGoSub:
@@ -464,6 +466,139 @@ namespace DarkBasicYo
             }
             
             return result;
+        }
+
+        private SwitchStatement ParseSwitchStatement(Token switchToken)
+        {
+            var expression = ParseWikiExpression();
+            
+            // now, there are a set of cases...
+            var looking = true;
+            DefaultCaseStatement defaultCase = null;
+            List<CaseStatement> caseStatements = new List<CaseStatement>();
+            while (looking)
+            {
+                switch (_stream.Peek.type)
+                {
+                    case LexemType.EOF:
+                        throw new ParserException("Hit end of file without a closing select statement", switchToken);
+                    case LexemType.EndStatement:
+                        _stream.Advance();
+                        break;
+                    case LexemType.KeywordCase:
+                        var caseToken = _stream.Advance();
+
+                        switch (_stream.Peek.type)
+                        {
+                            case LexemType.KeywordCaseDefault:
+                                if (defaultCase != null)
+                                {
+                                    throw new ParserException("Select statement can only have 1 default case",
+                                        defaultCase.StartToken);
+                                }
+                                defaultCase = ParseDefaultCase(caseToken);
+                                break;
+                            default:
+                                var caseStatement = ParseCaseStatement(caseToken);
+                                caseStatements.Add(caseStatement);
+                                break;
+                        }
+                        
+                        // parse a case statement!
+                        break;
+                    
+                    case LexemType.KeywordEndSelect:
+                        looking = false;
+                        _stream.Advance(); // discard token
+                        break;
+                }
+            }
+
+            return new SwitchStatement
+            {
+                startToken = switchToken,
+                endToken = _stream.Current,
+                cases = caseStatements,
+                defaultCase = defaultCase,
+                expression = expression
+            };
+
+        }
+
+        private CaseStatement ParseCaseStatement(Token caseToken)
+        {
+            var literals = ParseLiteralList(_stream.Advance());
+
+            var statements = new List<IStatementNode>();
+            var looking = true;
+            while (looking)
+            {
+                var nextToken = _stream.Peek;
+                switch (nextToken.type)
+                {
+                    case LexemType.EOF:
+                        throw new ParserException("Hit end of file without a closing case statement", caseToken);
+                    case LexemType.EndStatement:
+                        _stream.Advance();
+                        break;
+                    case LexemType.KeywordEndCase:
+                        _stream.Advance();
+                        looking = false;
+                        break;
+                    case LexemType.KeywordEndSelect:
+                        throw new ParserException("Must close all cases before ending select statement", caseToken);
+                    default:
+                        var member = ParseStatement();
+                        statements.Add(member);
+                        break; 
+                }
+            }
+
+            return new CaseStatement
+            {
+                startToken = caseToken,
+                endToken = _stream.Current,
+                statements = statements,
+                values = literals
+            };
+        }
+
+        private DefaultCaseStatement ParseDefaultCase(Token caseToken)
+        {
+            _stream.Advance(); // discard the "default"
+            
+            
+            var statements = new List<IStatementNode>();
+            var looking = true;
+            while (looking)
+            {
+                var nextToken = _stream.Peek;
+                switch (nextToken.type)
+                {
+                    case LexemType.EOF:
+                        throw new ParserException("Hit end of file without a closing case statement", caseToken);
+                    case LexemType.EndStatement:
+                        _stream.Advance();
+                        break;
+                    case LexemType.KeywordEndCase:
+                        _stream.Advance();
+                        looking = false;
+                        break;
+                    case LexemType.KeywordEndSelect:
+                        throw new ParserException("Must close all cases before ending select statement", caseToken);
+                    default:
+                        var member = ParseStatement();
+                        statements.Add(member);
+                        break; 
+                }
+            }
+
+            return new DefaultCaseStatement
+            {
+                startToken = caseToken,
+                endToken = _stream.Current,
+                statements = statements
+            };
         }
 
         private ForStatement ParseForStatement(Token forToken)
@@ -944,6 +1079,52 @@ namespace DarkBasicYo
             return lhs;
         }
 
+        private ILiteralNode ParseLiteral(Token token)
+        {
+            switch (token.type)
+            {
+                case LexemType.LiteralInt:
+                    return new LiteralIntExpression(token);
+                case LexemType.LiteralReal:
+                    return new LiteralRealExpression(token);
+                case LexemType.LiteralString:
+                    return new LiteralStringExpression(token);
+                default:
+                    throw new ParserException("Expected a literal", token);
+            }
+        }
+
+        private List<ILiteralNode> ParseLiteralList(Token start)
+        {
+            var literals = new List<ILiteralNode>();
+            literals.Add(ParseLiteral(start));
+            var looking = true;
+            while (looking)
+            {
+
+                switch (_stream.Peek.type)
+                {
+                    case LexemType.LiteralInt:
+                    case LexemType.LiteralReal:
+                    case LexemType.LiteralString:
+                        literals.Add(ParseLiteral(_stream.Advance()));
+                        break;
+                    case LexemType.ArgSplitter:
+                        _stream.Advance(); // discard ,
+                        break;
+                    case LexemType.EndStatement:
+                        _stream.Advance(); // discard eos
+                        break;
+                    default:
+                        looking = false;
+                        break;
+                }
+            }
+
+
+            return literals;
+        }
+
         private IExpressionNode ParseWikiTerm()
         {
             var token = _stream.Advance();
@@ -985,11 +1166,9 @@ namespace DarkBasicYo
                 case LexemType.VariableGeneral:
                     return ParseVariableReference(token);
                 case LexemType.LiteralInt:
-                    return new LiteralIntExpression(token);
                 case LexemType.LiteralReal:
-                    return new LiteralRealExpression(token);
                 case LexemType.LiteralString:
-                    return new LiteralStringExpression(token);
+                    return ParseLiteral(token);
                 case LexemType.OpMultiply:
                     var deRefExpr = ParseVariableReference();
                     return new DereferenceExpression(deRefExpr, token);

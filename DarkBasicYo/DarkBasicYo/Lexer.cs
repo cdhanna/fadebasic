@@ -29,6 +29,12 @@ namespace DarkBasicYo
         KeywordEndIf,
         KeywordElse,
         
+        KeywordSelect,
+        KeywordEndSelect,
+        KeywordCase,
+        KeywordEndCase,
+        KeywordCaseDefault,
+
         KeywordGoto,
         KeywordGoSub,
         KeywordReturn,
@@ -37,15 +43,15 @@ namespace DarkBasicYo
         KeywordType,
         KeywordEndType,
         
-        
         KeywordRepeat,
         KeywordUntil,
-        
         KeywordDo,
         KeywordLoop,
         KeywordWhile,
         KeywordEndWhile,
+        
         KeywordExit,
+        
         KeywordAs,
         KeywordTypeInteger,
         KeywordTypeByte,
@@ -138,6 +144,12 @@ namespace DarkBasicYo
             
             new Lexem(LexemType.KeywordDo, new Regex("^do")),
             new Lexem(LexemType.KeywordLoop, new Regex("^loop")),
+            
+            new Lexem(LexemType.KeywordSelect, new Regex("^select")),
+            new Lexem(LexemType.KeywordEndSelect, new Regex("^endselect")),
+            new Lexem(LexemType.KeywordCase, new Regex("^case")),
+            new Lexem(LexemType.KeywordEndCase, new Regex("^endcase")),
+            new Lexem(LexemType.KeywordCaseDefault, new Regex("^default")),
             
             new Lexem(LexemType.KeywordRepeat, new Regex("^repeat")),
             new Lexem(LexemType.KeywordUntil, new Regex("^until")),
