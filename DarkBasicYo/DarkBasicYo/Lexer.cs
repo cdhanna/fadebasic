@@ -37,6 +37,12 @@ namespace DarkBasicYo
         KeywordType,
         KeywordEndType,
         
+        
+        KeywordRepeat,
+        KeywordUntil,
+        
+        KeywordDo,
+        KeywordLoop,
         KeywordWhile,
         KeywordEndWhile,
         KeywordExit,
@@ -130,6 +136,11 @@ namespace DarkBasicYo
             new Lexem(LexemType.KeywordStep, new Regex("^step")),
             new Lexem(LexemType.KeywordNext, new Regex("^next")),
             
+            new Lexem(LexemType.KeywordDo, new Regex("^do")),
+            new Lexem(LexemType.KeywordLoop, new Regex("^loop")),
+            
+            new Lexem(LexemType.KeywordRepeat, new Regex("^repeat")),
+            new Lexem(LexemType.KeywordUntil, new Regex("^until")),
             // new Lexem(LexemType.Colon, new Regex("^:")),
 
             new Lexem(LexemType.KeywordScope, new Regex("^(local)|(global)")),

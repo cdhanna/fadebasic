@@ -490,6 +490,129 @@ ENDIF
         Assert.That(vm.typeRegisters[0], Is.EqualTo(TypeCodes.INT));
     }
     
+    [Test]
+    public void RepeatUntil_Simple()
+    {
+        var src = @"
+x = 1
+REPEAT
+    x = x + 1
+UNTIL x > 4
+";
+        Setup(src, out _, out var prog);
+        
+        var vm = new VirtualMachine(prog);
+        vm.Execute().MoveNext();
+        
+        Assert.That(vm.dataRegisters[0], Is.EqualTo(5));
+        Assert.That(vm.typeRegisters[0], Is.EqualTo(TypeCodes.INT));
+    }
+
+    [Test]
+    public void RepeatUntil_ConditionIsAlreadyTrue()
+    {
+        var src = @"
+x = 1
+REPEAT
+    x = x + 1
+UNTIL x > 0
+";
+        Setup(src, out _, out var prog);
+        
+        var vm = new VirtualMachine(prog);
+        vm.Execute().MoveNext();
+        
+        Assert.That(vm.dataRegisters[0], Is.EqualTo(2));
+        Assert.That(vm.typeRegisters[0], Is.EqualTo(TypeCodes.INT));
+    }
+
+    
+    [Test]
+    public void RepeatUntil_Exit()
+    {
+        var src = @"
+x = 1
+REPEAT
+    x = x + 1
+    IF x > 5 THEN EXIT
+UNTIL x > 100
+";
+        Setup(src, out _, out var prog);
+        
+        var vm = new VirtualMachine(prog);
+        vm.Execute().MoveNext();
+        
+        Assert.That(vm.dataRegisters[0], Is.EqualTo(6));
+        Assert.That(vm.typeRegisters[0], Is.EqualTo(TypeCodes.INT));
+    }
+
+    
+    [Test]
+    public void DoLoop_Simple_Exit()
+    {
+        var src = @"
+x = 0
+DO
+    x = x + 1
+    IF x = 10 THEN EXIT
+LOOP
+";
+        Setup(src, out _, out var prog);
+        
+        var vm = new VirtualMachine(prog);
+        vm.Execute().MoveNext();
+        
+        Assert.That(vm.dataRegisters[0], Is.EqualTo(10));
+        Assert.That(vm.typeRegisters[0], Is.EqualTo(TypeCodes.INT));
+    }
+
+    [Test]
+    public void DoLoop_Simple_GoTo()
+    {
+        var src = @"
+x = 0
+DO
+    x = x + 1
+    IF x = 10 THEN GOTO Derp
+LOOP
+
+Derp:
+x = x * 2
+";
+        Setup(src, out _, out var prog);
+        
+        var vm = new VirtualMachine(prog);
+        vm.Execute().MoveNext();
+        
+        Assert.That(vm.dataRegisters[0], Is.EqualTo(20));
+        Assert.That(vm.typeRegisters[0], Is.EqualTo(TypeCodes.INT));
+    }
+    
+    
+    [Test]
+    public void DoLoop_NeverExit()
+    {
+        var src = @"
+x = 0
+y = 0
+DO
+    x = x + 1
+LOOP
+y = 1
+";
+        Setup(src, out _, out var prog);
+        
+        var vm = new VirtualMachine(prog);
+        vm.Execute().MoveNext();
+        
+        Assert.That(vm.dataRegisters[0], Is.EqualTo(142)); // on July 30th, it happened to be that it got to 142, but that is entirely by instructions run... 
+        Assert.That(vm.typeRegisters[0], Is.EqualTo(TypeCodes.INT));
+        
+        Assert.That(vm.dataRegisters[1], Is.EqualTo(0)); // the point is that the loop never exits
+        Assert.That(vm.typeRegisters[1], Is.EqualTo(TypeCodes.INT));
+    }
+
+
     
     [Test]
     public void For_Simple()
@@ -511,6 +634,44 @@ NEXT
         
         Assert.That(vm.dataRegisters[1], Is.EqualTo(6));
         Assert.That(vm.typeRegisters[1], Is.EqualTo(TypeCodes.INT));
+    }
+
+    
+    [Test]
+    public void For_Simple_ChangingStep()
+    {
+        var src = @"
+x = 0
+y = 0
+z = 1
+FOR x = 1 TO 100 STEP z
+    y = x
+    z = x * 2
+NEXT
+";
+        Setup(src, out _, out var prog);
+        
+        var vm = new VirtualMachine(prog);
+        vm.Execute().MoveNext();
+
+        var z = 1;
+        var y = 0;
+        var x = 0;
+        for (x = 1; x <= 100; x += z)
+        {
+            y = x;
+            z = x * 2;
+        }
+        
+        
+        Assert.That(vm.dataRegisters[0], Is.EqualTo(x));
+        Assert.That(vm.typeRegisters[0], Is.EqualTo(TypeCodes.INT));
+        
+        Assert.That(vm.dataRegisters[1], Is.EqualTo(y));
+        Assert.That(vm.typeRegisters[1], Is.EqualTo(TypeCodes.INT));
+        
+        Assert.That(vm.dataRegisters[2], Is.EqualTo(z));
+        Assert.That(vm.typeRegisters[2], Is.EqualTo(TypeCodes.INT));
     }
 
     
@@ -561,6 +722,41 @@ NEXT
         Assert.That(vm.typeRegisters[1], Is.EqualTo(TypeCodes.INT));
     }
     
+    
+    [Test]
+    public void For_Simple_Reg()
+    {
+        var src = @"x = 0
+
+FOR x = 1 TO 4 `x is reg 0, lc is reg 1
+    n = 10 `n is reg 2
+NEXT
+y = 20
+f = y * n
+";
+        Setup(src, out _, out var prog);
+        
+        var vm = new VirtualMachine(prog);
+        vm.Execute2();
+        
+        Assert.That(vm.dataRegisters[0], Is.EqualTo(5));
+        Assert.That(vm.typeRegisters[0], Is.EqualTo(TypeCodes.INT));
+        // Assert.That(vm.dataRegisters[1], Is.EqualTo(4)); // loop counter
+        // Assert.That(vm.typeRegisters[1], Is.EqualTo(TypeCodes.INT));
+        Assert.That(vm.dataRegisters[1], Is.EqualTo(10));
+        Assert.That(vm.typeRegisters[1], Is.EqualTo(TypeCodes.INT));
+        // Assert.That(vm.dataRegisters[3], Is.EqualTo(20));
+        // Assert.That(vm.typeRegisters[3], Is.EqualTo(TypeCodes.INT));
+        // Assert.That(vm.dataRegisters[4], Is.EqualTo(200));
+        // Assert.That(vm.typeRegisters[4], Is.EqualTo(TypeCodes.INT));
+        
+        Assert.That(vm.dataRegisters[2], Is.EqualTo(20));
+        Assert.That(vm.typeRegisters[2], Is.EqualTo(TypeCodes.INT));
+        Assert.That(vm.dataRegisters[3], Is.EqualTo(200));
+        Assert.That(vm.typeRegisters[3], Is.EqualTo(TypeCodes.INT));
+    }
+
+    
         
     [Test]
     public void For_Sequences()
@@ -599,7 +795,7 @@ FOR x = 10 TO 0 STEP -3
 NEXT
 ";
         Setup(src, out _, out var prog);
-        
+
         var vm = new VirtualMachine(prog);
         vm.Execute().MoveNext();
         

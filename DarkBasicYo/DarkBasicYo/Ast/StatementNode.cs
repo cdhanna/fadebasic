@@ -139,6 +139,22 @@ namespace DarkBasicYo.Ast
         }
     }
 
+    public class DoLoopStatement : AstNode, IStatementNode
+    {
+        public List<IStatementNode> statements;
+
+        public DoLoopStatement(Token start, Token end, List<IStatementNode> statements) : base(start, end)
+        {
+            this.statements = statements;
+        }
+        
+        protected override string GetString()
+        {
+            return $"do ({string.Join(",", statements.Select(x => x.ToString()))})";
+        }
+    }
+    
+
     public class ForStatement : AstNode, IStatementNode
     {
         public IVariableNode variableNode;
@@ -176,6 +192,18 @@ namespace DarkBasicYo.Ast
             return $"while {condition} {string.Join(",", statements.Select(x => x.ToString()))}";
         }
     }
+    
+    public class RepeatUntilStatement : AstNode, IStatementNode
+    {
+        public IExpressionNode condition;
+        public List<IStatementNode> statements = new List<IStatementNode>();
+
+        protected override string GetString()
+        {
+            return $"repeat {condition} {string.Join(",", statements.Select(x => x.ToString()))}";
+        }
+    }
+
 
     public class IfStatement : AstNode, IStatementNode
     {
@@ -221,15 +249,4 @@ namespace DarkBasicYo.Ast
         }
     }
 
-    public class EndWhileStatement : AstNode, IStatementNode
-    {
-        public EndWhileStatement(Token token) : base(token)
-        {
-        }
-
-        protected override string GetString()
-        {
-            return "endwhile";
-        }
-    }
 }

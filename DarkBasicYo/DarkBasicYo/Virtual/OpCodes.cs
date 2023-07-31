@@ -62,7 +62,6 @@ namespace DarkBasicYo.Virtual
         /// Expects to find two values in the stack 
         /// </summary>
         public const byte ADD = 2;
-        public const byte ADD2 = 52;
         public const byte MUL = 3;
         public const byte DIVIDE = 4;
         public const byte BREAKPOINT = 255;
@@ -176,10 +175,15 @@ namespace DarkBasicYo.Virtual
         public const byte JUMP_GT_ZERO = 35;
 
         /// <summary>
-        /// pops an address, then pops a value. If the value is greater than or equal to zero, then the Instruction
+        /// pops an address, then pops a value. If the value is equal to zero, then the Instruction
         /// pointer is set to the address; otherwise nothing happens
         /// </summary>
-        public const byte JUMP_GTE_ZERO = 36;
-        
+        public const byte JUMP_ZERO = 37;
+
+        /// <summary>
+        /// pops the two values off the stack, and puts them back in MAX/MIN order
+        /// </summary>
+        public const byte MIN_MAX_PUSH = 38;
+
     }
 }

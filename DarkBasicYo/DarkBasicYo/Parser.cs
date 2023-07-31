@@ -347,8 +347,12 @@ namespace DarkBasicYo
                         return ParseIfStatement(token);
                     case LexemType.KeywordWhile:
                         return ParseWhileStatement(token);
+                    case LexemType.KeywordRepeat:
+                        return ParseRepeatUntil(token);
                     case LexemType.KeywordFor:
                         return ParseForStatement(token);
+                    case LexemType.KeywordDo:
+                        return ParseDoLoopStatement(token);
                     case LexemType.KeywordGoto:
                         return ParseGoto(token);
                     case LexemType.KeywordGoSub:
@@ -525,6 +529,71 @@ namespace DarkBasicYo
                 forToken, _stream.Current, variable, startExpr, endExpr, stepExpr, statements);
         }
 
+        private DoLoopStatement ParseDoLoopStatement(Token doToken)
+        {
+            var statements = new List<IStatementNode>();
+            var looking = true;
+            while (looking)
+            {
+                var nextToken = _stream.Peek;
+                switch (nextToken.type)
+                {
+                    case LexemType.EOF:
+                        throw new ParserException("Hit end of file without a closing loop statement", nextToken);
+                    case LexemType.EndStatement:
+                        _stream.Advance();
+                        break;
+                    case LexemType.KeywordLoop:
+                        _stream.Advance();
+                        looking = false;
+                        break;
+                    default:
+                        var member = ParseStatement();
+                        statements.Add(member);
+                        break; 
+                }
+            }
+
+            return new DoLoopStatement(doToken, _stream.Current, statements);
+        }
+
+        
+        private RepeatUntilStatement ParseRepeatUntil(Token whileToken)
+        {
+            var statements = new List<IStatementNode>();
+            var looking = true;
+            while (looking)
+            {
+                var nextToken = _stream.Peek;
+                switch (nextToken.type)
+                {
+                    case LexemType.EOF:
+                        throw new ParserException("Hit end of file without a closing until statement", nextToken);
+                    case LexemType.EndStatement:
+                        _stream.Advance();
+                        break;
+                    case LexemType.KeywordUntil:
+                        _stream.Advance();
+                        looking = false;
+                        break;
+                    default:
+                        var member = ParseStatement();
+                        statements.Add(member);
+                        break; 
+                }
+            }
+            var condition = ParseWikiExpression();
+
+            return new RepeatUntilStatement
+            {
+                startToken = whileToken,
+                endToken = _stream.Current,
+                statements = statements,
+                condition = condition
+            };
+        }
+
+        
         private WhileStatement ParseWhileStatement(Token whileToken)
         {
             var condition = ParseWikiExpression();

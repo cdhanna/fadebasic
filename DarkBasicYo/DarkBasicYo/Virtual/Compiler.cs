@@ -205,8 +205,14 @@ namespace DarkBasicYo.Virtual
                 case WhileStatement whileStatement:
                     Compile(whileStatement);
                     break;
+                case RepeatUntilStatement repeatUntilStatement:
+                    Compile(repeatUntilStatement);
+                    break;
                 case ForStatement forStatement:
                     Compile(forStatement);
+                    break;
+                case DoLoopStatement doLoopStatement:
+                    Compile(doLoopStatement);
                     break;
                 default:
                     throw new Exception("compiler exception: unhandled statement node " + statement);
@@ -223,10 +229,9 @@ namespace DarkBasicYo.Virtual
             AddPushInt(_buffer, int.MaxValue);
             _buffer.Add(OpCodes.JUMP);
         }
-
+        
         private void Compile(ForStatement forStatement)
         {
-           
             // for later, we'll need a statement that adds the step expr
             var stepAssignment = new AssignmentStatement
             {
@@ -247,61 +252,43 @@ namespace DarkBasicYo.Virtual
             };
             Compile(fakeAssignment);
 
-            // to calculate the condition, we need a loop-counter variable, which will start at zero...
-            AddPushInt(_buffer, 0);
-
-            // and we'll need it later, so lock it into a register...
-            _buffer.Add(OpCodes.STORE);
-            var reg = (byte)(registerCount++);
-            _buffer.Add(reg);
-
             // then, keep track of the start of the for-loop, this is where we'll come back to
             var forLoopValue = _buffer.Count;
-            // _buffer.Add(OpCodes.NOOP);
-            // the expression for the condition is 
-            //  (f - i) - (loopCount * stepExpr) >= 0
             
-            // load it back out again
-            _buffer.Add(OpCodes.LOAD);
-            _buffer.Add(reg);
+            // push min
+            Compile(forStatement.startValueExpression); // TODO: we are accessing the start twice- that may mean a function gets called twice
             
-            // push stepExpr
-            Compile(forStatement.stepValueExpression);
-            
-            // multiply
-            _buffer.Add(OpCodes.MUL);
-            _buffer.Add(OpCodes.ABS);
-            
-            // push f
+            // push max
             Compile(forStatement.endValueExpression);
 
-            // push i
-            Compile(forStatement.startValueExpression);
-
-            // subtract
-            AddPushInt(_buffer, -1);
-            _buffer.Add(OpCodes.MUL);
-            _buffer.Add(OpCodes.ADD);
-            _buffer.Add(OpCodes.ABS);
+            // we don't actually know if the min is min, and the max is max; so use an op code to sort the previous two stack entries
+            _buffer.Add(OpCodes.MIN_MAX_PUSH);
             
-            // subtract
-            AddPushInt(_buffer, -1);
-            _buffer.Add(OpCodes.MUL);
-            _buffer.Add(OpCodes.ADD);
-            // negate, because we did (loopCount * stepExpr) - (f - i)
-            AddPushInt(_buffer, -1);
-            _buffer.Add(OpCodes.MUL);
+            // push x again
+            Compile(forStatement.variableNode);
             
-            // cast the condition to an int
-            _buffer.Add(OpCodes.CAST);
-            _buffer.Add(TypeCodes.INT);
-
+            // is x less than max?
+            _buffer.Add(OpCodes.LTE);
+            
+            // if this is a zero, then we have failed, and we can exit...
+            // push the address we want to go if failed
+            var lteExitJumpIndex = _buffer.Count;
+            AddPushInt(_buffer, int.MaxValue);
+            // and maybe jump
+            _buffer.Add(OpCodes.JUMP_ZERO);
+            
+            // push x again
+            Compile(forStatement.variableNode);
+            
+            // is x greater than min?
+            _buffer.Add(OpCodes.GTE);
+            
             // then, put a fake value in for the for-statement success jump... We'll fix it later.
             var successJumpIndex = _buffer.Count;
             AddPushInt(_buffer, int.MaxValue);
             
             // then, do the jump-gt-zero
-            _buffer.Add(OpCodes.JUMP_GTE_ZERO);
+            _buffer.Add(OpCodes.JUMP_GT_ZERO);
             
             // if we didn't jump, then we need to load exit the for-loop.
             // Just take note of this buffer index, and we'll update it later
@@ -317,25 +304,6 @@ namespace DarkBasicYo.Virtual
                 Compile(successStatement);
             }
             var exitStatementIndexes = _exitInstructionIndexes.Pop();
-
-            // now that the for-loop has run once, we need to 
-            //  (1) - increase the loop counter
-            //  (2) - update x,
-            //  (3) - jump back to the start of the loop
-            
-            // put 1 on the stack, because we'll add it to the loopCounter
-            AddPushInt(_buffer, 1);
-            
-            // load the loopCounter variable
-            _buffer.Add(OpCodes.LOAD);
-            _buffer.Add(reg);
-            
-            // put 1+loopCounter onto the stack
-            _buffer.Add(OpCodes.ADD);
-            
-            // and then save it on the register
-            _buffer.Add(OpCodes.STORE);
-            _buffer.Add(reg);
 
             // now to update the value of x, we need to add the stepExpr to it.
             Compile(stepAssignment); // NOTE: there could be a bug here, because we are looping on a deterministic math operation, but simulating the interpolated variable
@@ -354,17 +322,102 @@ namespace DarkBasicYo.Virtual
                 // offset by 2, because of the opcode, and the type code
                 _buffer[successJumpIndex + 2 + i] = successJumpBytes[(successJumpBytes.Length -1) - i];
                 _buffer[exitJumpIndex + 2 + i] = endJumpBytes[(successJumpBytes.Length -1) - i];
+                _buffer[lteExitJumpIndex + 2 + i] = endJumpBytes[(successJumpBytes.Length -1) - i];
+                
                 foreach (var index in exitStatementIndexes)
                 {
                     _buffer[index + 2 + i] = endJumpBytes[(successJumpBytes.Length -1) - i];
                 }
             }
             
-            // we don't need the register anymore
-            registerCount--;
-            _buffer.Add(OpCodes.BREAKPOINT);
-
         }
+         
+        
+        private void Compile(DoLoopStatement doLoopStatement)
+        {
+
+            // first, keep track of the start of the while loop
+            var whileLoopValue = _buffer.Count;
+            
+            // keep track of the first index of the success
+            var successJumpValue = _buffer.Count;
+            _exitInstructionIndexes.Push(new List<int>());
+            foreach (var successStatement in doLoopStatement.statements)
+            {
+                Compile(successStatement);
+            }
+            var exitStatementIndexes = _exitInstructionIndexes.Pop();
+
+            // at the end of the successful statements, we need to jump back to the start
+            AddPushInt(_buffer, whileLoopValue);
+            _buffer.Add(OpCodes.JUMP);
+
+            var endJumpValue = _buffer.Count;
+            _buffer.Add(OpCodes.NOOP);
+            
+            // now go back and fill in the success ptr
+            var successJumpBytes = BitConverter.GetBytes(successJumpValue);
+            var endJumpBytes = BitConverter.GetBytes(endJumpValue);
+            for (var i = 0; i < successJumpBytes.Length; i++)
+            {
+                // offset by 2, because of the opcode, and the type code
+                foreach (var index in exitStatementIndexes)
+                {
+                    _buffer[index + 2 + i] = endJumpBytes[(successJumpBytes.Length -1) - i];
+                }
+                
+            }
+        }
+        
+        
+        private void Compile(RepeatUntilStatement repeatStatement)
+        {
+            
+            // first, keep track of the start of the while loop
+            var startValue = _buffer.Count;
+            
+            // keep track of the first index of the success
+            var successJumpValue = _buffer.Count;
+            _exitInstructionIndexes.Push(new List<int>());
+            foreach (var successStatement in repeatStatement.statements)
+            {
+                Compile(successStatement);
+            }
+            var exitStatementIndexes = _exitInstructionIndexes.Pop();
+            
+            // compile the condition expression
+            Compile(repeatStatement.condition);
+            // cast the expression to an int
+            _buffer.Add(OpCodes.CAST);
+            _buffer.Add(TypeCodes.INT);
+            
+            // the semantics of the word, "until", mean we flip the condition value
+            _buffer.Add(OpCodes.NOT);
+            
+            // then, insert the starting address
+            AddPushInt(_buffer, startValue);
+            
+            // then, maybe jump to the start?
+            _buffer.Add(OpCodes.JUMP_GT_ZERO);
+            
+            // if we didn't jump, then we are done!
+           
+            var endJumpValue = _buffer.Count;
+            _buffer.Add(OpCodes.NOOP);
+            
+            // now go back and fill in the success ptr
+            var endJumpBytes = BitConverter.GetBytes(endJumpValue);
+            for (var i = 0; i < endJumpBytes.Length; i++)
+            {
+                // offset by 2, because of the opcode, and the type code
+                foreach (var index in exitStatementIndexes)
+                {
+                    _buffer[index + 2 + i] = endJumpBytes[(endJumpBytes.Length -1) - i];
+                }
+                
+            }
+        }
+        
         
         private void Compile(WhileStatement whileStatement)
         {

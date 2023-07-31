@@ -106,6 +106,7 @@ namespace DarkBasicYo.Virtual
                     ulong data = 0;
                     byte addr = 0, size =0;
                     int insPtr;
+                    int ad, bd, cd;
                     switch (ins)
                     {
                         case OpCodes.JUMP:
@@ -121,10 +122,11 @@ namespace DarkBasicYo.Virtual
                                 instructionIndex = insPtr;
                             }
                             break;
-                        case OpCodes.JUMP_GTE_ZERO:
+                        
+                        case OpCodes.JUMP_ZERO:
                             VmUtil.ReadAsInt(stack, out insPtr);
-                            VmUtil.ReadAsInt(stack, out var jumpValue2);
-                            if (jumpValue2 >= 0)
+                            VmUtil.ReadAsInt(stack, out var jumpValue3);
+                            if (jumpValue3 == 0)
                             {
                                 jc++;
                                 instructionIndex = insPtr;
@@ -184,17 +186,22 @@ namespace DarkBasicYo.Virtual
                             VmUtil.Not(typeCode, aBytes, out cBytes);
                             VmUtil.Push(stack, cBytes, typeCode);
                             break;
-                        case OpCodes.ABS:
-                            VmUtil.Read(stack, out typeCode, out aBytes);
-                            VmUtil.Abs(typeCode, aBytes, out cBytes);
-                            VmUtil.Push(stack, cBytes, typeCode);
+                        case OpCodes.MIN_MAX_PUSH:
+                            VmUtil.ReadTwoValues(stack, out vTypeCode, out aBytes, out bBytes);
+                            VmUtil.GetMinMax(vTypeCode, aBytes, bBytes, out var needsFlip);
+                            if (needsFlip)
+                            {
+                                VmUtil.Push(stack, aBytes, typeCode);
+                                VmUtil.Push(stack, bBytes, typeCode);
+                            }
+                            else
+                            {
+                                VmUtil.Push(stack, bBytes, typeCode);
+                                VmUtil.Push(stack, aBytes, typeCode);
+                            }
+                            // VmUtil.Push(stack, cBytes, typeCode);
                             break;
                         case OpCodes.ADD:
-                            VmUtil.ReadTwoValues(stack, out vTypeCode, out aBytes, out bBytes);
-                            VmUtil.Add(heap, vTypeCode, aBytes, bBytes, out cBytes);
-                            VmUtil.Push(stack, cBytes, vTypeCode);
-                            break;
-                        case OpCodes.ADD2:
                             VmUtil.ReadTwoValues(stack, out vTypeCode, out aBytes, out bBytes);
                             VmUtil.Add(heap, vTypeCode, aBytes, bBytes, out cBytes);
                             VmUtil.Push(stack, cBytes, vTypeCode);
@@ -219,6 +226,7 @@ namespace DarkBasicYo.Virtual
                         case OpCodes.GTE:
                             VmUtil.ReadTwoValues(stack, out vTypeCode, out aBytes, out bBytes);
                             VmUtil.GreaterThanOrEqualTo(vTypeCode, bBytes, aBytes, out cBytes);
+                           
                             VmUtil.Push(stack, cBytes, vTypeCode);
                             break;
                         case OpCodes.LT:

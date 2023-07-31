@@ -538,6 +538,35 @@ namespace DarkBasicYo.Virtual
             Pad(bigSize, bBytes, out bBytes);
             typeCode = bigTypeCode;
         }
-        
+
+        public static void GetMinMax(byte aTypeCode, byte[] a, byte[] b, out bool needFlip)
+        {
+            switch (aTypeCode)
+            {
+
+                case TypeCodes.BYTE:
+                    byte aByte = a[0];
+                    byte bByte = b[0];
+                    needFlip = aByte > bByte;
+                    break;
+                case TypeCodes.WORD:
+                    short aShort = BitConverter.ToInt16(a, 0);
+                    short bShort = BitConverter.ToInt16(b, 0);
+                    needFlip = aShort > bShort;
+                    break;
+                case TypeCodes.INT:
+                    int aInt = BitConverter.ToInt32(a, 0);
+                    int bInt = BitConverter.ToInt32(b, 0);
+                    needFlip = aInt > bInt;
+                    break;
+                case TypeCodes.REAL:
+                    float aReal = BitConverter.ToSingle(a, 0);
+                    float bReal = BitConverter.ToSingle(b, 0);
+                    needFlip = aReal > bReal;
+                    break;
+                default:
+                    throw new Exception("Unsupported add operation");
+            }
+        }
     }
 }
