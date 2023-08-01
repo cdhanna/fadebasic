@@ -208,13 +208,13 @@ namespace DarkBasicYo.Ast
     {
         public IExpressionNode expression;
         public List<CaseStatement> cases;
-        public DefaultCaseStatement defaultCase;
+        public DefaultCaseStatement defaultCase ;
         
         protected override string GetString()
         {
             var statements = new List<IStatementNode>();
             statements.AddRange(cases);
-            if (defaultCase != null)
+            if (defaultCase != null )
             {
                 statements.Add(defaultCase);
             }
@@ -234,7 +234,7 @@ namespace DarkBasicYo.Ast
 
     public class DefaultCaseStatement : AstNode, IStatementNode
     {
-        public List<IStatementNode> statements;
+        public List<IStatementNode> statements ;
         protected override string GetString()
         {
             return $"case default ({string.Join(",", statements.Select((x => x.ToString())))})";

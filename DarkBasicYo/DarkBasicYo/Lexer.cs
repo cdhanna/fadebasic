@@ -142,7 +142,7 @@ namespace DarkBasicYo
             new Lexem(LexemType.KeywordStep, new Regex("^step")),
             new Lexem(LexemType.KeywordNext, new Regex("^next")),
             
-            new Lexem(LexemType.KeywordDo, new Regex("^do")),
+            new Lexem(LexemType.KeywordDo, new Regex("^do\\b")), // TODO: add word boundary to everything...
             new Lexem(LexemType.KeywordLoop, new Regex("^loop")),
             
             new Lexem(LexemType.KeywordSelect, new Regex("^select")),

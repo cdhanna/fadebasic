@@ -613,6 +613,211 @@ y = 1
     }
 
 
+    [Test]
+    public void Select_Simple()
+    {
+        var src = @"
+x = 32
+SELECT x
+    CASE 32
+        y = 1
+    ENDCASE
+ENDSELECT
+";
+        Setup(src, out _, out var prog);
+
+        var vm = new VirtualMachine(prog);
+        vm.Execute().MoveNext();
+        
+        Assert.That(vm.dataRegisters[1], Is.EqualTo(1));
+        Assert.That(vm.typeRegisters[1], Is.EqualTo(TypeCodes.INT));
+    }
+    
+    
+    [Test]
+    public void Select_Simple_2Cases_SkipTop()
+    {
+        var src = @"
+x = 15
+y = 0
+z = 0
+SELECT x
+    CASE 32
+        y = 1
+        z = 1
+    ENDCASE
+    CASE 15
+        y = 2
+    ENDCASE
+ENDSELECT
+";
+        Setup(src, out _, out var prog);
+
+        var vm = new VirtualMachine(prog);
+        vm.Execute().MoveNext();
+        
+        Assert.That(vm.dataRegisters[1], Is.EqualTo(2));
+        Assert.That(vm.typeRegisters[1], Is.EqualTo(TypeCodes.INT));
+        
+        Assert.That(vm.dataRegisters[2], Is.EqualTo(0));
+        Assert.That(vm.typeRegisters[2], Is.EqualTo(TypeCodes.INT));
+    }
+
+    
+    [Test]
+    public void Select_Simple_2Cases_SkipBottom()
+    {
+        var src = @"
+x = 32
+y = 0
+z = 0
+SELECT x
+    CASE 32
+        y = 1
+    ENDCASE
+    CASE 15
+        y = 2
+        z = 1
+    ENDCASE
+ENDSELECT
+";
+        Setup(src, out _, out var prog);
+
+        var vm = new VirtualMachine(prog);
+        vm.Execute().MoveNext();
+        
+        Assert.That(vm.dataRegisters[1], Is.EqualTo(1));
+        Assert.That(vm.typeRegisters[1], Is.EqualTo(TypeCodes.INT));
+        
+        Assert.That(vm.dataRegisters[2], Is.EqualTo(0));
+        Assert.That(vm.typeRegisters[2], Is.EqualTo(TypeCodes.INT));
+    }
+
+    
+    [Test]
+    public void Select_Simple_2Cases_MultipleValues()
+    {
+        var src = @"
+x = 6
+y = 0
+z = 0
+SELECT x
+    CASE 5,6,7
+        y = 1
+    ENDCASE
+    CASE 15
+        y = 2
+        z = 1
+    ENDCASE
+ENDSELECT
+";
+        Setup(src, out _, out var prog);
+
+        var vm = new VirtualMachine(prog);
+        vm.Execute().MoveNext();
+        
+        Assert.That(vm.dataRegisters[1], Is.EqualTo(1));
+        Assert.That(vm.typeRegisters[1], Is.EqualTo(TypeCodes.INT));
+        
+        Assert.That(vm.dataRegisters[2], Is.EqualTo(0));
+        Assert.That(vm.typeRegisters[2], Is.EqualTo(TypeCodes.INT));
+    }
+    
+    
+    [Test]
+    public void Select_Simple_Default()
+    {
+        var src = @"
+x = 6
+y = 0
+z = 0
+SELECT x
+    CASE 10
+        y = 1
+        z = 1
+    ENDCASE
+    CASE 15
+        y = 2
+        z = 1
+    ENDCASE
+    CASE DEFAULT
+        y = 3
+    ENDCASE
+ENDSELECT
+";
+        Setup(src, out _, out var prog);
+
+        var vm = new VirtualMachine(prog);
+        vm.Execute().MoveNext();
+        
+        Assert.That(vm.dataRegisters[1], Is.EqualTo(3));
+        Assert.That(vm.typeRegisters[1], Is.EqualTo(TypeCodes.INT));
+        
+        Assert.That(vm.dataRegisters[2], Is.EqualTo(0));
+        Assert.That(vm.typeRegisters[2], Is.EqualTo(TypeCodes.INT));
+    }
+
+    
+    [Test]
+    public void Select_Simple_Expression()
+    {
+        var src = @"
+x = 0
+y = 0
+z = 0
+SELECT 3 + 6
+    CASE 10
+        y = 1
+        z = 1
+    ENDCASE
+    CASE 9
+        y = 2
+    ENDCASE
+    CASE DEFAULT
+        y = 3
+        z = 1
+    ENDCASE
+ENDSELECT
+";
+        Setup(src, out _, out var prog);
+
+        var vm = new VirtualMachine(prog);
+        vm.Execute().MoveNext();
+        
+        Assert.That(vm.dataRegisters[1], Is.EqualTo(2));
+        Assert.That(vm.typeRegisters[1], Is.EqualTo(TypeCodes.INT));
+        
+        Assert.That(vm.dataRegisters[2], Is.EqualTo(0));
+        Assert.That(vm.typeRegisters[2], Is.EqualTo(TypeCodes.INT));
+    }
+
+    
+    [Test]
+    public void Select_Floats()
+    {
+        var src = @"
+x# = 1.2
+SELECT x#
+    CASE 1.2
+        y = 1
+    ENDCASE
+    CASE 4
+        y = 2
+        z = 1
+    ENDCASE
+ENDSELECT
+";
+        Setup(src, out _, out var prog);
+
+        var vm = new VirtualMachine(prog);
+        vm.Execute().MoveNext();
+        
+        Assert.That(vm.dataRegisters[1], Is.EqualTo(1));
+        Assert.That(vm.typeRegisters[1], Is.EqualTo(TypeCodes.INT));
+        
+        Assert.That(vm.dataRegisters[2], Is.EqualTo(0));
+        Assert.That(vm.typeRegisters[2], Is.EqualTo(TypeCodes.INT));
+    }
     
     [Test]
     public void For_Simple()
@@ -830,7 +1035,6 @@ NEXT
         var vm = new VirtualMachine(prog);
         vm.Execute().MoveNext();
 
-        var n = VirtualMachine.jc;
         var c = 0;
         for (var x = 0; x <= 4; x++)
         {
@@ -870,7 +1074,6 @@ NEXT
         var vm = new VirtualMachine(prog);
         vm.Execute().MoveNext();
 
-        var n = VirtualMachine.jc;
         var c = 0;
         for (var x = 0; x <= 4; x++)
         {

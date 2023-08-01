@@ -1173,7 +1173,7 @@ namespace DarkBasicYo
                     var deRefExpr = ParseVariableReference();
                     return new DereferenceExpression(deRefExpr, token);
                 case LexemType.OpMinus:
-                    var negateExpr = ParseWikiExpression();
+                    var negateExpr = ParseWikiTerm();
                     return new UnaryOperationExpression(UnaryOperationType.Negate, negateExpr, token, _stream.Current);
                 case LexemType.KeywordNot:
 

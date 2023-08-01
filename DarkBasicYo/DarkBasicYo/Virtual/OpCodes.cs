@@ -185,5 +185,14 @@ namespace DarkBasicYo.Virtual
         /// </summary>
         public const byte MIN_MAX_PUSH = 38;
 
+        /// <summary>
+        /// Next INS is the size of the jump table, not including the default case.
+        /// Then, by pairs of 2, read from INS, a literal constant, and an address.
+        /// Finally, read the address of the Default case
+        ///
+        /// Then, pop a value off the stack and treat it as the key. Jump to the address.
+        /// </summary>
+        public const byte JUMP_TABLE = 39;
+
     }
 }

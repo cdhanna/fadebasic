@@ -31,8 +31,6 @@ namespace DarkBasicYo.Virtual
         public ulong[] dataRegisters; // parallel array with typeReg
         public byte[] typeRegisters;  // parallel array with dataReg
 
-        
-        
         public VirtualMachine(IEnumerable<byte> program, StreamWriter standardOut=null)
         {
             this.program = program.ToArray();
@@ -73,11 +71,19 @@ namespace DarkBasicYo.Virtual
             };
         }
 
-        public static int jc = 0;
         public void Execute2(int instructionBatchCount=1000)
         {
             // while (true)
             {
+                byte[] aBytes = new byte[] { };
+                byte[] bBytes = new byte[] { };
+                byte[] cBytes = new byte[] { };
+                byte aTypeCode = 0, bTypeCode = 0, vTypeCode = 0, typeCode = 0;
+                ulong data = 0;
+                byte addr = 0, size =0;
+                int insPtr;
+                int ad, bd, cd;
+
                 for (var i = 0; i < instructionBatchCount; i++)
                 {
                     // if at end of program, exit.
@@ -89,26 +95,51 @@ namespace DarkBasicYo.Virtual
                         }
 
                         return;
-                        // yield return new ExecutionState
-                        // {
-                        //     isComplete = true
-                        // }; // we are done!
-                        // yield break;
                     }
 
 
                     var ins = Advance();
                     // ulong a = 0, b = 0, aTypeCode = 0, bTypeCode = 0;
-                    byte[] aBytes = new byte[] { };
-                    byte[] bBytes = new byte[] { };
-                    byte[] cBytes = new byte[] { };
-                    byte aTypeCode = 0, bTypeCode = 0, vTypeCode = 0, typeCode = 0;
-                    ulong data = 0;
-                    byte addr = 0, size =0;
-                    int insPtr;
-                    int ad, bd, cd;
+
                     switch (ins)
                     {
+                        case OpCodes.JUMP_TABLE:
+                            VmUtil.ReadAsInt(stack, out var tableSize);
+                            int[] addresses = new int[tableSize];
+                            long[] values = new long[tableSize];
+                            for (var j = 0; j < tableSize; j++)
+                            {
+                                VmUtil.Read(stack, out aTypeCode, out aBytes); // the value
+                                VmUtil.Pad(8, aBytes, out aBytes);
+                                var hash = BitConverter.ToInt64(aBytes, 0);
+                                VmUtil.ReadAsInt(stack, out var caseAddr);
+                                addresses[j] = caseAddr;
+                                values[j] = hash;
+                            }
+                            
+                            VmUtil.ReadAsInt(stack, out var defaultAddr);
+
+                            VmUtil.Read(stack, out bTypeCode, out bBytes);
+                            VmUtil.Pad(8, bBytes, out bBytes);
+                            var key = BitConverter.ToInt64(bBytes, 0);
+
+                            var found = false;
+                            for (var j = 0; j < tableSize; j++)
+                            {
+                                if (key == values[j])
+                                {
+                                    instructionIndex = addresses[j];
+                                    found = true;
+                                    break;
+                                }
+                            }
+
+                            if (!found)
+                            {
+                                instructionIndex = defaultAddr;
+                            }
+                            
+                            break;
                         case OpCodes.JUMP:
                             // the next instruction is the instruction ptr
                             VmUtil.ReadAsInt(stack, out insPtr);
@@ -128,7 +159,6 @@ namespace DarkBasicYo.Virtual
                             VmUtil.ReadAsInt(stack, out var jumpValue3);
                             if (jumpValue3 == 0)
                             {
-                                jc++;
                                 instructionIndex = insPtr;
                             }
                             break;

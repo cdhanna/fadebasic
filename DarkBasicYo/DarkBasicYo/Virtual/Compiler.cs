@@ -64,6 +64,7 @@ namespace DarkBasicYo.Virtual
         public HostMethodTable methodTable;
 
         private Dictionary<CommandDescriptor, int> _commandToPtr = new Dictionary<CommandDescriptor, int>();
+        private Stack<List<int>> _exitInstructionIndexes = new Stack<List<int>>();
 
         private List<LabelReplacement> _labelReplacements = new List<LabelReplacement>();
         private Dictionary<string, int> _labelToInstructionIndex = new Dictionary<string, int>();
@@ -214,12 +215,14 @@ namespace DarkBasicYo.Virtual
                 case DoLoopStatement doLoopStatement:
                     Compile(doLoopStatement);
                     break;
+                case SwitchStatement switchStatement:
+                    Compile(switchStatement);
+                    break;
                 default:
                     throw new Exception("compiler exception: unhandled statement node " + statement);
             }
         }
 
-        private Stack<List<int>> _exitInstructionIndexes = new Stack<List<int>>();
         private void Compile(ExitLoopStatement exitLoopStatement)
         {
             // immediately jump to the exit...
@@ -228,6 +231,112 @@ namespace DarkBasicYo.Virtual
             // and then jump to the exit block
             AddPushInt(_buffer, int.MaxValue);
             _buffer.Add(OpCodes.JUMP);
+        }
+
+        private void Compile(SwitchStatement switchStatement)
+        {
+            // first, compile the switch expression
+            Compile(switchStatement.expression);
+
+            // then, push the address of the default case (fill it in later)
+            var defaultInsIndex = _buffer.Count;
+            AddPushInt(_buffer, int.MaxValue);
+            
+            // then, push the switch-value and address for each case
+            var pairInsIndexes = new List<int>[switchStatement.cases.Count];
+            var caseCount = 0;
+            for (var i = 0; i < switchStatement.cases.Count; i++)
+            {
+                var caseStatement = switchStatement.cases[i];
+
+                pairInsIndexes[i] = new List<int>();
+                foreach (var literal in caseStatement.values)
+                {
+                    caseCount++; // keep track of how many ACTUAL cases there are
+                    pairInsIndexes[i].Add(_buffer.Count); // later, we'll update the pushed int to be the address of the case
+                    AddPushInt(_buffer, int.MaxValue);
+                    
+                    // compile the switch-value (this must be a literal, enforced by the parser)
+                    Compile(literal);
+                }
+            }
+            
+            // push the total number of cases
+            AddPushInt(_buffer, caseCount);
+            
+            // then, actually put the jump table.... It will jump to the right case, or default!
+            _buffer.Add(OpCodes.JUMP_TABLE);
+            
+            // keep track of the actual address values for each case statement
+            var caseAddrValues = new int[switchStatement.cases.Count];
+            
+            // keep track of the instruction indexes that point to exit-address, that need to be patched later
+            var exitInsIndexes = new int[switchStatement.cases.Count];
+
+            // compile each case block
+            for (var i = 0; i < switchStatement.cases.Count; i++)
+            {
+                // the start of this case statement.
+                var caseStatement = switchStatement.cases[i];
+                caseAddrValues[i] = _buffer.Count; 
+                
+                // compile the actual statements...
+                foreach (var statement in caseStatement.statements)
+                {
+                    Compile(statement);
+                }
+                
+                // now that we are done with the case, jump to the end. (no "fall-through")
+                exitInsIndexes[i] = _buffer.Count;
+                AddPushInt(_buffer, int.MaxValue); // later, this will get changed to be the exit address
+                _buffer.Add(OpCodes.JUMP);
+            }
+            
+            // compile the default case
+            var defaultAddr = _buffer.Count; // this is where the default case lives
+            if (switchStatement.defaultCase != null)
+            {
+                foreach (var statement in switchStatement.defaultCase.statements)
+                {
+                    Compile(statement);
+                }
+            }
+
+            // now at the end of the default block, we are done! so this is the exit address.
+            var exitAddr = _buffer.Count;
+            _buffer.Add(OpCodes.NOOP);
+
+            // now do all the address replacements....
+            for (var i = 0; i < switchStatement.cases.Count; i++)
+            {
+                var indexes = pairInsIndexes[i];
+                var caseAddr = caseAddrValues[i];
+                var caseAddrBytes = BitConverter.GetBytes(caseAddr);
+                foreach (var index in indexes)
+                {
+                    for (var j = 0; j < caseAddrBytes.Length; j++)
+                    {
+                        _buffer[index + 2 + j] = caseAddrBytes[(caseAddrBytes.Length - 1) - j];
+                    }
+                }
+            }
+            
+            // replace the default address at the start of the function
+            var defaultAddrBytes = BitConverter.GetBytes(defaultAddr);
+            for (var i = 0; i < defaultAddrBytes.Length; i++)
+            {
+                _buffer[defaultInsIndex + 2 + i] = defaultAddrBytes[(defaultAddrBytes.Length - 1) - i];
+            }
+
+            // replace all the individual case statement's references to the jump exit
+            var exitAddrBytes = BitConverter.GetBytes(exitAddr);
+            foreach (var exitIns in exitInsIndexes)
+            {
+                for (var i = 0; i < exitAddrBytes.Length; i++)
+                {
+                    _buffer[exitIns + 2 + i] = exitAddrBytes[(exitAddrBytes.Length - 1) - i];
+                }
+            }
         }
         
         private void Compile(ForStatement forStatement)

@@ -161,7 +161,80 @@ x = -3 - -1
         
         Assert.That(prog.statements.Count, Is.EqualTo(1));
         var code = prog.ToString();
-        Assert.That(code, Is.EqualTo("((= (ref x),(add (6),(subtract (666),(add (6),(greaterthan (6666666),(6)))))))"));
+        Assert.That(code, Is.EqualTo("((= (ref x),(- (neg (3)),(neg (1)))))"));
+    }
+
+    [Test]
+    public void AnasUnfunTest_NegativeEdition_Trivial()
+    {
+        var input = @"
+x = -1
+";
+      
+        var parser = MakeParser(input);
+        var prog = parser.ParseProgram();
+        
+        Assert.That(prog.statements.Count, Is.EqualTo(1));
+        var code = prog.ToString();
+        Assert.That(code, Is.EqualTo("((= (ref x),(neg (1))))"));
+    }
+
+    [Test]
+    public void AnasUnfunTest_NegativeEdition_Trivial_Stupid()
+    {
+        var input = @"
+x = - - - 1
+";
+      
+        var parser = MakeParser(input);
+        var prog = parser.ParseProgram();
+        
+        Assert.That(prog.statements.Count, Is.EqualTo(1));
+        var code = prog.ToString();
+        Assert.That(code, Is.EqualTo("((= (ref x),(neg (neg (neg (1))))))"));
+    }
+    
+    [Test]
+    public void AnasUnfunTest_NegativeEdition_Deluxe()
+    {
+        var input = @"
+x = -(3 - (- (-1)) )
+";
+        var parser = MakeParser(input);
+        var prog = parser.ParseProgram();
+        
+        Assert.That(prog.statements.Count, Is.EqualTo(1));
+        var code = prog.ToString();
+        Assert.That(code, Is.EqualTo("((= (ref x),(neg (- (3),(neg (neg (1)))))))"));
+    }
+
+    [Test]
+    public void AnasUnfunTest_NegativeEdition_Deluxe_Mul_Official_Seal_Of_Approval()
+    {
+        var input = @"
+x = 3 * - - 1 - 2 * 4
+";
+        var parser = MakeParser(input);
+        var prog = parser.ParseProgram();
+        
+        Assert.That(prog.statements.Count, Is.EqualTo(1));
+        var code = prog.ToString();
+        Assert.That(code, Is.EqualTo("((= (ref x),(- (* (3),(neg (neg (1)))),(* (2),(4)))))"));
+    }
+
+    
+    [Test]
+    public void AnasUnfunTest_NegativeEdition_Parens()
+    {
+        var input = @"
+x = -(3 - -1)
+";
+        var parser = MakeParser(input);
+        var prog = parser.ParseProgram();
+        
+        Assert.That(prog.statements.Count, Is.EqualTo(1));
+        var code = prog.ToString();
+        Assert.That(code, Is.EqualTo("((= (ref x),(neg (- (3),(neg (1))))))"));
     }
 
     
