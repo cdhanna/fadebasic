@@ -24,6 +24,10 @@ namespace DarkBasicYo
         KeywordStep, 
         KeywordNext,
         
+        KeywordFunction,
+        KeywordEndFunction,
+        KeywordExitFunction,
+        
         KeywordIf,
         KeywordThen,
         KeywordEndIf,
@@ -142,6 +146,10 @@ namespace DarkBasicYo
             new Lexem(LexemType.KeywordStep, new Regex("^step")),
             new Lexem(LexemType.KeywordNext, new Regex("^next")),
             
+            new Lexem(LexemType.KeywordEndFunction, new Regex("^endfunction\\b")), 
+            new Lexem(LexemType.KeywordFunction, new Regex("^function\\b")),
+            new Lexem(-1, LexemType.KeywordExitFunction, new Regex("^exitfunction\\b")),
+
             new Lexem(LexemType.KeywordDo, new Regex("^do\\b")), // TODO: add word boundary to everything...
             new Lexem(LexemType.KeywordLoop, new Regex("^loop")),
             

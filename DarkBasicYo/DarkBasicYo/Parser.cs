@@ -361,6 +361,10 @@ namespace DarkBasicYo
                         return ParseGoSub(token);
                     case LexemType.KeywordReturn:
                         return ParseReturn(token);
+                    case LexemType.KeywordFunction:
+                        return ParseFunction(token);
+                    case LexemType.KeywordExitFunction:
+                        return ParseExitFunction(token);
                     case LexemType.KeywordEnd:
                         return new EndProgramStatement(token);
                     case LexemType.KeywordExit:
@@ -466,6 +470,116 @@ namespace DarkBasicYo
             }
             
             return result;
+        }
+
+
+        private ParameterNode ParseParameterNode()
+        {
+            var typeMember = ParseTypeMember();
+            return new ParameterNode(typeMember.name, typeMember.type);
+            // var nameToken = _stream.Advance();
+            // string variableName = null;
+            // switch (nameToken.type)
+            // {
+            //     case LexemType.VariableGeneral:
+            //     case LexemType.VariableReal:
+            //     case LexemType.VariableString:
+            //         break;
+            //     default:
+            //         throw new ParserException("Expected to find a variable", nameToken);
+            // }
+            // ParseVariableReference()
+        }
+
+        private FunctionReturnStatement ParseExitFunction(Token endToken)
+        {
+            var expression = ParseWikiExpression();
+            return new FunctionReturnStatement(endToken, expression);
+        }
+        
+        private FunctionStatement ParseFunction(Token functionToken)
+        {
+            // parse the name
+
+            var nameToken = _stream.Advance();
+            if (nameToken.type != LexemType.VariableGeneral)
+            {
+                throw new ParserException("Exepcted to find valid function name", nameToken);
+            }
+            
+            if (_stream.Advance().type != LexemType.ParenOpen)
+            {
+                throw new ParserException("Expected to find open paren", _stream.Current);
+            }
+            
+            // now we need to parse a set of arguments....
+            // TODO: 
+            var parameters = new List<ParameterNode>();
+            var looking = true;
+            while (looking)
+            {
+                var nextToken = _stream.Peek;
+                switch (nextToken.type)
+                {
+                    case LexemType.EOF:
+                        throw new ParserException("Hit end of file without a closing function parameter list", nextToken);
+                    case LexemType.ArgSplitter:
+                    case LexemType.EndStatement:
+                        _stream.Advance();
+                        break;
+                    case LexemType.ParenClose:
+                        _stream.Advance();
+                        looking = false;
+                        break;
+                    default:
+                        var member = ParseParameterNode();
+                        parameters.Add(member);
+                        break; 
+                }
+            }
+            
+            if (_stream.Current.type != LexemType.ParenClose)
+            {
+                throw new ParserException("Expected to find open paren", _stream.Current);
+            }
+
+            // now we need to parse all the statements
+            var statements = new List<IStatementNode>();
+            looking = true;
+            while (looking)
+            {
+                var nextToken = _stream.Peek;
+                switch (nextToken.type)
+                {
+                    case LexemType.EOF:
+                        throw new ParserException("Hit end of file without a closing function statement", nextToken);
+                    case LexemType.EndStatement:
+                        _stream.Advance();
+                        break;
+                    case LexemType.KeywordEndFunction:
+                        _stream.Advance();
+                        
+                        // there may be an expression...
+                        ParseWikiExpression()
+                        
+                        looking = false;
+                        break;
+                    default:
+                        var member = ParseStatement();
+                        statements.Add(member);
+                        break; 
+                }
+            }
+            
+
+            return new FunctionStatement
+            {
+                statements = statements,
+                parameters = parameters,
+                name = nameToken.raw,
+                startToken = functionToken,
+                endToken = _stream.Current
+            };
         }
 
         private SwitchStatement ParseSwitchStatement(Token switchToken)

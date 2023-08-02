@@ -3,7 +3,7 @@ using DarkBasicYo.Ast;
 
 namespace Tests;
 
-public class ParserTests
+public partial class ParserTests
 {
     private Lexer _lexer;
     private CommandCollection _commands;
@@ -898,7 +898,8 @@ ENDSELECT
 (switch (ref x) ((case (1),(2),(5) ((= (ref x),(1))))))
 )".ReplaceLineEndings("")));
     }
-
+    
+    
     
     [Test]
     public void OtherIfStatement_Easy()
