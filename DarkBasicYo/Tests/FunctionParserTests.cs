@@ -61,7 +61,51 @@ ENDFUNCTION 5
         var code = prog.ToString();
         Console.WriteLine(code);
         Assert.That(code, Is.EqualTo(@"(
-(func hello (),((= (ref x),(1)),(retfunc (5)))
+(func hello (),((= (ref x),(1)),(retfunc (5))))
+)".ReplaceLineEndings("")));
+    }
+
+    
+    [Test]
+    public void Function_WithFollowingStatement()
+    {
+        var input = @"
+FUNCTION hello()
+    x = 1
+ENDFUNCTION
+x = 2
+";
+        var parser = MakeParser(input);
+        var prog = parser.ParseProgram();
+        
+        Assert.That(prog.statements.Count, Is.EqualTo(2));
+        var code = prog.ToString();
+        Console.WriteLine(code);
+        Assert.That(code, Is.EqualTo(@"(
+(func hello (),((= (ref x),(1)))),
+(= (ref x),(2))
+)".ReplaceLineEndings("")));
+    }
+
+    
+    [Test]
+    public void Function_ReturnExpr_WithFollowingStatement()
+    {
+        var input = @"
+FUNCTION hello()
+    x = 1
+ENDFUNCTION x + 1
+x = 2
+";
+        var parser = MakeParser(input);
+        var prog = parser.ParseProgram();
+        
+        Assert.That(prog.statements.Count, Is.EqualTo(2));
+        var code = prog.ToString();
+        Console.WriteLine(code);
+        Assert.That(code, Is.EqualTo(@"(
+(func hello (),((= (ref x),(1)),(retfunc (+ (ref x),(1))))),
+(= (ref x),(2))
 )".ReplaceLineEndings("")));
     }
 

@@ -560,7 +560,11 @@ namespace DarkBasicYo
                         _stream.Advance();
                         
                         // there may be an expression...
-                        ParseWikiExpression()
+                        // ParseWikiExpression()
+                        if (TryParseExpression(out var returnExpr))
+                        {
+                            statements.Add(new FunctionReturnStatement(nextToken, returnExpr));
+                        }
                         
                         looking = false;
                         break;
@@ -1158,6 +1162,17 @@ namespace DarkBasicYo
             }
         }
 
+        public bool TryParseExpression(out IExpressionNode expr)
+        {
+            expr = null;
+            if (!TryParseWikiTerm(out var term))
+            {
+                return false;
+            }
+
+            expr = ParseWikiExpression(term, 0);
+            return true;
+        }
         public IExpressionNode ParseWikiExpression()
         {
             var term = ParseWikiTerm();
@@ -1241,11 +1256,23 @@ namespace DarkBasicYo
 
         private IExpressionNode ParseWikiTerm()
         {
-            var token = _stream.Advance();
+            var start = _stream.Peek;
+            if (!TryParseWikiTerm(out var expr))
+            {
+                throw new ParserException("Expected to find an expression term", start);
+            }
+            
+            return expr;
+        }
+        
+        private bool TryParseWikiTerm(out IExpressionNode outputExpression)
+        {
+            var token = _stream.Peek;
             switch (token.type)
             {
+                
                 case LexemType.CommandWord:
-                    
+                    _stream.Advance();
                     if (!_commands.TryGetCommandDescriptor(token, out var command))
                     {
                         throw new Exception("Parser exception! unknown command " + token.raw);
@@ -1253,7 +1280,7 @@ namespace DarkBasicYo
 
                     // parse the args!
                     var argExpressions = ParseCommandArgs(token, command);
-                    return new CommandExpression()
+                    outputExpression = new CommandExpression()
                     {
                         startToken = token,
                         endToken = _stream.Current,
@@ -1263,6 +1290,8 @@ namespace DarkBasicYo
                     
                     break;
                 case LexemType.ParenOpen:
+                    _stream.Advance();
+
                     var expr = ParseWikiExpression();
                     var closeToken = _stream.Advance(); // move past closing...
 
@@ -1271,25 +1300,38 @@ namespace DarkBasicYo
                         throw new ParserException("expected closing paren", closeToken);
                     }
 
-                    return expr;
+                    outputExpression = expr;
                     
                     break;
                 
                 case LexemType.VariableReal:
                 case LexemType.VariableString:
                 case LexemType.VariableGeneral:
-                    return ParseVariableReference(token);
+                    _stream.Advance();
+
+                    outputExpression = ParseVariableReference(token);
+                    break;
                 case LexemType.LiteralInt:
                 case LexemType.LiteralReal:
                 case LexemType.LiteralString:
-                    return ParseLiteral(token);
+                    _stream.Advance();
+
+                    outputExpression = ParseLiteral(token);
+                    break;
                 case LexemType.OpMultiply:
+                    _stream.Advance();
+
                     var deRefExpr = ParseVariableReference();
-                    return new DereferenceExpression(deRefExpr, token);
+                    outputExpression = new DereferenceExpression(deRefExpr, token);
+                    break;
                 case LexemType.OpMinus:
+                    _stream.Advance();
+
                     var negateExpr = ParseWikiTerm();
-                    return new UnaryOperationExpression(UnaryOperationType.Negate, negateExpr, token, _stream.Current);
+                    outputExpression = new UnaryOperationExpression(UnaryOperationType.Negate, negateExpr, token, _stream.Current);
+                    break;
                 case LexemType.KeywordNot:
+                    _stream.Advance();
 
                     var peek = _stream.Peek;
                     var notExpr = ParseWikiExpression();
@@ -1305,17 +1347,23 @@ namespace DarkBasicYo
                                     var oldLhs = binOp.lhs;
                                     binOp.lhs = new UnaryOperationExpression(UnaryOperationType.Not, oldLhs, token,
                                         _stream.Current);
-                                    return binOp;
+                                    outputExpression = binOp;
+                                    return true;
                                 }
 
                                 break;
                         }
                     }
 
-                    return new UnaryOperationExpression(UnaryOperationType.Not, notExpr, token, _stream.Current);
+                    outputExpression = new UnaryOperationExpression(UnaryOperationType.Not, notExpr, token, _stream.Current);
+                    break;
                 default:
-                    throw new ParserException("Cannot match single, " + token.type, token);
+                    outputExpression = null;
+                    break;
+                    // throw new ParserException("Cannot match single, " + token.type, token);
             }
+
+            return outputExpression != null;
         }
         
     }
