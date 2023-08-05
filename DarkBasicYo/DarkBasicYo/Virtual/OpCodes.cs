@@ -28,7 +28,23 @@ namespace DarkBasicYo.Virtual
         public const byte PTR_REG  = 0x0A; // 1 byte (registry ptr)
         public const byte PTR_HEAP = 0x0B; // 4 bytes (heap ptr)
         public const byte STRUCT   = 0x0C; // 4 bytes (ptr)
-        
+
+        public static readonly byte[] ORDER_PREC = new byte[]
+        {
+            30, // int
+            50, // real
+            30, // bool
+            29, // byte
+            31, // word
+            30, // dword
+            30, // dint
+            60, // dfloat
+            30, // void
+            30, // string (int ptr)
+            10, // ptr_reg
+            10, // ptr_heap
+            10, // struct (int ptr)
+        };
 
         public static readonly byte[] SIZE_TABLE = new byte[]
         {
@@ -49,6 +65,8 @@ namespace DarkBasicYo.Virtual
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public static byte GetByteSize(byte typeCode) => SIZE_TABLE[typeCode];
+
+        public static byte GetOrder(byte typeCode) => ORDER_PREC[typeCode];
     }
 
     public static class OpCodes
@@ -193,6 +211,23 @@ namespace DarkBasicYo.Virtual
         /// Then, pop a value off the stack and treat it as the key. Jump to the address.
         /// </summary>
         public const byte JUMP_TABLE = 39;
+        
+        /// <summary>
+        /// Creates a new scope for variables to live inside.
+        /// All registers are affected
+        /// </summary>
+        public const byte PUSH_SCOPE = 40;
+
+        /// <summary>
+        /// Removes the current scope and pops a new scope
+        /// All registers are affected
+        /// </summary>
+        public const byte POP_SCOPE = 41;
+
+        /// <summary>
+        /// Just go kaboom
+        /// </summary>
+        public const byte EXPLODE = 42;
 
     }
 }

@@ -5,7 +5,7 @@ using DarkBasicYo.Virtual;
 
 namespace Tests;
 
-public class TokenVm
+public partial class TokenVm
 {
     private ProgramNode? _exprAst;
 
@@ -1290,6 +1290,7 @@ Return
         Assert.That(vm.typeRegisters[1], Is.EqualTo(TypeCodes.INT));
     }
 
+    
     
     [Test]
     public void TestDeclareAndAssign()

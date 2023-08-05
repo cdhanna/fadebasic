@@ -15,6 +15,32 @@ namespace DarkBasicYo.Virtual
         
     }
 
+    public struct VirtualScope
+    {
+        public readonly int initialCapacity;
+        public ulong[] dataRegisters; // parallel array with typeReg
+        public byte[] typeRegisters;  // parallel array with dataReg
+
+        public VirtualScope(int initialCapacity)
+        {
+            this.initialCapacity = initialCapacity;
+            dataRegisters = new ulong[initialCapacity];
+            typeRegisters = new byte[initialCapacity];
+        }
+        
+        public void Read(int index, out ulong data, out byte typeCode)
+        {
+            data = dataRegisters[index];
+            typeCode = typeRegisters[index];
+        }
+
+        public void Write(int index, ulong data, byte typeCode)
+        {
+            dataRegisters[index] = data;
+            typeRegisters[index] = typeCode;
+        }
+    }
+
     
     public class VirtualMachine
     {
@@ -27,9 +53,12 @@ namespace DarkBasicYo.Virtual
         public VmHeap heap = new VmHeap();
         public HostMethodTable hostMethods = new HostMethodTable();
         public Stack<int> methodStack = new Stack<int>();
-        
-        public ulong[] dataRegisters; // parallel array with typeReg
-        public byte[] typeRegisters;  // parallel array with dataReg
+
+        public VirtualScope globalScope = new VirtualScope();
+        public Stack<VirtualScope> scopeStack;
+
+        public ulong[] dataRegisters => scopeStack.Peek().dataRegisters; // TODO: optimize to remove method call Peek()
+        public byte[] typeRegisters => scopeStack.Peek().typeRegisters;
 
         public VirtualMachine(IEnumerable<byte> program, StreamWriter standardOut=null)
         {
@@ -41,13 +70,16 @@ namespace DarkBasicYo.Virtual
             
             _standardOut = standardOut;
 
-            dataRegisters = new ulong[256];
-            typeRegisters = new byte[256];
-            for (var i = 0; i < dataRegisters.Length; i++)
-            {
-                dataRegisters[i] = 0;
-                typeRegisters[i] = 0;
-            }
+            globalScope = new VirtualScope(256);
+            scopeStack = new Stack<VirtualScope>();
+            scopeStack.Push(globalScope);
+            // dataRegisters = new ulong[256];
+            // typeRegisters = new byte[256];
+            // for (var i = 0; i < dataRegisters.Length; i++)
+            // {
+            //     dataRegisters[i] = 0;
+            //     typeRegisters[i] = 0;
+            // }
         }
 
         public string ReadStdOut()
@@ -103,6 +135,20 @@ namespace DarkBasicYo.Virtual
 
                     switch (ins)
                     {
+                        case OpCodes.EXPLODE:
+                            throw new Exception("Kaboom");
+                            break;
+                        case OpCodes.PUSH_SCOPE:
+                            var newScope = new VirtualScope(64);
+                            scopeStack.Push(newScope);
+                            break;
+                        case OpCodes.POP_SCOPE:
+                            if (scopeStack.Count == 1)
+                            {
+                                throw new Exception("Cannot pop the global stack");
+                            }
+                            scopeStack.Pop();
+                            break;
                         case OpCodes.JUMP_TABLE:
                             VmUtil.ReadAsInt(stack, out var tableSize);
                             int[] addresses = new int[tableSize];

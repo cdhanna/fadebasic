@@ -380,21 +380,17 @@ namespace DarkBasicYo.Virtual
                     c = BitConverter.GetBytes(sumReal);
                     break;
                 default:
-                    throw new Exception("Unsupported add operation");
+                    throw new Exception($"Unsupported add operation typecode=[{aTypeCode}]");
             }
         }
-        
-        
-        public static void Cast(Stack<byte> stack, byte typeCode)
+
+        public static void CastInline(byte[] bytes, byte currentTypeCode, byte typeCode, out byte[] outputBytes)
         {
-            Read(stack, out var currentTypeCode, out var bytes);
             if (currentTypeCode == typeCode)
             {
-                Push(stack, bytes, typeCode);
+                outputBytes = bytes;
                 return;
             }
-
-            
             // handle int conversions
             if (currentTypeCode == TypeCodes.INT)
             {
@@ -427,11 +423,16 @@ namespace DarkBasicYo.Virtual
             }
             else if (currentTypeCode == TypeCodes.REAL)
             {
+                var actualFloat = BitConverter.ToSingle(bytes, 0);
+
                 switch (typeCode)
                 {
+                    case TypeCodes.INT:
+                        bytes = BitConverter.GetBytes((int)actualFloat);
+                        break;
                     case TypeCodes.WORD:
-                        var actual = BitConverter.ToSingle(bytes, 0);
-                        var castWord = (ushort)actual;
+                        // var actual = BitConverter.ToSingle(bytes, 0);
+                        var castWord = (ushort)actualFloat;
                         bytes = BitConverter.GetBytes(castWord);
                         break;
                     default:
@@ -446,19 +447,24 @@ namespace DarkBasicYo.Virtual
                         var castInt = (int)bytes[0];
                         bytes = BitConverter.GetBytes(castInt);
                         break;
-                    
+                    case TypeCodes.WORD:
+                        bytes = BitConverter.GetBytes((short)bytes[0]);
+                        break;
                     default:
                         throw new NotImplementedException($"cast from byte to typeCode=[{typeCode}] is not supported yet.");
                 }
             }
             else if (currentTypeCode == TypeCodes.WORD)
             {
+                short actualWord = BitConverter.ToInt16(bytes, 0);
                 switch (typeCode)
                 {
                     case TypeCodes.INT:
-                        short actualWord = BitConverter.ToInt16(bytes, 0);
                         var castInt = (int)actualWord;
                         bytes = BitConverter.GetBytes(castInt);
+                        break;
+                    case TypeCodes.BYTE:
+                        bytes = BitConverter.GetBytes((byte)actualWord);
                         break;
                     default:
                         throw new NotImplementedException($"cast from byte to typeCode=[{typeCode}] is not supported yet.");
@@ -480,6 +486,20 @@ namespace DarkBasicYo.Virtual
                 throw new NotImplementedException($"casts from typeCode=[{currentTypeCode}] types are not supported. target=[{typeCode}]");
             }
 
+            outputBytes = bytes;
+        }
+        
+        public static void Cast(Stack<byte> stack, byte typeCode)
+        {
+            Read(stack, out var currentTypeCode, out var bytes);
+            // if (currentTypeCode == typeCode)
+            // {
+            //     Push(stack, bytes, typeCode);
+            //     return;
+            // }
+
+            CastInline(bytes, currentTypeCode, typeCode, out bytes);
+            
             Push(stack, bytes, typeCode);
             // var expectedSize = TypeCodes.GetByteSize(typeCode);
             // for (var n = expectedSize -1 ; n >= 0; n --)
@@ -528,15 +548,30 @@ namespace DarkBasicYo.Virtual
             Read(stack, bTypeCode, out bBytes);
 
             // if the type codes are not the same, take the bigger one...
-            var bigTypeCode = aTypeCode;
-            var aSize = TypeCodes.GetByteSize(aTypeCode);
-            var bSize = TypeCodes.GetByteSize(bTypeCode);
-            if (bSize > aSize) bigTypeCode = bTypeCode;
-            var bigSize = TypeCodes.GetByteSize(bigTypeCode);
 
-            Pad(bigSize, aBytes, out aBytes);
-            Pad(bigSize, bBytes, out bBytes);
-            typeCode = bigTypeCode;
+            var aOrder = TypeCodes.GetOrder(aTypeCode);
+            var bOrder = TypeCodes.GetOrder(bTypeCode);
+
+            if (aOrder > bOrder)
+            {
+                CastInline(bBytes, bTypeCode, aTypeCode, out bBytes);
+                typeCode = aTypeCode;
+            }
+            else
+            {
+                CastInline(aBytes, aTypeCode, bTypeCode, out aBytes);
+                typeCode = bTypeCode;
+            }
+            
+            // var bigTypeCode = aTypeCode;
+            // var aSize = TypeCodes.GetByteSize(aTypeCode);
+            // var bSize = TypeCodes.GetByteSize(bTypeCode);
+            // if (bSize > aSize) bigTypeCode = bTypeCode;
+            // var bigSize = TypeCodes.GetByteSize(bigTypeCode);
+            //
+            // Pad(bigSize, aBytes, out aBytes);
+            // Pad(bigSize, bBytes, out bBytes);
+            // typeCode = bigTypeCode;
         }
 
         public static void GetMinMax(byte aTypeCode, byte[] a, byte[] b, out bool needFlip)

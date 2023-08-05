@@ -65,6 +65,19 @@ namespace DarkBasicYo.Ast
             return $"goto {label}";
         }
     }
+
+    public class ExpressionStatement : AstNode, IStatementNode
+    {
+        public IExpressionNode expression;
+        public ExpressionStatement(IExpressionNode expression) : base(expression.StartToken, expression.EndToken)
+        {
+            this.expression = expression;
+        }
+        protected override string GetString()
+        {
+            return $"expr {expression}";
+        }
+    }
     
     
     public class ReturnStatement : AstNode, IStatementNode

@@ -45,6 +45,27 @@ namespace DarkBasicYo.Virtual
         public int InstructionIndex;
         public string Label;
     }
+
+    public struct FunctionCallReplacement
+    {
+        public int InstructionIndex;
+        public string FunctionName;
+    }
+
+    public class CompileScope
+    {
+        public int registerCount;
+        
+        private Dictionary<string, CompiledVariable> _varToReg = new Dictionary<string, CompiledVariable>();
+
+        private Dictionary<string, CompiledArrayVariable> _arrayVarToReg =
+            new Dictionary<string, CompiledArrayVariable>();
+
+        public void Declare(string name)
+        {
+            
+        }
+    }
     
     public class Compiler
     {
@@ -54,6 +75,9 @@ namespace DarkBasicYo.Virtual
         public List<byte> Program => _buffer;
         public int registerCount;
 
+        private CompileScope globalScope;
+        private Stack<CompileScope> scopeStack;
+        
         private Dictionary<string, CompiledVariable> _varToReg = new Dictionary<string, CompiledVariable>();
 
         private Dictionary<string, CompiledArrayVariable> _arrayVarToReg =
@@ -68,6 +92,10 @@ namespace DarkBasicYo.Virtual
 
         private List<LabelReplacement> _labelReplacements = new List<LabelReplacement>();
         private Dictionary<string, int> _labelToInstructionIndex = new Dictionary<string, int>();
+
+        private List<FunctionCallReplacement> _functionCallReplacements = new List<FunctionCallReplacement>();
+        private Dictionary<string, int> _functionTable = new Dictionary<string, int>();
+
         public Compiler(CommandCollection commands)
         {
             this.commands = commands;
@@ -82,7 +110,11 @@ namespace DarkBasicYo.Virtual
             {
                 methods = methods
             };
-            
+
+            scopeStack = new Stack<CompileScope>();
+            globalScope = new CompileScope();
+            scopeStack.Push(globalScope);
+
         }
 
         public void Compile(ProgramNode program)
@@ -112,6 +144,21 @@ namespace DarkBasicYo.Virtual
                 {
                     // offset by 2, because of the opcode, and the type code
                     _buffer[replacement.InstructionIndex + 2 + i] = locationBytes[(locationBytes.Length -1) - i];
+                }
+            }
+            
+            // replace all function instrunctions
+            foreach (var replacement in _functionCallReplacements)
+            {
+                if (!_functionTable.TryGetValue(replacement.FunctionName, out var location))
+                {
+                    throw new Exception("Compiler: unknown function location " + replacement.FunctionName);
+                }
+
+                var locationBytes = BitConverter.GetBytes(location);
+                for (var i = 0; i < locationBytes.Length; i++)
+                {
+                    _buffer[replacement.InstructionIndex + 2 + i] = locationBytes[(locationBytes.Length - 1) - i];
                 }
             }
         }
@@ -218,11 +265,105 @@ namespace DarkBasicYo.Virtual
                 case SwitchStatement switchStatement:
                     Compile(switchStatement);
                     break;
+                case FunctionStatement functionStatement:
+                    Compile(functionStatement);
+                    break;
+                case FunctionReturnStatement returnStatement:
+                    Compile(returnStatement);
+                    break;
+                case ExpressionStatement expressionStatement:
+                    Compile(expressionStatement);
+                    break;
                 default:
                     throw new Exception("compiler exception: unhandled statement node " + statement);
             }
         }
 
+        void CompileAsInvocation(ArrayIndexReference expr)
+        {
+            // need to push values onto stack
+            foreach (var argExpr in expr.rankExpressions)
+            {
+                Compile(argExpr);
+            }
+            
+            _functionCallReplacements.Add(new FunctionCallReplacement()
+            {
+                InstructionIndex = _buffer.Count,
+                FunctionName = expr.variableName
+            });
+            AddPushInt(_buffer, int.MaxValue);
+            _buffer.Add(OpCodes.JUMP_HISTORY);
+        }
+
+        
+        private void Compile(FunctionReturnStatement returnStatement)
+        {
+            // put the return value onto the stack
+            Compile(returnStatement.returnExpression);
+            
+            // pop a scope
+            _buffer.Add(OpCodes.POP_SCOPE);
+            
+            // and then jump home
+            _buffer.Add(OpCodes.RETURN);
+        }
+
+        private void Compile(FunctionStatement functionStatement)
+        {
+            // well, first, if we come across one of these, we should throw an exception...
+            _buffer.Add(OpCodes.EXPLODE); // TODO: add a jump-over-function feature
+            
+            // functions are global
+            var ptr = _buffer.Count;
+            _functionTable[functionStatement.name] = ptr; // TODO: what about duplicate function names?
+            
+            // push a new scope
+            _buffer.Add(OpCodes.PUSH_SCOPE);
+            
+            // now, we need to pull values off the stack and put them into variable declarations...
+            // foreach (var arg in functionStatement.parameters)
+            for (var i = functionStatement.parameters.Count - 1; i >= 0; i --) // read in reverse order due to stack
+            {
+                var arg = functionStatement.parameters[i];
+                
+                // compile up a fake declaration for the input
+                var fakeDecl = new DeclarationStatement
+                {
+                    variable = arg.variable.variableName,
+                    scopeType = DeclarationScopeType.Local,
+                    type = arg.type
+                };
+                Compile(fakeDecl);
+                
+                // and now compile up the assignment
+                // var a = new AssignmentStatement();
+                // Compile(a);
+                _buffer.Add(OpCodes.CAST);
+                var tc = VmUtil.GetTypeCode(arg.type.variableType);
+                _buffer.Add(tc);
+                CompileAssignmentLeftHandSide(arg.variable);
+
+            }
+            
+            
+            
+            
+            // compile all the statements...
+            foreach (var statement in functionStatement.statements)
+            {
+                Compile(statement);
+            }
+            
+            // at the end of the function, we need to jump home
+            // pop a scope
+            _buffer.Add(OpCodes.POP_SCOPE);
+            
+            // and then jump home
+            _buffer.Add(OpCodes.RETURN);
+            
+        }
+        
         private void Compile(ExitLoopStatement exitLoopStatement)
         {
             // immediately jump to the exit...
@@ -1049,20 +1190,9 @@ namespace DarkBasicYo.Virtual
 
         }
 
-        public void Compile(AssignmentStatement assignmentStatement)
+        void CompileAssignmentLeftHandSide(IVariableNode variable)
         {
-            /*
-             * in order to assign, we need to know what we are assigning two, and find the correct place to put the result.
-             *
-             * If it is a simple variable, then it lives on a local register.
-             * If it is an array, then it lives in memory.
-             */
-
-            
-            // compile the rhs of the assignment...
-            Compile(assignmentStatement.expression);
-
-            switch (assignmentStatement.variable)
+            switch (variable)
             {
                 case ArrayIndexReference arrayRefNode:
                     if (!_arrayVarToReg.TryGetValue(arrayRefNode.variableName, out var compiledArrayVar))
@@ -1179,9 +1309,143 @@ namespace DarkBasicYo.Virtual
                 default:
                     throw new NotImplementedException("Unsupported reference assignment");
             }
-         
+        }
+        
+        
+        public void Compile(AssignmentStatement assignmentStatement)
+        {
+            /*
+             * in order to assign, we need to know what we are assigning two, and find the correct place to put the result.
+             *
+             * If it is a simple variable, then it lives on a local register.
+             * If it is an array, then it lives in memory.
+             */
+
             
-            
+            // compile the rhs of the assignment...
+            Compile(assignmentStatement.expression);
+            CompileAssignmentLeftHandSide(assignmentStatement.variable);
+            //
+            // switch (assignmentStatement.variable)
+            // {
+            //     case ArrayIndexReference arrayRefNode:
+            //         if (!_arrayVarToReg.TryGetValue(arrayRefNode.variableName, out var compiledArrayVar))
+            //         {
+            //             throw new Exception("Compiler: cannot access array since it not declared" +
+            //                                 arrayRefNode.variableName);
+            //         }
+            //         // always cast the expression to the correct type code; slightly wasteful, could be better.
+            //         _buffer.Add(OpCodes.CAST);
+            //         _buffer.Add(compiledArrayVar.typeCode);
+            //         _buffer.Add(OpCodes.DISCARD); // we don't actually want the type code to live on the heap
+            //         
+            //         var sizeOfElement = compiledArrayVar.byteSize;
+            //         AddPushInt(_buffer, sizeOfElement);
+            //
+            //         PushAddress(arrayRefNode);
+            //         // write! It'll find the ptr, then the size, and then the data itself
+            //         _buffer.Add(OpCodes.WRITE);
+            //         
+            //         break;
+            //     case VariableRefNode variableRefNode:
+            //         
+            //         if (!_varToReg.TryGetValue(variableRefNode.variableName, out var compiledVar))
+            //         {
+            //             // // ?
+            //             var tc = VmUtil.GetTypeCode(variableRefNode.DefaultTypeByName);
+            //             compiledVar = _varToReg[variableRefNode.variableName] = new CompiledVariable
+            //             {
+            //                 registerAddress = (byte)(registerCount++),
+            //                 name = variableRefNode.variableName,
+            //                 typeCode = tc,
+            //                 byteSize = TypeCodes.GetByteSize(tc)
+            //             };
+            //         }
+            //
+            //         // always cast the expression to the correct type code; slightly wasteful, could be better.
+            //         _buffer.Add(OpCodes.CAST);
+            //         _buffer.Add(compiledVar.typeCode);
+            //
+            //         // store the value of the expression&cast in the desired register.
+            //         _buffer.Add(OpCodes.STORE);
+            //         _buffer.Add(compiledVar.registerAddress);
+            //         break;
+            //     case StructFieldReference fieldReferenceNode:
+            //
+            //         switch (fieldReferenceNode.left)
+            //         {
+            //             case ArrayIndexReference arrayRefNode:
+            //                 
+            //                 // we need to find the start index of the array element,
+            //                 // and then add the offset for the field access part (the right side)
+            //                 if (!_arrayVarToReg.TryGetValue(arrayRefNode.variableName, out var compiledLeftArrayVar))
+            //                 {
+            //                     throw new Exception("Compiler: cannot access array since it not declared" +
+            //                                         arrayRefNode.variableName);
+            //                 }
+            //                 
+            //                 
+            //                 _buffer.Add(OpCodes.DISCARD); // we don't actually want the type code to live on the heap
+            //
+            //                 var rightType = compiledLeftArrayVar.structType;
+            //                 ComputeStructOffsets(rightType, fieldReferenceNode.right, out var rightOffset, out var rightLength, out _);
+            //
+            //                 // load the write-length
+            //                 AddPushInt(_buffer, rightLength);
+            //                 
+            //                 // load the offset of the right side
+            //                 AddPushInt(_buffer, rightOffset);
+            //                 
+            //                 // load the array pointer
+            //                 PushAddress(arrayRefNode);
+            //                 
+            //                 // add the pointer and the offset together
+            //                 _buffer.Add(OpCodes.ADD);
+            //                 
+            //                 // write the data at the array index, by the offset, 
+            //                 _buffer.Add(OpCodes.WRITE);
+            //                 break;
+            //             
+            //             case VariableRefNode variableRef:
+            //                 if (!_varToReg.TryGetValue(variableRef.variableName, out compiledVar))
+            //                 {
+            //                     throw new Exception("compiler exception! the referenced variable has not been declared yet " +
+            //                                         variableRef.variableName);
+            //                 }
+            //                 
+            //                 _buffer.Add(OpCodes.DISCARD); // we don't actually want the type code to live on the heap
+            //                 
+            //                 // load up the compiled type info 
+            //                 var type = _types[compiledVar.structType];
+            //                 ComputeStructOffsets(type, fieldReferenceNode.right, out var offset, out var length, out _);
+            //
+            //                 // push the length of the write segment
+            //                 AddPushInt(_buffer, length);
+            //                 
+            //                 // load the base address of the variable
+            //                 _buffer.Add(OpCodes.LOAD);
+            //                 _buffer.Add(compiledVar.registerAddress);
+            //                 
+            //                 // load the offset of the right side
+            //                 AddPushInt(_buffer, offset);
+            //                 
+            //                 // sum them, then the result is the ptr on the stack
+            //                 _buffer.Add(OpCodes.ADD);
+            //                 
+            //                 // pull the ptr, length, then data, and return the ptr.
+            //                 _buffer.Add(OpCodes.WRITE);
+            //                 
+            //                 break;
+            //             default:
+            //                 throw new NotImplementedException("unhandled left side of operation");
+            //         }
+            //         break;
+            //     default:
+            //         throw new NotImplementedException("Unsupported reference assignment");
+            // }
+            //
+            //
+
         }
 
         public void ComputeStructOffsets(CompiledType baseType, IVariableNode right, out int offset, out int writeLength, out byte typeCode)
@@ -1230,6 +1494,18 @@ namespace DarkBasicYo.Virtual
                 default:
                     throw new NotImplementedException("Cannot compute offsets");
             }
+        }
+
+
+        public void Compile(ExpressionStatement statement)
+        {
+            Compile(statement.expression);
+            // nothing happens with the expression, because it isn't being assigned to anything...
+            // but we don't know how big the result of the previous expression was... 
+            // _buffer.Add(OpCodes.DISCARD);
+            
+            //
+            
         }
         
         public void Compile(IExpressionNode expr)
@@ -1290,8 +1566,14 @@ namespace DarkBasicYo.Virtual
 
                     if (!_arrayVarToReg.TryGetValue(arrayRef.variableName, out var arrayVar))
                     {
-                        throw new Exception("compiler exception! the referenced array has not been declared yet " +
-                                            arrayRef.variableName);
+                        CompileAsInvocation(arrayRef);
+                        break;
+                        // if (_functionTable.TryGetValue(arrayRef.variableName, out var func))
+                        // {
+                        //     break;
+                        // }
+                        // throw new Exception("compiler exception! the referenced array has not been declared yet " +
+                        //                     arrayRef.variableName);
                     }
                     
                     var sizeOfElement = arrayVar.byteSize;

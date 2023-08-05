@@ -200,32 +200,57 @@ namespace DarkBasicYo
                         case LexemType.ParenOpen:
                             _stream.Advance();
                             var rankExpressions = new List<IExpressionNode>();
-                            for (var rankIndex = 0; rankIndex < 5; rankIndex++) // 5 is the magic "max dimension"
+                            
+                            // var statements = new List<IStatementNode>();
+                            var looking = true;
+                            while (looking)
                             {
-                                var rankExpression = ParseWikiExpression();
-                                rankExpressions.Add(rankExpression);
-                                var closeOrComma = _stream.Advance();
-                                var closeFound = false;
-                                switch (closeOrComma.type)
+                                var nextToken = _stream.Peek;
+                                switch (nextToken.type)
                                 {
-                                    case LexemType.ParenClose:
-                                        closeFound = true;
-                                        break;
+                                    case LexemType.EOF:
+                                        throw new ParserException("Hit end of file without a closing paren", nextToken);
+                                    case LexemType.EndStatement:
                                     case LexemType.ArgSplitter:
-                                        if (rankIndex + 1 == 5)
-                                        {
-                                            throw new ParserException("arrays can only have 5 dimensions", closeOrComma);
-                                        }
+                                        _stream.Advance();
+                                        break;
+                                    case LexemType.ParenClose:
+                                        _stream.Advance();
+                                        looking = false;
                                         break;
                                     default:
-                                        throw new ParserException("Expected close paren or comma", next);
-                                }
-
-                                if (closeFound)
-                                {
-                                    break;
+                                        var member = ParseWikiExpression();
+                                        rankExpressions.Add(member);
+                                        break; 
                                 }
                             }
+                            
+                            // for (var rankIndex = 0; rankIndex < 5; rankIndex++) // 5 is the magic "max dimension"
+                            // {
+                            //     var rankExpression = ParseWikiExpression();
+                            //     rankExpressions.Add(rankExpression);
+                            //     var closeOrComma = _stream.Advance();
+                            //     var closeFound = false;
+                            //     switch (closeOrComma.type)
+                            //     {
+                            //         case LexemType.ParenClose:
+                            //             closeFound = true;
+                            //             break;
+                            //         case LexemType.ArgSplitter:
+                            //             if (rankIndex + 1 == 5)
+                            //             {
+                            //                 throw new ParserException("arrays can only have 5 dimensions", closeOrComma);
+                            //             }
+                            //             break;
+                            //         default:
+                            //             throw new ParserException("Expected close paren or comma", next);
+                            //     }
+                            //
+                            //     if (closeFound)
+                            //     {
+                            //         break;
+                            //     }
+                            // }
                             
                             // we have the ranks, so we know its a array access at least.
                             // but it could still be a nested thing
@@ -388,6 +413,9 @@ namespace DarkBasicYo
                             case LexemType.EndStatement when secondToken.raw == ":":
                                 return new LabelDeclarationNode(token, secondToken);
                                 break;
+                            case LexemType.EndStatement:
+                                return new ExpressionStatement(reference); // TODO: eh?
+
                             case LexemType.OpEqual:
                                 var expr = ParseWikiExpression();
                                 

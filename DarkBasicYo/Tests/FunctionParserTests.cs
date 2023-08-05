@@ -3,6 +3,61 @@ namespace Tests;
 public partial class ParserTests
 {
     
+    
+    [Test]
+    public void Invoke_Simple()
+    {
+        var input = @"
+x = Test()
+";
+        var parser = MakeParser(input);
+        var prog = parser.ParseProgram();
+        
+        Assert.That(prog.statements.Count, Is.EqualTo(1));
+        var code = prog.ToString();
+        Console.WriteLine(code);
+        Assert.That(code, Is.EqualTo(@"(
+(= (ref x),(ref test[]))
+)".ReplaceLineEndings("")));
+    }
+
+    
+    [Test]
+    public void Invoke_WithArg()
+    {
+        var input = @"
+x = Test(1)
+";
+        var parser = MakeParser(input);
+        var prog = parser.ParseProgram();
+        
+        Assert.That(prog.statements.Count, Is.EqualTo(1));
+        var code = prog.ToString();
+        Console.WriteLine(code);
+        Assert.That(code, Is.EqualTo(@"(
+(= (ref x),(ref test[(1)]))
+)".ReplaceLineEndings("")));
+    }
+    
+    
+    [Test]
+    public void Invoke_Statement()
+    {
+        var input = @"
+Test(1)
+";
+        var parser = MakeParser(input);
+        var prog = parser.ParseProgram();
+        
+        Assert.That(prog.statements.Count, Is.EqualTo(1));
+        var code = prog.ToString();
+        Console.WriteLine(code);
+        Assert.That(code, Is.EqualTo(@"(
+(expr (ref test[(1)]))
+)".ReplaceLineEndings("")));
+    }
+
+    
     [Test]
     public void Function_Simple()
     {
