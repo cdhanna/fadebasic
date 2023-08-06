@@ -56,16 +56,16 @@ namespace DarkBasicYo.Virtual
         public VirtualScope globalScope = new VirtualScope();
         public Stack<VirtualScope> scopeStack;
 
-        public VirtualScope scope => scopeStack.Peek();
+        public VirtualScope scope;
 
-        public ulong[] dataRegisters => scopeStack.Peek().dataRegisters; // TODO: optimize to remove method call Peek()
-        public byte[] typeRegisters => scopeStack.Peek().typeRegisters;
+        public ulong[] dataRegisters => scope.dataRegisters; // TODO: optimize to remove method call Peek()
+        public byte[] typeRegisters => scope.typeRegisters;
 
         public VirtualMachine(IEnumerable<byte> program)
         {
             this.program = program.ToArray();
            
-            globalScope = new VirtualScope(256);
+            globalScope = scope = new VirtualScope(256);
             scopeStack = new Stack<VirtualScope>();
             scopeStack.Push(globalScope);
             // dataRegisters = new ulong[256];
@@ -142,6 +142,7 @@ namespace DarkBasicYo.Virtual
                         case OpCodes.PUSH_SCOPE:
                             var newScope = new VirtualScope(64);
                             scopeStack.Push(newScope);
+                            scope = newScope;
                             break;
                         case OpCodes.POP_SCOPE:
                             if (scopeStack.Count == 1)
@@ -149,6 +150,7 @@ namespace DarkBasicYo.Virtual
                                 throw new Exception("Cannot pop the global stack");
                             }
                             scopeStack.Pop();
+                            scope = scopeStack.Peek();
                             break;
                         case OpCodes.JUMP_TABLE:
                             VmUtil.ReadAsInt(stack, out var tableSize);
