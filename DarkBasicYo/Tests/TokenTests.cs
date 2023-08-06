@@ -514,6 +514,23 @@ print x";
 
     
     [Test]
+    public void Tokenize_MultiCommand()
+    {
+        var input = @"wait key";
+
+        var lexer = new Lexer();
+        var tokens = lexer.Tokenize(input, TestCommands.Commands);
+        
+        Assert.That(tokens.Count, Is.EqualTo(2));
+        
+        Assert.That(tokens[0].type, Is.EqualTo(LexemType.CommandWord));
+        Assert.That(tokens[0].raw, Is.EqualTo("wait key"));
+        
+        Assert.That(tokens[1].type, Is.EqualTo(LexemType.EndStatement));
+
+    }
+    
+    [Test]
     public void Tokenize_Power()
     {
         var input = @"a ^ 2";

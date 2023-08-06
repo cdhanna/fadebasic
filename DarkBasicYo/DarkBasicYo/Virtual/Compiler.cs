@@ -14,6 +14,7 @@ namespace DarkBasicYo.Virtual
         public string name;
         public string structType;
         public byte registerAddress;
+        public bool isGlobal;
     }
 
     public class CompiledArrayVariable
@@ -61,9 +62,52 @@ namespace DarkBasicYo.Virtual
         private Dictionary<string, CompiledArrayVariable> _arrayVarToReg =
             new Dictionary<string, CompiledArrayVariable>();
 
-        public void Declare(string name)
+        public bool TryGetVariable(string name, out CompiledVariable variable)
         {
-            
+            return _varToReg.TryGetValue(name, out variable);
+        }
+
+        public bool TryGetArray(string name, out CompiledArrayVariable arrayVariable)
+        {
+            return _arrayVarToReg.TryGetValue(name, out arrayVariable);
+        }
+        
+        public CompiledVariable Create(string name, byte typeCode, bool isGlobal)
+        {
+            var compileVar = new CompiledVariable
+            {
+                registerAddress = (byte)(registerCount++),
+                name = name,
+                typeCode = typeCode,
+                byteSize = TypeCodes.GetByteSize(typeCode),
+                isGlobal = isGlobal
+            };
+
+            _varToReg[name] = compileVar;
+            return compileVar;
+        }
+
+        public CompiledArrayVariable CreateArray(string declarationVariable, int rankLength, byte typeCode)
+        {
+            var compileArrayVar = new CompiledArrayVariable()
+            {
+                registerAddress = (byte)(registerCount++),
+                rankSizeRegisterAddresses = new byte[rankLength],
+                rankIndexScalerRegisterAddresses = new byte[rankLength],
+                name = declarationVariable,
+                typeCode = typeCode,
+                byteSize = TypeCodes.GetByteSize(typeCode)
+            };
+            _arrayVarToReg[declarationVariable] = compileArrayVar;
+            return compileArrayVar;
+        }
+
+        public byte AllocateRegister()
+        {
+            // registerCount++;
+
+            var x = (byte)registerCount;
+            return (byte)(registerCount++);
         }
     }
     
@@ -73,15 +117,17 @@ namespace DarkBasicYo.Virtual
         private List<byte> _buffer = new List<byte>();
 
         public List<byte> Program => _buffer;
-        public int registerCount;
+        // public int registerCount;
 
         private CompileScope globalScope;
         private Stack<CompileScope> scopeStack;
-        
-        private Dictionary<string, CompiledVariable> _varToReg = new Dictionary<string, CompiledVariable>();
 
-        private Dictionary<string, CompiledArrayVariable> _arrayVarToReg =
-            new Dictionary<string, CompiledArrayVariable>();
+        private CompileScope scope => scopeStack.Peek();
+        
+        // private Dictionary<string, CompiledVariable> _varToReg = new Dictionary<string, CompiledVariable>();
+
+        // private Dictionary<string, CompiledArrayVariable> _arrayVarToReg =
+        //     new Dictionary<string, CompiledArrayVariable>();
 
         private Dictionary<string, CompiledType> _types = new Dictionary<string, CompiledType>();
 
@@ -867,7 +913,7 @@ namespace DarkBasicYo.Virtual
                 case VariableRefNode refNode:
 
                     // this is a register address...
-                    if (!_varToReg.TryGetValue(refNode.variableName, out var variable))
+                    if (!scope.TryGetVariable(refNode.variableName, out var variable))
                     {
                         var fakeDeclStatement = new DeclarationStatement
                         {
@@ -879,7 +925,7 @@ namespace DarkBasicYo.Virtual
                             type = new TypeReferenceNode(refNode.DefaultTypeByName, refNode.startToken)
                         };
                         Compile(fakeDeclStatement);
-                        if (!_varToReg.TryGetValue(refNode.variableName, out variable))
+                        if (!scope.TryGetVariable(refNode.variableName, out variable))
                         {
                             throw new Exception(
                                 "Compiler exception: cannot use reference to a variable that does not exist " + refNode);
@@ -900,7 +946,7 @@ namespace DarkBasicYo.Virtual
                 case ArrayIndexReference indexReference:
                     // if we push the address, that isn't good enough, because it is not a register address...
                     // we need to indicate that the value stored in the stack is actually not a registry ptr, but a heap ptr
-                    if (!_arrayVarToReg.TryGetValue(indexReference.variableName, out var compiledArrayVar))
+                    if (!scope.TryGetArray(indexReference.variableName, out var compiledArrayVar))
                     {
                         throw new Exception("Compiler: cannot access array since it not declared" +
                                             indexReference.variableName);
@@ -923,6 +969,7 @@ namespace DarkBasicYo.Virtual
             // put each expression on the stack.
             for (var i = 0; i < commandStatement.command.args.Count; i++)
             {
+                
                 if (i >= commandStatement.args.Count)
                 {
                     if (commandStatement.command.args[i].isOptional)
@@ -986,13 +1033,8 @@ namespace DarkBasicYo.Virtual
             if (declaration.ranks == null || declaration.ranks.Length == 0)
             {
                 // this is a normal variable decl.
-                var compiledVar = _varToReg[declaration.variable] = new CompiledVariable
-                {
-                    registerAddress = (byte)(registerCount++),
-                    name = declaration.variable,
-                    typeCode = tc,
-                    byteSize = TypeCodes.GetByteSize(tc)
-                };
+                // scope.Create(declaration.variable, tc);
+                var compiledVar = scope.Create(declaration.variable, tc, declaration.scopeType == DeclarationScopeType.Global);
 
                 if (tc == TypeCodes.STRUCT)
                 {
@@ -1020,8 +1062,9 @@ namespace DarkBasicYo.Virtual
                             _buffer.Add(TypeCodes.STRUCT);
                             
                             // the ptr will be stored in the register for this variable
-                            _buffer.Add(OpCodes.STORE);
-                            _buffer.Add(compiledVar.registerAddress);
+                            // _buffer.Add(OpCodes.STORE);
+                            // _buffer.Add(compiledVar.registerAddress);
+                            PushStore(_buffer, compiledVar.registerAddress, compiledVar.isGlobal);
                             break;
                 
                         default:
@@ -1033,15 +1076,8 @@ namespace DarkBasicYo.Virtual
             else
             {
                 // this is an array decl
-                var arrayVar = _arrayVarToReg[declaration.variable] = new CompiledArrayVariable()
-                {
-                    registerAddress = (byte)(registerCount++),
-                    rankSizeRegisterAddresses = new byte[declaration.ranks.Length],
-                    rankIndexScalerRegisterAddresses = new byte[declaration.ranks.Length],
-                    name = declaration.variable,
-                    typeCode = tc,
-                    byteSize = TypeCodes.GetByteSize(tc)
-                };
+
+                var arrayVar = scope.CreateArray(declaration.variable, declaration.ranks.Length, tc);
 
                 if (tc == TypeCodes.STRUCT)
                 {
@@ -1066,8 +1102,8 @@ namespace DarkBasicYo.Virtual
                     Compile(expr); 
                     
                     // reserve 2 registers for array rank metadata
-                    arrayVar.rankSizeRegisterAddresses[i] = (byte)(registerCount++);
-                    arrayVar.rankIndexScalerRegisterAddresses[i] = (byte)(registerCount++);
+                    arrayVar.rankSizeRegisterAddresses[i] = scope.AllocateRegister(); // (byte)(registerCount++);
+                    arrayVar.rankIndexScalerRegisterAddresses[i] = scope.AllocateRegister(); //(byte)(registerCount++);
                     
                     // store the expression value (the length for this rank) in a register
                     _buffer.Add(OpCodes.STORE);
@@ -1136,7 +1172,7 @@ namespace DarkBasicYo.Virtual
 
         public void PushAddress(ArrayIndexReference arrayRefNode)
         {
-            if (!_arrayVarToReg.TryGetValue(arrayRefNode.variableName, out var compiledArrayVar))
+            if (!scope.TryGetArray(arrayRefNode.variableName, out var compiledArrayVar))
             {
                 throw new Exception("Compiler: cannot access array since it not declared" +
                                     arrayRefNode.variableName);
@@ -1190,12 +1226,23 @@ namespace DarkBasicYo.Virtual
 
         }
 
+        static void PushStore(List<byte> buffer, byte registerAddress, bool isGlobal)
+        {
+            buffer.Add(isGlobal ? OpCodes.STORE_GLOBAL : OpCodes.STORE);
+            buffer.Add(registerAddress);
+        }
+        static void PushLoad(List<byte> buffer, byte registerAddress, bool isGlobal)
+        {
+            buffer.Add(isGlobal ? OpCodes.LOAD_GLOBAL : OpCodes.LOAD);
+            buffer.Add(registerAddress);
+        }
+
         void CompileAssignmentLeftHandSide(IVariableNode variable)
         {
             switch (variable)
             {
                 case ArrayIndexReference arrayRefNode:
-                    if (!_arrayVarToReg.TryGetValue(arrayRefNode.variableName, out var compiledArrayVar))
+                    if (!scope.TryGetArray(arrayRefNode.variableName, out var compiledArrayVar))
                     {
                         throw new Exception("Compiler: cannot access array since it not declared" +
                                             arrayRefNode.variableName);
@@ -1215,17 +1262,10 @@ namespace DarkBasicYo.Virtual
                     break;
                 case VariableRefNode variableRefNode:
                     
-                    if (!_varToReg.TryGetValue(variableRefNode.variableName, out var compiledVar))
+                    if (!scope.TryGetVariable(variableRefNode.variableName, out var compiledVar))
                     {
-                        // // ?
                         var tc = VmUtil.GetTypeCode(variableRefNode.DefaultTypeByName);
-                        compiledVar = _varToReg[variableRefNode.variableName] = new CompiledVariable
-                        {
-                            registerAddress = (byte)(registerCount++),
-                            name = variableRefNode.variableName,
-                            typeCode = tc,
-                            byteSize = TypeCodes.GetByteSize(tc)
-                        };
+                        compiledVar = scope.Create(variableRefNode.variableName, tc, false);
                     }
             
                     // always cast the expression to the correct type code; slightly wasteful, could be better.
@@ -1233,8 +1273,9 @@ namespace DarkBasicYo.Virtual
                     _buffer.Add(compiledVar.typeCode);
     
                     // store the value of the expression&cast in the desired register.
-                    _buffer.Add(OpCodes.STORE);
-                    _buffer.Add(compiledVar.registerAddress);
+                    // _buffer.Add(OpCodes.STORE);
+                    // _buffer.Add(compiledVar.registerAddress);
+                    PushStore(_buffer, compiledVar.registerAddress, compiledVar.isGlobal);
                     break;
                 case StructFieldReference fieldReferenceNode:
 
@@ -1244,7 +1285,7 @@ namespace DarkBasicYo.Virtual
                             
                             // we need to find the start index of the array element,
                             // and then add the offset for the field access part (the right side)
-                            if (!_arrayVarToReg.TryGetValue(arrayRefNode.variableName, out var compiledLeftArrayVar))
+                            if (!scope.TryGetArray(arrayRefNode.variableName, out var compiledLeftArrayVar))
                             {
                                 throw new Exception("Compiler: cannot access array since it not declared" +
                                                     arrayRefNode.variableName);
@@ -1273,7 +1314,7 @@ namespace DarkBasicYo.Virtual
                             break;
                         
                         case VariableRefNode variableRef:
-                            if (!_varToReg.TryGetValue(variableRef.variableName, out compiledVar))
+                            if (!scope.TryGetVariable(variableRef.variableName, out compiledVar))
                             {
                                 throw new Exception("compiler exception! the referenced variable has not been declared yet " +
                                                     variableRef.variableName);
@@ -1289,8 +1330,9 @@ namespace DarkBasicYo.Virtual
                             AddPushInt(_buffer, length);
                             
                             // load the base address of the variable
-                            _buffer.Add(OpCodes.LOAD);
-                            _buffer.Add(compiledVar.registerAddress);
+                            // _buffer.Add(OpCodes.LOAD);
+                            // _buffer.Add(compiledVar.registerAddress);
+                            PushLoad(_buffer, compiledVar.registerAddress, compiledVar.isGlobal);
                             
                             // load the offset of the right side
                             AddPushInt(_buffer, offset);
@@ -1564,7 +1606,7 @@ namespace DarkBasicYo.Virtual
                 case ArrayIndexReference arrayRef:
                     // need to fetch the value from the array...
 
-                    if (!_arrayVarToReg.TryGetValue(arrayRef.variableName, out var arrayVar))
+                    if (!scope.TryGetArray(arrayRef.variableName, out var arrayVar))
                     {
                         CompileAsInvocation(arrayRef);
                         break;
@@ -1632,7 +1674,7 @@ namespace DarkBasicYo.Virtual
                     {
                         case VariableRefNode variableRef:
 
-                            if (!_varToReg.TryGetValue(variableRef.variableName, out var typeCompiledVar))
+                            if (!scope.TryGetVariable(variableRef.variableName, out var typeCompiledVar))
                             {
                                 throw new Exception(
                                     "compiler exception! the referenced variable has not been declared yet " +
@@ -1670,7 +1712,7 @@ namespace DarkBasicYo.Virtual
                             
                             break;
                         case ArrayIndexReference arrayRefNode:
-                            if (!_arrayVarToReg.TryGetValue(arrayRefNode.variableName, out var leftArrayVar))
+                            if (!scope.TryGetArray(arrayRefNode.variableName, out var leftArrayVar))
                             {
                                 throw new Exception("compiler exception! the referenced array has not been declared yet " +
                                                     arrayRefNode.variableName);
@@ -1702,14 +1744,15 @@ namespace DarkBasicYo.Virtual
                     break;
                 case VariableRefNode variableRef:
                     // emit the read from register
-                    if (!_varToReg.TryGetValue(variableRef.variableName, out var compiledVar))
+                    if (!scope.TryGetVariable(variableRef.variableName, out var compiledVar))
                     {
                         throw new Exception("compiler exception! the referenced variable has not been declared yet " +
                                             variableRef.variableName);
                     }
                     
-                    _buffer.Add(OpCodes.LOAD);
-                    _buffer.Add(compiledVar.registerAddress);
+                    PushLoad(_buffer, compiledVar.registerAddress, compiledVar.isGlobal);
+                    // _buffer.Add(OpCodes.LOAD);
+                    // _buffer.Add(compiledVar.registerAddress);
                     
                     break;
                 case UnaryOperationExpression unary:

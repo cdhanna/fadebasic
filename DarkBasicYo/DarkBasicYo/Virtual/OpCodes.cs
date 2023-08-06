@@ -29,6 +29,10 @@ namespace DarkBasicYo.Virtual
         public const byte PTR_HEAP = 0x0B; // 4 bytes (heap ptr)
         public const byte STRUCT   = 0x0C; // 4 bytes (ptr)
 
+
+        public const byte ANY      = 254; // this isn't a real type code, it is a fake number used for calling C# methods
+        public const byte VM       = 255; // this isn't a real type code, it is used as a hack in calling C# methods
+
         public static readonly byte[] ORDER_PREC = new byte[]
         {
             30, // int
@@ -228,6 +232,16 @@ namespace DarkBasicYo.Virtual
         /// Just go kaboom
         /// </summary>
         public const byte EXPLODE = 42;
+
+        /// <summary>
+        /// Exactly the same as <see cref="LOAD"/>, but always pulls from the global scope
+        /// </summary>
+        public const byte LOAD_GLOBAL = 43;
+        
+        /// <summary>
+        /// Exactly the same as <see cref="STORE"/>, but always pulls from the global scope
+        /// </summary>
+        public const byte STORE_GLOBAL = 44;
 
     }
 }

@@ -22,5 +22,11 @@ namespace DarkBasicYo
         {
             
         }
+
+        [CommandName("inc")]
+        public static void Inc(ref int x)
+        {
+            x += 1;
+        }
     }
 }

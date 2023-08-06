@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Reflection;
 
 namespace DarkBasicYo.Virtual
@@ -31,6 +32,105 @@ namespace DarkBasicYo.Virtual
             };
         }
 
+        private static bool TryBuildExecutorCache(MethodInfo method, out Func<object[], object> executor)
+        {
+            executor = null;
+            if (method.ReturnType != typeof(void))
+            {
+                return false; // TODO: return types are not cachable yet.
+            }
+
+            var parameters = method.GetParameters();
+            var parameterTypes = parameters.Select(x => x.ParameterType).ToArray();
+            
+            switch (parameters.Length)
+            {
+                // case 1 when parameters[0].ParameterType == typeof(int):
+                //
+                //     // var type = typeof(Action<>).MakeGenericType(parameterTypes);
+                //     var deleg = (Action<int>)Delegate.CreateDelegate(typeof(Action<int>), method);
+                //     executor = p =>
+                //     {
+                //         deleg.Invoke((int)p[0]);
+                //         return null;
+                //     };
+                //     break;
+                case 1 when !parameterTypes[0].HasElementType:
+                // case 1:
+                
+                    var capture = BuildConvert1Arg(parameterTypes[0], method);
+                    executor = p => capture(p[0]);
+                    break;
+                default:
+                    return false; // TODO: support caching for higher parameter count
+            }
+
+            
+            
+            return false;
+        }
+
+        private static Func<object, object> BuildConvert1Arg(Type type, MethodInfo captureMethod)
+        {
+
+            if (type.HasElementType)
+            {
+                type = type.GetElementType();
+            }
+            
+            var bf = BindingFlags.Static | BindingFlags.NonPublic;
+            var genMethod = typeof(HostMethodUtil).GetMethod(nameof(Convert1Arg), bf);
+            var method = genMethod.MakeGenericMethod(type);
+            var result = method.Invoke(null, new object[] { captureMethod });
+            var castResult = (Action<object>)result;
+            return x =>
+            {
+                castResult(x);
+                return null;
+            };
+        }
+        
+        private static Action<object> Convert1Arg<T>(MethodInfo method)
+        {
+            try
+            {
+                var strong = (Action<T>)Delegate.CreateDelegate(typeof(Action<T>), method);
+                Action<object> weak = (arg) => strong((T)arg);
+                return weak;
+            }
+            catch (Exception ex)
+            {
+                // TODO: WHY CAN I NOT USE A REF TYPE AS A GENERIC ARG!?!?!?!?!!??
+                Console.WriteLine(ex.Message);
+                throw;
+            }
+        }
+        
+        private static bool TryBuildDelegateType(MethodInfo method, out Type type)
+        {
+            type = null;
+            
+            if (method.ReturnType != typeof(void))
+            {
+                return false; // TODO: return types are not cachable yet.
+            }
+        
+            var parameters = method.GetParameters();
+            var parameterTypes = parameters.Select(x => x.ParameterType).ToArray();
+            switch (parameters.Length)
+            {
+                case 1:
+        
+                    type = typeof(Action<>).MakeGenericType(parameterTypes);
+                    // var deleg = Delegate.CreateDelegate(type, method);
+                    break;
+                default:
+                    return false; // TODO: support caching for higher parameter count
+            }
+        
+            return type != null;
+        }
+
         public static HostMethod BuildHostMethodViaReflection(MethodInfo method)
         {
             
@@ -39,6 +139,8 @@ namespace DarkBasicYo.Virtual
             var argTypeCodes = new List<byte>();
             // var argTypes = new List<Type>();
             var defaultArgValues = new object[parameters.Length];
+
+            
             for (var i = 0; i < parameters.Length; i++)
             {
                 var parameter = parameters[i];
@@ -47,7 +149,6 @@ namespace DarkBasicYo.Virtual
                 
                 if (!_typeToTypeCode.TryGetValue(parameterType, out var parameterTypeCode))
                 {
-                    
                     if (parameterType.IsByRef)
                     {
                         var subType = parameterType.GetElementType();
@@ -55,6 +156,15 @@ namespace DarkBasicYo.Virtual
                         {
                             throw new Exception("HostMethodBuilder: unsupported ptr arg type " + parameterType.Name);
                         }
+                    }
+                    else if (typeof(VirtualMachine).IsAssignableFrom(parameterType))
+                    {
+                        // this is allowed, set 
+                        parameterTypeCode = TypeCodes.VM;
+                    }
+                    else if (typeof(CommandArgObject) == parameterType)
+                    {
+                        parameterTypeCode = TypeCodes.ANY;
                     }
                     else
                     {
@@ -78,17 +188,35 @@ namespace DarkBasicYo.Virtual
             {
                 throw new Exception("HostMethodBuilder: unsupported return type " + method.ReturnType.Name);
             }
-            
-            
-            
-            return new HostMethod
+
+
+       
+            var hostMethod = new HostMethod
             {
                 function = method,
                 returnTypeCode = returnTypeCode,
                 argTypeCodes = argTypeCodes.ToArray(),
-                defaultArgValues = defaultArgValues
+                defaultArgValues = defaultArgValues,
+                executor = instanceParams => method.Invoke(null, instanceParams)
                 // argTypes = argTypes.ToArray()
             };
+            // if (TryBuildExecutorCache(method, out var executor))
+            {
+                hostMethod.executor = p => null;
+            }
+            // if (TryBuildDelegateType(method, out var dType))
+            // {
+            //     hostMethod.executor = (instanceParams) =>
+            //     {
+            //         
+            //         return null;
+            //     };
+            //     var cached = Delegate.CreateDelegate(dType, method);
+            //     // hostMethod.cachedFunction = (Func<object, object[]>)(parameters => cached);
+            // }
+
+            return hostMethod;
+
         }
 
         public static HostMethod BuildHostMethodViaReflection(Type clazz, string methodName)
@@ -100,6 +228,7 @@ namespace DarkBasicYo.Virtual
         
         public static void Execute(HostMethod method, VirtualMachine machine)
         {
+            //return;
             // if there are args, then we need to pull those values off the stack and cast them.
 
             var argInstances = new object[method.argTypeCodes.Length];
@@ -109,10 +238,27 @@ namespace DarkBasicYo.Virtual
             for (var i = method.argTypeCodes.Length - 1; i >= 0; i --)
             // for (var i = 0; i < method.argTypeCodes.Length; i++)
             {
-                
-                
+                if (method.argTypeCodes[i] == TypeCodes.VM)
+                {
+                    argInstances[i] = machine;
+                    continue;
+                }
+
                 VmUtil.Read(machine.stack, out var typeCode, out var bytes);
                 readTypeCodes[i] = typeCode;
+                
+                
+                if (method.argTypeCodes[i] == TypeCodes.ANY)
+                {
+                    argInstances[i] = new CommandArgObject
+                    {
+                        bytes = bytes,
+                        typeCode = typeCode
+                    };
+                    continue;
+                }
+
+                
                 if (typeCode == TypeCodes.PTR_REG)
                 {
                     // resolve this before we continue...
@@ -188,7 +334,8 @@ namespace DarkBasicYo.Virtual
                 }
             }
             
-            var result = method.function?.Invoke(null, argInstances);
+            // var result = method.function?.Invoke(null, argInstances);
+            var result = method.executor(argInstances);
             
             // check for ref parameters that need to be restored...
             for (var i = 0; i < method.argTypeCodes.Length; i++)
@@ -276,5 +423,7 @@ namespace DarkBasicYo.Virtual
         public byte returnTypeCode;
         public object[] defaultArgValues;
         public MethodInfo function;
+        public Func<object[], object> executor;
+        
     }
 }

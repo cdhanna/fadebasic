@@ -1305,6 +1305,19 @@ Return
         Assert.That(vm.typeRegisters[0], Is.EqualTo(TypeCodes.WORD));
     }
 
+    [Test]
+    public void TestGlobalDeclareAndAssign()
+    {
+        var src = "GLOBAL x as word: x = 3";
+        Setup(src, out _, out var prog);
+        
+        var vm = new VirtualMachine(prog);
+        vm.Execute().MoveNext();
+        
+        Assert.That(vm.dataRegisters[0], Is.EqualTo(3));
+        Assert.That(vm.typeRegisters[0], Is.EqualTo(TypeCodes.WORD));
+    }
+
     
     [Test]
     public void TestDeclareAndAssignToExpression()
@@ -2315,6 +2328,45 @@ y = x(2).derp * x(1).color
     
     
     [Test]
+    public void CallHost_MultiWord()
+    {
+        var src = "wait key";
+        Setup(src, out var compiler, out var prog);
+        var vm = new VirtualMachine(prog);
+        vm.hostMethods = compiler.methodTable;
+        vm.Execute2();
+    }
+    
+    [Test]
+    public void CallHost_PassVm()
+    {
+        var src = "getVm";
+        Setup(src, out var compiler, out var prog);
+        var vm = new VirtualMachine(prog);
+        vm.hostMethods = compiler.methodTable;
+        vm.Execute2();
+    }
+
+    
+    [Test]
+    public void CallHost_ObjectInput()
+    {
+        var src = @$"
+any input 3, x
+any input ""darn"", y
+";
+        Setup(src, out var compiler, out var prog);
+        var vm = new VirtualMachine(prog);
+        vm.hostMethods = compiler.methodTable;
+        vm.Execute2();
+        Assert.That(vm.typeRegisters[0], Is.EqualTo(TypeCodes.INT));
+        Assert.That(vm.dataRegisters[0], Is.EqualTo(0));
+        
+        Assert.That(vm.typeRegisters[1], Is.EqualTo(TypeCodes.INT));
+        Assert.That(vm.dataRegisters[1], Is.EqualTo(TypeCodes.STRING)); 
+    }
+    
+    [Test]
     public void CallHost_RefType()
     {
         var src = "x = 7: refDbl x: x = x * 2";
@@ -2473,6 +2525,7 @@ w$ = x$(2)
         var str = VmConverter.ToString(memory);
         Assert.That(str, Is.EqualTo("olleh"));
     }
+    
     
     [Test]
     public void CallHost_StringReturn_Assignment()

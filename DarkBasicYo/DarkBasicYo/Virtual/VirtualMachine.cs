@@ -57,19 +57,15 @@ namespace DarkBasicYo.Virtual
         public VirtualScope globalScope = new VirtualScope();
         public Stack<VirtualScope> scopeStack;
 
+        public VirtualScope scope => scopeStack.Peek();
+
         public ulong[] dataRegisters => scopeStack.Peek().dataRegisters; // TODO: optimize to remove method call Peek()
         public byte[] typeRegisters => scopeStack.Peek().typeRegisters;
 
-        public VirtualMachine(IEnumerable<byte> program, StreamWriter standardOut=null)
+        public VirtualMachine(IEnumerable<byte> program)
         {
             this.program = program.ToArray();
-            if (standardOut == null)
-            {
-                standardOut = new StreamWriter(new MemoryStream());
-            }
-            
-            _standardOut = standardOut;
-
+           
             globalScope = new VirtualScope(256);
             scopeStack = new Stack<VirtualScope>();
             scopeStack.Push(globalScope);
@@ -103,8 +99,16 @@ namespace DarkBasicYo.Virtual
             };
         }
 
+
+        private bool isSuspendRequested;
+        public void Suspend()
+        {
+            isSuspendRequested = true;
+        }
+
         public void Execute2(int instructionBatchCount=1000)
         {
+            isSuspendRequested = false;
             // while (true)
             {
                 byte[] aBytes = new byte[] { };
@@ -126,6 +130,11 @@ namespace DarkBasicYo.Virtual
                             // throw new Exception("Left over stack");
                         }
 
+                        return;
+                    }
+                    
+                    if (isSuspendRequested)
+                    {
                         return;
                     }
 
@@ -327,14 +336,37 @@ namespace DarkBasicYo.Virtual
                             VmUtil.Pad(8, aBytes, out aBytes);
                             data = BitConverter.ToUInt64(aBytes, 0);
 
-                            dataRegisters[addr] = data;
-                            typeRegisters[addr] = typeCode;
+                            scope.dataRegisters[addr] = data;
+                            scope.typeRegisters[addr] = typeCode;
+                            break;
+                        case OpCodes.STORE_GLOBAL:
+                            addr = Advance();
+                            VmUtil.Read(stack, out typeCode, out aBytes);
+                            VmUtil.Pad(8, aBytes, out aBytes);
+                            data = BitConverter.ToUInt64(aBytes, 0);
+
+                            globalScope.dataRegisters[addr] = data;
+                            globalScope.typeRegisters[addr] = typeCode;
                             break;
                         case OpCodes.LOAD:
                             addr = Advance();
 
-                            typeCode = typeRegisters[addr];
-                            data = dataRegisters[addr];
+                            typeCode = scope.typeRegisters[addr];
+                            data = scope.dataRegisters[addr];
+                            size = TypeCodes.GetByteSize(typeCode);
+                            aBytes = BitConverter.GetBytes(data);
+                            for (var n = size -1 ; n >= 0; n --)
+                            {
+                                stack.Push(aBytes[n]);
+                            }
+                            
+                            stack.Push(typeCode);
+                            break;
+                        case OpCodes.LOAD_GLOBAL:
+                            addr = Advance();
+
+                            typeCode = globalScope.typeRegisters[addr];
+                            data = globalScope.dataRegisters[addr];
                             size = TypeCodes.GetByteSize(typeCode);
                             aBytes = BitConverter.GetBytes(data);
                             for (var n = size -1 ; n >= 0; n --)
@@ -406,13 +438,7 @@ namespace DarkBasicYo.Virtual
                             throw new Exception("Unknown op code: " + ins);
                     }
                 }
-
-                // if there is anything left on the stack
-                var remaining = stack.Count;
-                // yield return new ExecutionState
-                // {
-                //     isComplete = false
-                // };
+                
             }
 
         }   

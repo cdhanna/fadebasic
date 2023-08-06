@@ -49,7 +49,7 @@ EndFunction a
 
     
     [Test]
-    public void Function_InvalidAccess()
+    public void Function_Global()
     {
         var src = @"
 global y as integer
@@ -69,6 +69,30 @@ EndFunction a
         Assert.That(vm.dataRegisters[1], Is.EqualTo(1)); 
         Assert.That(vm.typeRegisters[1], Is.EqualTo(TypeCodes.INT));
     }
+    
+    
+    [Test]
+    public void Function_Local()
+    {
+        var src = @"
+global y as integer
+y = 1
+x = Test()
+
+END
+Function Test()
+a = y
+EndFunction a
+";
+        Setup(src, out _, out var prog);
+        
+        var vm = new VirtualMachine(prog);
+        vm.Execute().MoveNext();
+        
+        Assert.That(vm.dataRegisters[1], Is.EqualTo(0)); 
+        Assert.That(vm.typeRegisters[1], Is.EqualTo(TypeCodes.INT));
+    }
+
     
     [Test]
     public void Function_ExplicitTypedArg()
@@ -432,7 +456,7 @@ Function Fib(a)
         ExitFunction 1
     ENDIF
     ExitFunction Fib(a - 1) + Fib(a - 2)
-EndFunction a
+EndFunction
 ";
         Setup(src, out _, out var prog);
         

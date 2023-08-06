@@ -298,6 +298,7 @@ namespace DarkBasicYo
             {
                 
                 var argDescriptor = command.args[i];
+                if (argDescriptor.isVmArg) continue;
                 
                 if (i > 0)
                 {

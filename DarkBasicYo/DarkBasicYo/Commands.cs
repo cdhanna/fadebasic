@@ -4,6 +4,7 @@ using System.Linq;
 using System.Reflection;
 using System.Text.RegularExpressions;
 using DarkBasicYo.Ast;
+using DarkBasicYo.Virtual;
 
 namespace DarkBasicYo
 {
@@ -17,6 +18,13 @@ namespace DarkBasicYo
         {
             Name = name;
         }
+    }
+
+    [Serializable]
+    public struct CommandArgObject
+    {
+        public byte[] bytes;
+        public byte typeCode;
     }
     
     public class CommandDescriptor
@@ -43,13 +51,18 @@ namespace DarkBasicYo
             args = new List<ArgDescriptor>();
             foreach (var parameter in parameters)
             {
+                if (typeof(VirtualMachine).IsAssignableFrom(parameter.ParameterType ) )
+                {
+                    continue;
+                }
                 var arg = new ArgDescriptor
                 {
                     // TODO: get name and other optional info
                     name = parameter.Name,
                     type = VariableType.Integer,
                     isRef = parameter.ParameterType.IsByRef,
-                    isOptional = parameter.IsOptional
+                    isOptional = parameter.IsOptional,
+                    // isVmArg = parameter.ParameterType == typeof(VirtualMachine)
                 };
                 args.Add(arg);
             }
@@ -71,18 +84,7 @@ namespace DarkBasicYo
     {
         public readonly List<CommandDescriptor> Commands;
         public readonly Dictionary<string, CommandDescriptor> Lookup;
-
-        // public CommandCollection(List<CommandDescriptor> commands)
-        // {
-        //     Commands = commands;
-        //     Lookup = commands.ToDictionary(c => c.command);
-        // }
-        //
-        // public CommandCollection(params CommandDescriptor[] commands) : this(commands.ToList())
-        // {
-        //
-        // }
-
+        
         public CommandCollection(params Type[] commandClasses)
         {
             Commands = new List<CommandDescriptor>();
@@ -104,7 +106,9 @@ namespace DarkBasicYo
 
         public bool TryGetCommandDescriptor(Token token, out CommandDescriptor commandDescriptor)
         {
-            var lookup = Regex.Replace(token.raw, "(\\s||\\t)*", "");
+            
+            var lookup = Regex.Replace(token.raw, "(\\s)+", " ");
+            // var lookup = Regex.Replace(token.raw, "(\\s||\\t)*", " ");
             return Lookup.TryGetValue(lookup, out commandDescriptor);
         }
     }
@@ -116,6 +120,7 @@ namespace DarkBasicYo
         public bool isRef;
         public bool isOptional;
 
+        public bool isVmArg;
         // public int arity = 1; // TODO: ? 
         // public bool optional; // TODO: ?
 
@@ -129,15 +134,5 @@ namespace DarkBasicYo
             this.name = name;
             this.type = type;
         }
-    }
-
-    [Flags]
-    public enum LiteralType
-    {
-        Integer = 1, // 00001
-        Real = 2, // 00010
-        String = 4, // 00100
-        Any = 7, // 00111
-        Numeric = 3 // 00011
     }
 }
