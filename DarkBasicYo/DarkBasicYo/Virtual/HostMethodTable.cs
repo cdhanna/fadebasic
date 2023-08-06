@@ -197,12 +197,12 @@ namespace DarkBasicYo.Virtual
                 returnTypeCode = returnTypeCode,
                 argTypeCodes = argTypeCodes.ToArray(),
                 defaultArgValues = defaultArgValues,
-                executor = instanceParams => method.Invoke(null, instanceParams)
+                // executor = instanceParams => method.Invoke(null, instanceParams)
                 // argTypes = argTypes.ToArray()
             };
             // if (TryBuildExecutorCache(method, out var executor))
             {
-                hostMethod.executor = p => null;
+                // hostMethod.executor = p => null;
             }
             // if (TryBuildDelegateType(method, out var dType))
             // {
@@ -334,8 +334,8 @@ namespace DarkBasicYo.Virtual
                 }
             }
             
-            // var result = method.function?.Invoke(null, argInstances);
-            var result = method.executor(argInstances);
+            var result = method.function?.Invoke(null, argInstances);
+            // var result = method.executor(argInstances);
             
             // check for ref parameters that need to be restored...
             for (var i = 0; i < method.argTypeCodes.Length; i++)
@@ -423,7 +423,7 @@ namespace DarkBasicYo.Virtual
         public byte returnTypeCode;
         public object[] defaultArgValues;
         public MethodInfo function;
-        public Func<object[], object> executor;
+        // public Func<object[], object> executor;
         
     }
 }

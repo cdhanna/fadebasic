@@ -44,7 +44,6 @@ namespace DarkBasicYo.Virtual
     
     public class VirtualMachine
     {
-        private readonly StreamWriter _standardOut;
         public readonly byte[] program;
 
         public int instructionIndex;
@@ -78,13 +77,6 @@ namespace DarkBasicYo.Virtual
             // }
         }
 
-        public string ReadStdOut()
-        {
-            _standardOut.Flush();
-            _standardOut.BaseStream.Seek(0, SeekOrigin.Begin);
-            var sr = new StreamReader(_standardOut.BaseStream);
-            return sr.ReadToEnd();
-        }
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         private byte Advance() => program[instructionIndex++];
@@ -424,13 +416,7 @@ namespace DarkBasicYo.Virtual
                             HostMethodUtil.Execute(method, this);
                             
                             break;
-                        case OpCodes.DBG_PRINT:
-
-                            aTypeCode = stack.Pop();
-                            VmUtil.Read(stack, aTypeCode, out var bytes);
-                            var dbgValue = VmUtil.DbgConvert(aTypeCode, bytes);
-                            _standardOut.WriteLine(aTypeCode + " - " + dbgValue);
-                            break;
+                        
                         case OpCodes.NOOP:
                             // do nothing! Its a no-op!
                             break;

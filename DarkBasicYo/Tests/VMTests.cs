@@ -19,15 +19,18 @@ public class VMTests
         var vm = new VirtualMachine(new List<byte>
         {
             OpCodes.PUSH, TypeCodes.WORD, 0b01, 0b01, // a 1 in the 9th's place is 512
-            OpCodes.DBG_PRINT, 
+            // OpCodes.DBG_PRINT, 
         });
         
         var state = vm.Execute();
         var res = state.MoveNext();
 
-        var str = vm.ReadStdOut();
-        Assert.That(str, Is.EqualTo("4 - 257\n"));
+        // var str = vm.ReadStdOut();
+        // Assert.That(str, Is.EqualTo("4 - 257\n"));
         Assert.IsTrue(state.Current.isComplete);
+        VmUtil.Read(vm.stack, out var tc, out var bytes);
+        Assert.That(tc, Is.EqualTo(TypeCodes.WORD));
+        Assert.That(BitConverter.ToInt16(bytes), Is.EqualTo(257));
         // Assert.That(vm.stack.Peek(), Is.EqualTo(512));
     }
 
@@ -39,8 +42,7 @@ public class VMTests
         {
             OpCodes.PUSH, TypeCodes.WORD, 1, 0,
             OpCodes.PUSH, TypeCodes.WORD, 0, 5,
-            OpCodes.ADD, 
-            OpCodes.DBG_PRINT
+            OpCodes.ADD
         });
         
         var state = vm.Execute();
@@ -48,8 +50,14 @@ public class VMTests
         
         Assert.IsTrue(state.Current.isComplete);
         
-        var str = vm.ReadStdOut();
-        Assert.That(str, Is.EqualTo("4 - 261\n"));
+        // var str = vm.ReadStdOut();
+        
+        // Assert.That(str, Is.EqualTo("4 - 261\n"));
+        VmUtil.Read(vm.stack, out var tc, out var bytes);
+        Assert.That(tc, Is.EqualTo(TypeCodes.WORD));
+        Assert.That(BitConverter.ToInt16(bytes), Is.EqualTo(261));
+
+
     }
     
     [Test]
@@ -59,16 +67,19 @@ public class VMTests
         {
             OpCodes.PUSH, TypeCodes.WORD, 0, 2, // 256 * 0 + 2
             OpCodes.PUSH, TypeCodes.WORD, 1, 2, // 256 * 1 + 2
-            OpCodes.MUL, 
-            OpCodes.DBG_PRINT
+            OpCodes.MUL,
         });
         
         var state = vm.Execute();
         var res = state.MoveNext();
         
         Assert.IsTrue(state.Current.isComplete);
-        var str = vm.ReadStdOut();
-        Assert.That(str, Is.EqualTo($"4 - {(2) * (256 + 2)}\n"));
+        // var str = vm.ReadStdOut();
+        // Assert.That(str, Is.EqualTo($"4 - {(2) * (256 + 2)}\n"));
+        VmUtil.Read(vm.stack, out var tc, out var bytes);
+        Assert.That(tc, Is.EqualTo(TypeCodes.WORD));
+        Assert.That(BitConverter.ToInt16(bytes), Is.EqualTo((2) * (256 + 2)));
+
     }
     
     
@@ -81,19 +92,23 @@ public class VMTests
             OpCodes.PUSH, TypeCodes.WORD, 1, 2, // 256 * 1 + 2
 
             OpCodes.MUL, 
-            OpCodes.DBG_PRINT
+            // OpCodes.DBG_PRINT
         });
         
         var state = vm.Execute();
         var res = state.MoveNext();
         
         Assert.IsTrue(state.Current.isComplete);
-        var str = vm.ReadStdOut();
+        // var str = vm.ReadStdOut();
         
         // the actual product is 66,564
         // but the value of Word is 65,536,
         // so if it wraps correctly, we should see 66,564 - 65,536 = 1028
-        Assert.That(str, Is.EqualTo($"4 - 1028\n"));
+        // Assert.That(str, Is.EqualTo($"4 - 1028\n"));
+        VmUtil.Read(vm.stack, out var tc, out var bytes);
+        Assert.That(tc, Is.EqualTo(TypeCodes.WORD));
+        Assert.That(BitConverter.ToInt16(bytes), Is.EqualTo(1028));
+
     }
     
     
@@ -200,18 +215,20 @@ public class VMTests
             OpCodes.PUSH, TypeCodes.BYTE, 1, // 1
             OpCodes.PUSH, TypeCodes.WORD, 120, 10, // 256 * 254 + 10
 
-            OpCodes.ADD, 
-            OpCodes.DBG_PRINT
+            OpCodes.ADD
         });
         
         var state = vm.Execute();
         var res = state.MoveNext();
         
         Assert.IsTrue(state.Current.isComplete);
-        var str = vm.ReadStdOut();
-        
+        VmUtil.Read(vm.stack, out var tc, out var bytes);
+        Assert.That(tc, Is.EqualTo(TypeCodes.WORD));
+        Assert.That(BitConverter.ToInt16(bytes), Is.EqualTo(30731));
+
+        // throw new NotImplementedException();
         // adding a byte and a word together, the resulting math should take on the larger size
-        Assert.That(str, Is.EqualTo($"4 - 30731\n"));
+        // Assert.That(str, Is.EqualTo($"4 - 30731\n"));
     }
     
     [Test]
@@ -222,18 +239,21 @@ public class VMTests
             OpCodes.PUSH, TypeCodes.WORD, 120, 10, // 256 * 254 + 10
             OpCodes.PUSH, TypeCodes.BYTE, 1, // 1
 
-            OpCodes.ADD, 
-            OpCodes.DBG_PRINT
+            OpCodes.ADD,
         });
         
         var state = vm.Execute();
         var res = state.MoveNext();
         
         Assert.IsTrue(state.Current.isComplete);
-        var str = vm.ReadStdOut();
+        
+        VmUtil.Read(vm.stack, out var tc, out var bytes);
+        Assert.That(tc, Is.EqualTo(TypeCodes.WORD));
+        Assert.That(BitConverter.ToInt16(bytes), Is.EqualTo(30731));
+
         
         // adding a byte and a word together, the resulting math should take on the larger size
-        Assert.That(str, Is.EqualTo($"4 - 30731\n"));
+        // Assert.That(str, Is.EqualTo($"4 - 30731\n"));
     }
 
     [Test]

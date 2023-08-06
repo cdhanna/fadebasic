@@ -100,10 +100,6 @@ namespace DarkBasicYo.Virtual
         public const byte OR = 33;
         public const byte NOT = 34;
         
-        /// <summary>
-        /// A command that prints the current value of the stack
-        /// </summary>
-        public const byte DBG_PRINT = 100;
 
         /// <summary>
         /// the next byte in the INS is the Address, and then it expects to find a value in the stack
