@@ -520,6 +520,22 @@ namespace DarkBasicYo.Virtual
             }
             stack.Push(typeCode);
         }
+
+
+        private static byte[] toLongConversionUtil = new byte[8];
+        public static void ToULong(byte[] bytes, out ulong data)
+        {
+            for (var i = 0; i < toLongConversionUtil.Length; i++)
+            {
+                toLongConversionUtil[i] = 0;
+            }
+            for (var i = bytes.Length - 1; i >= 0; i--)
+            {
+                toLongConversionUtil[i] = bytes[i];
+            }
+            data = BitConverter.ToUInt64(toLongConversionUtil, 0);
+
+        }
         
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public static void Pad(byte size, byte[] bytes, out byte[] output)

@@ -161,6 +161,7 @@ namespace DarkBasicYo.Virtual
                                 VmUtil.Read(stack, out aTypeCode, out aBytes); // the value
                                 VmUtil.Pad(8, aBytes, out aBytes);
                                 var hash = BitConverter.ToInt64(aBytes, 0);
+                                // VmUtil.ToLong(aBytes, out var hash);
                                 VmUtil.ReadAsInt(stack, out var caseAddr);
                                 addresses[j] = caseAddr;
                                 values[j] = hash;
@@ -327,8 +328,9 @@ namespace DarkBasicYo.Virtual
                             // read a register location, which is always 1 byte.
                             addr = Advance();
                             VmUtil.Read(stack, out typeCode, out aBytes);
-                            VmUtil.Pad(8, aBytes, out aBytes);
-                            data = BitConverter.ToUInt64(aBytes, 0);
+                            // VmUtil.Pad(8, aBytes, out aBytes);
+                            // data = BitConverter.ToUInt64(aBytes, 0);
+                            VmUtil.ToULong(aBytes, out data);
 
                             scope.dataRegisters[addr] = data;
                             scope.typeRegisters[addr] = typeCode;
