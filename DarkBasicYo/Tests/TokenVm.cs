@@ -33,10 +33,10 @@ public partial class TokenVm
         // Assert.That(prog.Count, Is.EqualTo(6)); // type code and 4 bytes for the int
         Assert.That(prog[0], Is.EqualTo(OpCodes.PUSH));
         Assert.That(prog[1], Is.EqualTo(TypeCodes.INT));
-        Assert.That(prog[2], Is.EqualTo(0));
+        Assert.That(prog[2], Is.EqualTo(12));
         Assert.That(prog[3], Is.EqualTo(0));
         Assert.That(prog[4], Is.EqualTo(0));
-        Assert.That(prog[5], Is.EqualTo(12));
+        Assert.That(prog[5], Is.EqualTo(0));
         Assert.That(prog[6], Is.EqualTo(OpCodes.CAST));
         Assert.That(prog[7], Is.EqualTo(TypeCodes.WORD));
 
@@ -1765,11 +1765,12 @@ x = x + y * 3
         var vm = new VirtualMachine(prog);
         vm.Execute().MoveNext();
         
-        Assert.That(vm.dataRegisters[0], Is.EqualTo(10));
-        Assert.That(vm.typeRegisters[0], Is.EqualTo(TypeCodes.INT));
-        
         Assert.That(vm.dataRegisters[1], Is.EqualTo(2));
         Assert.That(vm.typeRegisters[1], Is.EqualTo(TypeCodes.INT));
+        
+        Assert.That(vm.dataRegisters[0], Is.EqualTo(10));
+        Assert.That(vm.typeRegisters[0], Is.EqualTo(TypeCodes.INT));
+
     }
 
     
@@ -1902,6 +1903,48 @@ x = (4-5) - (2 - 1)
         Assert.That(vm.typeRegisters[0], Is.EqualTo(TypeCodes.REAL));
     }
 
+    [Test]
+    public void Math_Ints_Add()
+    {
+        var src = @"x = 1 + 2";
+        Setup(src, out _, out var prog);
+        
+        var vm = new VirtualMachine(prog);
+        vm.Execute2();
+        Assert.That(vm.dataRegisters[0], Is.EqualTo(3));
+        Assert.That(vm.typeRegisters[0], Is.EqualTo(TypeCodes.INT));
+    }
+    
+    [Test]
+    public void Math_Ints_Multiply()
+    {
+        var src = @"x = 3 * 2";
+        Setup(src, out _, out var prog);
+        
+        var vm = new VirtualMachine(prog);
+        vm.Execute2();
+        Assert.That(vm.dataRegisters[0], Is.EqualTo(6));
+        Assert.That(vm.typeRegisters[0], Is.EqualTo(TypeCodes.INT));
+    }
+    
+    [TestCase("3", ">", "2", true)]
+    [TestCase("2", ">", "3", false)]
+    [TestCase("2", "<", "3", true)]
+    [TestCase("3", "<", "2", false)]
+    [TestCase("3", ">=", "2", true)]
+    [TestCase("2", ">=", "3", false)]
+    [TestCase("2", "<=", "3", true)]
+    [TestCase("3", "<=", "2", false)]
+    public void Math_Ints_OpTesting(string l, string op, string r, bool expected)
+    {
+        var src = @$"x = {l} {op} {r}";
+        Setup(src, out _, out var prog);
+        
+        var vm = new VirtualMachine(prog);
+        vm.Execute2();
+        Assert.That(vm.dataRegisters[0], Is.EqualTo(expected ? 1 : 0));
+        Assert.That(vm.typeRegisters[0], Is.EqualTo(TypeCodes.INT));
+    }
     
     [Test]
     public void AutoFloatMath()

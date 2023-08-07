@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Generic;
 
 namespace DarkBasicYo.Virtual
@@ -7,7 +8,6 @@ namespace DarkBasicYo.Virtual
         public byte[] buffer;
         public int ptr;
 
-        // public Span<byte> 
         // public int Count;
 
         public FastStack(int capacity)
@@ -32,6 +32,16 @@ namespace DarkBasicYo.Virtual
             }
             ptr -= size;
         }
+        
+        public void PopArraySpan(int size, out ReadOnlySpan<byte> span)
+        {
+            // value = new byte[size];
+            // Count -= size;
+            span = new ReadOnlySpan<byte>(buffer, ptr - size, size);
+            
+            // span = x;
+            ptr -= size;
+        }
 
         public void Push(byte data)
         {
@@ -47,18 +57,31 @@ namespace DarkBasicYo.Virtual
                 buffer[ptr++] = data[n];
             }
         }
+        
+        
         public void PushArrayReverse(byte[] data, int start, int length)
         {
-            // Count += length;
-            // for (var n = typeSize - 1; n >= 0; n --)
-            // {
-            //     stack.Push(values[n]);
-            // }
             for (var n = start + (length - 1); n >= start ; n --)
             {
-                // var value = Advance();
                 buffer[ptr++] = data[n];
             }
+        }
+        
+        public void PushSpan(ReadOnlySpan<byte> data, int length)
+        {
+            for (var n = 0; n < length; n ++)
+            {
+                buffer[ptr++] = data[n];
+            }
+        }
+        public void PushSpanAndType(ReadOnlySpan<byte> data, byte typecode, int length)
+        {
+            for (var n = 0; n < length; n ++)
+            {
+                buffer[ptr++] = data[n];
+            }
+
+            buffer[ptr++] = typecode;
         }
 
         public void Pop2(out byte data)

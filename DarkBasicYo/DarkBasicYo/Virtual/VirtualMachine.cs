@@ -103,6 +103,7 @@ namespace DarkBasicYo.Virtual
                 byte[] aBytes;
                 byte[] bBytes;
                 byte[] cBytes;
+                ReadOnlySpan<byte> aSpan, bSpan, cSpan;
                 byte aTypeCode = 0, bTypeCode = 0, vTypeCode = 0, typeCode = 0;
                 ulong data;
                 byte addr, size;
@@ -153,10 +154,10 @@ namespace DarkBasicYo.Virtual
                             long[] values = new long[tableSize];
                             for (var j = 0; j < tableSize; j++)
                             {
-                                VmUtil.Read(stack, out aTypeCode, out aBytes); // the value
-                                VmUtil.Pad(8, aBytes, out aBytes);
-                                var hash = BitConverter.ToInt64(aBytes, 0);
-                                // VmUtil.ToLong(aBytes, out var hash);
+                                VmUtil.ReadSpan(stack, out aTypeCode, out aSpan); // the value
+                                // VmUtil.Pad(8, aBytes, out aBytes);
+                                // var hash = BitConverter.ToInt64(aBytes, 0);
+                                VmUtil.ToLongSpan(TypeCodes.GetByteSize(aTypeCode), aSpan, out var hash);
                                 VmUtil.ReadAsInt(stack, out var caseAddr);
                                 addresses[j] = caseAddr;
                                 values[j] = hash;
@@ -164,9 +165,10 @@ namespace DarkBasicYo.Virtual
                             
                             VmUtil.ReadAsInt(stack, out var defaultAddr);
 
-                            VmUtil.Read(stack, out bTypeCode, out bBytes);
-                            VmUtil.Pad(8, bBytes, out bBytes);
-                            var key = BitConverter.ToInt64(bBytes, 0);
+                            VmUtil.ReadSpan(stack, out bTypeCode, out bSpan);
+                            // VmUtil.Pad(8, bBytes, out bBytes);
+                            // var key = BitConverter.ToInt64(bBytes, 0);
+                            VmUtil.ToLongSpan(TypeCodes.GetByteSize(bTypeCode), bSpan, out var key);
 
                             var found = false;
                             for (var j = 0; j < tableSize; j++)
@@ -225,9 +227,9 @@ namespace DarkBasicYo.Virtual
                             break;
                         case OpCodes.DUPE:
                             // look at the stack, and push stuff onto it...
-                            VmUtil.Read(stack, out typeCode, out aBytes);
-                            VmUtil.Push(stack, aBytes, typeCode);
-                            VmUtil.Push(stack, aBytes, typeCode);
+                            VmUtil.ReadSpan(stack, out typeCode, out aSpan);
+                            VmUtil.PushSpan(stack, aSpan, typeCode);
+                            VmUtil.PushSpan(stack, aSpan, typeCode);
                             break;
                         case OpCodes.BPUSH:
                             var code = Advance();
@@ -235,120 +237,103 @@ namespace DarkBasicYo.Virtual
                             break;
                         case OpCodes.PUSH:
                             typeCode = Advance();
-                            // instructionIndex += 4;
-
-                            // continue;
-
                             size = TypeCodes.GetByteSize(typeCode);
                             stack.PushArray(program, instructionIndex, size);
                             instructionIndex += size;
-                            // for (var n = 0; n < size; n ++)
-                            // {
-                            //     var value = Advance();
-                            //     stack.Push(value);
-                            // }
-                            
                             stack.Push(typeCode);
-                            // ticks[0] = sw.ElapsedTicks;
                             
                             break;
                         case OpCodes.PUSH_TYPELESS:
                             typeCode = Advance();
-
                             size = TypeCodes.GetByteSize(typeCode);
-                            for (var n = 0; n < size; n ++)
-                            {
-                                var value = Advance();
-                                stack.Push(value);
-                            }
+                            stack.PushArray(program, instructionIndex, size);
+                            instructionIndex += size;
                             
                             break;
                         case OpCodes.NOT:
-                            VmUtil.Read(stack, out typeCode, out aBytes);
-                            VmUtil.Not(typeCode, aBytes, out cBytes);
-                            VmUtil.Push(stack, cBytes, typeCode);
+                            VmUtil.ReadSpan(stack, out typeCode, out aSpan);
+                            VmUtil.Not(typeCode, aSpan, out cSpan);
+                            VmUtil.PushSpan(stack, cSpan, typeCode);
                             break;
                         case OpCodes.MIN_MAX_PUSH:
-                            VmUtil.ReadTwoValues(stack, out vTypeCode, out aBytes, out bBytes);
-                            VmUtil.GetMinMax(vTypeCode, aBytes, bBytes, out var needsFlip);
+                            // throw new NotImplementedException();
+
+                            VmUtil.ReadTwoValues(stack, out vTypeCode, out aSpan, out bSpan);
+                            VmUtil.GetMinMax(vTypeCode, aSpan, bSpan, out var needsFlip);
+                            
+                            aBytes = aSpan.ToArray();
+                            bBytes = bSpan.ToArray();
                             if (needsFlip)
                             {
-                                VmUtil.Push(stack, aBytes, typeCode);
-                                VmUtil.Push(stack, bBytes, typeCode);
+                                VmUtil.PushSpan(stack, aBytes, typeCode);
+                                VmUtil.PushSpan(stack, bBytes, typeCode);
                             }
                             else
                             {
-                                VmUtil.Push(stack, bBytes, typeCode);
-                                VmUtil.Push(stack, aBytes, typeCode);
+                                VmUtil.PushSpan(stack, bBytes, typeCode);
+                                VmUtil.PushSpan(stack, aBytes, typeCode);
                             }
-                            // VmUtil.Push(stack, cBytes, typeCode);
                             break;
                         case OpCodes.ADD:
-                            VmUtil.ReadTwoValues(stack, out vTypeCode, out aBytes, out bBytes);
-                            VmUtil.Add(heap, vTypeCode, aBytes, bBytes, out cBytes);
-                            VmUtil.Push(stack, cBytes, vTypeCode);
+                            VmUtil.ReadTwoValues(stack, out vTypeCode, out aSpan, out bSpan);
+                            VmUtil.Add(heap, vTypeCode, aSpan, bSpan, out cSpan);
+                            // VmUtil.Push(stack, cBytes, vTypeCode);
+                            VmUtil.PushSpan(stack, cSpan, vTypeCode);
                             break;
                         case OpCodes.BREAKPOINT:
                             break;
                         case OpCodes.MUL:
-                            VmUtil.ReadTwoValues(stack, out vTypeCode, out aBytes, out bBytes);
-                            VmUtil.Multiply(vTypeCode, aBytes, bBytes, out cBytes);
-                            VmUtil.Push(stack, cBytes, vTypeCode);
+                            // throw new NotImplementedException();
+                            VmUtil.ReadTwoValues(stack, out vTypeCode, out aSpan, out bSpan);
+                            VmUtil.Multiply(vTypeCode, aSpan, bSpan, out cSpan);
+                            VmUtil.PushSpan(stack, cSpan, vTypeCode);
                             break;
                         case OpCodes.DIVIDE:
-                            VmUtil.ReadTwoValues(stack, out vTypeCode, out aBytes, out bBytes);
-                            VmUtil.Divide(vTypeCode, aBytes, bBytes, out cBytes);
-                            VmUtil.Push(stack, cBytes, vTypeCode);
+                            VmUtil.ReadTwoValues(stack, out vTypeCode, out aSpan, out bSpan);
+                            VmUtil.Divide(vTypeCode, aSpan, bSpan, out cSpan);
+                            VmUtil.PushSpan(stack, cSpan, vTypeCode);
                             break;
                         case OpCodes.GT:
-                            VmUtil.ReadTwoValues(stack, out vTypeCode, out aBytes, out bBytes);
-                            VmUtil.GreaterThan(vTypeCode, bBytes, aBytes, out cBytes);
-                            VmUtil.Push(stack, cBytes, vTypeCode);
+                            VmUtil.ReadTwoValues(stack, out vTypeCode, out aSpan, out bSpan);
+                            VmUtil.GreaterThan(vTypeCode, bSpan, aSpan, out cSpan);
+                            VmUtil.PushSpan(stack, cSpan, vTypeCode);
                             break;
                         case OpCodes.GTE:
-                            VmUtil.ReadTwoValues(stack, out vTypeCode, out aBytes, out bBytes);
-                            VmUtil.GreaterThanOrEqualTo(vTypeCode, bBytes, aBytes, out cBytes);
-                           
-                            VmUtil.Push(stack, cBytes, vTypeCode);
+                            VmUtil.ReadTwoValues(stack, out vTypeCode, out aSpan, out bSpan);
+                            VmUtil.GreaterThanOrEqualTo(vTypeCode, bSpan, aSpan, out cSpan);
+                            VmUtil.PushSpan(stack, cSpan, vTypeCode);
                             break;
                         case OpCodes.LT:
-                            VmUtil.ReadTwoValues(stack, out vTypeCode, out aBytes, out bBytes);
-                            VmUtil.GreaterThan(vTypeCode, aBytes, bBytes, out cBytes);
-                            VmUtil.Push(stack, cBytes, vTypeCode);
+                            VmUtil.ReadTwoValues(stack, out vTypeCode, out aSpan, out bSpan);
+                            VmUtil.GreaterThan(vTypeCode, aSpan, bSpan, out cSpan);
+                            VmUtil.PushSpan(stack, cSpan, vTypeCode);
                             break;
                         case OpCodes.LTE:
-                            VmUtil.ReadTwoValues(stack, out vTypeCode, out aBytes, out bBytes);
-                            VmUtil.GreaterThanOrEqualTo(vTypeCode, aBytes, bBytes, out cBytes);
-                            VmUtil.Push(stack, cBytes, vTypeCode);
+                            VmUtil.ReadTwoValues(stack, out vTypeCode, out aSpan, out bSpan);
+                            VmUtil.GreaterThanOrEqualTo(vTypeCode, aSpan, bSpan, out cSpan);
+                            VmUtil.PushSpan(stack, cSpan, vTypeCode);
                             break;
                         case OpCodes.EQ:
-                            VmUtil.ReadTwoValues(stack, out vTypeCode, out aBytes, out bBytes);
-                            VmUtil.EqualTo(vTypeCode, aBytes, bBytes, out cBytes);
-                            VmUtil.Push(stack, cBytes, vTypeCode);
+                            // throw new NotImplementedException();
+
+                            VmUtil.ReadTwoValues(stack, out vTypeCode, out aSpan, out bSpan);
+                            VmUtil.EqualTo(vTypeCode, aSpan, bSpan, out cSpan);
+                            VmUtil.PushSpan(stack, cSpan, vTypeCode);
                             break;
                         case OpCodes.STORE:
 
                             // read a register location, which is always 1 byte.
                             addr = Advance();
-                            // continue;
-
-                            VmUtil.Read(stack, out typeCode, out aBytes);
-                            // VmUtil.Pad(8, aBytes, out aBytes);
-                            // data = BitConverter.ToUInt64(aBytes, 0);
-                            VmUtil.ToULong(aBytes, out data);
-
+                            VmUtil.ReadSpan(stack, out typeCode, out var span);
+                            VmUtil.ToULongSpan(TypeCodes.GetByteSize(typeCode), span, out data);
                             scope.dataRegisters[addr] = data;
                             scope.typeRegisters[addr] = typeCode;
-                            
-                            // ticks[2] = sw.ElapsedTicks;
-
 
                             break;
                         case OpCodes.STORE_GLOBAL:
                             addr = Advance();
-                            VmUtil.Read(stack, out typeCode, out aBytes);
-                            VmUtil.ToULong(aBytes, out data);
-
+                            VmUtil.ReadSpan(stack, out typeCode, out var span2);
+                            VmUtil.ToULongSpan(TypeCodes.GetByteSize(typeCode), span2, out data);
                             globalScope.dataRegisters[addr] = data;
                             globalScope.typeRegisters[addr] = typeCode;
                             break;
@@ -359,12 +344,8 @@ namespace DarkBasicYo.Virtual
                             data = scope.dataRegisters[addr];
                             size = TypeCodes.GetByteSize(typeCode);
                             aBytes = BitConverter.GetBytes(data);
-                            for (var n = size -1 ; n >= 0; n --)
-                            {
-                                stack.Push(aBytes[n]);
-                            }
+                            stack.PushSpanAndType(new ReadOnlySpan<byte>(aBytes), typeCode, size);
                             
-                            stack.Push(typeCode);
                             break;
                         case OpCodes.LOAD_GLOBAL:
                             addr = Advance();
@@ -373,12 +354,8 @@ namespace DarkBasicYo.Virtual
                             data = globalScope.dataRegisters[addr];
                             size = TypeCodes.GetByteSize(typeCode);
                             aBytes = BitConverter.GetBytes(data);
-                            for (var n = size -1 ; n >= 0; n --)
-                            {
-                                stack.Push(aBytes[n]);
-                            }
+                            stack.PushSpanAndType(new ReadOnlySpan<byte>(aBytes), typeCode, size);
                             
-                            stack.Push(typeCode);
                             break;
                         case OpCodes.CAST:
                             
@@ -396,7 +373,7 @@ namespace DarkBasicYo.Virtual
                             heap.Allocate(allocLength, out var allocPtr);
                             // push the address onto the stack
                             bBytes = BitConverter.GetBytes(allocPtr);
-                            VmUtil.Push(stack, bBytes, TypeCodes.INT);
+                            VmUtil.PushSpan(stack, bBytes, TypeCodes.INT);
                             
                             break;
                         case OpCodes.DISCARD:
@@ -413,18 +390,19 @@ namespace DarkBasicYo.Virtual
                             VmUtil.ReadAsInt(stack, out var readPtr);
                             VmUtil.ReadAsInt(stack, out var readLength);
                             heap.Read(readPtr, readLength, out aBytes);
-                            for (var r = readLength -1; r >= 0; r--)
+                            stack.PushSpan(aBytes, readLength);
+                            // for (var r = readLength -1; r >= 0; r--)
                             // for (var r = 0; r < readLength; r ++)
-                            {
-                                var b = aBytes[r];
-                                stack.Push(b);
-                            }
+                            // {
+                            //     var b = aBytes[r];
+                            //     stack.Push(b);
+                            // }
                             
                             break;
                         case OpCodes.LENGTH:
                             VmUtil.ReadAsInt(stack, out var readLengthPtr);
                             heap.GetAllocationSize(readLengthPtr, out var readAllocLength);
-                            VmUtil.Push(stack, BitConverter.GetBytes(readAllocLength), TypeCodes.INT);
+                            VmUtil.PushSpan(stack, BitConverter.GetBytes(readAllocLength), TypeCodes.INT);
                             break;
                         case OpCodes.CALL_HOST:
                             

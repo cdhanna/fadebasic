@@ -56,24 +56,36 @@ namespace DarkBasicYo.Virtual
             {
                 throw new Exception("vm exception: expected an int for ptr");
             }
+            
+            ReadSpan(stack, TypeCodes.INT, out var aSpan);
                             
-            Read(stack, TypeCodes.INT, out var aBytes);
-            var writePtr = BitConverter.ToInt32(aBytes, 0);
+            // Read(stack, TypeCodes.INT, out var aBytes);
+            var writePtr = BitConverter.ToInt32(aSpan.ToArray(), 0);
             
             ReadAsInt(stack, out var writeLength);
 
-            var bytes = new byte[writeLength];
-            for (var w = 0; w < writeLength; w++)
-            {
-                var b = stack.Pop();
-                bytes[w] = b;
-            }
+            // var bytes = new byte[writeLength];
+            stack.PopArraySpan(writeLength, out var span);
+            
+            /*
+             * In the old system, this just happened to work by accident.
+             * but the issue is that the stack has 3,0,0,0 on it,
+             * but the write-length is set to the size of the entry, which is 2.
+             * so the write-length only finds 0,0 instead of 0,3
+             */
+            
+            // for (var w = 0; w < writeLength; w++)
+            // {
+            //     var b = stack.Pop();
+            //     bytes[w] = b;
+            // }
                             
-            heap.Write(writePtr, writeLength, bytes);
+            heap.Write(writePtr, writeLength, span.ToArray());
 
             if (pushPtr)
             {
-                Push(stack, aBytes, TypeCodes.INT);
+                PushSpan(stack, aSpan, TypeCodes.INT);
+                // Push(stack, aBytes, TypeCodes.INT);
             }
         }
         
@@ -84,9 +96,9 @@ namespace DarkBasicYo.Virtual
             {
                 throw new Exception("vm exception: expected an int");
             }
-                            
-            Read(stack, TypeCodes.INT, out var aBytes);
-            result = BitConverter.ToInt32(aBytes, 0);
+            ReadSpan(stack, TypeCodes.INT, out var span);
+            // Read(stack, TypeCodes.INT, out var aBytes);
+            result = BitConverter.ToInt32(span.ToArray(), 0);
         }
 
 
@@ -102,6 +114,7 @@ namespace DarkBasicYo.Virtual
         }
         
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        [Obsolete]
         public static void Read(FastStack stack, byte typeCode, out byte[] value)
         {
             var size = TypeCodes.GetByteSize(typeCode);
@@ -109,14 +122,20 @@ namespace DarkBasicYo.Virtual
             readBufferIndex = (readBufferIndex + 1) % readBuffers.Length;
             value = readBuffers[readBufferIndex];
             stack.PopArray(size, ref value);
-            // for (var n = 0; n < size; n++)
-            // {
-            //     var aPart = stack.Pop();
-            //     value[n] = aPart;
-            // }
         }
         
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public static void ReadSpan(FastStack stack, byte typeCode, out ReadOnlySpan<byte> value)
+        {
+            var size = TypeCodes.GetByteSize(typeCode);
+
+            // readBufferIndex = (readBufferIndex + 1) % readBuffers.Length;
+            // value = readBuffers[readBufferIndex];
+            stack.PopArraySpan(size, out value);
+        }
+        
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        [Obsolete]
         public static void Read(FastStack stack, out byte typeCode, out byte[] value)
         {
             typeCode = stack.Pop();
@@ -124,8 +143,17 @@ namespace DarkBasicYo.Virtual
         }
         
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        public static void Multiply(byte aTypeCode, byte[] a, byte[] b, out byte[] c)
+        public static void ReadSpan(FastStack stack, out byte typeCode, out ReadOnlySpan<byte> value)
         {
+            typeCode = stack.Pop();
+            ReadSpan(stack, typeCode, out value);
+        }
+        
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public static void Multiply(byte aTypeCode, ReadOnlySpan<byte> aSpan, ReadOnlySpan<byte> bSpan, out ReadOnlySpan<byte> c)
+        {
+            byte[] a = aSpan.ToArray();
+            byte[] b = bSpan.ToArray();
             switch (aTypeCode)
             {
                 case TypeCodes.BYTE:
@@ -159,8 +187,9 @@ namespace DarkBasicYo.Virtual
         
         
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        public static void Not(byte aTypeCode, byte[] a, out byte[] c)
+        public static void Not(byte aTypeCode, ReadOnlySpan<byte> aSpan, out ReadOnlySpan<byte> c)
         {
+            var a = aSpan.ToArray();
             switch (aTypeCode)
             {
                 case TypeCodes.BYTE:
@@ -216,8 +245,10 @@ namespace DarkBasicYo.Virtual
 
         
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        public static void GreaterThan(byte aTypeCode, byte[] a, byte[] b, out byte[] c)
+        public static void GreaterThan(byte aTypeCode, ReadOnlySpan<byte> aSpan, ReadOnlySpan<byte> bSpan, out ReadOnlySpan<byte> c)
         {
+            var a = aSpan.ToArray();
+            var b = bSpan.ToArray();
             switch (aTypeCode)
             {
                 case TypeCodes.BYTE:
@@ -249,8 +280,10 @@ namespace DarkBasicYo.Virtual
             }
         }
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        public static void GreaterThanOrEqualTo(byte aTypeCode, byte[] a, byte[] b, out byte[] c)
+        public static void GreaterThanOrEqualTo(byte aTypeCode, ReadOnlySpan<byte> aSpan, ReadOnlySpan<byte> bSpan, out ReadOnlySpan<byte> c)
         {
+            var a = aSpan.ToArray();
+            var b = bSpan.ToArray();
             switch (aTypeCode)
             {
                 case TypeCodes.BYTE:
@@ -284,8 +317,10 @@ namespace DarkBasicYo.Virtual
         
         
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        public static void EqualTo(byte aTypeCode, byte[] a, byte[] b, out byte[] c)
+        public static void EqualTo(byte aTypeCode, ReadOnlySpan<byte> aSpan, ReadOnlySpan<byte> bSpan, out ReadOnlySpan<byte> c)
         {
+            var a = aSpan.ToArray();
+            var b = bSpan.ToArray();
             switch (aTypeCode)
             {
                 case TypeCodes.BYTE:
@@ -315,8 +350,10 @@ namespace DarkBasicYo.Virtual
 
         
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        public static void Divide(byte aTypeCode, byte[] a, byte[] b, out byte[] c)
+        public static void Divide(byte aTypeCode, ReadOnlySpan<byte> aSpan, ReadOnlySpan<byte> bSpan, out ReadOnlySpan<byte> c)
         {
+            byte[] a = aSpan.ToArray();
+            byte[] b = bSpan.ToArray();
             switch (aTypeCode)
             {
                 case TypeCodes.BYTE:
@@ -349,8 +386,10 @@ namespace DarkBasicYo.Virtual
         }
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        public static void Add(VmHeap heap, byte aTypeCode, byte[] a, byte[] b, out byte[] c)
+        public static void Add(VmHeap heap, byte aTypeCode, ReadOnlySpan<byte> aSpan, ReadOnlySpan<byte> bSpan, out ReadOnlySpan<byte> c)
         {
+            byte[] a = aSpan.ToArray();
+            byte[] b = bSpan.ToArray();
             switch (aTypeCode)
             {
                 case TypeCodes.STRING:
@@ -400,131 +439,136 @@ namespace DarkBasicYo.Virtual
             }
         }
 
-        public static void CastInline(byte[] bytes, byte currentTypeCode, byte typeCode, ref byte[] outputBytes)
+        public static void CastInlineSpan(ReadOnlySpan<byte> span, byte currentTypeCode, byte typeCode, ref ReadOnlySpan<byte> outputSpan)
         {
+            
             if (currentTypeCode == typeCode)
             {
-                // outputBytes = bytes;
+                outputSpan = span;
                 return;
             }
-            // handle int conversions
-            if (currentTypeCode == TypeCodes.INT)
-            {
-                switch (typeCode)
-                {
-                    // case TypeCodes.BOOL:
-                    //     var boolByte = (byte)((bytes[0] > 0 || bytes[1] > 0 || bytes[2] > 0 || bytes[3] > 0) ? 1 : 0);
-                    //     bytes = new byte[] { boolByte };
-                    //     break;
-                    case TypeCodes.WORD:
-                        bytes = new byte[] { bytes[0], bytes[1] }; // take the last 2 parts of the int
-                        break;
-                    case TypeCodes.BYTE:
-                        bytes = new byte[] { bytes[0] };
-                        break;
-                    case TypeCodes.REAL:
-                        var actual = BitConverter.ToInt32(bytes, 0);
-                        var castFloat = (float)actual;
-                        bytes = BitConverter.GetBytes(castFloat);
-                        break;
-                    case TypeCodes.PTR_HEAP:
-                    case TypeCodes.STRUCT:
-                    case TypeCodes.STRING:
-                        // a string type IS just an int ptr; so we don't need to convert anything!
-                        bytes = bytes;
-                        break;
-                    default:
-                        throw new NotImplementedException($"cast from int to typeCode=[{typeCode}] is not supported yet.");
-                }
-            }
-            else if (currentTypeCode == TypeCodes.REAL)
-            {
-                var actualFloat = BitConverter.ToSingle(bytes, 0);
 
-                switch (typeCode)
-                {
-                    case TypeCodes.INT:
-                        bytes = BitConverter.GetBytes((int)actualFloat);
-                        break;
-                    case TypeCodes.WORD:
-                        // var actual = BitConverter.ToSingle(bytes, 0);
-                        var castWord = (ushort)actualFloat;
-                        bytes = BitConverter.GetBytes(castWord);
-                        break;
-                    default:
-                        throw new NotImplementedException($"cast from float to typeCode=[{typeCode}] is not supported yet.");
-                }
-            }
-            else if (currentTypeCode == TypeCodes.BYTE)
+            switch (currentTypeCode)
             {
-                switch (typeCode)
-                {
-                    case TypeCodes.INT:
-                        var castInt = (int)bytes[0];
-                        bytes = BitConverter.GetBytes(castInt);
-                        break;
-                    case TypeCodes.WORD:
-                        bytes = BitConverter.GetBytes((short)bytes[0]);
-                        break;
-                    default:
-                        throw new NotImplementedException($"cast from byte to typeCode=[{typeCode}] is not supported yet.");
-                }
-            }
-            else if (currentTypeCode == TypeCodes.WORD)
-            {
-                short actualWord = BitConverter.ToInt16(bytes, 0);
-                switch (typeCode)
-                {
-                    case TypeCodes.INT:
-                        var castInt = (int)actualWord;
-                        bytes = BitConverter.GetBytes(castInt);
-                        break;
-                    case TypeCodes.BYTE:
-                        bytes = BitConverter.GetBytes((byte)actualWord);
-                        break;
-                    default:
-                        throw new NotImplementedException($"cast from byte to typeCode=[{typeCode}] is not supported yet.");
-                }
-            } 
-            else if (currentTypeCode == TypeCodes.STRUCT)
-            {
-                switch (typeCode)
-                {
-                    case TypeCodes.INT:
-                        bytes = bytes;
-                        break;
-                    default:
-                        throw new NotImplementedException($"cast from struct ptr to typeCode=[{typeCode}] is not supported yet.");
-                }
-            }
-            else
-            {
-                throw new NotImplementedException($"casts from typeCode=[{currentTypeCode}] types are not supported. target=[{typeCode}]");
-            }
+                case TypeCodes.INT:
+                    switch (typeCode)
+                    {
+                        case TypeCodes.WORD:
+                            outputSpan = span.Slice(0, 2);
+                            // bytes = new byte[] { bytes[0], bytes[1] }; // take the last 2 parts of the int
+                            break;
+                        case TypeCodes.BYTE:
+                            // bytes = new byte[] { bytes[0] };
+                            outputSpan = span.Slice(0, 1);
+                            break;
+                        case TypeCodes.REAL:
+                            var actual = BitConverter.ToInt32(span.ToArray(), 0);
+                            var castFloat = (float)actual;
+                            outputSpan = new ReadOnlySpan<byte>(BitConverter.GetBytes(castFloat));
+                            break;
+                        case TypeCodes.PTR_HEAP:
+                        case TypeCodes.STRUCT:
+                        case TypeCodes.STRING:
+                            // a string type IS just an int ptr; so we don't need to convert anything!
+                            outputSpan = span;
+                            break;
+                        default:
+                            throw new NotImplementedException($"cast from int to typeCode=[{typeCode}] is not supported yet.");
+                    }
 
-            outputBytes = bytes;
+                    break;
+                case TypeCodes.REAL:
+                    var actualFloat = BitConverter.ToSingle(span.ToArray(), 0);
+                    switch (typeCode)
+                    {
+                        case TypeCodes.INT:
+                            outputSpan = BitConverter.GetBytes((int)actualFloat);
+                            break;
+                        case TypeCodes.WORD:
+                            // var actual = BitConverter.ToSingle(bytes, 0);
+                            var castWord = (ushort)actualFloat;
+                            outputSpan = BitConverter.GetBytes(castWord);
+                            break;
+                        default:
+                            throw new NotImplementedException($"cast from float to typeCode=[{typeCode}] is not supported yet.");
+                    }
+                    break;
+                case TypeCodes.BYTE:
+                    switch (typeCode)
+                    {
+                        case TypeCodes.INT:
+                            var castInt = (int)span[0];
+                            outputSpan = BitConverter.GetBytes(castInt);
+                            break;
+                        case TypeCodes.WORD:
+                            outputSpan = BitConverter.GetBytes((short)span[0]);
+                            break;
+                        default:
+                            throw new NotImplementedException($"cast from byte to typeCode=[{typeCode}] is not supported yet.");
+                    }
+
+                    break;
+                case TypeCodes.WORD:
+                    short actualWord = BitConverter.ToInt16(span.ToArray(), 0);
+                    switch (typeCode)
+                    {
+                        case TypeCodes.INT:
+                            var castInt = (int)actualWord;
+                            outputSpan = BitConverter.GetBytes(castInt);
+                            break;
+                        case TypeCodes.BYTE:
+                            outputSpan = BitConverter.GetBytes((byte)actualWord);
+                            break;
+                        default:
+                            throw new NotImplementedException($"cast from byte to typeCode=[{typeCode}] is not supported yet.");
+                    }
+                    break;
+                case TypeCodes.STRUCT:
+                    switch (typeCode)
+                    {
+                        case TypeCodes.INT:
+                            outputSpan = span;
+                            break;
+                        default:
+                            throw new NotImplementedException($"cast from struct ptr to typeCode=[{typeCode}] is not supported yet.");
+                    }
+
+                    break;
+                default:
+                    throw new NotImplementedException($"casts from typeCode=[{currentTypeCode}] types are not supported. target=[{typeCode}]");
+
+            }
+            
         }
         
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public static void Cast(FastStack stack, byte typeCode)
         {
-            Read(stack, out var currentTypeCode, out var bytes);
-
+            ReadSpan(stack, out var currentTypeCode, out var span);
+            
             if (currentTypeCode != typeCode)
             {
-                CastInline(bytes, currentTypeCode, typeCode, ref bytes);
+                CastInlineSpan(span, currentTypeCode, typeCode, ref span);
             }
-
-            Push(stack, bytes, typeCode);
+            
+            PushSpan(stack, span, typeCode);
         }
         
         
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        [Obsolete]
         public static void Push(FastStack stack, byte[] values, byte typeCode)
         {
             var byteSize = TypeCodes.GetByteSize(typeCode);
             stack.PushArrayReverse(values, 0, byteSize);
             stack.Push(typeCode);
+        }
+        
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public static void PushSpan(FastStack stack, ReadOnlySpan<byte> span, byte typeCode)
+        {
+            var byteSize = TypeCodes.GetByteSize(typeCode);
+            stack.PushSpanAndType(span, typeCode, byteSize);
         }
 
 
@@ -542,6 +586,38 @@ namespace DarkBasicYo.Virtual
                 toLongConversionUtil[i] = bytes[i];
             }
             data = BitConverter.ToUInt64(toLongConversionUtil, 0);
+
+        }
+        
+        
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public static void ToULongSpan(int size, ReadOnlySpan<byte> span, out ulong data)
+        {
+            for (var i = 0; i < size; i++)
+            {
+                toLongConversionUtil[i] = 0;
+            }
+            for (var i = size - 1; i >= 0; i--)
+            {
+                toLongConversionUtil[i] = span[i];
+            }
+            data = BitConverter.ToUInt64(toLongConversionUtil, 0);
+
+        }
+
+        
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public static void ToLongSpan(int size, ReadOnlySpan<byte> span, out long data)
+        {
+            for (var i = 0; i < size; i++)
+            {
+                toLongConversionUtil[i] = 0;
+            }
+            for (var i = size - 1; i >= 0; i--)
+            {
+                toLongConversionUtil[i] = span[i];
+            }
+            data = BitConverter.ToInt64(toLongConversionUtil, 0);
 
         }
         
@@ -563,13 +639,13 @@ namespace DarkBasicYo.Virtual
         }
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        public static void ReadTwoValues(FastStack stack, out byte typeCode, out byte[] aBytes, out byte[] bBytes)
+        public static void ReadTwoValues(FastStack stack, out byte typeCode, out ReadOnlySpan<byte> aBytes, out ReadOnlySpan<byte> bBytes)
         {
             var aTypeCode = stack.Pop();
-            Read(stack, aTypeCode, out aBytes);
+            ReadSpan(stack, aTypeCode, out aBytes);
                             
             var bTypeCode = stack.Pop();
-            Read(stack, bTypeCode, out bBytes);
+            ReadSpan(stack, bTypeCode, out bBytes);
 
             // if the type codes are not the same, take the bigger one...
 
@@ -578,28 +654,20 @@ namespace DarkBasicYo.Virtual
 
             if (aOrder > bOrder)
             {
-                CastInline(bBytes, bTypeCode, aTypeCode, ref bBytes);
+                CastInlineSpan(bBytes, bTypeCode, aTypeCode, ref bBytes);
                 typeCode = aTypeCode;
             }
             else
             {
-                CastInline(aBytes, aTypeCode, bTypeCode, ref aBytes);
+                CastInlineSpan(aBytes, aTypeCode, bTypeCode, ref aBytes);
                 typeCode = bTypeCode;
             }
-            
-            // var bigTypeCode = aTypeCode;
-            // var aSize = TypeCodes.GetByteSize(aTypeCode);
-            // var bSize = TypeCodes.GetByteSize(bTypeCode);
-            // if (bSize > aSize) bigTypeCode = bTypeCode;
-            // var bigSize = TypeCodes.GetByteSize(bigTypeCode);
-            //
-            // Pad(bigSize, aBytes, out aBytes);
-            // Pad(bigSize, bBytes, out bBytes);
-            // typeCode = bigTypeCode;
         }
 
-        public static void GetMinMax(byte aTypeCode, byte[] a, byte[] b, out bool needFlip)
+        public static void GetMinMax(byte aTypeCode, ReadOnlySpan<byte> aSpan, ReadOnlySpan<byte> bSpan, out bool needFlip)
         {
+            var a = aSpan.ToArray();
+            var b = bSpan.ToArray();
             switch (aTypeCode)
             {
 

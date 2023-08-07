@@ -192,7 +192,7 @@ public class VMTests
     {
         var vm = new VirtualMachine(new List<byte>
         {
-            OpCodes.PUSH, TypeCodes.INT, 0, 0, 0, 3, // 3
+            OpCodes.PUSH, TypeCodes.INT, 3, 0, 0, 0, // 3
             OpCodes.CAST, TypeCodes.WORD,
             OpCodes.STORE, Registers.R0
         });
@@ -213,7 +213,7 @@ public class VMTests
         var vm = new VirtualMachine(new List<byte>
         {
             OpCodes.PUSH, TypeCodes.BYTE, 1, // 1
-            OpCodes.PUSH, TypeCodes.WORD, 120, 10, // 256 * 254 + 10
+            OpCodes.PUSH, TypeCodes.WORD, 10, 120, // 256 * 254 + 10
 
             OpCodes.ADD
         });
@@ -222,7 +222,7 @@ public class VMTests
         var res = state.MoveNext();
         
         Assert.IsTrue(state.Current.isComplete);
-        VmUtil.Read(vm.stack, out var tc, out var bytes);
+        VmUtil.ReadSpan(vm.stack, out var tc, out var bytes);
         Assert.That(tc, Is.EqualTo(TypeCodes.WORD));
         Assert.That(BitConverter.ToInt16(bytes), Is.EqualTo(30731));
 
@@ -236,7 +236,7 @@ public class VMTests
     {
         var vm = new VirtualMachine(new List<byte>
         {
-            OpCodes.PUSH, TypeCodes.WORD, 120, 10, // 256 * 254 + 10
+            OpCodes.PUSH, TypeCodes.WORD, 10, 120, // 256 * 254 + 10
             OpCodes.PUSH, TypeCodes.BYTE, 1, // 1
 
             OpCodes.ADD,
@@ -247,7 +247,7 @@ public class VMTests
         
         Assert.IsTrue(state.Current.isComplete);
         
-        VmUtil.Read(vm.stack, out var tc, out var bytes);
+        VmUtil.ReadSpan(vm.stack, out var tc, out var bytes);
         Assert.That(tc, Is.EqualTo(TypeCodes.WORD));
         Assert.That(BitConverter.ToInt16(bytes), Is.EqualTo(30731));
 
@@ -283,10 +283,10 @@ public class VMTests
     {
         var vm = new VirtualMachine(new List<byte>
         {
-            OpCodes.PUSH, TypeCodes.INT, 0, 0, 0, 4, 
+            OpCodes.PUSH, TypeCodes.INT, 4, 0, 0, 0, 
             OpCodes.ALLOC, 
             OpCodes.STORE, Registers.R0,
-            OpCodes.PUSH, TypeCodes.INT, 0, 0, 0, 4, 
+            OpCodes.PUSH, TypeCodes.INT, 4, 0, 0, 0, 
             OpCodes.ALLOC, 
             OpCodes.STORE, Registers.R1,
         });
@@ -306,10 +306,10 @@ public class VMTests
     {
         var vm = new VirtualMachine(new List<byte>
         {
-            OpCodes.PUSH, TypeCodes.WORD, 0, 3, // push a word onto the stack (no type code)
-            OpCodes.PUSH, TypeCodes.WORD, 0, 9, // push a second word onto the stack (no type code)
-            OpCodes.PUSH, TypeCodes.INT, 0, 0, 0, 6, // push a length of 4 (bytes) onto the stack
-            OpCodes.PUSH, TypeCodes.INT, 0, 0, 0, 6, // push a length of 4 (bytes) onto the stack
+            OpCodes.PUSH, TypeCodes.WORD, 3, 0, // push a word onto the stack (no type code)
+            OpCodes.PUSH, TypeCodes.WORD, 9, 0, // push a second word onto the stack (no type code)
+            OpCodes.PUSH, TypeCodes.INT, 6, 0, 0, 0, // push a length of 4 (bytes) onto the stack
+            OpCodes.PUSH, TypeCodes.INT, 6, 0, 0, 0, // push a length of 4 (bytes) onto the stack
             OpCodes.ALLOC, // allocate 6 bytes (pop)
             OpCodes.STORE, Registers.R0,
             OpCodes.LOAD, Registers.R0,
@@ -320,13 +320,13 @@ public class VMTests
         vm.Execute2();
 
         var mem = vm.heap.memory;
-        Assert.That(mem[0], Is.EqualTo(4));
-        Assert.That(mem[1], Is.EqualTo(9));
-        Assert.That(mem[2], Is.EqualTo(0));
+        Assert.That(mem[0], Is.EqualTo(3));
+        Assert.That(mem[1], Is.EqualTo(0));
+        Assert.That(mem[2], Is.EqualTo(4));
         
-        Assert.That(mem[3], Is.EqualTo(4));
-        Assert.That(mem[4], Is.EqualTo(3));
-        Assert.That(mem[5], Is.EqualTo(0));
+        Assert.That(mem[3], Is.EqualTo(9));
+        Assert.That(mem[4], Is.EqualTo(0));
+        Assert.That(mem[5], Is.EqualTo(4));
     }
 
     

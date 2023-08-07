@@ -189,7 +189,7 @@ namespace DarkBasicYo.Virtual
                 for (var i = 0; i < locationBytes.Length; i++)
                 {
                     // offset by 2, because of the opcode, and the type code
-                    _buffer[replacement.InstructionIndex + 2 + i] = locationBytes[(locationBytes.Length -1) - i];
+                    _buffer[replacement.InstructionIndex + 2 + i] = locationBytes[i];
                 }
             }
             
@@ -204,7 +204,7 @@ namespace DarkBasicYo.Virtual
                 var locationBytes = BitConverter.GetBytes(location);
                 for (var i = 0; i < locationBytes.Length; i++)
                 {
-                    _buffer[replacement.InstructionIndex + 2 + i] = locationBytes[(locationBytes.Length - 1) - i];
+                    _buffer[replacement.InstructionIndex + 2 + i] = locationBytes[i];
                 }
             }
         }
@@ -503,7 +503,7 @@ namespace DarkBasicYo.Virtual
                 {
                     for (var j = 0; j < caseAddrBytes.Length; j++)
                     {
-                        _buffer[index + 2 + j] = caseAddrBytes[(caseAddrBytes.Length - 1) - j];
+                        _buffer[index + 2 + j] = caseAddrBytes[j];
                     }
                 }
             }
@@ -512,7 +512,7 @@ namespace DarkBasicYo.Virtual
             var defaultAddrBytes = BitConverter.GetBytes(defaultAddr);
             for (var i = 0; i < defaultAddrBytes.Length; i++)
             {
-                _buffer[defaultInsIndex + 2 + i] = defaultAddrBytes[(defaultAddrBytes.Length - 1) - i];
+                _buffer[defaultInsIndex + 2 + i] = defaultAddrBytes[i];
             }
 
             // replace all the individual case statement's references to the jump exit
@@ -521,7 +521,7 @@ namespace DarkBasicYo.Virtual
             {
                 for (var i = 0; i < exitAddrBytes.Length; i++)
                 {
-                    _buffer[exitIns + 2 + i] = exitAddrBytes[(exitAddrBytes.Length - 1) - i];
+                    _buffer[exitIns + 2 + i] = exitAddrBytes[i];
                 }
             }
         }
@@ -616,13 +616,13 @@ namespace DarkBasicYo.Virtual
             for (var i = 0; i < successJumpBytes.Length; i++)
             {
                 // offset by 2, because of the opcode, and the type code
-                _buffer[successJumpIndex + 2 + i] = successJumpBytes[(successJumpBytes.Length -1) - i];
-                _buffer[exitJumpIndex + 2 + i] = endJumpBytes[(successJumpBytes.Length -1) - i];
-                _buffer[lteExitJumpIndex + 2 + i] = endJumpBytes[(successJumpBytes.Length -1) - i];
+                _buffer[successJumpIndex + 2 + i] = successJumpBytes[i];
+                _buffer[exitJumpIndex + 2 + i] = endJumpBytes[i];
+                _buffer[lteExitJumpIndex + 2 + i] = endJumpBytes[i];
                 
                 foreach (var index in exitStatementIndexes)
                 {
-                    _buffer[index + 2 + i] = endJumpBytes[(successJumpBytes.Length -1) - i];
+                    _buffer[index + 2 + i] = endJumpBytes[i];
                 }
             }
             
@@ -659,7 +659,7 @@ namespace DarkBasicYo.Virtual
                 // offset by 2, because of the opcode, and the type code
                 foreach (var index in exitStatementIndexes)
                 {
-                    _buffer[index + 2 + i] = endJumpBytes[(successJumpBytes.Length -1) - i];
+                    _buffer[index + 2 + i] = endJumpBytes[i];
                 }
                 
             }
@@ -708,7 +708,7 @@ namespace DarkBasicYo.Virtual
                 // offset by 2, because of the opcode, and the type code
                 foreach (var index in exitStatementIndexes)
                 {
-                    _buffer[index + 2 + i] = endJumpBytes[(endJumpBytes.Length -1) - i];
+                    _buffer[index + 2 + i] = endJumpBytes[ i];
                 }
                 
             }
@@ -775,11 +775,11 @@ namespace DarkBasicYo.Virtual
             for (var i = 0; i < successJumpBytes.Length; i++)
             {
                 // offset by 2, because of the opcode, and the type code
-                _buffer[successJumpIndex + 2 + i] = successJumpBytes[(successJumpBytes.Length -1) - i];
-                _buffer[exitJumpIndex + 2 + i] = endJumpBytes[(successJumpBytes.Length -1) - i];
+                _buffer[successJumpIndex + 2 + i] = successJumpBytes[i];
+                _buffer[exitJumpIndex + 2 + i] = endJumpBytes[i];
                 foreach (var index in exitStatementIndexes)
                 {
-                    _buffer[index + 2 + i] = endJumpBytes[(successJumpBytes.Length -1) - i];
+                    _buffer[index + 2 + i] = endJumpBytes[ i];
                 }
                 
             }
@@ -855,9 +855,10 @@ namespace DarkBasicYo.Virtual
             for (var i = 0; i < successJumpBytes.Length; i++)
             {
                 // offset by 2, because of the opcode, and the type code
-                _buffer[successJumpIndex + 2 + i] = successJumpBytes[(successJumpBytes.Length -1) - i];
-                _buffer[elseJumpIndex + 2 + i] = elseJumpBytes[(successJumpBytes.Length -1) - i];
-                _buffer[endJumpIndex + 2 + i] = endJumpBytes[(successJumpBytes.Length -1) - i];
+                //(successJumpBytes.Length -1) - i
+                _buffer[successJumpIndex + 2 + i] = successJumpBytes[i];
+                _buffer[elseJumpIndex + 2 + i] = elseJumpBytes[i];
+                _buffer[endJumpIndex + 2 + i] = endJumpBytes[i];
             }
         }
         
@@ -1012,7 +1013,8 @@ namespace DarkBasicYo.Virtual
             _buffer.Add(OpCodes.PUSH);
             _buffer.Add(TypeCodes.INT);
             var bytes = BitConverter.GetBytes(commandAddress);
-            for (var i = bytes.Length -1; i >= 0; i--)
+            for (var i = 0 ; i < bytes.Length; i ++)
+            // for (var i = bytes.Length -1; i >= 0; i--)
             {
                 _buffer.Add(bytes[i]);
             }
@@ -1095,6 +1097,7 @@ namespace DarkBasicYo.Virtual
                 }
                 
                 // this is an array! we need to save each rank's length
+                // for (var i = 0; i < declaration.ranks.Length; i++)
                 for (var i = declaration.ranks.Length -1; i >= 0; i--)
                 {
                     // put the expression value onto the stack
@@ -1112,12 +1115,7 @@ namespace DarkBasicYo.Virtual
                     if (i == declaration.ranks.Length - 1)
                     {
                         // push 1 as the multiplier factor, because later, multiplying by 1 is a no-op;
-                        _buffer.Add(OpCodes.PUSH);
-                        _buffer.Add(TypeCodes.INT);
-                        _buffer.Add(0);
-                        _buffer.Add(0);
-                        _buffer.Add(0);
-                        _buffer.Add(1);
+                        AddPushInt(_buffer, 1);
                     }
                     else
                     {
@@ -1140,12 +1138,7 @@ namespace DarkBasicYo.Virtual
                 
                 
                 // now, we need to allocate enough memory for the entire thing
-                _buffer.Add(OpCodes.PUSH); // push the value '1' onto the stack...
-                _buffer.Add(TypeCodes.INT);
-                _buffer.Add(0);
-                _buffer.Add(0);
-                _buffer.Add(0);
-                _buffer.Add(1);
+                AddPushInt(_buffer, 1);
                 
                 for (var i = 0; i < declaration.ranks.Length; i++)
                 {
@@ -1367,126 +1360,6 @@ namespace DarkBasicYo.Virtual
             // compile the rhs of the assignment...
             Compile(assignmentStatement.expression);
             CompileAssignmentLeftHandSide(assignmentStatement.variable);
-            //
-            // switch (assignmentStatement.variable)
-            // {
-            //     case ArrayIndexReference arrayRefNode:
-            //         if (!_arrayVarToReg.TryGetValue(arrayRefNode.variableName, out var compiledArrayVar))
-            //         {
-            //             throw new Exception("Compiler: cannot access array since it not declared" +
-            //                                 arrayRefNode.variableName);
-            //         }
-            //         // always cast the expression to the correct type code; slightly wasteful, could be better.
-            //         _buffer.Add(OpCodes.CAST);
-            //         _buffer.Add(compiledArrayVar.typeCode);
-            //         _buffer.Add(OpCodes.DISCARD); // we don't actually want the type code to live on the heap
-            //         
-            //         var sizeOfElement = compiledArrayVar.byteSize;
-            //         AddPushInt(_buffer, sizeOfElement);
-            //
-            //         PushAddress(arrayRefNode);
-            //         // write! It'll find the ptr, then the size, and then the data itself
-            //         _buffer.Add(OpCodes.WRITE);
-            //         
-            //         break;
-            //     case VariableRefNode variableRefNode:
-            //         
-            //         if (!_varToReg.TryGetValue(variableRefNode.variableName, out var compiledVar))
-            //         {
-            //             // // ?
-            //             var tc = VmUtil.GetTypeCode(variableRefNode.DefaultTypeByName);
-            //             compiledVar = _varToReg[variableRefNode.variableName] = new CompiledVariable
-            //             {
-            //                 registerAddress = (byte)(registerCount++),
-            //                 name = variableRefNode.variableName,
-            //                 typeCode = tc,
-            //                 byteSize = TypeCodes.GetByteSize(tc)
-            //             };
-            //         }
-            //
-            //         // always cast the expression to the correct type code; slightly wasteful, could be better.
-            //         _buffer.Add(OpCodes.CAST);
-            //         _buffer.Add(compiledVar.typeCode);
-            //
-            //         // store the value of the expression&cast in the desired register.
-            //         _buffer.Add(OpCodes.STORE);
-            //         _buffer.Add(compiledVar.registerAddress);
-            //         break;
-            //     case StructFieldReference fieldReferenceNode:
-            //
-            //         switch (fieldReferenceNode.left)
-            //         {
-            //             case ArrayIndexReference arrayRefNode:
-            //                 
-            //                 // we need to find the start index of the array element,
-            //                 // and then add the offset for the field access part (the right side)
-            //                 if (!_arrayVarToReg.TryGetValue(arrayRefNode.variableName, out var compiledLeftArrayVar))
-            //                 {
-            //                     throw new Exception("Compiler: cannot access array since it not declared" +
-            //                                         arrayRefNode.variableName);
-            //                 }
-            //                 
-            //                 
-            //                 _buffer.Add(OpCodes.DISCARD); // we don't actually want the type code to live on the heap
-            //
-            //                 var rightType = compiledLeftArrayVar.structType;
-            //                 ComputeStructOffsets(rightType, fieldReferenceNode.right, out var rightOffset, out var rightLength, out _);
-            //
-            //                 // load the write-length
-            //                 AddPushInt(_buffer, rightLength);
-            //                 
-            //                 // load the offset of the right side
-            //                 AddPushInt(_buffer, rightOffset);
-            //                 
-            //                 // load the array pointer
-            //                 PushAddress(arrayRefNode);
-            //                 
-            //                 // add the pointer and the offset together
-            //                 _buffer.Add(OpCodes.ADD);
-            //                 
-            //                 // write the data at the array index, by the offset, 
-            //                 _buffer.Add(OpCodes.WRITE);
-            //                 break;
-            //             
-            //             case VariableRefNode variableRef:
-            //                 if (!_varToReg.TryGetValue(variableRef.variableName, out compiledVar))
-            //                 {
-            //                     throw new Exception("compiler exception! the referenced variable has not been declared yet " +
-            //                                         variableRef.variableName);
-            //                 }
-            //                 
-            //                 _buffer.Add(OpCodes.DISCARD); // we don't actually want the type code to live on the heap
-            //                 
-            //                 // load up the compiled type info 
-            //                 var type = _types[compiledVar.structType];
-            //                 ComputeStructOffsets(type, fieldReferenceNode.right, out var offset, out var length, out _);
-            //
-            //                 // push the length of the write segment
-            //                 AddPushInt(_buffer, length);
-            //                 
-            //                 // load the base address of the variable
-            //                 _buffer.Add(OpCodes.LOAD);
-            //                 _buffer.Add(compiledVar.registerAddress);
-            //                 
-            //                 // load the offset of the right side
-            //                 AddPushInt(_buffer, offset);
-            //                 
-            //                 // sum them, then the result is the ptr on the stack
-            //                 _buffer.Add(OpCodes.ADD);
-            //                 
-            //                 // pull the ptr, length, then data, and return the ptr.
-            //                 _buffer.Add(OpCodes.WRITE);
-            //                 
-            //                 break;
-            //             default:
-            //                 throw new NotImplementedException("unhandled left side of operation");
-            //         }
-            //         break;
-            //     default:
-            //         throw new NotImplementedException("Unsupported reference assignment");
-            // }
-            //
-            //
 
         }
 
@@ -1571,7 +1444,8 @@ namespace DarkBasicYo.Virtual
                     var strSize = str.Length * TypeCodes.GetByteSize(TypeCodes.INT);
                     
                     // push the string data...
-                    for (var i = str.Length - 1; i >= 0; i--)
+                    // for (var i = str.Length - 1; i >= 0; i--)
+                    for (var i = 0 ; i < str.Length; i ++)
                     {
                         var c = (uint)str[i];
                         AddPushUInt(_buffer, c, includeTypeCode:false);
@@ -1594,7 +1468,8 @@ namespace DarkBasicYo.Virtual
                     _buffer.Add(OpCodes.PUSH);
                     _buffer.Add(TypeCodes.REAL);
                     var realValue = BitConverter.GetBytes(literalReal.value);
-                    for (var i = realValue.Length - 1; i >= 0; i--)
+                    // for (var i = realValue.Length - 1; i >= 0; i--)
+                    for (var i = 0 ; i < realValue.Length; i ++)
                     {
                         _buffer.Add(realValue[i]);
                     }
@@ -1841,7 +1716,8 @@ namespace DarkBasicYo.Virtual
         {
             buffer.Add(OpCodes.PUSH);
             buffer.Add(typeCode);
-            for (var i = value.Length - 1; i >= 0; i--)
+            for (var i = 0 ; i < value.Length; i ++)
+            // for (var i = value.Length - 1; i >= 0; i--)
             {
                 buffer.Add(value[i]);
             }
@@ -1851,7 +1727,8 @@ namespace DarkBasicYo.Virtual
             buffer.Add(OpCodes.PUSH);
             buffer.Add(TypeCodes.INT);
             var value = BitConverter.GetBytes(x);
-            for (var i = value.Length - 1; i >= 0; i--)
+            for (var i = 0; i < value.Length; i++)
+            // for (var i = value.Length - 1; i >= 0; i--)
             {
                 buffer.Add(value[i]);
             }
@@ -1870,7 +1747,8 @@ namespace DarkBasicYo.Virtual
             buffer.Add(TypeCodes.INT);
 
             var value = BitConverter.GetBytes(x);
-            for (var i = value.Length - 1; i >= 0; i--)
+            // for (var i = value.Length - 1; i >= 0; i--)
+            for (var i = 0 ; i < value.Length; i ++)
             {
                 buffer.Add(value[i]);
             }
