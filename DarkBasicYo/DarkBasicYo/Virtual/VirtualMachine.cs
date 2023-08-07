@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.IO;
 using System.Linq;
 using System.Numerics;
@@ -48,9 +49,10 @@ namespace DarkBasicYo.Virtual
 
         public int instructionIndex;
 
-        public Stack<byte> stack = new Stack<byte>();
+        // public Stack<byte> stack = new Stack<byte>();
+        public FastStack stack = new FastStack(256);
         public VmHeap heap = new VmHeap();
-        public HostMethodTable hostMethods = new HostMethodTable();
+        public HostMethodTable hostMethods= new HostMethodTable();
         public Stack<int> methodStack = new Stack<int>();
 
         public VirtualScope globalScope = new VirtualScope();
@@ -61,20 +63,15 @@ namespace DarkBasicYo.Virtual
         public ulong[] dataRegisters => scope.dataRegisters; // TODO: optimize to remove method call Peek()
         public byte[] typeRegisters => scope.typeRegisters;
 
-        public VirtualMachine(IEnumerable<byte> program)
+        public VirtualMachine(IEnumerable<byte> program) : this(program.ToArray())
         {
-            this.program = program.ToArray();
-           
+        }
+        public VirtualMachine(byte[] program)
+        {
+            this.program = program;
             globalScope = scope = new VirtualScope(256);
             scopeStack = new Stack<VirtualScope>();
             scopeStack.Push(globalScope);
-            // dataRegisters = new ulong[256];
-            // typeRegisters = new byte[256];
-            // for (var i = 0; i < dataRegisters.Length; i++)
-            // {
-            //     dataRegisters[i] = 0;
-            //     typeRegisters[i] = 0;
-            // }
         }
 
 
@@ -103,37 +100,35 @@ namespace DarkBasicYo.Virtual
             isSuspendRequested = false;
             // while (true)
             {
-                byte[] aBytes = new byte[] { };
-                byte[] bBytes = new byte[] { };
-                byte[] cBytes = new byte[] { };
+                byte[] aBytes;
+                byte[] bBytes;
+                byte[] cBytes;
                 byte aTypeCode = 0, bTypeCode = 0, vTypeCode = 0, typeCode = 0;
-                ulong data = 0;
-                byte addr = 0, size =0;
+                ulong data;
+                byte addr, size;
                 int insPtr;
-                int ad, bd, cd;
 
+                // var sw = new Stopwatch();
+                
                 for (var i = 0; i < instructionBatchCount; i++)
                 {
                     // if at end of program, exit.
                     if (instructionIndex >= program.Length)
                     {
-                        if (stack.Count > 0)
-                        {
-                            // throw new Exception("Left over stack");
-                        }
-
-                        return;
+           
+                        break;
                     }
                     
                     if (isSuspendRequested)
                     {
-                        return;
+                        break;
                     }
 
 
                     var ins = Advance();
+                    // sw.Restart();
                     // ulong a = 0, b = 0, aTypeCode = 0, bTypeCode = 0;
-
+                    
                     switch (ins)
                     {
                         case OpCodes.EXPLODE:
@@ -240,15 +235,22 @@ namespace DarkBasicYo.Virtual
                             break;
                         case OpCodes.PUSH:
                             typeCode = Advance();
+                            // instructionIndex += 4;
+
+                            // continue;
 
                             size = TypeCodes.GetByteSize(typeCode);
-                            for (var n = 0; n < size; n ++)
-                            {
-                                var value = Advance();
-                                stack.Push(value);
-                            }
+                            stack.PushArray(program, instructionIndex, size);
+                            instructionIndex += size;
+                            // for (var n = 0; n < size; n ++)
+                            // {
+                            //     var value = Advance();
+                            //     stack.Push(value);
+                            // }
                             
                             stack.Push(typeCode);
+                            // ticks[0] = sw.ElapsedTicks;
+                            
                             break;
                         case OpCodes.PUSH_TYPELESS:
                             typeCode = Advance();
@@ -325,8 +327,11 @@ namespace DarkBasicYo.Virtual
                             VmUtil.Push(stack, cBytes, vTypeCode);
                             break;
                         case OpCodes.STORE:
+
                             // read a register location, which is always 1 byte.
                             addr = Advance();
+                            // continue;
+
                             VmUtil.Read(stack, out typeCode, out aBytes);
                             // VmUtil.Pad(8, aBytes, out aBytes);
                             // data = BitConverter.ToUInt64(aBytes, 0);
@@ -334,12 +339,15 @@ namespace DarkBasicYo.Virtual
 
                             scope.dataRegisters[addr] = data;
                             scope.typeRegisters[addr] = typeCode;
+                            
+                            // ticks[2] = sw.ElapsedTicks;
+
+
                             break;
                         case OpCodes.STORE_GLOBAL:
                             addr = Advance();
                             VmUtil.Read(stack, out typeCode, out aBytes);
-                            VmUtil.Pad(8, aBytes, out aBytes);
-                            data = BitConverter.ToUInt64(aBytes, 0);
+                            VmUtil.ToULong(aBytes, out data);
 
                             globalScope.dataRegisters[addr] = data;
                             globalScope.typeRegisters[addr] = typeCode;
@@ -373,8 +381,13 @@ namespace DarkBasicYo.Virtual
                             stack.Push(typeCode);
                             break;
                         case OpCodes.CAST:
+                            
                             typeCode = Advance();
+                            // continue;
                             VmUtil.Cast(stack, typeCode);
+                            
+                            // ticks[1] = sw.ElapsedTicks;
+
                             break;
                         
                         case OpCodes.ALLOC:
@@ -428,8 +441,14 @@ namespace DarkBasicYo.Virtual
                             throw new Exception("Unknown op code: " + ins);
                     }
                 }
-                
+
+                // for (var i = 0; i < ticks.Length; i++)
+                // {
+                //     Console.WriteLine(ticks[i]);
+                // }
+
             }
+            
 
         }   
     }

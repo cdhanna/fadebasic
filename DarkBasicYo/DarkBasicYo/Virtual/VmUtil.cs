@@ -48,7 +48,7 @@ namespace DarkBasicYo.Virtual
             }
         }
 
-        public static void WriteToHeap(Stack<byte> stack, VmHeap heap, bool pushPtr)
+        public static void WriteToHeap(FastStack stack, VmHeap heap, bool pushPtr)
         {
             // ReadAsInt(stack, out var writePtr);
             var typeCode = stack.Pop();
@@ -77,7 +77,7 @@ namespace DarkBasicYo.Virtual
             }
         }
         
-        public static void ReadAsInt(Stack<byte> stack, out int result)
+        public static void ReadAsInt(FastStack stack, out int result)
         {
             var typeCode = stack.Pop();
             if (typeCode != TypeCodes.INT)
@@ -88,20 +88,36 @@ namespace DarkBasicYo.Virtual
             Read(stack, TypeCodes.INT, out var aBytes);
             result = BitConverter.ToInt32(aBytes, 0);
         }
-        
-        [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        public static void Read(Stack<byte> stack, byte typeCode, out byte[] value)
+
+
+        private static byte[][] readBuffers = new byte[3][];
+        private static int readBufferIndex = 0;
+
+        static VmUtil()
         {
-            var size = TypeCodes.GetByteSize(typeCode);
-            value = new byte[size];
-            for (var n = 0; n < size; n++)
+            for (var i = 0; i < readBuffers.Length; i++)
             {
-                var aPart = stack.Pop();
-                value[n] = aPart;
+                readBuffers[i] = new byte[8];
             }
         }
         
-        public static void Read(Stack<byte> stack, out byte typeCode, out byte[] value)
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public static void Read(FastStack stack, byte typeCode, out byte[] value)
+        {
+            var size = TypeCodes.GetByteSize(typeCode);
+
+            readBufferIndex = (readBufferIndex + 1) % readBuffers.Length;
+            value = readBuffers[readBufferIndex];
+            stack.PopArray(size, ref value);
+            // for (var n = 0; n < size; n++)
+            // {
+            //     var aPart = stack.Pop();
+            //     value[n] = aPart;
+            // }
+        }
+        
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public static void Read(FastStack stack, out byte typeCode, out byte[] value)
         {
             typeCode = stack.Pop();
             Read(stack, typeCode, out value);
@@ -384,11 +400,11 @@ namespace DarkBasicYo.Virtual
             }
         }
 
-        public static void CastInline(byte[] bytes, byte currentTypeCode, byte typeCode, out byte[] outputBytes)
+        public static void CastInline(byte[] bytes, byte currentTypeCode, byte typeCode, ref byte[] outputBytes)
         {
             if (currentTypeCode == typeCode)
             {
-                outputBytes = bytes;
+                // outputBytes = bytes;
                 return;
             }
             // handle int conversions
@@ -489,40 +505,32 @@ namespace DarkBasicYo.Virtual
             outputBytes = bytes;
         }
         
-        public static void Cast(Stack<byte> stack, byte typeCode)
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public static void Cast(FastStack stack, byte typeCode)
         {
             Read(stack, out var currentTypeCode, out var bytes);
-            // if (currentTypeCode == typeCode)
-            // {
-            //     Push(stack, bytes, typeCode);
-            //     return;
-            // }
 
-            CastInline(bytes, currentTypeCode, typeCode, out bytes);
-            
+            if (currentTypeCode != typeCode)
+            {
+                CastInline(bytes, currentTypeCode, typeCode, ref bytes);
+            }
+
             Push(stack, bytes, typeCode);
-            // var expectedSize = TypeCodes.GetByteSize(typeCode);
-            // for (var n = expectedSize -1 ; n >= 0; n --)
-            // {
-            //     stack.Push(bytes[n]);
-            // }
-            // stack.Push(typeCode);
         }
         
         
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        public static void Push(Stack<byte> stack, byte[] values, byte typeCode)
+        public static void Push(FastStack stack, byte[] values, byte typeCode)
         {
-            var typeSize = TypeCodes.GetByteSize(typeCode);
-            for (var n = typeSize - 1; n >= 0; n --)
-            {
-                stack.Push(values[n]);
-            }
+            var byteSize = TypeCodes.GetByteSize(typeCode);
+            stack.PushArrayReverse(values, 0, byteSize);
             stack.Push(typeCode);
         }
 
 
         private static byte[] toLongConversionUtil = new byte[8];
+        
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public static void ToULong(byte[] bytes, out ulong data)
         {
             for (var i = 0; i < toLongConversionUtil.Length; i++)
@@ -555,7 +563,7 @@ namespace DarkBasicYo.Virtual
         }
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        public static void ReadTwoValues(Stack<byte> stack, out byte typeCode, out byte[] aBytes, out byte[] bBytes)
+        public static void ReadTwoValues(FastStack stack, out byte typeCode, out byte[] aBytes, out byte[] bBytes)
         {
             var aTypeCode = stack.Pop();
             Read(stack, aTypeCode, out aBytes);
@@ -570,12 +578,12 @@ namespace DarkBasicYo.Virtual
 
             if (aOrder > bOrder)
             {
-                CastInline(bBytes, bTypeCode, aTypeCode, out bBytes);
+                CastInline(bBytes, bTypeCode, aTypeCode, ref bBytes);
                 typeCode = aTypeCode;
             }
             else
             {
-                CastInline(aBytes, aTypeCode, bTypeCode, out aBytes);
+                CastInline(aBytes, aTypeCode, bTypeCode, ref aBytes);
                 typeCode = bTypeCode;
             }
             
