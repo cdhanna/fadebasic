@@ -48,7 +48,7 @@ namespace DarkBasicYo.Virtual
             }
         }
 
-        public static void WriteToHeap(FastStack stack, VmHeap heap, bool pushPtr)
+        public static void WriteToHeap(ref FastStack stack, VmHeap heap, bool pushPtr)
         {
             // ReadAsInt(stack, out var writePtr);
             var typeCode = stack.Pop();
@@ -57,12 +57,12 @@ namespace DarkBasicYo.Virtual
                 throw new Exception("vm exception: expected an int for ptr");
             }
             
-            ReadSpan(stack, TypeCodes.INT, out var aSpan);
+            ReadSpan(ref stack, TypeCodes.INT, out var aSpan);
                             
             // Read(stack, TypeCodes.INT, out var aBytes);
             var writePtr = BitConverter.ToInt32(aSpan.ToArray(), 0);
             
-            ReadAsInt(stack, out var writeLength);
+            ReadAsInt(ref stack, out var writeLength);
 
             // var bytes = new byte[writeLength];
             stack.PopArraySpan(writeLength, out var span);
@@ -72,6 +72,8 @@ namespace DarkBasicYo.Virtual
              * but the issue is that the stack has 3,0,0,0 on it,
              * but the write-length is set to the size of the entry, which is 2.
              * so the write-length only finds 0,0 instead of 0,3
+             *
+             * Or I guess, we could CAST the type to the desired type...
              */
             
             // for (var w = 0; w < writeLength; w++)
@@ -84,19 +86,19 @@ namespace DarkBasicYo.Virtual
 
             if (pushPtr)
             {
-                PushSpan(stack, aSpan, TypeCodes.INT);
+                PushSpan(ref stack, aSpan, TypeCodes.INT);
                 // Push(stack, aBytes, TypeCodes.INT);
             }
         }
         
-        public static void ReadAsInt(FastStack stack, out int result)
+        public static void ReadAsInt(ref FastStack stack, out int result)
         {
             var typeCode = stack.Pop();
             if (typeCode != TypeCodes.INT)
             {
                 throw new Exception("vm exception: expected an int");
             }
-            ReadSpan(stack, TypeCodes.INT, out var span);
+            ReadSpan(ref stack, TypeCodes.INT, out var span);
             // Read(stack, TypeCodes.INT, out var aBytes);
             result = BitConverter.ToInt32(span.ToArray(), 0);
         }
@@ -113,40 +115,20 @@ namespace DarkBasicYo.Virtual
             }
         }
         
-        [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        [Obsolete]
-        public static void Read(FastStack stack, byte typeCode, out byte[] value)
-        {
-            var size = TypeCodes.GetByteSize(typeCode);
-
-            readBufferIndex = (readBufferIndex + 1) % readBuffers.Length;
-            value = readBuffers[readBufferIndex];
-            stack.PopArray(size, ref value);
-        }
         
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        public static void ReadSpan(FastStack stack, byte typeCode, out ReadOnlySpan<byte> value)
+        public static void ReadSpan(ref FastStack stack, byte typeCode, out ReadOnlySpan<byte> value)
         {
             var size = TypeCodes.GetByteSize(typeCode);
 
-            // readBufferIndex = (readBufferIndex + 1) % readBuffers.Length;
-            // value = readBuffers[readBufferIndex];
             stack.PopArraySpan(size, out value);
         }
         
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        [Obsolete]
-        public static void Read(FastStack stack, out byte typeCode, out byte[] value)
+        public static void ReadSpan(ref FastStack stack, out byte typeCode, out ReadOnlySpan<byte> value)
         {
             typeCode = stack.Pop();
-            Read(stack, typeCode, out value);
-        }
-        
-        [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        public static void ReadSpan(FastStack stack, out byte typeCode, out ReadOnlySpan<byte> value)
-        {
-            typeCode = stack.Pop();
-            ReadSpan(stack, typeCode, out value);
+            ReadSpan(ref stack, typeCode, out value);
         }
         
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
@@ -542,30 +524,21 @@ namespace DarkBasicYo.Virtual
         }
         
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        public static void Cast(FastStack stack, byte typeCode)
+        public static void Cast(ref FastStack stack, byte typeCode)
         {
-            ReadSpan(stack, out var currentTypeCode, out var span);
+            ReadSpan(ref stack, out var currentTypeCode, out var span);
             
             if (currentTypeCode != typeCode)
             {
                 CastInlineSpan(span, currentTypeCode, typeCode, ref span);
             }
             
-            PushSpan(stack, span, typeCode);
+            PushSpan(ref stack, span, typeCode);
         }
         
         
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        [Obsolete]
-        public static void Push(FastStack stack, byte[] values, byte typeCode)
-        {
-            var byteSize = TypeCodes.GetByteSize(typeCode);
-            stack.PushArrayReverse(values, 0, byteSize);
-            stack.Push(typeCode);
-        }
-        
-        [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        public static void PushSpan(FastStack stack, ReadOnlySpan<byte> span, byte typeCode)
+        public static void PushSpan(ref FastStack stack, ReadOnlySpan<byte> span, byte typeCode)
         {
             var byteSize = TypeCodes.GetByteSize(typeCode);
             stack.PushSpanAndType(span, typeCode, byteSize);
@@ -639,13 +612,13 @@ namespace DarkBasicYo.Virtual
         }
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        public static void ReadTwoValues(FastStack stack, out byte typeCode, out ReadOnlySpan<byte> aBytes, out ReadOnlySpan<byte> bBytes)
+        public static void ReadTwoValues(ref FastStack stack, out byte typeCode, out ReadOnlySpan<byte> aBytes, out ReadOnlySpan<byte> bBytes)
         {
             var aTypeCode = stack.Pop();
-            ReadSpan(stack, aTypeCode, out aBytes);
+            ReadSpan(ref stack, aTypeCode, out aBytes);
                             
             var bTypeCode = stack.Pop();
-            ReadSpan(stack, bTypeCode, out bBytes);
+            ReadSpan(ref stack, bTypeCode, out bBytes);
 
             // if the type codes are not the same, take the bigger one...
 

@@ -244,7 +244,7 @@ namespace DarkBasicYo.Virtual
                     continue;
                 }
 
-                VmUtil.ReadSpan(machine.stack, out var typeCode, out var span);
+                VmUtil.ReadSpan(ref machine.stack, out var typeCode, out var span);
                 var bytes = span.ToArray();
                 readTypeCodes[i] = typeCode;
                 
@@ -395,7 +395,7 @@ namespace DarkBasicYo.Virtual
                 case TypeCodes.INT:
                     var resultInt = (int)result;
                     var bytes = BitConverter.GetBytes(resultInt);
-                    VmUtil.PushSpan(machine.stack, bytes, method.returnTypeCode);
+                    VmUtil.PushSpan(ref machine.stack, bytes, method.returnTypeCode);
                     break;
                 case TypeCodes.STRING:
                     var resultStr = (string)result;
@@ -403,7 +403,7 @@ namespace DarkBasicYo.Virtual
                     machine.heap.Allocate(bytes.Length, out var resultStrPtr);
                     machine.heap.Write(resultStrPtr, bytes.Length, bytes);
                     var ptrIntBytes = BitConverter.GetBytes(resultStrPtr);
-                    VmUtil.PushSpan(machine.stack, ptrIntBytes, TypeCodes.STRING);
+                    VmUtil.PushSpan(ref machine.stack, ptrIntBytes, TypeCodes.STRING);
                     break;
                 case TypeCodes.VOID:
                     // do nothing, since there is no return type

@@ -1285,10 +1285,15 @@ namespace DarkBasicYo.Virtual
                             }
                             
                             
-                            _buffer.Add(OpCodes.DISCARD); // we don't actually want the type code to live on the heap
 
                             var rightType = compiledLeftArrayVar.structType;
-                            ComputeStructOffsets(rightType, fieldReferenceNode.right, out var rightOffset, out var rightLength, out _);
+                            ComputeStructOffsets(rightType, fieldReferenceNode.right, out var rightOffset, out var rightLength, out var rightTypeCode);
+
+                            // cast the value to the right type
+                            _buffer.Add(OpCodes.CAST);
+                            _buffer.Add(rightTypeCode);
+                            
+                            _buffer.Add(OpCodes.DISCARD); // we don't actually want the type code to live on the heap
 
                             // load the write-length
                             AddPushInt(_buffer, rightLength);
