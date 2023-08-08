@@ -5,7 +5,7 @@ using System.Reflection;
 
 namespace DarkBasicYo.Virtual
 {
-    public class HostMethodTable
+    public struct HostMethodTable
     {
         public HostMethod[] methods;
 
@@ -415,7 +415,7 @@ namespace DarkBasicYo.Virtual
         }
     }
 
-    public class HostMethod
+    public struct HostMethod
     {
         // public string name;
         // TODO: args?

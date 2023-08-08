@@ -381,7 +381,7 @@ public class VMTests
         var method = HostMethodUtil.BuildHostMethodViaReflection(typeof(TestMethods), nameof(TestMethods.Test));
         vm.hostMethods.methods = new HostMethod[]
         {
-            null, // fake out
+            default, // fake out
             method
         };
         vm.Execute2();
@@ -403,7 +403,7 @@ public class VMTests
         var method = HostMethodUtil.BuildHostMethodViaReflection(typeof(TestMethods), nameof(TestMethods.TestWithInt));
         vm.hostMethods.methods = new HostMethod[]
         {
-            null, // fake out
+            default, // fake out
             method
         };
         vm.Execute2();
@@ -427,7 +427,7 @@ public class VMTests
         var method = HostMethodUtil.BuildHostMethodViaReflection(typeof(TestMethods), nameof(TestMethods.TestWithReturnValue));
         vm.hostMethods.methods = new HostMethod[]
         {
-            null, // fake out
+            default, // fake out
             method
         };
         vm.Execute2();

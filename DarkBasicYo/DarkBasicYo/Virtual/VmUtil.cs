@@ -48,7 +48,7 @@ namespace DarkBasicYo.Virtual
             }
         }
 
-        public static void WriteToHeap(ref FastStack stack, VmHeap heap, bool pushPtr)
+        public static void WriteToHeap(ref FastStack<byte> stack, VmHeap heap, bool pushPtr)
         {
             // ReadAsInt(stack, out var writePtr);
             var typeCode = stack.Pop();
@@ -91,7 +91,7 @@ namespace DarkBasicYo.Virtual
             }
         }
         
-        public static void ReadAsInt(ref FastStack stack, out int result)
+        public static void ReadAsInt(ref FastStack<byte> stack, out int result)
         {
             var typeCode = stack.Pop();
             if (typeCode != TypeCodes.INT)
@@ -103,21 +103,8 @@ namespace DarkBasicYo.Virtual
             result = BitConverter.ToInt32(span.ToArray(), 0);
         }
 
-
-        private static byte[][] readBuffers = new byte[3][];
-        private static int readBufferIndex = 0;
-
-        static VmUtil()
-        {
-            for (var i = 0; i < readBuffers.Length; i++)
-            {
-                readBuffers[i] = new byte[8];
-            }
-        }
-        
-        
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        public static void ReadSpan(ref FastStack stack, byte typeCode, out ReadOnlySpan<byte> value)
+        public static void ReadSpan(ref FastStack<byte> stack, byte typeCode, out ReadOnlySpan<byte> value)
         {
             var size = TypeCodes.GetByteSize(typeCode);
 
@@ -125,10 +112,46 @@ namespace DarkBasicYo.Virtual
         }
         
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        public static void ReadSpan(ref FastStack stack, out byte typeCode, out ReadOnlySpan<byte> value)
+        public static void ReadSpan(ref FastStack<byte> stack, out byte typeCode, out ReadOnlySpan<byte> value)
         {
             typeCode = stack.Pop();
             ReadSpan(ref stack, typeCode, out value);
+        }
+        
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public static void ReadSpanAsUInt(ref FastStack<byte> stack, out ulong value)
+        {
+            var typeCode = stack.Pop();
+            var size = TypeCodes.GetByteSize(typeCode);
+
+            switch (size)
+            {
+                case 4:
+                    // value = 1;
+                    value = (ulong)BitConverter.ToInt32(stack.buffer, stack.ptr - size);
+                    stack.ptr -= size;
+                    break;
+                default:
+                    
+                    var span = new ReadOnlySpan<byte>(stack.buffer, stack.ptr - size, size);
+            
+                    // span = x;
+                    stack.ptr -= size;
+            
+                    for (var i = 0; i < size; i++)
+                    {
+                        toLongConversionUtil[i] = 0;
+                    }
+                    for (var i = size - 1; i >= 0; i--)
+                    {
+                        toLongConversionUtil[i] = span[i];
+                    }
+                    value = BitConverter.ToUInt64(toLongConversionUtil, 0);
+                    break;
+            }
+            
+            // stack.PopArraySpan(size, out value);
+            // ReadSpan(ref stack, typeCode, out value);
         }
         
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
@@ -524,21 +547,20 @@ namespace DarkBasicYo.Virtual
         }
         
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        public static void Cast(ref FastStack stack, byte typeCode)
+        public static void Cast(ref FastStack<byte> stack, byte typeCode)
         {
-            ReadSpan(ref stack, out var currentTypeCode, out var span);
+            var currentTypeCode = stack.Peek();
+            if (currentTypeCode == typeCode) return; // don't need to do anything!
+            ReadSpan(ref stack, out currentTypeCode, out var span);
             
-            if (currentTypeCode != typeCode)
-            {
-                CastInlineSpan(span, currentTypeCode, typeCode, ref span);
-            }
+            CastInlineSpan(span, currentTypeCode, typeCode, ref span);
             
             PushSpan(ref stack, span, typeCode);
         }
         
         
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        public static void PushSpan(ref FastStack stack, ReadOnlySpan<byte> span, byte typeCode)
+        public static void PushSpan(ref FastStack<byte> stack, ReadOnlySpan<byte> span, byte typeCode)
         {
             var byteSize = TypeCodes.GetByteSize(typeCode);
             stack.PushSpanAndType(span, typeCode, byteSize);
@@ -612,7 +634,7 @@ namespace DarkBasicYo.Virtual
         }
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        public static void ReadTwoValues(ref FastStack stack, out byte typeCode, out ReadOnlySpan<byte> aBytes, out ReadOnlySpan<byte> bBytes)
+        public static void ReadTwoValues(ref FastStack<byte> stack, out byte typeCode, out ReadOnlySpan<byte> aBytes, out ReadOnlySpan<byte> bBytes)
         {
             var aTypeCode = stack.Pop();
             ReadSpan(ref stack, aTypeCode, out aBytes);

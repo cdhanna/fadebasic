@@ -4,7 +4,7 @@ using System.Runtime.InteropServices.ComTypes;
 
 namespace DarkBasicYo.Virtual
 {
-    public class VmHeap
+    public struct VmHeap
     {
         
         public byte[] memory;
@@ -17,13 +17,16 @@ namespace DarkBasicYo.Virtual
         ///
         /// If it exists in this dictionary, then it is "leased"
         /// </summary>
-        private Dictionary<int, int> _allocations = new Dictionary<int, int>();
+        private Dictionary<int, int> _allocations;// = new Dictionary<int, int>();
 
-        private Dictionary<int, Stack<int>> _lengthToPtrs = new Dictionary<int, Stack<int>>();
+        private Dictionary<int, Stack<int>> _lengthToPtrs;// = new Dictionary<int, Stack<int>>();
 
-        public VmHeap(int initialCapacity=128)
+        public VmHeap(int initialCapacity)
         {
             memory = new byte[initialCapacity];
+            _cursor = 0;
+            _allocations = new Dictionary<int, int>();
+            _lengthToPtrs = new Dictionary<int, Stack<int>>();
         }
 
         public void Write(int ptr, int length, byte[] data)

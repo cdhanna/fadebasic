@@ -5,6 +5,7 @@ using System.IO;
 using System.Linq;
 using System.Numerics;
 using System.Runtime.CompilerServices;
+using System.Runtime.InteropServices;
 
 namespace DarkBasicYo.Virtual
 {
@@ -15,30 +16,18 @@ namespace DarkBasicYo.Virtual
         public bool isComplete;
         
     }
-
+    
     public struct VirtualScope
     {
-        public readonly int initialCapacity;
-        public ulong[] dataRegisters; // parallel array with typeReg
-        public byte[] typeRegisters;  // parallel array with dataReg
-
+        // public readonly int initialCapacity;
+        
+        // parallel array with dataReg
+        public ulong[] dataRegisters;
+        public byte[] typeRegisters;
         public VirtualScope(int initialCapacity)
         {
-            this.initialCapacity = initialCapacity;
             dataRegisters = new ulong[initialCapacity];
             typeRegisters = new byte[initialCapacity];
-        }
-        
-        public void Read(int index, out ulong data, out byte typeCode)
-        {
-            data = dataRegisters[index];
-            typeCode = typeRegisters[index];
-        }
-
-        public void Write(int index, ulong data, byte typeCode)
-        {
-            dataRegisters[index] = data;
-            typeRegisters[index] = typeCode;
         }
     }
 
@@ -50,13 +39,13 @@ namespace DarkBasicYo.Virtual
         public int instructionIndex;
 
         // public Stack<byte> stack = new Stack<byte>();
-        public FastStack stack = new FastStack(256);
-        public VmHeap heap = new VmHeap();
-        public HostMethodTable hostMethods= new HostMethodTable();
-        public Stack<int> methodStack = new Stack<int>();
+        public FastStack<byte> stack = new FastStack<byte>(256);
+        public VmHeap heap;
+        public HostMethodTable hostMethods;
+        public FastStack<int> methodStack;
 
-        public VirtualScope globalScope = new VirtualScope();
-        public Stack<VirtualScope> scopeStack;
+        public VirtualScope globalScope;
+        public FastStack<VirtualScope> scopeStack;
 
         public VirtualScope scope;
 
@@ -70,7 +59,9 @@ namespace DarkBasicYo.Virtual
         {
             this.program = program;
             globalScope = scope = new VirtualScope(256);
-            scopeStack = new Stack<VirtualScope>();
+            scopeStack = new FastStack<VirtualScope>(16);
+            methodStack = new FastStack<int>(16);
+            heap = new VmHeap(128);
             scopeStack.Push(globalScope);
         }
 
@@ -102,34 +93,35 @@ namespace DarkBasicYo.Virtual
             {
                 byte[] aBytes;
                 byte[] bBytes;
-                byte[] cBytes;
+                // byte[] cBytes;
                 ReadOnlySpan<byte> aSpan, bSpan, cSpan;
                 byte aTypeCode = 0, bTypeCode = 0, vTypeCode = 0, typeCode = 0;
                 ulong data;
                 byte addr, size;
                 int insPtr;
-
+                
                 // var sw = new Stopwatch();
                 
-                for (var i = 0; i < instructionBatchCount; i++)
+                for (var i = 0; 
+                     i < instructionBatchCount 
+                        && instructionIndex < program.Length 
+                        && !isSuspendRequested; 
+                     i++)
                 {
                     // if at end of program, exit.
-                    if (instructionIndex >= program.Length)
-                    {
-           
-                        break;
-                    }
-                    
-                    if (isSuspendRequested)
-                    {
-                        break;
-                    }
+                    // if (instructionIndex >= program.Length)
+                    // {
+                    //
+                    //     break;
+                    // }
+                    //
+                    // if (isSuspendRequested)
+                    // {
+                    //     break;
+                    // }
 
 
                     var ins = Advance();
-                    // sw.Restart();
-                    // ulong a = 0, b = 0, aTypeCode = 0, bTypeCode = 0;
-                    
                     switch (ins)
                     {
                         case OpCodes.EXPLODE:
@@ -141,12 +133,12 @@ namespace DarkBasicYo.Virtual
                             scope = newScope;
                             break;
                         case OpCodes.POP_SCOPE:
-                            if (scopeStack.Count == 1)
-                            {
-                                throw new Exception("Cannot pop the global stack");
-                            }
+                            // if (scopeStack.Count == 1)
+                            // {
+                            //     throw new Exception("Cannot pop the global stack");
+                            // }
                             scopeStack.Pop();
-                            scope = scopeStack.Peek();
+                            scope = scopeStack.buffer[scopeStack.ptr -1];
                             break;
                         case OpCodes.JUMP_TABLE:
                             VmUtil.ReadAsInt(ref stack, out var tableSize);
@@ -216,7 +208,7 @@ namespace DarkBasicYo.Virtual
                             instructionIndex = insPtr;
                             break;
                         case OpCodes.RETURN:
-                            if (methodStack.Count != 0)
+                            if (methodStack.ptr > 0)
                             {
                                 /*
                                  * the use case to allow a return on an empty stack is
@@ -324,8 +316,12 @@ namespace DarkBasicYo.Virtual
 
                             // read a register location, which is always 1 byte.
                             addr = Advance();
-                            VmUtil.ReadSpan(ref stack, out typeCode, out var span);
-                            VmUtil.ToULongSpan(TypeCodes.GetByteSize(typeCode), span, out data);
+                            // continue;
+                            // VmUtil.ReadSpan(ref stack, out typeCode, out var span);
+                            // VmUtil.ToULongSpan(TypeCodes.GetByteSize(typeCode), span, out data);
+                            // data = 1;
+                            VmUtil.ReadSpanAsUInt(ref stack, out data);
+                            
                             scope.dataRegisters[addr] = data;
                             scope.typeRegisters[addr] = typeCode;
 
@@ -360,6 +356,7 @@ namespace DarkBasicYo.Virtual
                         case OpCodes.CAST:
                             
                             typeCode = Advance();
+                            
                             // continue;
                             VmUtil.Cast(ref stack, typeCode);
                             
@@ -391,13 +388,6 @@ namespace DarkBasicYo.Virtual
                             VmUtil.ReadAsInt(ref stack, out var readLength);
                             heap.Read(readPtr, readLength, out aBytes);
                             stack.PushSpan(aBytes, readLength);
-                            // for (var r = readLength -1; r >= 0; r--)
-                            // for (var r = 0; r < readLength; r ++)
-                            // {
-                            //     var b = aBytes[r];
-                            //     stack.Push(b);
-                            // }
-                            
                             break;
                         case OpCodes.LENGTH:
                             VmUtil.ReadAsInt(ref stack, out var readLengthPtr);
