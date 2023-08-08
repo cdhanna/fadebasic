@@ -126,8 +126,7 @@ namespace DarkBasicYo.Virtual
 
             switch (size)
             {
-                case 4:
-                    // value = 1;
+                case sizeof(int):
                     value = (ulong)BitConverter.ToInt32(stack.buffer, stack.ptr - size);
                     stack.ptr -= size;
                     break;
@@ -135,9 +134,9 @@ namespace DarkBasicYo.Virtual
                     
                     var span = new ReadOnlySpan<byte>(stack.buffer, stack.ptr - size, size);
             
-                    // span = x;
                     stack.ptr -= size;
-            
+                    byte[] toLongConversionUtil = new byte[8];
+
                     for (var i = 0; i < size; i++)
                     {
                         toLongConversionUtil[i] = 0;
@@ -149,9 +148,6 @@ namespace DarkBasicYo.Virtual
                     value = BitConverter.ToUInt64(toLongConversionUtil, 0);
                     break;
             }
-            
-            // stack.PopArraySpan(size, out value);
-            // ReadSpan(ref stack, typeCode, out value);
         }
         
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
@@ -565,73 +561,7 @@ namespace DarkBasicYo.Virtual
             var byteSize = TypeCodes.GetByteSize(typeCode);
             stack.PushSpanAndType(span, typeCode, byteSize);
         }
-
-
-        private static byte[] toLongConversionUtil = new byte[8];
         
-        [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        public static void ToULong(byte[] bytes, out ulong data)
-        {
-            for (var i = 0; i < toLongConversionUtil.Length; i++)
-            {
-                toLongConversionUtil[i] = 0;
-            }
-            for (var i = bytes.Length - 1; i >= 0; i--)
-            {
-                toLongConversionUtil[i] = bytes[i];
-            }
-            data = BitConverter.ToUInt64(toLongConversionUtil, 0);
-
-        }
-        
-        
-        [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        public static void ToULongSpan(int size, ReadOnlySpan<byte> span, out ulong data)
-        {
-            for (var i = 0; i < size; i++)
-            {
-                toLongConversionUtil[i] = 0;
-            }
-            for (var i = size - 1; i >= 0; i--)
-            {
-                toLongConversionUtil[i] = span[i];
-            }
-            data = BitConverter.ToUInt64(toLongConversionUtil, 0);
-
-        }
-
-        
-        [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        public static void ToLongSpan(int size, ReadOnlySpan<byte> span, out long data)
-        {
-            for (var i = 0; i < size; i++)
-            {
-                toLongConversionUtil[i] = 0;
-            }
-            for (var i = size - 1; i >= 0; i--)
-            {
-                toLongConversionUtil[i] = span[i];
-            }
-            data = BitConverter.ToInt64(toLongConversionUtil, 0);
-
-        }
-        
-        [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        public static void Pad(byte size, byte[] bytes, out byte[] output)
-        {
-            if (size == bytes.Length)
-            {
-                output = bytes;
-            }
-            else
-            {
-                output = new byte[size];
-                for (var i = bytes.Length - 1; i >= 0; i--)
-                {
-                    output[i] = bytes[i];
-                }
-            }
-        }
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public static void ReadTwoValues(ref FastStack<byte> stack, out byte typeCode, out ReadOnlySpan<byte> aBytes, out ReadOnlySpan<byte> bBytes)

@@ -124,43 +124,42 @@ namespace DarkBasicYo.Virtual
                     var ins = Advance();
                     switch (ins)
                     {
-                        case OpCodes.EXPLODE:
-                            throw new Exception("Kaboom");
+                        case OpCodes.PUSH:
+                            typeCode = Advance();
+                            size = TypeCodes.GetByteSize(typeCode);
+                            stack.PushArray(program, instructionIndex, size);
+                            stack.Push(typeCode);
+                            instructionIndex += size;
+                            
                             break;
+                        case OpCodes.CAST:
+                            typeCode = Advance();
+                            VmUtil.Cast(ref stack, typeCode);
+                            break;
+
                         case OpCodes.PUSH_SCOPE:
                             var newScope = new VirtualScope(64);
                             scopeStack.Push(newScope);
                             scope = newScope;
                             break;
                         case OpCodes.POP_SCOPE:
-                            // if (scopeStack.Count == 1)
-                            // {
-                            //     throw new Exception("Cannot pop the global stack");
-                            // }
                             scopeStack.Pop();
                             scope = scopeStack.buffer[scopeStack.ptr -1];
                             break;
                         case OpCodes.JUMP_TABLE:
                             VmUtil.ReadAsInt(ref stack, out var tableSize);
                             int[] addresses = new int[tableSize];
-                            long[] values = new long[tableSize];
+                            ulong[] values = new ulong[tableSize];
                             for (var j = 0; j < tableSize; j++)
                             {
-                                VmUtil.ReadSpan(ref stack, out aTypeCode, out aSpan); // the value
-                                // VmUtil.Pad(8, aBytes, out aBytes);
-                                // var hash = BitConverter.ToInt64(aBytes, 0);
-                                VmUtil.ToLongSpan(TypeCodes.GetByteSize(aTypeCode), aSpan, out var hash);
+                                VmUtil.ReadSpanAsUInt(ref stack, out var hash);
                                 VmUtil.ReadAsInt(ref stack, out var caseAddr);
                                 addresses[j] = caseAddr;
                                 values[j] = hash;
                             }
                             
                             VmUtil.ReadAsInt(ref stack, out var defaultAddr);
-
-                            VmUtil.ReadSpan(ref stack, out bTypeCode, out bSpan);
-                            // VmUtil.Pad(8, bBytes, out bBytes);
-                            // var key = BitConverter.ToInt64(bBytes, 0);
-                            VmUtil.ToLongSpan(TypeCodes.GetByteSize(bTypeCode), bSpan, out var key);
+                            VmUtil.ReadSpanAsUInt(ref stack, out var key);
 
                             var found = false;
                             for (var j = 0; j < tableSize; j++)
@@ -227,14 +226,7 @@ namespace DarkBasicYo.Virtual
                             var code = Advance();
                             stack.Push(code);
                             break;
-                        case OpCodes.PUSH:
-                            typeCode = Advance();
-                            size = TypeCodes.GetByteSize(typeCode);
-                            stack.PushArray(program, instructionIndex, size);
-                            instructionIndex += size;
-                            stack.Push(typeCode);
-                            
-                            break;
+
                         case OpCodes.PUSH_TYPELESS:
                             typeCode = Advance();
                             size = TypeCodes.GetByteSize(typeCode);
@@ -271,8 +263,6 @@ namespace DarkBasicYo.Virtual
                             VmUtil.Add(heap, vTypeCode, aSpan, bSpan, out cSpan);
                             // VmUtil.Push(stack, cBytes, vTypeCode);
                             VmUtil.PushSpan(ref stack, cSpan, vTypeCode);
-                            break;
-                        case OpCodes.BREAKPOINT:
                             break;
                         case OpCodes.MUL:
                             // throw new NotImplementedException();
@@ -316,10 +306,6 @@ namespace DarkBasicYo.Virtual
 
                             // read a register location, which is always 1 byte.
                             addr = Advance();
-                            // continue;
-                            // VmUtil.ReadSpan(ref stack, out typeCode, out var span);
-                            // VmUtil.ToULongSpan(TypeCodes.GetByteSize(typeCode), span, out data);
-                            // data = 1;
                             VmUtil.ReadSpanAsUInt(ref stack, out data);
                             
                             scope.dataRegisters[addr] = data;
@@ -328,8 +314,7 @@ namespace DarkBasicYo.Virtual
                             break;
                         case OpCodes.STORE_GLOBAL:
                             addr = Advance();
-                            VmUtil.ReadSpan(ref stack, out typeCode, out var span2);
-                            VmUtil.ToULongSpan(TypeCodes.GetByteSize(typeCode), span2, out data);
+                            VmUtil.ReadSpanAsUInt(ref stack, out data);
                             globalScope.dataRegisters[addr] = data;
                             globalScope.typeRegisters[addr] = typeCode;
                             break;
@@ -353,17 +338,7 @@ namespace DarkBasicYo.Virtual
                             stack.PushSpanAndType(new ReadOnlySpan<byte>(aBytes), typeCode, size);
                             
                             break;
-                        case OpCodes.CAST:
-                            
-                            typeCode = Advance();
-                            
-                            // continue;
-                            VmUtil.Cast(ref stack, typeCode);
-                            
-                            // ticks[1] = sw.ElapsedTicks;
-
-                            break;
-                        
+  
                         case OpCodes.ALLOC:
                             // next value is an int, we know this.
                             VmUtil.ReadAsInt(ref stack, out var allocLength);
@@ -389,11 +364,11 @@ namespace DarkBasicYo.Virtual
                             heap.Read(readPtr, readLength, out aBytes);
                             stack.PushSpan(aBytes, readLength);
                             break;
-                        case OpCodes.LENGTH:
-                            VmUtil.ReadAsInt(ref stack, out var readLengthPtr);
-                            heap.GetAllocationSize(readLengthPtr, out var readAllocLength);
-                            VmUtil.PushSpan(ref stack, BitConverter.GetBytes(readAllocLength), TypeCodes.INT);
-                            break;
+                        // case OpCodes.LENGTH:
+                        //     VmUtil.ReadAsInt(ref stack, out var readLengthPtr);
+                        //     heap.GetAllocationSize(readLengthPtr, out var readAllocLength);
+                        //     VmUtil.PushSpan(ref stack, BitConverter.GetBytes(readAllocLength), TypeCodes.INT);
+                        //     break;
                         case OpCodes.CALL_HOST:
                             
                             VmUtil.ReadAsInt(ref stack, out var hostMethodPtr);
@@ -404,6 +379,12 @@ namespace DarkBasicYo.Virtual
                         
                         case OpCodes.NOOP:
                             // do nothing! Its a no-op!
+                            break;
+                        
+                        case OpCodes.EXPLODE:
+                            throw new Exception("Kaboom");
+                        
+                        case OpCodes.BREAKPOINT:
                             break;
                         default:
                             throw new Exception("Unknown op code: " + ins);
