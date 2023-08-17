@@ -113,7 +113,7 @@ namespace DarkBasicYo.Virtual
     
     public class Compiler
     {
-        public readonly CommandCollection commands;
+        // public readonly CommandCollection commands;
         private List<byte> _buffer = new List<byte>();
 
         public List<byte> Program => _buffer;
@@ -133,7 +133,7 @@ namespace DarkBasicYo.Virtual
 
         public HostMethodTable methodTable;
 
-        private Dictionary<CommandDescriptor, int> _commandToPtr = new Dictionary<CommandDescriptor, int>();
+        private Dictionary<string, int> _commandToPtr = new Dictionary<string, int>();
         private Stack<List<int>> _exitInstructionIndexes = new Stack<List<int>>();
 
         private List<LabelReplacement> _labelReplacements = new List<LabelReplacement>();
@@ -144,13 +144,14 @@ namespace DarkBasicYo.Virtual
 
         public Compiler(CommandCollection commands)
         {
-            this.commands = commands;
+            // this.commands = commands;
 
-            var methods = new HostMethod[commands.Commands.Count];
+            var methods = new CommandInfo[commands.Commands.Count];
             for (var i = 0; i < commands.Commands.Count; i++)
             {
-                methods[i] = HostMethodUtil.BuildHostMethodViaReflection(commands.Commands[i].method);
-                _commandToPtr[commands.Commands[i]] = i;
+                // methods[i] = HostMethodUtil.BuildHostMethodViaReflection(commands.Commands[i].method);
+                methods[i] = commands.Commands[i];
+                _commandToPtr[commands.Commands[i].name] = i;
             }
             methodTable = new HostMethodTable
             {
@@ -968,8 +969,9 @@ namespace DarkBasicYo.Virtual
             // TODO: save local state?
             
             // put each expression on the stack.
-            for (var i = 0; i < commandStatement.command.args.Count; i++)
+            for (var i = 0; i < commandStatement.command.args.Length; i++)
             {
+                if (commandStatement.command.args[i].isVmArg) continue;
                 
                 if (i >= commandStatement.args.Count)
                 {
@@ -1005,7 +1007,7 @@ namespace DarkBasicYo.Virtual
             
             
             // find the address of the method
-            if (!_commandToPtr.TryGetValue(commandStatement.command, out var commandAddress))
+            if (!_commandToPtr.TryGetValue(commandStatement.command.name, out var commandAddress))
             {
                 throw new Exception("compiler: could not find method address: " + commandStatement.command);
             }

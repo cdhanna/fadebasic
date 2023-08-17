@@ -2,7 +2,7 @@ using DarkBasicYo;
 
 namespace Tests;
 
-public class Tests
+public class TokenizeTests
 {
     [SetUp]
     public void Setup()
@@ -519,7 +519,7 @@ print x";
         var input = @"wait key";
 
         var lexer = new Lexer();
-        var tokens = lexer.Tokenize(input, TestCommands.Commands);
+        var tokens = lexer.Tokenize(input, TestCommands.CommandsForTesting);
         
         Assert.That(tokens.Count, Is.EqualTo(2));
         

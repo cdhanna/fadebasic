@@ -5,6 +5,11 @@ namespace DarkBasicYo.Virtual
 {
     public static class VmConverter
     {
+        public static string ToStringSpan(ReadOnlySpan<byte> strBytes)
+        {
+            return ToString(strBytes.ToArray()); // TODO: revisit this later...
+        }
+        
         public static string ToString(byte[] strBytes)
         {
             var sb = new StringBuilder(); // TODO: make this a static cached non alloc sb
@@ -16,6 +21,12 @@ namespace DarkBasicYo.Virtual
             }
 
             return sb.ToString();
+        }
+
+        public static void FromStringSpan(string str, out ReadOnlySpan<byte> bytes)
+        {
+            FromString(str, out var arr); // TODO: revisit this later...
+            bytes = new ReadOnlySpan<byte>(arr);
         }
 
         public static void FromString(string str, out byte[] bytes)

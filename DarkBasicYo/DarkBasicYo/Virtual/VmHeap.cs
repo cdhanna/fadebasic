@@ -36,6 +36,19 @@ namespace DarkBasicYo.Virtual
                 memory[ptr + i] = data[i];
             }
         }
+
+        public void WriteSpan(int ptr, int length, ReadOnlySpan<byte> data)
+        {
+            for (var i = 0; i < length; i++)
+            {
+                memory[ptr + i] = data[i];
+            }
+        }
+
+        public void ReadSpan(int ptr, int length, out ReadOnlySpan<byte> memory)
+        {
+            memory = new ReadOnlySpan<byte>(this.memory, ptr, length);
+        }
         
         public void Read(int ptr, int length, out byte[] memory)
         {

@@ -1,5 +1,7 @@
 using System.Collections.Generic;
 using System.Linq;
+using System.Reflection;
+using DarkBasicYo.Virtual;
 
 namespace DarkBasicYo.Ast
 {
@@ -110,7 +112,7 @@ namespace DarkBasicYo.Ast
     
     public class CommandStatement : AstNode, IStatementNode
     {
-        public CommandDescriptor command;
+        public CommandInfo command;
         public List<IExpressionNode> args = new List<IExpressionNode>();
 
         protected override string GetString()
@@ -120,7 +122,7 @@ namespace DarkBasicYo.Ast
             {
                 argString = " " + argString;
             }
-            return $"call {command.command}{argString}";
+            return $"call {command.name}{argString}";
         }
     }
 

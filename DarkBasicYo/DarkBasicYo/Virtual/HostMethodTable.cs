@@ -7,9 +7,9 @@ namespace DarkBasicYo.Virtual
 {
     public struct HostMethodTable
     {
-        public HostMethod[] methods;
+        public CommandInfo[] methods;
 
-        public void FindMethod(int methodAddr, out HostMethod method)
+        public void FindMethod(int methodAddr, out CommandInfo method)
         {
             method = methods[methodAddr];
         }
@@ -130,7 +130,8 @@ namespace DarkBasicYo.Virtual
         
             return type != null;
         }
-
+        
+        
         public static HostMethod BuildHostMethodViaReflection(MethodInfo method)
         {
             
@@ -225,6 +226,10 @@ namespace DarkBasicYo.Virtual
             return BuildHostMethodViaReflection(method);
         }
 
+        public static void Execute(CommandInfo method, VirtualMachine machine)
+        {
+            method.executor(machine);
+        }
         
         public static void Execute(HostMethod method, VirtualMachine machine)
         {

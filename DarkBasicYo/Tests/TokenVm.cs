@@ -11,12 +11,12 @@ public partial class TokenVm
 
     void Setup(string src, out Compiler compiler, out List<byte> progam)
     {
-        var collection = TestCommands.Commands;
+        var collection = TestCommands.CommandsForTesting;
         var lexer = new Lexer();
         var tokens = lexer.Tokenize(src, collection);
         var parser = new Parser(new TokenStream(tokens), collection);
         _exprAst = parser.ParseProgram();
-
+        
         compiler = new Compiler(collection);
         compiler.Compile(_exprAst);
         progam = compiler.Program;
@@ -2358,10 +2358,49 @@ y = x(2).derp * x(1).color
 
     }
 
+    [Test]
+    public void CallHost_BenchmarkStyle()
+    {
+        var x2 = new TestCommands();
+
+        var src = @"
+x = 1
+standard double x
+";
+        
+        var lexer = new Lexer();
+        var tokens = lexer.Tokenize(src, StandardCommands.LimitedCommands);
+
+        Console.WriteLine("----- COMMANDS");
+        foreach (var x in StandardCommands.LimitedCommands.Commands)
+        {
+            Console.WriteLine("COMMAND : " + x.name );
+            
+            foreach (var n in x.args)
+            {
+                Console.WriteLine(" " + n.typeCode);
+            }
+        }
+        
+        var parser = new Parser(new TokenStream(tokens), StandardCommands.LimitedCommands);
+        var exprAst = parser.ParseProgram();
+        
+        var compiler = new Compiler(StandardCommands.LimitedCommands);
+        
+        compiler.Compile(exprAst);
+        
+        var vm = new VirtualMachine(compiler.Program);
+        vm.hostMethods = compiler.methodTable;
+        vm.Execute2();
+
+    }
+    
     
     [Test]
     public void CallHost()
     {
+        var x = new TestCommands();
+        
         var src = "callTest";
         Setup(src, out var compiler, out var prog);
         var vm = new VirtualMachine(prog);
@@ -2573,7 +2612,7 @@ w$ = x$(2)
     [Test]
     public void CallHost_StringReturn_Assignment()
     {
-        var src = "x$ = \"hello\"; y$ = reverse x$";
+        var src = "x$ = \"hello\": y$ = reverse x$";
         Setup(src, out var compiler, out var prog);
         var vm = new VirtualMachine(prog);
         vm.hostMethods = compiler.methodTable;
@@ -2666,6 +2705,7 @@ w$ = x$(2)
         Setup(src, out var compiler, out var prog);
         var vm = new VirtualMachine(prog);
         vm.hostMethods = compiler.methodTable;
+        vm.commands = TestCommands.CommandsForTesting;
         vm.Execute2();
         
         Assert.That(vm.typeRegisters[0], Is.EqualTo(TypeCodes.INT));
@@ -2704,7 +2744,7 @@ w$ = x$(2)
     [Test]
     public void CallHost_OpOrder4()
     {
-        var src = "x = 1 + min 5 8";
+        var src = "x = 1 + min 5, 8";
         Setup(src, out var compiler, out var prog);
         var vm = new VirtualMachine(prog);
         vm.hostMethods = compiler.methodTable;

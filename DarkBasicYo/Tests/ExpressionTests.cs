@@ -7,9 +7,9 @@ public class ExpressionTests
     public Parser BuildParser(string src, out List<Token> tokens)
     {
         var lexer = new Lexer();
-        tokens = lexer.Tokenize(src, TestCommands.Commands);
+        tokens = lexer.Tokenize(src, TestCommands.CommandsForTesting);
         var stream = new TokenStream(tokens);
-        var parser = new Parser(stream, TestCommands.Commands);
+        var parser = new Parser(stream, TestCommands.CommandsForTesting);
         return parser;
     }
     

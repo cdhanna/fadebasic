@@ -48,15 +48,16 @@ namespace RosylnExample
 
         public static async Task TestItOut()
         {
-            var sw = new Stopwatch();
-            sw.Start();
+            // var sw = new Stopwatch();
+            // sw.Start();
             var script = CSharpScript.Create("42");
-            var compileTime = sw.ElapsedMilliseconds;
-            var result = await script.RunAsync();
-            var executionTime = sw.ElapsedMilliseconds - compileTime;
+            
+            // var compileTime = sw.ElapsedMilliseconds;
+            await script.RunAsync();
+            // var executionTime = sw.ElapsedMilliseconds - compileTime;
 
-            sw.Stop();
-            var res = result.ReturnValue;
+            // sw.Stop();
+            // var res = result.ReturnValue;
         }
 
     }

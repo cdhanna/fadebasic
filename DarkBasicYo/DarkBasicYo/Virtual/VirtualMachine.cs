@@ -42,6 +42,7 @@ namespace DarkBasicYo.Virtual
         public FastStack<byte> stack = new FastStack<byte>(256);
         public VmHeap heap;
         public HostMethodTable hostMethods;
+        public CommandCollection commands;
         public FastStack<int> methodStack;
 
         public VirtualScope globalScope;

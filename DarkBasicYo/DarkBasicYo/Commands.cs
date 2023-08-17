@@ -82,29 +82,53 @@ namespace DarkBasicYo
 
     public class CommandCollection
     {
-        public readonly List<CommandDescriptor> Commands;
-        public readonly Dictionary<string, CommandDescriptor> Lookup;
-        
-        public CommandCollection(params Type[] commandClasses)
+        public readonly List<CommandInfo> Commands;
+        public readonly List<IMethodSource> Sources;
+        public readonly Dictionary<string, CommandInfo> Lookup;
+
+        public CommandCollection()
         {
-            Commands = new List<CommandDescriptor>();
-            foreach (var commandClass in commandClasses)
-            {
-                var methods = commandClass.GetMethods(BindingFlags.Static | BindingFlags.Public);
-                foreach (var method in methods)
-                {
-                    var nameAttr = method.GetCustomAttribute<CommandNameAttribute>();
-                    if (nameAttr != null)
-                    {
-                        Commands.Add(new CommandDescriptor(method));
-                    }
-                }
-            }
-            Lookup = Commands.ToDictionary(c => c.command.ToLowerInvariant());
-
+            Commands = new List<CommandInfo>();
+            Lookup = new Dictionary<string, CommandInfo>();
+            Sources = new List<IMethodSource>();
         }
+       
+        public CommandCollection(params IMethodSource[] sources)
+        {
+            Commands = new List<CommandInfo>();
+            Sources = sources.ToList();
+            foreach (var source in sources)
+            {
+                Commands.AddRange(source.Commands);
+            }
+            Lookup = Commands.ToDictionary(c => c.name.ToLowerInvariant());
+        }
+        
+        // public static implicit operator CommandCollection(CommandInfo[] commands)
+        // {
+        //     return new CommandCollection(commands);
+        // }
+        
+        // public CommandCollection(params Type[] commandClasses)
+        // {
+        //     Commands = new List<CommandDescriptor>();
+        //     foreach (var commandClass in commandClasses)
+        //     {
+        //         var methods = commandClass.GetMethods(BindingFlags.Static | BindingFlags.Public);
+        //         foreach (var method in methods)
+        //         {
+        //             var nameAttr = method.GetCustomAttribute<CommandNameAttribute>();
+        //             if (nameAttr != null)
+        //             {
+        //                 Commands.Add(new CommandDescriptor(method));
+        //             }
+        //         }
+        //     }
+        //     Lookup = Commands.ToDictionary(c => c.command.ToLowerInvariant());
+        //
+        // }
 
-        public bool TryGetCommandDescriptor(Token token, out CommandDescriptor commandDescriptor)
+        public bool TryGetCommandDescriptor(Token token, out CommandInfo commandDescriptor)
         {
             
             var lookup = Regex.Replace(token.raw, "(\\s)+", " ");

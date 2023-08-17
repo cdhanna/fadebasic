@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Runtime.CompilerServices;
+using System.Runtime.InteropServices;
 using DarkBasicYo.Ast;
 
 namespace DarkBasicYo.Virtual
@@ -48,6 +49,49 @@ namespace DarkBasicYo.Virtual
             }
         }
 
+
+        public static void ReadValue<T>(VirtualMachine vm, out T value, out CommandArgRuntimeState state, out int address) where T : struct
+        {
+            ReadSpan(ref vm.stack, out var typeCode, out var span);
+
+            switch (typeCode)
+            {
+                case TypeCodes.PTR_REG:
+                    state = CommandArgRuntimeState.RegisterRef;
+                    address = (int) span[0];
+                    // refRegisters[i] = regAddr;
+                    var data = vm.dataRegisters[address];
+                    typeCode = vm.typeRegisters[address];
+                    // TODO: we could validate that typeCode is equal to the given typeCode for <T>
+                    var bytes = BitConverter.GetBytes(data);
+                    value = MemoryMarshal.Read<T>(bytes);
+                    break;
+                case TypeCodes.PTR_HEAP:
+                    state = CommandArgRuntimeState.HeapRef;
+                    address = MemoryMarshal.Read<int>(span);
+                    
+                    // the heap does not store type info, which means we need to assume the next value on the stack is the type code.
+                    typeCode = vm.stack.Pop();
+
+                    // if it is a string, then the de-dupe happens later, but if it is a string, then we need to actually go do the lookup
+                    // if (typeCode != TypeCodes.STRING)
+                    {
+                        var size = TypeCodes.GetByteSize(typeCode);
+                        // vm.heap.Read(address, size, out bytes);
+                        vm.heap.ReadSpan(address, size, out span);
+                    }
+                    value = MemoryMarshal.Read<T>(span);
+
+                    break;
+                default:
+                    state = CommandArgRuntimeState.Value;
+                    address = 0;
+                    value = MemoryMarshal.Read<T>(span);
+                    break;
+            }
+        }
+        
+        
         public static void WriteToHeap(ref FastStack<byte> stack, VmHeap heap, bool pushPtr)
         {
             // ReadAsInt(stack, out var writePtr);

@@ -212,19 +212,19 @@ namespace DarkBasicYo
         };
 
 
-        public List<Token> Tokenize(string input, CommandCollection commands = null)
+        public List<Token> Tokenize(string input, CommandCollection commands = default)
         {
             var tokens = new List<Token>();
-            if (commands == null)
+            if (commands == default)
             {
-                commands = StandardCommands.LimitedCommands;
+                commands = new CommandCollection();
             }
 
             var lexems = Lexems.ToList();
             foreach (var command in commands.Commands)
             {
                 // var pattern = "";
-                var components = command.command.Select(x =>
+                var components = command.name.Select(x =>
                 {
                     switch (x)
                     {
@@ -422,25 +422,6 @@ namespace DarkBasicYo
             _maxIndex = maxIndex;
         }
 
-        // public Token GetNext(int ahead=0) => _tokens[Index + ahead];
-
-        public bool TryGet(LexemType type, out Token token, out int index)
-        {
-            token = null;
-            index = -1;
-            for (var i = Index; i < _maxIndex; i++)
-            {
-                if (_tokens[i].type == type)
-                {
-                    index = i;
-                    token = _tokens[i];
-                    return true;
-                }
-            }
-
-            return false;
-        }
-
         public Token Advance()
         {
             return Current = _tokens[Index++];
@@ -448,22 +429,7 @@ namespace DarkBasicYo
 
 
         public bool IsEof => Index >= _tokens.Count;
-        public TokenStream Slice(int start, int stop)
-        {
-            // var set = _tokens.Skip(start).Take((stop - start)).ToList();
-            // return new TokenStream(set);
-            return new TokenStream(_tokens, start, stop);
-        }
-
-        public TokenStream Slice(int start) => Slice(start, _maxIndex);
-
-        public Token Get(int index) => _tokens[index];
-
-        public Token AdvanceTo(int closeIndex)
-        {
-            Index = closeIndex;
-            return Current = _tokens[Index];
-        }
+       
     }
 
 }

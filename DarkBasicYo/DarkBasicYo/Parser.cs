@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Text;
 using DarkBasicYo.Ast;
+using DarkBasicYo.Virtual;
 
 namespace DarkBasicYo
 {
@@ -291,10 +292,10 @@ namespace DarkBasicYo
             
         }
 
-        private List<IExpressionNode> ParseCommandArgs(Token token, CommandDescriptor command)
+        private List<IExpressionNode> ParseCommandArgs(Token token, CommandInfo command)
         {
             var argExpressions = new List<IExpressionNode>();
-            for (var i = 0; i < command.args.Count; i++)
+            for (var i = 0; i < command.args.Length; i++)
             {
                 
                 var argDescriptor = command.args[i];
@@ -483,12 +484,7 @@ namespace DarkBasicYo
             }
 
             var result = Inner();
-            //
-            // if (_stream.IsEof)
-            // {
-            //     return result;
-            // }
-
+   
             switch (_stream.Peek.type)
             {
                 case LexemType.EndStatement when consumeEndOfStatement:

@@ -1,5 +1,6 @@
 using DarkBasicYo;
 using DarkBasicYo.Ast;
+using DarkBasicYo.Virtual;
 
 namespace Tests;
 
@@ -12,7 +13,7 @@ public partial class ParserTests
     public void Setup()
     {
         _lexer = new Lexer();
-        _commands = TestCommands.Commands;
+        _commands = TestCommands.CommandsForTesting;
     }
 
     TokenStream Tokenize(string input) => new TokenStream(_lexer.Tokenize(input, _commands));
@@ -28,7 +29,7 @@ public partial class ParserTests
         
         Assert.That(prog.statements.Count, Is.EqualTo(1));
         Assert.That(prog.statements[0], Is.AssignableTo<CommandStatement>());
-        Assert.That(((CommandStatement)prog.statements[0]).command.command, Is.EqualTo("print"));
+        Assert.That(((CommandStatement)prog.statements[0]).command.name, Is.EqualTo("print"));
         Assert.That(((CommandStatement)prog.statements[0]).args.Count, Is.EqualTo(1));
 
         var code = prog.ToString();
@@ -91,8 +92,8 @@ print x";
     public void CallHostStatement()
     {
         var input = @"callTest";
-        var tokenStream = new TokenStream(_lexer.Tokenize(input, TestCommands.Commands));
-        var parser = new Parser(tokenStream, TestCommands.Commands);
+        var tokenStream = new TokenStream(_lexer.Tokenize(input, TestCommands.CommandsForTesting));
+        var parser = new Parser(tokenStream, TestCommands.CommandsForTesting);
         var prog = parser.ParseProgram();
         
         Assert.That(prog.statements.Count, Is.EqualTo(1));
@@ -104,8 +105,8 @@ print x";
     public void CallHostStatement_Expr()
     {
         var input = @"x = 1 + add 2,3";
-        var tokenStream = new TokenStream(_lexer.Tokenize(input, TestCommands.Commands));
-        var parser = new Parser(tokenStream, TestCommands.Commands);
+        var tokenStream = new TokenStream(_lexer.Tokenize(input, TestCommands.CommandsForTesting));
+        var parser = new Parser(tokenStream, TestCommands.CommandsForTesting);
         var prog = parser.ParseProgram();
         
         Assert.That(prog.statements.Count, Is.EqualTo(1));
