@@ -10,7 +10,7 @@ public class VariableTests
         var lexer = new Lexer();
         tokens = lexer.Tokenize(src);
         var stream = new TokenStream(tokens);
-        var parser = new Parser(stream, StandardCommands.LimitedCommands);
+        var parser = new Parser(stream, TestCommands.CommandsForTesting);
         return parser;
     }
 

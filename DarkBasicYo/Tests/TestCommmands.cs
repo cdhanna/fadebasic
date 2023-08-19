@@ -29,35 +29,43 @@ namespace Tests
             
         }
         
-        // [DarkBasicCommand("any input")]
-        // public static void InputAnyType(CommandArgObject x, ref int tc)
-        // {
-        //     switch (x.typeCode)
-        //     {
-        //         case TypeCodes.INT:
-        //             tc = TypeCodes.INT;
-        //             break;
-        //         case TypeCodes.STRING:
-        //             tc = TypeCodes.STRING;
-        //             break;
-        //         default:
-        //             tc = -1;
-        //             break;
-        //     }
-        // }
+        [DarkBasicCommand("any input")]
+        public static void InputAnyType(object x, ref int tc)
+        {
+            switch (x)
+            {
+                case int:
+                    tc = TypeCodes.INT;
+                    break;
+                case string:
+                    tc = TypeCodes.STRING;
+                    break;
+                default:
+                    tc = -1;
+                    break;
+            }
+        }
         //
         //
-        // // [CommandName("sum")]
-        // // public static int Sum(params int[] numbers)
-        // // {
-        // //     var sum = 0;
-        // //     for (var i = 0; i < numbers.Length; i++)
-        // //     {
-        // //         sum += numbers[i];
-        // //     }
-        // //
-        // //     return sum;
-        // // }
+        [DarkBasicCommand("sum")]
+        public static int Sum(params int[] numbers)
+        {
+            var sum = 0;
+            for (var i = 0; i < numbers.Length; i++)
+            {
+                sum += numbers[i];
+            }
+        
+            return sum;
+        }
+        
+        
+        [DarkBasicCommand("get last")]
+        public static int SillyLast(params int[] numbers)
+        {
+            return numbers[^1];
+        }
+        
         //
         [DarkBasicCommand("wait key")]
         public static void WaitKey()
@@ -70,11 +78,11 @@ namespace Tests
         {
             
         }
-        // [DarkBasicCommand("add")]
-        // public static int AddTest(int a, int b)
-        // {
-        //     return a + b;
-        // }
+        [DarkBasicCommand("add")]
+        public static int AddTest(int a, int b)
+        {
+            return a + b;
+        }
         //
         [DarkBasicCommand("min")]
         public static int Min(int a, int b)
@@ -90,11 +98,18 @@ namespace Tests
         }
         //
         //
-        // [DarkBasicCommand("print")]
-        // public static void Tuna(string variable)
-        // {
-        //     Console.WriteLine(variable);
-        // }
+        [DarkBasicCommand("print")]
+        public static void Tuna(params object[] variable)
+        {
+            Console.WriteLine(string.Join("\n", variable));
+        }
+        
+        [DarkBasicCommand("concat")]
+        public static string Concat(params object[] variable)
+        {
+            return string.Join(";", variable);
+        }
+        
         //
         [DarkBasicCommand("len")]
         public static int Length(string x)
@@ -125,10 +140,10 @@ namespace Tests
         // //     return x * 2;
         // // }
         //
-        // [DarkBasicCommand("tuna")]
-        // public static void Tuna(ref string x)
-        // {
-        //     x = "tuna";
-        // }
+        [DarkBasicCommand("tuna")]
+        public static void Tuna(ref string x)
+        {
+            x = "tuna";
+        }
     }
 }

@@ -34,7 +34,7 @@ public class TokenizeTests
         var input = @"print";
 
         var lexer = new Lexer();
-        var tokens = lexer.Tokenize(input, StandardCommands.LimitedCommands);
+        var tokens = lexer.Tokenize(input, TestCommands.CommandsForTesting);
         
         Assert.That(tokens.Count, Is.EqualTo(2));
         
@@ -53,7 +53,7 @@ public class TokenizeTests
         var input = @"print 1,  4  , 2";
 
         var lexer = new Lexer();
-        var tokens = lexer.Tokenize(input, StandardCommands.LimitedCommands);
+        var tokens = lexer.Tokenize(input, TestCommands.CommandsForTesting);
         
         Assert.That(tokens.Count, Is.EqualTo(7));
         
@@ -83,10 +83,10 @@ public class TokenizeTests
     [Test]
     public void Tokenize_CommandVar()
     {
-        var input = @"print tuna";
+        var input = @"print hank";
 
         var lexer = new Lexer();
-        var tokens = lexer.Tokenize(input, StandardCommands.LimitedCommands);
+        var tokens = lexer.Tokenize(input, TestCommands.CommandsForTesting);
         
         Assert.That(tokens.Count, Is.EqualTo(3));
         
@@ -98,7 +98,7 @@ public class TokenizeTests
         Assert.That(tokens[1].type, Is.EqualTo(LexemType.VariableGeneral));
         Assert.That(tokens[1].lineNumber, Is.EqualTo(0));
         Assert.That(tokens[1].charNumber, Is.EqualTo(6));
-        Assert.That(tokens[1].raw, Is.EqualTo("tuna"));
+        Assert.That(tokens[1].raw, Is.EqualTo("hank"));
         Assert.That(tokens[2].type, Is.EqualTo(LexemType.EndStatement));
 
     }
@@ -110,7 +110,7 @@ public class TokenizeTests
         var input = @"print tuna#";
 
         var lexer = new Lexer();
-        var tokens = lexer.Tokenize(input, StandardCommands.LimitedCommands);
+        var tokens = lexer.Tokenize(input, TestCommands.CommandsForTesting);
         
         Assert.That(tokens.Count, Is.EqualTo(3));
         
@@ -134,7 +134,7 @@ public class TokenizeTests
         var input = @"print tuna$";
 
         var lexer = new Lexer();
-        var tokens = lexer.Tokenize(input, StandardCommands.LimitedCommands);
+        var tokens = lexer.Tokenize(input, TestCommands.CommandsForTesting);
         
         Assert.That(tokens.Count, Is.EqualTo(3));
         
@@ -158,7 +158,7 @@ public class TokenizeTests
         var input = @"wait key";
 
         var lexer = new Lexer();
-        var tokens = lexer.Tokenize(input, StandardCommands.LimitedCommands);
+        var tokens = lexer.Tokenize(input, TestCommands.CommandsForTesting);
         
         Assert.That(tokens.Count, Is.EqualTo(2));
         
@@ -177,7 +177,7 @@ public class TokenizeTests
         var input = @"wait     key";
 
         var lexer = new Lexer();
-        var tokens = lexer.Tokenize(input, StandardCommands.LimitedCommands);
+        var tokens = lexer.Tokenize(input, TestCommands.CommandsForTesting);
         
         Assert.That(tokens.Count, Is.EqualTo(2));
         
@@ -302,7 +302,7 @@ endwhile
 ";
 
         var lexer = new Lexer();
-        var tokens = lexer.Tokenize(input);
+        var tokens = lexer.Tokenize(input, TestCommands.CommandsForTesting);
         
         Assert.That(tokens.Count, Is.EqualTo(8));
         Assert.That(tokens[0].type, Is.EqualTo(LexemType.KeywordWhile));
@@ -327,7 +327,7 @@ endwhile
 print x";
 
         var lexer = new Lexer();
-        var tokens = lexer.Tokenize(input);
+        var tokens = lexer.Tokenize(input, TestCommands.CommandsForTesting);
         
         Assert.That(tokens.Count, Is.EqualTo(7));
         Assert.That(tokens[0].type, Is.EqualTo(LexemType.VariableGeneral));

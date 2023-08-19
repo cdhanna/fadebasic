@@ -972,6 +972,22 @@ namespace DarkBasicYo.Virtual
             for (var i = 0; i < commandStatement.command.args.Length; i++)
             {
                 if (commandStatement.command.args[i].isVmArg) continue;
+
+                if (commandStatement.command.args[i].isParams)
+                {
+                    
+                    // and then, compile the rest of the args
+                    for (var j = commandStatement.args.Count - 1; j >= i; j --)
+                    {
+                        var argExpr2 = commandStatement.args[j];
+                        Compile(argExpr2);
+                    }
+                    
+                    // first, we need to tell the program how many arguments there are left in the set
+                    // , which of course, is args - i.
+                    AddPushInt(_buffer, commandStatement.args.Count - i);
+                    break;
+                }
                 
                 if (i >= commandStatement.args.Count)
                 {
@@ -985,7 +1001,6 @@ namespace DarkBasicYo.Virtual
                         throw new Exception("Compiler: not enough arg expressions to meet the needs of the function");
                     }
                 }
-                
                 
                 var argExpr = commandStatement.args[i];
                 var argDesc = commandStatement.command.args[i];

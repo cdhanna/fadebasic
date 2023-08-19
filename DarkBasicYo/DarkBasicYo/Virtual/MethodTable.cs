@@ -24,6 +24,7 @@ namespace DarkBasicYo.Virtual
     public struct CommandInfo
     {
         public string name;
+        public string sig;
         public int methodIndex; // how to run this command.
         public CommandArgInfo[] args;
         public CommandExecution executor;
@@ -35,7 +36,7 @@ namespace DarkBasicYo.Virtual
         public bool isRef;
         public bool isOptional;
         public bool isVmArg;
-        public int xyz;
+        public bool isParams;
     }
     
     

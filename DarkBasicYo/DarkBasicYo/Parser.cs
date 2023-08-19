@@ -300,6 +300,32 @@ namespace DarkBasicYo
                 
                 var argDescriptor = command.args[i];
                 if (argDescriptor.isVmArg) continue;
+
+                if (argDescriptor.isParams)
+                {
+                    // this must be the last named param, and we read until the end!
+                    // nothing is allowed to pass by reference, on a params
+                    var huntingForMoreArgs = true;
+                    while (huntingForMoreArgs)
+                    {
+                        if (TryParseExpression(out var expr))
+                        {
+                            argExpressions.Add(expr);
+                            // if the next token is a comma, we can keep going!
+                           
+                        }
+                        else if (_stream.Peek.type == LexemType.ArgSplitter)
+                        {
+                            _stream.Advance(); // discard the arg-splitter
+                        }
+                        else
+                        {
+                            huntingForMoreArgs = false;
+                        }
+                    }
+
+                    return argExpressions;
+                }
                 
                 if (i > 0)
                 {

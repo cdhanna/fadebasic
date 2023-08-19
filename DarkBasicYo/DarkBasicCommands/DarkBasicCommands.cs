@@ -8,16 +8,16 @@ namespace DarkBasicYo
     {
         
         
-        [DarkBasicCommand("len")]
-        public static int Length(string x)
-        {
-            return x.Length;
-        }
-        [DarkBasicCommand("flip")]
-        public static string Flip(string x)
-        {
-            return x.Reverse().ToString();
-        }
+        // [DarkBasicCommand("len")]
+        // public static int Length(string x)
+        // {
+        //     return x.Length;
+        // }
+        // [DarkBasicCommand("flip")]
+        // public static string Flip(string x)
+        // {
+        //     return x.Reverse().ToString();
+        // }
         //
         // [DarkBasicCommand("Ana2")]
         // public static int Ana3(int y)
@@ -34,16 +34,22 @@ namespace DarkBasicYo
         //     return 0;
         // }
         //
-        // [DarkBasicCommand("Mult")]
-        // public static int Mult(int x, int y)
-        // {
-        //     return x * y;
-        // }
+        [DarkBasicCommand("Many")]
+        public static int Many(params int[] many)
+        {
+            return many.Length;
+        }
         //
         //
         //
-        // [DarkBasicCommand("standard double")]
-        //  public static int StandardDouble(int x)
+        // [DarkBasicCommand("standard double2")]
+        //  public static int StandardDoubleffff(int x, int y=3)
+        //  {
+        //      return x * 2;
+        //  }
+        //  
+        //  [DarkBasicCommand("refTest")]
+        //  public static int RefTest(ref int x)
         //  {
         //      return x * 2;
         //  }

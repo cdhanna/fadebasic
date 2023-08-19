@@ -2369,10 +2369,10 @@ standard double x
 ";
         
         var lexer = new Lexer();
-        var tokens = lexer.Tokenize(src, StandardCommands.LimitedCommands);
+        var tokens = lexer.Tokenize(src, TestCommands.CommandsForTesting);
 
         Console.WriteLine("----- COMMANDS");
-        foreach (var x in StandardCommands.LimitedCommands.Commands)
+        foreach (var x in TestCommands.CommandsForTesting.Commands)
         {
             Console.WriteLine("COMMAND : " + x.name );
             
@@ -2382,10 +2382,10 @@ standard double x
             }
         }
         
-        var parser = new Parser(new TokenStream(tokens), StandardCommands.LimitedCommands);
+        var parser = new Parser(new TokenStream(tokens), TestCommands.CommandsForTesting);
         var exprAst = parser.ParseProgram();
         
-        var compiler = new Compiler(StandardCommands.LimitedCommands);
+        var compiler = new Compiler(TestCommands.CommandsForTesting);
         
         compiler.Compile(exprAst);
         
@@ -2460,6 +2460,53 @@ any input ""darn"", y
         Assert.That(vm.dataRegisters[0], Is.EqualTo(28));
     }
     
+    [Test]
+    public void CallHost_Params()
+    {
+        var src = @"
+x = 1
+x = x + sum 2,3,6
+";
+        Setup(src, out var compiler, out var prog);
+        var vm = new VirtualMachine(prog);
+        vm.hostMethods = compiler.methodTable;
+        vm.Execute2();
+        Assert.That(vm.typeRegisters[0], Is.EqualTo(TypeCodes.INT));
+        Assert.That(vm.dataRegisters[0], Is.EqualTo(12));
+    }
+
+    
+    [Test]
+    public void CallHost_Params_Order()
+    {
+        var src = @"
+x = get last 1,2,3
+";
+        Setup(src, out var compiler, out var prog);
+        var vm = new VirtualMachine(prog);
+        vm.hostMethods = compiler.methodTable;
+        vm.Execute2();
+        Assert.That(vm.typeRegisters[0], Is.EqualTo(TypeCodes.INT));
+        Assert.That(vm.dataRegisters[0], Is.EqualTo(3));
+    }
+
+    
+    [Test]
+    public void CallHost_Params_Object()
+    {
+        var src = @"
+x$ = concat 1, ""hello"", 2
+";
+        Setup(src, out var compiler, out var prog);
+        var vm = new VirtualMachine(prog);
+        vm.hostMethods = compiler.methodTable;
+        vm.Execute2();
+        Assert.That(vm.typeRegisters[0], Is.EqualTo(TypeCodes.STRING));
+        vm.heap.Read((int)vm.dataRegisters[0], "1;hello;2".Length * 4, out var memory);
+        var str = VmConverter.ToString(memory);
+        Assert.That(str, Is.EqualTo("1;hello;2"));
+    }
+
     
     [Test]
     public void CallHost_RefType_String()

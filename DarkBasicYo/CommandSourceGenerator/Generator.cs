@@ -135,6 +135,7 @@ namespace {namespaceStr}
             return $@"new {nameof(CommandInfo)}()
 {{
     {nameof(CommandInfo.name)} = {descriptor.CallName},
+    {nameof(CommandInfo.sig)} = ""{descriptor.Sig}"",
     {nameof(CommandInfo.methodIndex)} = {index},
     {nameof(CommandInfo.executor)} = {descriptor.MethodName},
     {nameof(CommandInfo.args)} = new {nameof(CommandArgInfo)}[] 
@@ -150,9 +151,9 @@ namespace {namespaceStr}
             return $@"new {nameof(CommandArgInfo)}() 
 {{
     {nameof(CommandArgInfo.isVmArg)} = {arg.IsVm.ToString().ToLowerInvariant()},
-    {nameof(CommandArgInfo.isOptional)} = false,
+    {nameof(CommandArgInfo.isOptional)} = {arg.IsOptional.ToString().ToLowerInvariant()},
     {nameof(CommandArgInfo.isRef)} = {arg.IsRef.ToString().ToLowerInvariant()},
-    {nameof(CommandArgInfo.xyz)} = 33,
+    {nameof(CommandArgInfo.isParams)} = {arg.IsParams.ToString().ToLowerInvariant()},
     {nameof(CommandArgInfo.typeCode)} = {arg.TypeCode}
 }}";
         }
@@ -161,12 +162,25 @@ namespace {namespaceStr}
         static string GetMethodSource(CommandDescriptor descriptor)
         {
 
+            var flippedParameterList = descriptor.Parameters.ToList();
+            flippedParameterList.Reverse();
+
+            var sb = new StringBuilder();
+
+            // for (var i = 0; i < flippedParameterList.Count; i++)
+            // {
+            //     var parameter = flippedParameterList[i];
+            //     
+            //     parameter.IsParams
+            //     
+            // }
+            
             
             return $@"// method {descriptor.CallName}
 public static void {descriptor.MethodName}({nameof(VirtualMachine)} {VM})
 {{
     // declare and assign all method inputs...
-    {string.Join("\n", descriptor.Parameters.Select(GetParameterDeclSource))}
+    {string.Join("\n", flippedParameterList.Select(GetParameterDeclSource))}
 
     // invoke the method Gosh Darn! Test it!
     {GetReturnSource(descriptor)}
@@ -204,17 +218,7 @@ public static void {descriptor.MethodName}({nameof(VirtualMachine)} {VM})
                         sb.AppendLine($"{VM}.{nameof(VirtualMachine.heap)}.{nameof(VirtualMachine.heap.WriteSpan)}({resultStrPtr}, {resultSpan}.Length, {resultSpan});");
                         sb.AppendLine($"var {ptrIntBytes} = {nameof(BitConverter)}.{nameof(BitConverter.GetBytes)}({resultStrPtr});");
                         sb.AppendLine($"{nameof(VmUtil)}.{nameof(VmUtil.PushSpan)}(ref {VM}.{nameof(VirtualMachine.stack)}, {ptrIntBytes}, {TypeCodes.STRING});");
-                        // v.heap.Allocate();
-                    // case TypeCodes.STRING:
-                    //     var resultStr = (string)result;
-                    // VmConverter.FromString(resultStr, out bytes);
-                    // machine.heap.Allocate(bytes.Length, out var resultStrPtr);
-                    //     machine.heap.Write(resultStrPtr, bytes.Length, bytes);
-                    //     var ptrIntBytes = BitConverter.GetBytes(resultStrPtr);
-                    //     VmUtil.PushSpan(ref machine.stack, ptrIntBytes, TypeCodes.STRING);
-                    //     break;
-                    
-                        
+                       
                     
                         break;
                     default:
@@ -226,10 +230,31 @@ public static void {descriptor.MethodName}({nameof(VirtualMachine)} {VM})
                 foreach (var parameter in descriptor.Parameters)
                 {
                     if (!parameter.IsRef) continue;
-                    
-                    // ah, this is a ref parameter, so we need to put it back in its register...
-                    // 
-                    sb.AppendLine($"{VM}.{nameof(VirtualMachine.dataRegisters)}[{GetRegistryVarName(parameter)}] =  {nameof(BitConverter)}.{nameof(BitConverter.ToUInt32)}({nameof(BitConverter)}.{nameof(BitConverter.GetBytes)}({parameter.Name}), 0);");
+
+                    switch (parameter.TypeName)
+                    {
+                        case "object":
+                            break;
+                        case "int":
+                            sb.AppendLine($"{nameof(VmUtil)}.{nameof(VmUtil.HandleValue)}<{parameter.TypeName}>(" +
+                                          $"{VM}, " +
+                                          $"{parameter.Name}, " +
+                                          $"{parameter.TypeCode}, " +
+                                          $"{parameter.VariableStateName}, " +
+                                          $"{parameter.VariableAddress}" +
+                                          $");");
+                            break;
+                        case "string":
+                            sb.AppendLine($"{nameof(VmUtil)}.{nameof(VmUtil.HandleValueString)}(" +
+                                          $"{VM}, " +
+                                          $"{parameter.Name}, " +
+                                          $"{parameter.TypeCode}, " +
+                                          $"{parameter.VariableStateName}, " +
+                                          $"{parameter.VariableAddress}" +
+                                          $");");
+                            break;
+                    }
+
                 }
 
 
@@ -254,23 +279,6 @@ public static void {descriptor.MethodName}({nameof(VirtualMachine)} {VM})
             }
             else return arg.Name;
         }
-
-        static string GetRegistrySpanName(ArgDescriptor descriptor)
-        {
-            return $"{descriptor.Name}RegAddrSpan";
-        }
-        static string GetRegistryVarName(ArgDescriptor descriptor)
-        {
-            return $"{descriptor.Name}RegAddr";
-        }
-        static string GetStrPointerVarName(ArgDescriptor descriptor)
-        {
-            return $"{descriptor.Name}StrPtr";
-        }
-        static string GetStrSizeVarName(ArgDescriptor descriptor)
-        {
-            return $"{descriptor.Name}StrSize";
-        }
         
         static string GetParameterDeclSource(ArgDescriptor descriptor)
         {
@@ -278,81 +286,81 @@ public static void {descriptor.MethodName}({nameof(VirtualMachine)} {VM})
          
             sb.AppendLine($"// handle {descriptor.Name}");
 
-            // var typeName = descriptor.TypeName;
-            // if (descriptor.IsRef)
-            // {
-            //     // we'll expect to see a ptr
-            // }
-            
-            
-            var spanName = $"{descriptor.Name}Span";
-            var typeCode = $"{descriptor.Name}Tc";
-
-            if (descriptor.IsVm)
-            {
-                // need to cast the vm to the right type, and hope it works!
-                sb.AppendLine(
-                    $"var {descriptor.Name} = ({descriptor.TypeName}){VM};");
-
-                return sb.ToString();
-            }
-            
-            // for heap vs reg pointers, at compile time, we don't know.
-            // so, we'll need to check the stack itself
-
-            VirtualMachine v = null;
-            // VmUtil.ReadValue<int>(v, out var x, out var s, out var a);
-            // VmUtil.ReadValue<string>(v, out var x2, out var s2, out var a2);
             try
             {
-                switch (descriptor.TypeName, descriptor.IsRef)
+                if (descriptor.IsOptional)
                 {
-                    case ("string", _):
-                        sb.AppendLine(
-                            $"{nameof(VmUtil)}.{nameof(VmUtil.ReadSpan)}(ref {VM}.{nameof(VirtualMachine.stack)}, out var {typeCode}, out var {spanName});"
-                        );
-                        sb.AppendLine(
-                            $"var {GetStrPointerVarName(descriptor)} = {nameof(MemoryMarshal)}.{nameof(MemoryMarshal.Read)}<int>({spanName});");
-                        sb.AppendLine($"{descriptor.TypeName} {descriptor.Name} = default;");
-                        sb.AppendLine($"if ({VM}.{nameof(VirtualMachine.heap)}.{nameof(VmHeap.TryGetAllocationSize)}({GetStrPointerVarName(descriptor)}, out var {GetStrSizeVarName(descriptor)})) {{");
-                        sb.AppendLine($"\t{VM}.{nameof(VirtualMachine.heap)}.{nameof(VmHeap.ReadSpan)}({GetStrPointerVarName(descriptor)}, {GetStrSizeVarName(descriptor)}, out {spanName});");
-                        sb.AppendLine($"\t{descriptor.Name} = {nameof(VmConverter)}.{nameof(VmConverter.ToStringSpan)}({spanName});");
-                        sb.AppendLine("} else throw new Exception(\"runtime exception! expected to find a string pointer\");");
-                        
-                        break;
-                    
-                    
-                    case ("int", true):
-                        sb.AppendLine(
-                            $"{nameof(VmUtil)}.{nameof(VmUtil.ReadSpan)}(ref {VM}.{nameof(VirtualMachine.stack)}, out var {typeCode}, out var {GetRegistrySpanName(descriptor)});"
-                        );
-                        
-                        sb.AppendLine(
-                            $"var {GetRegistryVarName(descriptor)} =  {GetRegistrySpanName(descriptor)}[0];");
-                        
-                        sb.AppendLine($"var {spanName} = new ReadOnlySpan<byte>({nameof(BitConverter)}.{nameof(BitConverter.GetBytes)}({VM}.{nameof(VirtualMachine.dataRegisters)}[{GetRegistryVarName(descriptor)}]));");
-                        
-                        sb.AppendLine(
-                            $"{nameof(VmUtil)}.{nameof(VmUtil.CastInlineSpan)}({spanName}, {VM}.{nameof(VirtualMachine.typeRegisters)}[{GetRegistryVarName(descriptor)}], {TypeCodes.INT}, ref {spanName});"
-                        );
-                        sb.AppendLine(
-                            $"var {descriptor.Name} = {nameof(MemoryMarshal)}.{nameof(MemoryMarshal.Read)}<int>({spanName});");
-                        
-                        break;
-                    case ("int" ,false):
-                        
-                        sb.AppendLine(
-                            $"{nameof(VmUtil)}.{nameof(VmUtil.ReadSpan)}(ref {VM}.{nameof(VirtualMachine.stack)}, out var {typeCode}, out var {spanName});"
-                            );
-                        sb.AppendLine(
-                            $"{nameof(VmUtil)}.{nameof(VmUtil.CastInlineSpan)}({spanName}, {typeCode}, {TypeCodes.INT}, ref {spanName});"
-                            );
-                        sb.AppendLine(
-                            $"var {descriptor.Name} = {nameof(MemoryMarshal)}.{nameof(MemoryMarshal.Read)}<int>({spanName});");
-                        break;
-                    default:
-                        throw new Exception("unhandled type, " + descriptor.TypeName);
+                    sb.AppendLine($"// OPTIONAL EXPR: " + descriptor.OptionalExpr.ToString());
                 }
+
+                if (descriptor.IsVm)
+                {
+                    // need to cast the vm to the right type, and hope it works!
+                    sb.AppendLine(
+                        $"var {descriptor.Name} = ({descriptor.TypeName}){VM};");
+
+                    return sb.ToString();
+                }
+
+                if (descriptor.IsParams)
+                {
+                    var iVar = "__i";
+                    // we'll read until the end. First, we need to know how many doodads there are!
+
+                    sb.AppendLine(
+                        $"{nameof(VmUtil)}.{nameof(VmUtil.ReadAsInt)}(ref {VM}.{nameof(VirtualMachine.stack)}, out var {descriptor.ParamsLengthVariableName});");
+                    sb.AppendLine(
+                        $"var {descriptor.Name} = new {descriptor.TypeName.Replace("[]", "")}[{descriptor.ParamsLengthVariableName}];");
+                    sb.AppendLine($"for (var {iVar} = 0; {iVar} < {descriptor.ParamsLengthVariableName}; {iVar}++) ");
+                    sb.AppendLine("{");
+                    var forSrc = GenerateVariableReadSource(
+                        typeName: descriptor.TypeName.Replace("[]", ""),
+                        optionalStr: "default",
+                        name: $"{descriptor.Name}[{iVar}]",
+                        stateVariable: "_",
+                        addrVariable: "_"
+                    );
+                    sb.AppendLine($"{forSrc}");
+                    sb.AppendLine("}");
+                    return sb.ToString();
+                }
+
+                var optStr = (descriptor.IsOptional ? descriptor.OptionalExpr.ToString() : "default");
+                var src = GenerateVariableReadSource(descriptor.TypeName, optStr,
+                    "var " + descriptor.Name,
+                    "var " + descriptor.VariableStateName,
+                    "var " + descriptor.VariableAddress);
+                sb.AppendLine(src);
+                // switch (descriptor.TypeName)
+                // {
+                //     case "object":
+                //         sb.AppendLine($"{nameof(VmUtil)}.{nameof(VmUtil.ReadValueAny)}(" +
+                //                       $"{VM}, " +
+                //                       $"{(descriptor.IsOptional ? descriptor.OptionalExpr.ToString() : "default")}, " +
+                //                       $"out var {descriptor.Name}," +
+                //                       $"out var {descriptor.VariableStateName}," +
+                //                       $"out var {descriptor.VariableAddress}" +
+                //                       $");");
+                //         break;
+                //     case "int":
+                //         sb.AppendLine($"{nameof(VmUtil)}.{nameof(VmUtil.ReadValue)}<{descriptor.TypeName}>(" +
+                //                       $"{VM}, " +
+                //                       $"{(descriptor.IsOptional ? descriptor.OptionalExpr.ToString() : "default")}, " +
+                //                       $"out var {descriptor.Name}," +
+                //                       $"out var {descriptor.VariableStateName}," +
+                //                       $"out var {descriptor.VariableAddress}" +
+                //                       $");");
+                //         break;
+                //     case ("string"):
+                //         sb.AppendLine($"{nameof(VmUtil)}.{nameof(VmUtil.ReadValueString)}(" +
+                //                       $"{VM}, " +
+                //                       $"{(descriptor.IsOptional ? descriptor.OptionalExpr.ToString() : "default")}, " +
+                //                       $"out var {descriptor.Name}," +
+                //                       $"out var {descriptor.VariableStateName}," +
+                //                       $"out var {descriptor.VariableAddress}" +
+                //                       $");");
+                //         break;
+                // }
             }
             catch (Exception ex)
             {
@@ -360,6 +368,47 @@ public static void {descriptor.MethodName}({nameof(VirtualMachine)} {VM})
             }
 
             return sb.ToString();
+        }
+
+        public static void Test(out int x)
+        {
+            x = 2;
+        }
+        static string GenerateVariableReadSource(string typeName, string optionalStr, string name, string stateVariable, string addrVariable)
+        {
+            // var n = new int[3];
+            switch (typeName)
+            {
+                case "object":
+                    return ($"{nameof(VmUtil)}.{nameof(VmUtil.ReadValueAny)}(" +
+                                  $"{VM}, " +
+                                  $"{optionalStr}, " +
+                                  $"out {name}," +
+                                  $"out {stateVariable}," +
+                                  $"out {addrVariable}" +
+                                  $");");
+                    break;
+                case "int":
+                    return ($"{nameof(VmUtil)}.{nameof(VmUtil.ReadValue)}<{typeName}>(" +
+                                  $"{VM}, " +
+                                  $"{optionalStr}, " +
+                                  $"out {name}," +
+                                  $"out {stateVariable}," +
+                                  $"out {addrVariable}" +
+                                  $");");
+                    break;
+                case ("string"):
+                    return ($"{nameof(VmUtil)}.{nameof(VmUtil.ReadValueString)}(" +
+                                  $"{VM}, " +
+                                  $"{optionalStr}, " +
+                                  $"out {name}," +
+                                  $"out {stateVariable}," +
+                                  $"out {addrVariable}" +
+                                  $");");
+                    break;
+                default:
+                    throw new NotImplementedException("that type isn't supported for reading " + typeName);
+            }
         }
     }
 
@@ -370,9 +419,10 @@ public static void {descriptor.MethodName}({nameof(VirtualMachine)} {VM})
         public AttributeSyntax attributeSyntax;
         public string TargetClassName => $"{((NamespaceDeclarationSyntax)classSyntax.Parent).Name}.{classSyntax.Identifier.ToString()}";
         public string TargetMethodName => methodSyntax.Identifier.ToString();
-        public string MethodName => $"Call2_{TargetMethodName}";
+        public string MethodName => $"Call_{TargetMethodName}_{Sig}";
         public string NamespaceName => $"{((NamespaceDeclarationSyntax)classSyntax.Parent).Name}";
         public string CallName => attributeSyntax.ArgumentList.Arguments[0].Expression.ToString();
+        public string Sig => ReturnType + "R" + string.Join("", Parameters.Select(x => x.TypeCode + (x.IsRef ? "O":"")));
 
         public string ReturnType => methodSyntax.ReturnType.ToString();
         
@@ -380,8 +430,13 @@ public static void {descriptor.MethodName}({nameof(VirtualMachine)} {VM})
         public List<ArgDescriptor> Parameters =>
             methodSyntax.ParameterList.Parameters.Select(p => new ArgDescriptor(this, p)).ToList();
 
-    }
+        
+        public static void Call_Test_voidR()
+        {
+        
+        }
 
+    }
     public class ArgDescriptor
     {
         private readonly CommandDescriptor _owner;
@@ -389,30 +444,46 @@ public static void {descriptor.MethodName}({nameof(VirtualMachine)} {VM})
 
         public string Name => _parameter.Identifier.ToString();
         public string VariableStateName => _parameter.Identifier.ToString() + "VarState";
+        public string VariableAddress => _parameter.Identifier.ToString() + "VarAddr";
+        public string ParamsLengthVariableName => _parameter.Identifier + "VarParamsLength";
+
         public string TypeName => _parameter.Type.ToString();
         public bool IsRef => _parameter.Modifiers.Any(SyntaxKind.RefKeyword);
+        public bool IsParams => _parameter.Modifiers.Any(SyntaxKind.ParamsKeyword);
 
         public bool IsVm => _parameter.AttributeLists.Any(x => x.Attributes.Any(attribute =>
         {
+            // ParamAtt
             var isCommandAttr = attribute.Name.ToString() == nameof(FromVmAttribute) || attribute.Name.ToString() == nameof(FromVmAttribute).Substring(0, nameof(FromVmAttribute).Length - "Attribute".Length);
             return isCommandAttr;
         }));
+        
+        public bool IsOptional => _parameter.Default != null;
 
+        public ExpressionSyntax OptionalExpr => _parameter.Default.Value;
         public byte TypeCode
         {
             get
             {
                 if (IsVm) return TypeCodes.VM;
+
+                var tn = TypeName;
+                if (IsParams)
+                {
+                    tn = tn.Replace("[]", "");
+                }
                 
-                return TypeName switch
+                return tn switch
                 {
                     "int" => TypeCodes.INT,
                     "string" => TypeCodes.STRING,
+                    "object" => TypeCodes.ANY,
                     nameof(VirtualMachine) => TypeCodes.VM,
                     _ => throw new Exception($"Type=[{TypeName}] is not a valid arg type")
                 };
             }
         }
+
 
         public ArgDescriptor(CommandDescriptor owner, ParameterSyntax parameter)
         {

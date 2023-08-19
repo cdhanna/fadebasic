@@ -113,6 +113,20 @@ print x";
         var code = prog.ToString();
         Assert.That(code, Is.EqualTo("((= (ref x),(+ (1),(xcall add (2),(3)))))"));
     }
+    
+    [Test]
+    public void CallHost_Params_1()
+    {
+        var input = @"print a, b, c";
+        var tokenStream = new TokenStream(_lexer.Tokenize(input, TestCommands.CommandsForTesting));
+        var parser = new Parser(tokenStream, TestCommands.CommandsForTesting);
+        var prog = parser.ParseProgram();
+        
+        Assert.That(prog.statements.Count, Is.EqualTo(1));
+        var code = prog.ToString();
+        Assert.That(code, Is.EqualTo("((call print (ref a),(ref b),(ref c))"));
+    }
+
 
 
     

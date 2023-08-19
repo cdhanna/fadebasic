@@ -50,12 +50,137 @@ namespace DarkBasicYo.Virtual
         }
 
 
-        public static void ReadValue<T>(VirtualMachine vm, out T value, out CommandArgRuntimeState state, out int address) where T : struct
+        public static void GetBytes<T>(T value, out byte[] bytes)
+        {
+            switch (value)
+            {
+                case int i:
+                    bytes = BitConverter.GetBytes(i);
+                    break;
+                default:
+                    throw new NotImplementedException("cannot convert unknown type to bytes " + value + " typeof " + typeof(T));
+            }
+        }
+        public static void HandleValue<T>(VirtualMachine vm, T value, byte typeCode, CommandArgRuntimeState state, int address) where T : struct
+        {
+            switch (state)
+            {
+                case CommandArgRuntimeState.RegisterRef:
+                    GetBytes(value, out var regBytes);
+                    vm.dataRegisters[address] = BitConverter.ToUInt32(regBytes, 0);
+                    break;
+                case CommandArgRuntimeState.HeapRef:
+                    var size = TypeCodes.GetByteSize(typeCode);
+                    GetBytes(value, out var heapBytes);
+                    vm.heap.Write(address, size, heapBytes);
+                    break;
+                case CommandArgRuntimeState.Value:
+                    // do nothing.
+                    break;
+            }
+        }
+        
+        
+        public static void HandleValueString(VirtualMachine vm, string value, byte typeCode, CommandArgRuntimeState state, int address)
+        {
+            byte[] strBytes;
+            int strPtr;
+            switch (state)
+            {
+                case CommandArgRuntimeState.RegisterRef:
+                    VmConverter.FromString(value, out strBytes);
+                    vm.heap.Allocate(strBytes.Length, out strPtr);
+                    vm.heap.Write(strPtr, strBytes.Length, strBytes);
+                    vm.dataRegisters[address] = BitConverter.ToUInt32(BitConverter.GetBytes(strPtr), 0);
+                    break;
+                case CommandArgRuntimeState.HeapRef:
+                    
+                    VmConverter.FromString(value, out strBytes);
+                    vm.heap.Allocate(strBytes.Length, out strPtr);
+                    vm.heap.Write(strPtr, strBytes.Length, strBytes);
+                    vm.heap.Write(address, 4, BitConverter.GetBytes(strPtr));
+                    break;
+                case CommandArgRuntimeState.Value:
+                    // do nothing.
+                    break;
+            }
+        }
+
+        
+        // public static void ReadValue(VirtualMachine vm, string defaultValue, out string )
+        public static void ReadValueString(VirtualMachine vm, string defaultValue, out string value,
+            out CommandArgRuntimeState state, out int address)
         {
             ReadSpan(ref vm.stack, out var typeCode, out var span);
-
+            int strPtr = 0, strSize = 0;
             switch (typeCode)
             {
+                case TypeCodes.VOID:
+                    address = 0;
+                    state = CommandArgRuntimeState.Value;
+                    value = defaultValue;
+                    break;
+                case TypeCodes.PTR_REG:
+                    state = CommandArgRuntimeState.RegisterRef;
+                    address = (int) span[0];
+                    var data = vm.dataRegisters[address];
+                    typeCode = vm.typeRegisters[address];
+                    // TODO: we could validate that typeCode is equal to the given typeCode for <T>
+                    var bytes = BitConverter.GetBytes(data);
+                    strPtr = (int)BitConverter.ToUInt32(bytes, 0);
+                    if (vm.heap.TryGetAllocationSize(strPtr, out strSize))
+                    {
+                        vm.heap.Read(strPtr, strSize, out var strBytes);
+                        value = VmConverter.ToString(strBytes);
+                    }
+                    else
+                    {
+                        value = null;
+                    }
+                    break;
+                case TypeCodes.PTR_HEAP:
+                    state = CommandArgRuntimeState.HeapRef;
+                    address = MemoryMarshal.Read<int>(span);
+                    // the heap does not store type info, which means we need to assume the next value on the stack is the type code.
+                    typeCode = vm.stack.Pop();
+                    if (vm.heap.TryGetAllocationSize(address, out strSize))
+                    {
+                        vm.heap.Read(address, strSize, out var strBytes);
+                        value = VmConverter.ToString(strBytes);
+                    }
+                    else
+                    {
+                        value = null;
+                    }
+
+                    break;
+                default:
+                    state = CommandArgRuntimeState.Value;
+                    address = 0;
+                    strPtr = MemoryMarshal.Read<int>(span);
+                    if (vm.heap.TryGetAllocationSize(strPtr, out strSize))
+                    {
+                        vm.heap.Read(strPtr, strSize, out var strBytes);
+                        value = VmConverter.ToString(strBytes);
+                    }
+                    else
+                    {
+                        value = null;
+                    }
+                    break;
+            }
+        }
+        
+        public static void ReadValue<T>(VirtualMachine vm, T defaultValue, out T value, out CommandArgRuntimeState state, out int address) where T : struct
+        {
+            ReadSpan(ref vm.stack, out var typeCode, out var span);
+            switch (typeCode)
+            {
+                case TypeCodes.VOID:
+                    address = 0;
+                    state = CommandArgRuntimeState.Value;
+                    value = defaultValue;
+                    break;
                 case TypeCodes.PTR_REG:
                     state = CommandArgRuntimeState.RegisterRef;
                     address = (int) span[0];
@@ -91,6 +216,25 @@ namespace DarkBasicYo.Virtual
             }
         }
         
+        
+        public static void ReadValueAny(VirtualMachine vm, object defaultValue, out object value, out CommandArgRuntimeState state, out int address)
+        {
+            // peek the type code...
+            var peekTypeCode = vm.stack.Peek();
+            switch (peekTypeCode)
+            {
+                case TypeCodes.STRING:
+                    ReadValueString(vm, defaultValue?.ToString(), out var strValue, out state, out address);
+                    value = strValue;
+                    break;
+                case TypeCodes.INT:
+                    ReadValue<int>(vm, default, out var intValue, out state, out address);
+                    value = intValue;
+                    break;
+                default:
+                    throw new Exception("uh oh, the any type isn't supported for the actual read type");
+            }
+        }
         
         public static void WriteToHeap(ref FastStack<byte> stack, VmHeap heap, bool pushPtr)
         {
