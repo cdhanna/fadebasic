@@ -75,7 +75,7 @@ EndFunction a
     public void Function_Local()
     {
         var src = @"
-global y as integer
+local y as integer
 y = 1
 x = Test()
 
@@ -152,7 +152,7 @@ e as egg
 e.x = 32
 e.y = 66
 
-sum = Test(e)
+derp = Test(e)
 
 END
 Function Test(a as egg)
@@ -442,6 +442,12 @@ EndFunction a
     [TestCase(4, 3)]
     [TestCase(5, 5)]
     [TestCase(6, 8)]
+    [TestCase(7, 13)]
+    [TestCase(8, 21)]
+    [TestCase(9, 34)]
+    [TestCase(10, 55)]
+    [TestCase(11, 89)]
+    [TestCase(12, 55+89)]
     public void Function_Fib(int input, int expected)
     {
         var src = @$"
@@ -461,7 +467,7 @@ EndFunction
         Setup(src, out _, out var prog);
         
         var vm = new VirtualMachine(prog);
-        vm.Execute().MoveNext();
+        vm.Execute2(25000); // YO, the instruction count needs to be high
         
         Assert.That(vm.dataRegisters[0], Is.EqualTo(expected)); 
         Assert.That(vm.typeRegisters[0], Is.EqualTo(TypeCodes.INT));

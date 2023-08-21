@@ -2359,44 +2359,6 @@ y = x(2).derp * x(1).color
     }
 
     [Test]
-    public void CallHost_BenchmarkStyle()
-    {
-        var x2 = new TestCommands();
-
-        var src = @"
-x = 1
-standard double x
-";
-        
-        var lexer = new Lexer();
-        var tokens = lexer.Tokenize(src, TestCommands.CommandsForTesting);
-
-        Console.WriteLine("----- COMMANDS");
-        foreach (var x in TestCommands.CommandsForTesting.Commands)
-        {
-            Console.WriteLine("COMMAND : " + x.name );
-            
-            foreach (var n in x.args)
-            {
-                Console.WriteLine(" " + n.typeCode);
-            }
-        }
-        
-        var parser = new Parser(new TokenStream(tokens), TestCommands.CommandsForTesting);
-        var exprAst = parser.ParseProgram();
-        
-        var compiler = new Compiler(TestCommands.CommandsForTesting);
-        
-        compiler.Compile(exprAst);
-        
-        var vm = new VirtualMachine(compiler.Program);
-        vm.hostMethods = compiler.methodTable;
-        vm.Execute2();
-
-    }
-    
-    
-    [Test]
     public void CallHost()
     {
         var x = new TestCommands();
@@ -2466,6 +2428,21 @@ any input ""darn"", y
         var src = @"
 x = 1
 x = x + sum 2,3,6
+";
+        Setup(src, out var compiler, out var prog);
+        var vm = new VirtualMachine(prog);
+        vm.hostMethods = compiler.methodTable;
+        vm.Execute2();
+        Assert.That(vm.typeRegisters[0], Is.EqualTo(TypeCodes.INT));
+        Assert.That(vm.dataRegisters[0], Is.EqualTo(12));
+    }
+
+    [Test]
+    public void CallHost_Params_WithLeadingVm()
+    {
+        var src = @"
+x = 1
+x = x + sum2 2,3,6
 ";
         Setup(src, out var compiler, out var prog);
         var vm = new VirtualMachine(prog);

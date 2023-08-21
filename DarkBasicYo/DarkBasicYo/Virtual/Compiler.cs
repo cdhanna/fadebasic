@@ -969,6 +969,7 @@ namespace DarkBasicYo.Virtual
             // TODO: save local state?
             
             // put each expression on the stack.
+            var argCounter = 0;
             for (var i = 0; i < commandStatement.command.args.Length; i++)
             {
                 if (commandStatement.command.args[i].isVmArg) continue;
@@ -977,7 +978,7 @@ namespace DarkBasicYo.Virtual
                 {
                     
                     // and then, compile the rest of the args
-                    for (var j = commandStatement.args.Count - 1; j >= i; j --)
+                    for (var j = commandStatement.args.Count - 1; j >= argCounter; j --)
                     {
                         var argExpr2 = commandStatement.args[j];
                         Compile(argExpr2);
@@ -985,9 +986,10 @@ namespace DarkBasicYo.Virtual
                     
                     // first, we need to tell the program how many arguments there are left in the set
                     // , which of course, is args - i.
-                    AddPushInt(_buffer, commandStatement.args.Count - i);
+                    AddPushInt(_buffer, commandStatement.args.Count - argCounter);
                     break;
                 }
+                argCounter++;
                 
                 if (i >= commandStatement.args.Count)
                 {

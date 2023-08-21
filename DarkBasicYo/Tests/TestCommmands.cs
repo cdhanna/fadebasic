@@ -58,6 +58,17 @@ namespace Tests
         
             return sum;
         }
+        [DarkBasicCommand("sum2")]
+        public static int Sum2([FromVm]VirtualMachine x, params int[] numbers)
+        {
+            var sum = 0;
+            for (var i = 0; i < numbers.Length; i++)
+            {
+                sum += numbers[i];
+            }
+        
+            return sum;
+        }
         
         
         [DarkBasicCommand("get last")]

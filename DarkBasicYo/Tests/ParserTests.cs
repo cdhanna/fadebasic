@@ -124,7 +124,7 @@ print x";
         
         Assert.That(prog.statements.Count, Is.EqualTo(1));
         var code = prog.ToString();
-        Assert.That(code, Is.EqualTo("((call print (ref a),(ref b),(ref c))"));
+        Assert.That(code, Is.EqualTo("((call print (ref a),(ref b),(ref c)))"));
     }
 
 

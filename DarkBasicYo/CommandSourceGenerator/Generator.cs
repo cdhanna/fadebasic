@@ -306,7 +306,7 @@ public static void {descriptor.MethodName}({nameof(VirtualMachine)} {VM})
                 {
                     var iVar = "__i";
                     // we'll read until the end. First, we need to know how many doodads there are!
-
+                    
                     sb.AppendLine(
                         $"{nameof(VmUtil)}.{nameof(VmUtil.ReadAsInt)}(ref {VM}.{nameof(VirtualMachine.stack)}, out var {descriptor.ParamsLengthVariableName});");
                     sb.AppendLine(
@@ -331,6 +331,7 @@ public static void {descriptor.MethodName}({nameof(VirtualMachine)} {VM})
                     "var " + descriptor.VariableStateName,
                     "var " + descriptor.VariableAddress);
                 sb.AppendLine(src);
+                
                 // switch (descriptor.TypeName)
                 // {
                 //     case "object":
