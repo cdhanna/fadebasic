@@ -269,7 +269,6 @@ namespace DarkBasicYo.Virtual
                         case OpCodes.ADD2:
                             VmUtil.ReadTwoValues(ref stack, out vTypeCode, out aSpan, out bSpan);
                             VmUtil.Add(ref heap, vTypeCode, aSpan, bSpan, out cSpan);
-                            // VmUtil.Push(stack, cBytes, vTypeCode);
                             VmUtil.PushSpan(ref stack, cSpan, vTypeCode);
                             break;
                         case OpCodes.MUL:
