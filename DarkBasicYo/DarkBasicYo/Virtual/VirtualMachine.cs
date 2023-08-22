@@ -262,13 +262,13 @@ namespace DarkBasicYo.Virtual
                             break;
                         case OpCodes.ADD:
                             VmUtil.ReadTwoValues(ref stack, out vTypeCode, out aSpan, out bSpan);
-                            VmUtil.Add(heap, vTypeCode, aSpan, bSpan, out cSpan);
+                            VmUtil.Add(ref heap, vTypeCode, aSpan, bSpan, out cSpan);
                             // VmUtil.Push(stack, cBytes, vTypeCode);
                             VmUtil.PushSpan(ref stack, cSpan, vTypeCode);
                             break;
                         case OpCodes.ADD2:
                             VmUtil.ReadTwoValues(ref stack, out vTypeCode, out aSpan, out bSpan);
-                            VmUtil.Add(heap, vTypeCode, aSpan, bSpan, out cSpan);
+                            VmUtil.Add(ref heap, vTypeCode, aSpan, bSpan, out cSpan);
                             // VmUtil.Push(stack, cBytes, vTypeCode);
                             VmUtil.PushSpan(ref stack, cSpan, vTypeCode);
                             break;
@@ -363,10 +363,10 @@ namespace DarkBasicYo.Virtual
                             stack.Pop();
                             break;
                         case OpCodes.WRITE:
-                            VmUtil.WriteToHeap(ref stack, heap, false);
+                            VmUtil.WriteToHeap(ref stack, ref heap, false);
                             break;
                         case OpCodes.WRITE_PTR:
-                            VmUtil.WriteToHeap(ref stack, heap, true);
+                            VmUtil.WriteToHeap(ref stack, ref heap, true);
                             break;
                         case OpCodes.READ:
                             

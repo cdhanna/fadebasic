@@ -139,6 +139,30 @@ EndFunction a + ""hello""
     
     
     [Test]
+    public void Function_Return_String()
+    {
+        var src = @"
+x$ = """"
+x$ = Test()
+END
+Function Test()
+a$ = ""hello""
+EndFunction a$
+";
+        Setup(src, out _, out var prog);
+        
+        var vm = new VirtualMachine(prog);
+        vm.Execute().MoveNext();
+        
+        vm.heap.Read((int)vm.dataRegisters[0], "hello".Length * 4, out var memory);
+        var str = VmConverter.ToString(memory);
+        Assert.That(str, Is.EqualTo("hello"));
+
+        Assert.That(vm.typeRegisters[0], Is.EqualTo(TypeCodes.STRING));
+    }
+
+    
+    [Test]
     public void Type_Array_Math()
     {
         var src = @"
@@ -198,7 +222,7 @@ EndFunction g
     }
     
     [Test]
-    public void Function_Return_CardGameUseCase()
+    public void Function_Return_CardGameUseCase_Simple()
     {
         var src = @"
 x = 0
@@ -236,6 +260,47 @@ EndFunction ct.suit + ct.value
 
         Assert.That(vm.dataRegisters[0], Is.EqualTo(13));
         // Assert.That(vm.typeRegisters[0], Is.EqualTo(TypeCodes.STRING));
+    }
+
+    [Test]
+    public void Function_Return_CardGameUseCase()
+    {
+        var src = @"
+x$ = """"
+TYPE cardType
+    suit as integer
+    value as integer
+ENDTYPE
+dim cards(3) as cardType
+cards(2).suit = 5
+cards(2).value = 8
+
+x$ = Test(2)
+
+END
+Function Test(index)
+    ct as cardType
+    ct = cards(index)
+    IF ct.suit = 5 then returnValue$ = ""of pie""
+    IF ct.value = 8 then returnValue$ = ""the eight "" + returnValue$
+    
+EndFunction returnValue$
+";
+        Setup(src, out _, out var prog);
+        
+        var vm = new VirtualMachine(prog);
+        vm.Execute().MoveNext();
+
+        // at this point, the pointer to the right heap is getting lost???
+        
+        var expected = "the eight of pie";
+        vm.heap.GetAllocationSize((int)vm.dataRegisters[0], out var allocSize);
+        vm.heap.Read((int)vm.dataRegisters[0], allocSize, out var memory);
+        var str = VmConverter.ToString(memory);
+        Assert.That(str, Is.EqualTo(expected));
+
+        // Assert.That(vm.dataRegisters[0], Is.EqualTo(13));
+        Assert.That(vm.typeRegisters[0], Is.EqualTo(TypeCodes.STRING));
     }
 
     

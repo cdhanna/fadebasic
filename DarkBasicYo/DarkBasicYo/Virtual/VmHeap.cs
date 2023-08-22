@@ -114,11 +114,6 @@ namespace DarkBasicYo.Virtual
                 }
             }
 
-            if (_cursor == 476)
-            {
-                
-            }
-            
             // reserve from the cursor to size offset...
             ptr = _cursor;
             _allocations[ptr] = size;

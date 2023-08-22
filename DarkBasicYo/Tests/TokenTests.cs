@@ -107,7 +107,7 @@ public class TokenizeTests
     [Test]
     public void Tokenize_CommandVarReal()
     {
-        var input = @"print tuna#";
+        var input = @"print f#";
 
         var lexer = new Lexer();
         var tokens = lexer.Tokenize(input, TestCommands.CommandsForTesting);
@@ -122,7 +122,7 @@ public class TokenizeTests
         Assert.That(tokens[1].type, Is.EqualTo(LexemType.VariableReal));
         Assert.That(tokens[1].lineNumber, Is.EqualTo(0));
         Assert.That(tokens[1].charNumber, Is.EqualTo(6));
-        Assert.That(tokens[1].raw, Is.EqualTo("tuna#"));
+        Assert.That(tokens[1].raw, Is.EqualTo("f#"));
         Assert.That(tokens[2].type, Is.EqualTo(LexemType.EndStatement));
 
     }
@@ -131,7 +131,7 @@ public class TokenizeTests
     [Test]
     public void Tokenize_CommandVarStr()
     {
-        var input = @"print tuna$";
+        var input = @"print f$";
 
         var lexer = new Lexer();
         var tokens = lexer.Tokenize(input, TestCommands.CommandsForTesting);
@@ -146,7 +146,7 @@ public class TokenizeTests
         Assert.That(tokens[1].type, Is.EqualTo(LexemType.VariableString));
         Assert.That(tokens[1].lineNumber, Is.EqualTo(0));
         Assert.That(tokens[1].charNumber, Is.EqualTo(6));
-        Assert.That(tokens[1].raw, Is.EqualTo("tuna$"));
+        Assert.That(tokens[1].raw, Is.EqualTo("f$"));
         Assert.That(tokens[2].type, Is.EqualTo(LexemType.EndStatement));
 
     }

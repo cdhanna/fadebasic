@@ -24,6 +24,7 @@ namespace DarkBasicYo.Virtual
         public string name;
         public CompiledType structType;
         public byte registerAddress;
+        public bool isGlobal;
         public byte[] rankSizeRegisterAddresses; // an array where the index is the rank, and the value is the ptr to a register whose value holds the size of the rank
         public byte[] rankIndexScalerRegisterAddresses; // an array where the index is the rank, and the value is the ptr to a register whose value holds the multiplier factor for the rank's indexing
     }
@@ -87,7 +88,7 @@ namespace DarkBasicYo.Virtual
             return compileVar;
         }
 
-        public CompiledArrayVariable CreateArray(string declarationVariable, int rankLength, byte typeCode)
+        public CompiledArrayVariable CreateArray(string declarationVariable, int rankLength, byte typeCode, bool isGlobal)
         {
             var compileArrayVar = new CompiledArrayVariable()
             {
@@ -96,7 +97,8 @@ namespace DarkBasicYo.Virtual
                 rankIndexScalerRegisterAddresses = new byte[rankLength],
                 name = declarationVariable,
                 typeCode = typeCode,
-                byteSize = TypeCodes.GetByteSize(typeCode)
+                byteSize = TypeCodes.GetByteSize(typeCode),
+                isGlobal = isGlobal
             };
             _arrayVarToReg[declarationVariable] = compileArrayVar;
             return compileArrayVar;
@@ -1098,7 +1100,7 @@ namespace DarkBasicYo.Virtual
             {
                 // this is an array decl
 
-                var arrayVar = scope.CreateArray(declaration.variable, declaration.ranks.Length, tc);
+                var arrayVar = scope.CreateArray(declaration.variable, declaration.ranks.Length, tc, declaration.scopeType == DeclarationScopeType.Global);
 
                 if (tc == TypeCodes.STRUCT)
                 {
@@ -1128,10 +1130,9 @@ namespace DarkBasicYo.Virtual
                     arrayVar.rankIndexScalerRegisterAddresses[i] = scope.AllocateRegister(); //(byte)(registerCount++);
                     
                     // store the expression value (the length for this rank) in a register
-                    _buffer.Add(OpCodes.STORE);
-                    _buffer.Add(arrayVar.rankSizeRegisterAddresses[i]); 
-                    
-                    // PushStore();
+                    // _buffer.Add(OpCodes.STORE);
+                    // _buffer.Add(arrayVar.rankSizeRegisterAddresses[i]);
+                    PushStore(_buffer, arrayVar.rankSizeRegisterAddresses[i], arrayVar.isGlobal);
 
                     if (i == declaration.ranks.Length - 1)
                     {
@@ -1141,19 +1142,24 @@ namespace DarkBasicYo.Virtual
                     else
                     {
                         // get the length of the right term
-                        _buffer.Add(OpCodes.LOAD);
-                        _buffer.Add(arrayVar.rankSizeRegisterAddresses[i + 1]); 
+                        // _buffer.Add(OpCodes.LOAD);
+                        // _buffer.Add(arrayVar.rankSizeRegisterAddresses[i + 1]); 
+                        PushLoad(_buffer, arrayVar.rankSizeRegisterAddresses[i + 1], arrayVar.isGlobal);
                         
                         // and get the multiplier factor of the right term
-                        _buffer.Add(OpCodes.LOAD);
-                        _buffer.Add(arrayVar.rankIndexScalerRegisterAddresses[i + 1]); 
+                        // _buffer.Add(OpCodes.LOAD);
+                        // _buffer.Add(arrayVar.rankIndexScalerRegisterAddresses[i + 1]); 
+                        PushLoad(_buffer, arrayVar.rankIndexScalerRegisterAddresses[i + 1], arrayVar.isGlobal);
+
 
                         // and multiply those together...
                         _buffer.Add(OpCodes.MUL);
                     }
                     
-                    _buffer.Add(OpCodes.STORE);
-                    _buffer.Add(arrayVar.rankIndexScalerRegisterAddresses[i]); // store the multiplier 
+                    // _buffer.Add(OpCodes.STORE);
+                    // _buffer.Add(arrayVar.rankIndexScalerRegisterAddresses[i]); // store the multiplier 
+                    PushStore(_buffer, arrayVar.rankIndexScalerRegisterAddresses[i], arrayVar.isGlobal);
+
                 }
                 
                 
@@ -1163,8 +1169,10 @@ namespace DarkBasicYo.Virtual
                 
                 for (var i = 0; i < declaration.ranks.Length; i++)
                 {
-                    _buffer.Add(OpCodes.LOAD);
-                    _buffer.Add(arrayVar.rankSizeRegisterAddresses[i]); // store the length of the sub var on the register.
+                    // _buffer.Add(OpCodes.LOAD);
+                    // _buffer.Add(arrayVar.rankSizeRegisterAddresses[i]); // store the length of the sub var on the register.
+                    PushLoad(_buffer, arrayVar.rankSizeRegisterAddresses[i], arrayVar.isGlobal);
+
                     _buffer.Add(OpCodes.MUL);
                 }
                 
@@ -1174,8 +1182,9 @@ namespace DarkBasicYo.Virtual
                 _buffer.Add(OpCodes.MUL); // multiply the length by the size, to get the entire byte-size of the requested array
                 _buffer.Add(OpCodes.ALLOC); // push the alloc instruction
                 
-                _buffer.Add(OpCodes.STORE);
-                _buffer.Add(arrayVar.registerAddress);
+                // _buffer.Add(OpCodes.STORE);
+                // _buffer.Add(arrayVar.registerAddress);
+                PushStore(_buffer, arrayVar.registerAddress, arrayVar.isGlobal);
             }
             
             
@@ -1205,9 +1214,9 @@ namespace DarkBasicYo.Virtual
 
             for (var i = 0; i < arrayRefNode.rankExpressions.Count; i++)
             {
-                _buffer.Add(OpCodes.LOAD); // load the multiplier factor for the term
-                _buffer.Add(compiledArrayVar.rankIndexScalerRegisterAddresses[i]);
-
+                // _buffer.Add(OpCodes.LOAD); // load the multiplier factor for the term
+                // _buffer.Add(compiledArrayVar.rankIndexScalerRegisterAddresses[i]);
+                PushLoad(_buffer, compiledArrayVar.rankIndexScalerRegisterAddresses[i], compiledArrayVar.isGlobal);
                 var expr = arrayRefNode.rankExpressions[i];
                 Compile(expr); // load the expression index
 
@@ -1232,8 +1241,10 @@ namespace DarkBasicYo.Virtual
             _buffer.Add(OpCodes.MUL);
 
             // load the array's ptr onto the stack, this is for the math of the offset
-            _buffer.Add(OpCodes.LOAD);
-            _buffer.Add(compiledArrayVar.registerAddress);
+            // _buffer.Add(OpCodes.LOAD);
+            // _buffer.Add(compiledArrayVar.registerAddress);
+            PushLoad(_buffer, compiledArrayVar.registerAddress, compiledArrayVar.isGlobal);
+
 
             // add the offset to the original pointer to get the write location
             _buffer.Add(OpCodes.ADD2);

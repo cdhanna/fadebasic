@@ -236,7 +236,7 @@ namespace DarkBasicYo.Virtual
             }
         }
         
-        public static void WriteToHeap(ref FastStack<byte> stack, VmHeap heap, bool pushPtr)
+        public static void WriteToHeap(ref FastStack<byte> stack, ref VmHeap heap, bool pushPtr)
         {
             // ReadAsInt(stack, out var writePtr);
             var typeCode = stack.Pop();
@@ -576,7 +576,7 @@ namespace DarkBasicYo.Virtual
         }
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        public static void Add(VmHeap heap, byte aTypeCode, ReadOnlySpan<byte> aSpan, ReadOnlySpan<byte> bSpan, out ReadOnlySpan<byte> c)
+        public static void Add(ref VmHeap heap, byte aTypeCode, ReadOnlySpan<byte> aSpan, ReadOnlySpan<byte> bSpan, out ReadOnlySpan<byte> c)
         {
             byte[] a = aSpan.ToArray();
             byte[] b = bSpan.ToArray();
