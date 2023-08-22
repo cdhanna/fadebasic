@@ -77,6 +77,36 @@ z$ = x$ + y$
 
     
     [Test]
+    public void String_Concat_SelfReference()
+    {
+        var src = @"
+x$ = ""world""
+x$ = ""hello "" + x$
+";
+        Setup(src, out _, out var prog);
+        
+        var vm = new VirtualMachine(prog);
+        vm.Execute2();
+        
+        Assert.That(vm.dataRegisters[0], Is.EqualTo("world".Length * 4 + "hello ".Length * 4)); // the ptr to the string in memory
+        Assert.That(vm.typeRegisters[0], Is.EqualTo(TypeCodes.STRING));
+        
+        vm.heap.Read((int)vm.dataRegisters[0], "hello world".Length * 4, out var memory);
+        var str = VmConverter.ToString(memory);
+        Assert.That(str, Is.EqualTo("hello world"));
+        
+        
+        // vm.heap.Read((int)vm.dataRegisters[1], "world".Length * 4, out memory);
+        // str = VmConverter.ToString(memory);
+        // Assert.That(str, Is.EqualTo("world"));
+        //
+        // vm.heap.Read((int)vm.dataRegisters[2], "helloworld".Length * 4, out memory);
+        // str = VmConverter.ToString(memory);
+        // Assert.That(str, Is.EqualTo("helloworld"));
+    }
+
+    
+    [Test]
     public void String_Concat_VariableAndLiteral()
     {
         var src = @"
@@ -144,6 +174,27 @@ y$ = ""world"" + x$
         var str = VmConverter.ToString(memory);
         
         Assert.That(str, Is.EqualTo("hello"));
+    }
+
+    
+    [Test]
+    public void String_Declare_HugeHeap()
+    {
+        var initialStr =
+            "okayokayokayokayokayokayokayokayokayokayokayokayokayokayokayokayokayokayokayokay";
+        var src = "x$ = \""+ initialStr + "\" ";
+        Setup(src, out _, out var prog);
+        
+        var vm = new VirtualMachine(prog);
+        vm.Execute2();
+        
+        Assert.That(vm.dataRegisters[0], Is.EqualTo(0)); // the ptr to the string in memory
+        Assert.That(vm.typeRegisters[0], Is.EqualTo(TypeCodes.STRING));
+        
+        vm.heap.Read(0, initialStr.Length * 4, out var memory);
+        var str = VmConverter.ToString(memory);
+        
+        Assert.That(str, Is.EqualTo(initialStr));
     }
 
     
@@ -276,6 +327,25 @@ y$ = ""world"" + x$
         var src = @"
 x = 1
 ` x = 2
+";
+        Setup(src, out _, out var prog);
+        
+        var vm = new VirtualMachine(prog);
+        vm.Execute().MoveNext();
+        
+        Assert.That(vm.dataRegisters[0], Is.EqualTo(1)); 
+        Assert.That(vm.typeRegisters[0], Is.EqualTo(TypeCodes.INT));
+    }
+
+    
+    [Test]
+    public void Comments_InTypeDef()
+    {
+        var src = @"
+TYPE egg
+    x `derp
+ENDTYPE
+x = 1
 ";
         Setup(src, out _, out var prog);
         
@@ -2330,6 +2400,40 @@ y = x(2,3).derp
         Assert.That(vm.heap.Cursor, Is.EqualTo(6*12));
         Assert.That(vm.dataRegisters[3], Is.EqualTo(3));
     }
+    
+    
+    [Test]
+    public void Type_Instantiate_MultiArray_MultiField_Assign_WithExtraVar()
+    {
+        var src = @"
+TYPE egg 
+    color AS WORD
+    derp 
+ENDTYPE
+y = 0
+DIM x(3) AS egg `3*4 is 12 elements- 
+
+n as egg
+x(2).derp = 122
+n = x(2)
+y = n.derp
+";
+        /*
+         * the problem is that n is being assigned to the pointer of x(2,3).
+         * well, x(2,3) evals to be a pointer to that spot in memory
+         *
+         * the addr is 66; but the data is at 68
+         */
+        
+        
+        Setup(src, out var compiler, out var prog);
+        var vm = new VirtualMachine(prog);
+        vm.hostMethods = compiler.methodTable;
+        vm.Execute2();
+        
+        Assert.That(vm.heap.Cursor, Is.EqualTo(6*(3 + 1))); // 1 extra for the original assignment of n as egg
+        Assert.That(vm.dataRegisters[0], Is.EqualTo(122));
+    }
 
     
     [Test]
@@ -2391,6 +2495,15 @@ y = x(2).derp * x(1).color
         vm.Execute2();
     }
 
+    [Test]
+    public void CallHost_InkIssue()
+    {
+        var src = "ink 5,0";
+        Setup(src, out var compiler, out var prog);
+        var vm = new VirtualMachine(prog);
+        vm.hostMethods = compiler.methodTable;
+        vm.Execute2();
+    }
     
     [Test]
     public void CallHost_ObjectInput()
@@ -2437,6 +2550,21 @@ x = x + sum 2,3,6
         Assert.That(vm.dataRegisters[0], Is.EqualTo(12));
     }
 
+    
+    [Test]
+    public void CallHost_Params_Empty()
+    {
+        var src = @"
+x = sum + 12
+";
+        Setup(src, out var compiler, out var prog);
+        var vm = new VirtualMachine(prog);
+        vm.hostMethods = compiler.methodTable;
+        vm.Execute2();
+        Assert.That(vm.typeRegisters[0], Is.EqualTo(TypeCodes.INT));
+        Assert.That(vm.dataRegisters[0], Is.EqualTo(12));
+    }
+
     [Test]
     public void CallHost_Params_WithLeadingVm()
     {
@@ -2449,7 +2577,7 @@ x = x + sum2 2,3,6
         vm.hostMethods = compiler.methodTable;
         vm.Execute2();
         Assert.That(vm.typeRegisters[0], Is.EqualTo(TypeCodes.INT));
-        Assert.That(vm.dataRegisters[0], Is.EqualTo(12));
+        Assert.That(vm.dataRegisters[0], Is.EqualTo(1 + 2 + 3 + 6));
     }
 
     

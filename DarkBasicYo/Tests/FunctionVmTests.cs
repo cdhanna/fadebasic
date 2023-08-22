@@ -136,7 +136,109 @@ EndFunction a + ""hello""
 
         Assert.That(vm.typeRegisters[0], Is.EqualTo(TypeCodes.STRING));
     }
+    
+    
+    [Test]
+    public void Type_Array_Math()
+    {
+        var src = @"
+x = 0
+TYPE cardType
+    suit
+    value
+ENDTYPE
+dim cards(3) as cardType
+cards(2).suit = 5
+cards(2).value = 8
+ct as cardType
+ct = cards(2)
 
+x = ct.value + ct.suit
+
+";
+        Setup(src, out _, out var prog);
+        
+        var vm = new VirtualMachine(prog);
+        vm.Execute().MoveNext();
+        Assert.That(vm.dataRegisters[0], Is.EqualTo(13));
+        // Assert.That(vm.typeRegisters[0], Is.EqualTo(TypeCodes.STRING));
+    }
+
+
+    [Test]
+    public void Function_Reference_GlobalArray()
+    {
+        var src = @"
+x = 0
+dim cards(3) as integer
+cards(0) = 100
+cards(1) = 200
+cards(2) = 300
+
+x = Test()
+
+END
+Function Test()
+    g = cards(0) + cards(1) + cards(2)
+EndFunction g
+";
+        Setup(src, out _, out var prog);
+        
+        var vm = new VirtualMachine(prog);
+        vm.Execute().MoveNext();
+
+        // var expected = "the eight of pie";
+        // vm.heap.GetAllocationSize((int)vm.dataRegisters[0], out var allocSize);
+        // vm.heap.Read((int)vm.dataRegisters[0], allocSize, out var memory);
+        // var str = VmConverter.ToString(memory);
+        // Assert.That(str, Is.EqualTo(expected));
+
+        Assert.That(vm.dataRegisters[0], Is.EqualTo(600));
+        // Assert.That(vm.typeRegisters[0], Is.EqualTo(TypeCodes.STRING));
+    }
+    
+    [Test]
+    public void Function_Return_CardGameUseCase()
+    {
+        var src = @"
+x = 0
+TYPE cardType
+    suit as integer
+    value as integer
+ENDTYPE
+dim cards(3) as cardType
+cards(2).suit = 5
+cards(2).value = 8
+
+x = Test(2)
+
+END
+Function Test(index)
+    ct as cardType
+    ct = cards(index)
+    `IF ct.suit = 5 then returnValue$ = ""of pie""
+    `IF ct.value = 8 then returnValue$ = ""the eight "" + returnValue$
+    `returnValue$ = ""of pie""
+    `returnValue$ = ""the eight"" + returnValue$
+    
+EndFunction ct.suit + ct.value
+";
+        Setup(src, out _, out var prog);
+        
+        var vm = new VirtualMachine(prog);
+        vm.Execute().MoveNext();
+
+        // var expected = "the eight of pie";
+        // vm.heap.GetAllocationSize((int)vm.dataRegisters[0], out var allocSize);
+        // vm.heap.Read((int)vm.dataRegisters[0], allocSize, out var memory);
+        // var str = VmConverter.ToString(memory);
+        // Assert.That(str, Is.EqualTo(expected));
+
+        Assert.That(vm.dataRegisters[0], Is.EqualTo(13));
+        // Assert.That(vm.typeRegisters[0], Is.EqualTo(TypeCodes.STRING));
+    }
+
+    
     
     [Test]
     public void Function_CustomTypedArg()
@@ -180,9 +282,8 @@ EndFunction a.x + a.y
 
     
     [Test]
-    public void Function_CustomTypedArg_ReferenceMutation()
+    public void Function_CustomTypedArg_ReferenceMutation_DoesNotChangeOriginal()
     {
-        throw new NotImplementedException("is this right?");
         var src = @"
 TYPE egg
     x
@@ -207,11 +308,11 @@ EndFunction
         
         vm.heap.Read((int)vm.dataRegisters[0], 4, out var memory);
         var data = BitConverter.ToInt32(memory);
-        Assert.That(data, Is.EqualTo(32*2));
+        Assert.That(data, Is.EqualTo(32));
         
         vm.heap.Read((int)vm.dataRegisters[0] + 4, 4, out memory); 
         data = BitConverter.ToInt32(memory);
-        Assert.That(data, Is.EqualTo(66-10));
+        Assert.That(data, Is.EqualTo(66));
 
         
         Assert.That(vm.typeRegisters[0], Is.EqualTo(TypeCodes.STRUCT));

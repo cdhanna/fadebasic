@@ -989,9 +989,8 @@ namespace DarkBasicYo.Virtual
                     AddPushInt(_buffer, commandStatement.args.Count - argCounter);
                     break;
                 }
-                argCounter++;
                 
-                if (i >= commandStatement.args.Count)
+                if (argCounter >= commandStatement.args.Count)
                 {
                     if (commandStatement.command.args[i].isOptional)
                     {
@@ -1004,7 +1003,7 @@ namespace DarkBasicYo.Virtual
                     }
                 }
                 
-                var argExpr = commandStatement.args[i];
+                var argExpr = commandStatement.args[argCounter];
                 var argDesc = commandStatement.command.args[i];
                 if (argDesc.isRef)
                 {
@@ -1020,6 +1019,7 @@ namespace DarkBasicYo.Virtual
                 {
                     Compile(argExpr);
                 }
+                argCounter++;
             }
             
             
@@ -1130,6 +1130,8 @@ namespace DarkBasicYo.Virtual
                     // store the expression value (the length for this rank) in a register
                     _buffer.Add(OpCodes.STORE);
                     _buffer.Add(arrayVar.rankSizeRegisterAddresses[i]); 
+                    
+                    // PushStore();
 
                     if (i == declaration.ranks.Length - 1)
                     {
@@ -1234,7 +1236,7 @@ namespace DarkBasicYo.Virtual
             _buffer.Add(compiledArrayVar.registerAddress);
 
             // add the offset to the original pointer to get the write location
-            _buffer.Add(OpCodes.ADD);
+            _buffer.Add(OpCodes.ADD2);
 
         }
 
@@ -1249,6 +1251,35 @@ namespace DarkBasicYo.Virtual
             buffer.Add(registerAddress);
         }
 
+        void CompileStructData(CompiledVariable compiledVar, bool ignoreType=true)
+        {
+            if (!_types.TryGetValue(compiledVar.structType, out var structType))
+            {
+                throw new Exception("Referencing type that does not exist yet. In assignment." + compiledVar.name + " and " + compiledVar.structType);
+            }
+            _buffer.Add(OpCodes.BREAKPOINT); // we don't actually want the type code to live on the heap
+
+            if (ignoreType)
+            _buffer.Add(OpCodes.DISCARD2); // we don't actually want the type code to live on the heap
+
+            // push the size of the write operation- it is the size of the struct we happen to have!
+            AddPushInt(_buffer, structType.byteSize);
+                        
+            // now, push the pointer where to write the data to- which, we know is the register address
+            PushLoad(_buffer, compiledVar.registerAddress, compiledVar.isGlobal);
+                        
+            // the address is a struct ref, not an int, so for the write-command to work, we need to cast the struct to an int
+            CastToInt();
+            
+            _buffer.Add(OpCodes.WRITE); // consume the ptr, then the length, then the data
+        }
+
+        void CastToInt()
+        {
+            _buffer.Add(OpCodes.CAST);
+            _buffer.Add(TypeCodes.INT);
+        }
+        
         void CompileAssignmentLeftHandSide(IVariableNode variable)
         {
             switch (variable)
@@ -1280,6 +1311,38 @@ namespace DarkBasicYo.Virtual
                         compiledVar = scope.Create(variableRefNode.variableName, tc, false);
                     }
             
+                    // wait wait, if the rhs is a pointer, and the lhs is a struct, then we actually need to COPY the pointer data...
+                    if (compiledVar.typeCode == TypeCodes.STRUCT)
+                    {
+                        CompileStructData(compiledVar);
+                        /*
+                         * when this is getting set to an array- the entire struct data is sitting on the stack. The array-expression reads  it from the heap
+                         * If we just just cast to struct, we'll just be capturing some random part of the memory...
+                         * instead, we need to assume that the stack contains the right length amount of valid bytes to write into memory...
+                         *
+                         * we know the struct data here, or rather, we can...
+                         */
+                        // if (!_types.TryGetValue(compiledVar.structType, out var structType))
+                        // {
+                        //     throw new Exception("Referencing type that does not exist yet. In assignment." + compiledVar.name + " and " + compiledVar.structType);
+                        // }
+                        //
+                        // _buffer.Add(OpCodes.DISCARD); // we don't actually want the type code to live on the heap
+                        //
+                        // // push the size of the write operation- it is the size of the struct we happen to have!
+                        // AddPushInt(_buffer, structType.byteSize);
+                        //
+                        // // now, push the pointer where to write the data to- which, we know is the register address
+                        // PushLoad(_buffer, compiledVar.registerAddress, compiledVar.isGlobal);
+                        //
+                        // // the address is a struct ref, not an int, so for the write-command to work, we need to cast the struct to an int
+                        // _buffer.Add(OpCodes.CAST);
+                        // _buffer.Add(TypeCodes.INT);
+                        //
+                        // _buffer.Add(OpCodes.WRITE); // consume the ptr, then the length, then the data
+                        break;
+                    }
+                    
                     // always cast the expression to the correct type code; slightly wasteful, could be better.
                     _buffer.Add(OpCodes.CAST);
                     _buffer.Add(compiledVar.typeCode);
@@ -1333,8 +1396,12 @@ namespace DarkBasicYo.Virtual
                         case VariableRefNode variableRef:
                             if (!scope.TryGetVariable(variableRef.variableName, out compiledVar))
                             {
-                                throw new Exception("compiler exception! the referenced variable has not been declared yet " +
-                                                    variableRef.variableName);
+                                FakeDeclare(variableRef, out compiledVar);
+                            }
+
+                            if (compiledVar.typeCode == TypeCodes.STRUCT)
+                            {
+                                
                             }
                             
                             _buffer.Add(OpCodes.DISCARD); // we don't actually want the type code to live on the heap
@@ -1380,6 +1447,12 @@ namespace DarkBasicYo.Virtual
              * If it is an array, then it lives in memory.
              */
 
+
+            if (assignmentStatement.variable is VariableRefNode leftRef &&
+                scope.TryGetVariable(leftRef.variableName, out var leftVar) && leftVar.typeCode == TypeCodes.STRUCT)
+            {
+                // _buffer.Add(OpCodes.BREAKPOINT);
+            }
             
             // compile the rhs of the assignment...
             Compile(assignmentStatement.expression);
@@ -1525,40 +1598,6 @@ namespace DarkBasicYo.Virtual
 
                     PushAddress(arrayRef);
 
-                    // load the index onto the stack
-                    // for (var i = 0; i < arrayRef.rankExpressions.Count ; i++)
-                    // {
-                    //     // load the multiplier factor for the term
-                    //     _buffer.Add(OpCodes.LOAD); 
-                    //     _buffer.Add(arrayVar.rankIndexScalerRegisterAddresses[i]);
-                    //
-                    //     // load the expression index
-                    //     var subExpr = arrayRef.rankExpressions[i];
-                    //     Compile(subExpr); 
-                    //     
-                    //     // multiply the expression index by the multiplier factor
-                    //     _buffer.Add(OpCodes.MUL);
-                    //
-                    //     if (i > 0)
-                    //     {
-                    //         // and if this isn't our first, add it to the previous value
-                    //         _buffer.Add(OpCodes.ADD);
-                    //     }
-                    // }
-                    //
-                    // // get the size of the element onto the stack
-                    // AddPushInt(_buffer, sizeOfElement);
-                    //
-                    // // multiply the size of the element, and the index, to get the offset into the memory
-                    // _buffer.Add(OpCodes.MUL);
-                    //
-                    // // load the array's ptr onto the stack, this is for the math of the offset
-                    // _buffer.Add(OpCodes.LOAD); 
-                    // _buffer.Add(arrayVar.registerAddress);
-                    //
-                    // // add the offset to the original pointer to get the write location
-                    // _buffer.Add(OpCodes.ADD);
-                    
                     // read, it'll find the ptr, size, and then place the data onto the stack
                     _buffer.Add(OpCodes.READ);
                     
@@ -1575,9 +1614,7 @@ namespace DarkBasicYo.Virtual
 
                             if (!scope.TryGetVariable(variableRef.variableName, out var typeCompiledVar))
                             {
-                                throw new Exception(
-                                    "compiler exception! the referenced variable has not been declared yet " +
-                                    variableRef.variableName);
+                                FakeDeclare(variableRef, out typeCompiledVar);
                             }
 
                             if (!_types.TryGetValue(typeCompiledVar.structType, out var type))
@@ -1613,8 +1650,8 @@ namespace DarkBasicYo.Virtual
                         case ArrayIndexReference arrayRefNode:
                             if (!scope.TryGetArray(arrayRefNode.variableName, out var leftArrayVar))
                             {
-                                throw new Exception("compiler exception! the referenced array has not been declared yet " +
-                                                    arrayRefNode.variableName);
+                                throw new CompilerException("compiler exception (3)! the referenced array has not been declared yet " +
+                                                    arrayRefNode.variableName, arrayRefNode);
                             }
                             
                             var rightType = leftArrayVar.structType;
@@ -1645,14 +1682,37 @@ namespace DarkBasicYo.Virtual
                     // emit the read from register
                     if (!scope.TryGetVariable(variableRef.variableName, out var compiledVar))
                     {
-                        throw new Exception("compiler exception! the referenced variable has not been declared yet " +
-                                            variableRef.variableName);
+                        // can we auto declare it?
+                        FakeDeclare(variableRef, out compiledVar);
+                    }
+
+                    if (compiledVar.typeCode == TypeCodes.STRUCT)
+                    {
+                        // ah, if this is a struct, then we should push the entire contents of the memory pointer on the stack.
+                        // CompileStructData(compiledVar, false);
+                        // we don't want to WRITE- we need to READ it from memory
+                        if (!_types.TryGetValue(compiledVar.structType, out var structType))
+                        {
+                            throw new Exception("Referencing type that does not exist yet. In value." + compiledVar.name + " and " + compiledVar.structType);
+                        }
+                        // load the size up
+                        AddPushInt(_buffer, structType.byteSize);
+
+                        // PushAddress(arrayRef);
+                        PushLoad(_buffer, compiledVar.registerAddress, compiledVar.isGlobal);
+                        CastToInt();
+                        
+                        _buffer.Add(OpCodes.BREAKPOINT);
+                        // read, it'll find the ptr, size, and then place the data onto the stack
+                        _buffer.Add(OpCodes.READ);
+                    
+                        // we need to inject the type-code back into the stack, since it doesn't exist in heap
+                        _buffer.Add(OpCodes.BPUSH);
+                        _buffer.Add(TypeCodes.STRUCT);
+                        break;
                     }
                     
                     PushLoad(_buffer, compiledVar.registerAddress, compiledVar.isGlobal);
-                    // _buffer.Add(OpCodes.LOAD);
-                    // _buffer.Add(compiledVar.registerAddress);
-                    
                     break;
                 case UnaryOperationExpression unary:
                     Compile(unary.rhs);
@@ -1733,6 +1793,26 @@ namespace DarkBasicYo.Virtual
                     break;
                 default:
                     throw new Exception("compiler: unknown expression");
+            }
+        }
+
+        
+        void FakeDeclare(VariableRefNode refNode, out CompiledVariable compiledVar)
+        {
+            var fakeDeclStatement = new DeclarationStatement
+            {
+                startToken = refNode.startToken,
+                endToken = refNode.endToken,
+                ranks = null,
+                scopeType = DeclarationScopeType.Local,
+                variable = refNode.variableName,
+                type = new TypeReferenceNode(refNode.DefaultTypeByName, refNode.startToken)
+            };
+            Compile(fakeDeclStatement);
+            if (!scope.TryGetVariable(refNode.variableName, out compiledVar))
+            {
+                throw new CompilerException("compiler exception (5)! the referenced variable has not been declared yet " +
+                                            refNode.variableName, refNode);
             }
         }
 

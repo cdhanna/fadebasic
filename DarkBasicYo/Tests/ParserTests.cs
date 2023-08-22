@@ -100,6 +100,21 @@ print x";
         var code = prog.ToString();
         Assert.That(code, Is.EqualTo("((call callTest))"));
     }
+    
+    
+    [Test]
+    public void CallHostStatement_InkIssue()
+    {
+        var input = @"ink 5, 2";
+        var tokenStream = new TokenStream(_lexer.Tokenize(input, TestCommands.CommandsForTesting));
+        var parser = new Parser(tokenStream, TestCommands.CommandsForTesting);
+        var prog = parser.ParseProgram();
+        
+        Assert.That(prog.statements.Count, Is.EqualTo(1));
+        var code = prog.ToString();
+        Assert.That(code, Is.EqualTo("((call ink (5),(2)))"));
+    }
+
 
     [Test]
     public void CallHostStatement_Expr()
@@ -127,6 +142,19 @@ print x";
         Assert.That(code, Is.EqualTo("((call print (ref a),(ref b),(ref c)))"));
     }
 
+
+    [Test]
+    public void CallHost_Params_WithNestedFunction()
+    {
+        var input = @"print a, rgb(255,128,0)";
+        var tokenStream = new TokenStream(_lexer.Tokenize(input, TestCommands.CommandsForTesting));
+        var parser = new Parser(tokenStream, TestCommands.CommandsForTesting);
+        var prog = parser.ParseProgram();
+        
+        Assert.That(prog.statements.Count, Is.EqualTo(1));
+        var code = prog.ToString();
+        Assert.That(code, Is.EqualTo("((call print (ref a),(xcall rgb (255),(128),(0))))"));
+    }
 
 
     

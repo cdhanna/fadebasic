@@ -41,6 +41,7 @@ namespace DarkBasicYo.Virtual
         // public Stack<byte> stack = new Stack<byte>();
         public FastStack<byte> stack = new FastStack<byte>(256);
         public VmHeap heap;
+        
         public HostMethodTable hostMethods;
         public CommandCollection commands;
         public FastStack<int> methodStack;
@@ -265,6 +266,12 @@ namespace DarkBasicYo.Virtual
                             // VmUtil.Push(stack, cBytes, vTypeCode);
                             VmUtil.PushSpan(ref stack, cSpan, vTypeCode);
                             break;
+                        case OpCodes.ADD2:
+                            VmUtil.ReadTwoValues(ref stack, out vTypeCode, out aSpan, out bSpan);
+                            VmUtil.Add(heap, vTypeCode, aSpan, bSpan, out cSpan);
+                            // VmUtil.Push(stack, cBytes, vTypeCode);
+                            VmUtil.PushSpan(ref stack, cSpan, vTypeCode);
+                            break;
                         case OpCodes.MUL:
                             // throw new NotImplementedException();
                             VmUtil.ReadTwoValues(ref stack, out vTypeCode, out aSpan, out bSpan);
@@ -350,6 +357,9 @@ namespace DarkBasicYo.Virtual
                             
                             break;
                         case OpCodes.DISCARD:
+                            stack.Pop();
+                            break;
+                        case OpCodes.DISCARD2:
                             stack.Pop();
                             break;
                         case OpCodes.WRITE:

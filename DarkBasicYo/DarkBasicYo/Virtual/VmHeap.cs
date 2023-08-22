@@ -108,7 +108,15 @@ namespace DarkBasicYo.Virtual
                     return;
                 }
 
-                throw new NotImplementedException("Heap exception: Heap overflow! Maybe I should auto expand the heap");
+                while (_cursor + size >= memory.Length)
+                {
+                    Array.Resize(ref memory, memory.Length * 2);
+                }
+            }
+
+            if (_cursor == 476)
+            {
+                
             }
             
             // reserve from the cursor to size offset...

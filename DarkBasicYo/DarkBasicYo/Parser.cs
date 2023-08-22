@@ -7,6 +7,15 @@ using DarkBasicYo.Virtual;
 namespace DarkBasicYo
 {
 
+    public class CompilerException : Exception
+    {
+        public CompilerException(string message, IAstNode node) 
+        :base ($"Compiler Exception: {message} at {node.StartToken.Location}-{node.EndToken?.Location}({node.ToString()})")
+        {
+            
+        }
+    }
+    
     public class ParserException : Exception
     {
         public string Message { get; }
@@ -14,7 +23,7 @@ namespace DarkBasicYo
         public Token End { get; }
 
         public ParserException(string message, Token start, Token end = null)
-            : base($"Parse Exception: {message} at {start.Location}-{end?.Location}(${start.lexem.type})")
+            : base($"Parse Exception: {message} at {start.Location}-{end?.Location}({start.lexem.type})")
         {
             Message = message;
             Start = start;
@@ -295,12 +304,34 @@ namespace DarkBasicYo
         private List<IExpressionNode> ParseCommandArgs(Token token, CommandInfo command)
         {
             var argExpressions = new List<IExpressionNode>();
+
+            bool isOpenParen = _stream.Peek.type == LexemType.ParenOpen;
+            if (isOpenParen)
+            {
+                // discard
+                _stream.Advance();
+            }
+
+            void EnsureCloseParen()
+            {
+                if (isOpenParen)
+                {
+                    if (_stream.Advance().type != LexemType.ParenClose)
+                    {
+                        throw new ParserException("Expected to find close paren for command if there is an open paren",
+                            token, _stream.Current);
+                    }
+                }
+            }
+
+            var parsedCount = 0;
+            
             for (var i = 0; i < command.args.Length; i++)
             {
                 
                 var argDescriptor = command.args[i];
                 if (argDescriptor.isVmArg) continue;
-
+                
                 if (argDescriptor.isParams)
                 {
                     // this must be the last named param, and we read until the end!
@@ -324,10 +355,11 @@ namespace DarkBasicYo
                         }
                     }
 
+                    EnsureCloseParen();
                     return argExpressions;
                 }
                 
-                if (i > 0)
+                if (parsedCount > 0)
                 {
                     // expect an arg separator
                     var commaToken = _stream.Peek;
@@ -335,6 +367,7 @@ namespace DarkBasicYo
                     {
                         if (argDescriptor.isOptional)
                         {
+                            EnsureCloseParen();
                             return argExpressions;
                         }
                         throw new ParserException("Expected a comma to separate args", commaToken);
@@ -356,9 +389,11 @@ namespace DarkBasicYo
                     argExpressions.Add(argExpr);
                 }
 
-            
+                parsedCount++;
+
             }
 
+            EnsureCloseParen();
             return argExpressions;
         }
 
@@ -528,18 +563,6 @@ namespace DarkBasicYo
         {
             var typeMember = ParseTypeMember();
             return new ParameterNode(typeMember.name, typeMember.type);
-            // var nameToken = _stream.Advance();
-            // string variableName = null;
-            // switch (nameToken.type)
-            // {
-            //     case LexemType.VariableGeneral:
-            //     case LexemType.VariableReal:
-            //     case LexemType.VariableString:
-            //         break;
-            //     default:
-            //         throw new ParserException("Expected to find a variable", nameToken);
-            // }
-            // ParseVariableReference()
         }
 
         private FunctionReturnStatement ParseExitFunction(Token endToken)

@@ -270,7 +270,8 @@ namespace DarkBasicYo.Virtual
             //     bytes[w] = b;
             // }
                             
-            heap.Write(writePtr, writeLength, span.ToArray());
+            //heap.Write(writePtr, writeLength, span.ToArray());
+            heap.WriteSpan(writePtr, writeLength, span);
 
             if (pushPtr)
             {

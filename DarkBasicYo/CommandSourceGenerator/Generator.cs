@@ -201,12 +201,13 @@ public static void {descriptor.MethodName}({nameof(VirtualMachine)} {VM})
                     case "void":
                         sb.AppendLine(GetInvokeSource(descriptor));
                         break;
+                    case "byte":
                     case "int":
                         sb.AppendLine($"var {result} = {GetInvokeSource(descriptor)}");
 
                         sb.AppendLine($"ReadOnlySpan<byte> {resultSpan} = {nameof(BitConverter)}.{nameof(BitConverter.GetBytes)}({result});");
 
-                        sb.AppendLine($"{nameof(VmUtil)}.{nameof(VmUtil.PushSpan)}(ref {VM}.{nameof(VirtualMachine.stack)}, {resultSpan}, {TypeCodes.INT});");
+                        sb.AppendLine($"{nameof(VmUtil)}.{nameof(VmUtil.PushSpan)}(ref {VM}.{nameof(VirtualMachine.stack)}, {resultSpan}, {descriptor.ReturnTypeCode});");
                         break;
                     case "string":
                         sb.AppendLine($"var {result} = {GetInvokeSource(descriptor)}");
@@ -331,37 +332,6 @@ public static void {descriptor.MethodName}({nameof(VirtualMachine)} {VM})
                     "var " + descriptor.VariableStateName,
                     "var " + descriptor.VariableAddress);
                 sb.AppendLine(src);
-                
-                // switch (descriptor.TypeName)
-                // {
-                //     case "object":
-                //         sb.AppendLine($"{nameof(VmUtil)}.{nameof(VmUtil.ReadValueAny)}(" +
-                //                       $"{VM}, " +
-                //                       $"{(descriptor.IsOptional ? descriptor.OptionalExpr.ToString() : "default")}, " +
-                //                       $"out var {descriptor.Name}," +
-                //                       $"out var {descriptor.VariableStateName}," +
-                //                       $"out var {descriptor.VariableAddress}" +
-                //                       $");");
-                //         break;
-                //     case "int":
-                //         sb.AppendLine($"{nameof(VmUtil)}.{nameof(VmUtil.ReadValue)}<{descriptor.TypeName}>(" +
-                //                       $"{VM}, " +
-                //                       $"{(descriptor.IsOptional ? descriptor.OptionalExpr.ToString() : "default")}, " +
-                //                       $"out var {descriptor.Name}," +
-                //                       $"out var {descriptor.VariableStateName}," +
-                //                       $"out var {descriptor.VariableAddress}" +
-                //                       $");");
-                //         break;
-                //     case ("string"):
-                //         sb.AppendLine($"{nameof(VmUtil)}.{nameof(VmUtil.ReadValueString)}(" +
-                //                       $"{VM}, " +
-                //                       $"{(descriptor.IsOptional ? descriptor.OptionalExpr.ToString() : "default")}, " +
-                //                       $"out var {descriptor.Name}," +
-                //                       $"out var {descriptor.VariableStateName}," +
-                //                       $"out var {descriptor.VariableAddress}" +
-                //                       $");");
-                //         break;
-                // }
             }
             catch (Exception ex)
             {
@@ -389,6 +359,7 @@ public static void {descriptor.MethodName}({nameof(VirtualMachine)} {VM})
                                   $"out {addrVariable}" +
                                   $");");
                     break;
+                case "byte":
                 case "int":
                     return ($"{nameof(VmUtil)}.{nameof(VmUtil.ReadValue)}<{typeName}>(" +
                                   $"{VM}, " +
@@ -426,6 +397,24 @@ public static void {descriptor.MethodName}({nameof(VirtualMachine)} {VM})
         public string Sig => ReturnType + "R" + string.Join("", Parameters.Select(x => x.TypeCode + (x.IsRef ? "O":"")));
 
         public string ReturnType => methodSyntax.ReturnType.ToString();
+
+        public byte ReturnTypeCode
+        {
+            get
+            {
+                switch (ReturnType)
+                {
+                    case "int":
+                        return TypeCodes.INT;
+                    case "byte":
+                        return TypeCodes.BYTE;
+                    case "string":
+                        return TypeCodes.STRING;
+                    default:
+                        throw new NotImplementedException("unhandled return type");
+                }
+            }
+        }
         
         
         public List<ArgDescriptor> Parameters =>
@@ -478,6 +467,7 @@ public static void {descriptor.MethodName}({nameof(VirtualMachine)} {VM})
                 {
                     "int" => TypeCodes.INT,
                     "string" => TypeCodes.STRING,
+                    "byte" => TypeCodes.BYTE,
                     "object" => TypeCodes.ANY,
                     nameof(VirtualMachine) => TypeCodes.VM,
                     _ => throw new Exception($"Type=[{TypeName}] is not a valid arg type")

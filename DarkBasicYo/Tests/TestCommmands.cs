@@ -156,5 +156,21 @@ namespace Tests
         {
             x = "tuna";
         }
+        
+        [DarkBasicCommand("rgb")]
+        public static int RgbToHex(byte r, byte g, byte b)
+        {
+            var color = 0;
+            color = r;
+            color = color + g << 4;
+            color = color + b << 8;
+            return color;
+        }
+
+        [DarkBasicCommand("ink")]
+        public static void Ink([FromVm] VirtualMachine vm, int foreground, int background)
+        {
+            
+        }
     }
 }

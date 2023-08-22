@@ -21,6 +21,6 @@ namespace DarkBasicYo.Virtual
         {
             method.executor(machine);
         }
+        
     }
-
 }

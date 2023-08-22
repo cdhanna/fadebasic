@@ -221,6 +221,7 @@ namespace DarkBasicYo
             }
 
             var lexems = Lexems.ToList();
+            // commands
             foreach (var command in commands.Commands)
             {
                 // var pattern = "";
@@ -235,11 +236,19 @@ namespace DarkBasicYo
                     }
                 });
                 var pattern = "^" + string.Join("", components);
-                var commandLexem = new Lexem(-1, LexemType.CommandWord, new Regex(pattern));
+                var commandLexem = new Lexem(-(pattern.Length * 100), LexemType.CommandWord, new Regex(pattern));
                 lexems.Add(commandLexem);
             }
 
-            lexems.Sort((a, b) => a.priority.CompareTo(b.priority));
+            lexems.Sort((a, b) =>
+            {
+                var prioCompare = a.priority.CompareTo(b.priority);
+                return prioCompare;
+                // if (prioCompare == 0)
+                // {
+                //     
+                // }
+            });
 
             var lines = input.Split(new string[]{"\n"}, StringSplitOptions.RemoveEmptyEntries);
 

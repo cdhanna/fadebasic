@@ -2,7 +2,7 @@ using System;
 
 namespace DarkBasicYo.SourceGenerators
 {
-    [AttributeUsage(AttributeTargets.Method)]
+    [AttributeUsage(AttributeTargets.Method, AllowMultiple = true)]
     public class DarkBasicCommandAttribute : Attribute
     {
         public string Name { get; }
