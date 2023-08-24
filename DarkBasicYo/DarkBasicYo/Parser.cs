@@ -269,7 +269,7 @@ namespace DarkBasicYo
                             {
                                 startToken = token,endToken = _stream.Current,
                                 rankExpressions = rankExpressions,
-                                variableName = token.raw
+                                variableName = token.caseInsensitiveRaw
                             };
                             
                             if (_stream.Peek?.type == LexemType.FieldSplitter)
@@ -383,7 +383,7 @@ namespace DarkBasicYo
                     var variableReference = ParseVariableReference();
                     argExpressions.Add(new AddressExpression(variableReference, token));
                 }
-                else
+                else if (!argDescriptor.isOptional)
                 {
                     var argExpr = ParseWikiExpression();
                     argExpressions.Add(argExpr);
@@ -424,13 +424,13 @@ namespace DarkBasicYo
                                 break;
                         }
 
-                        return new CommentStatement(token, token.raw);
+                        return new CommentStatement(token, token.caseInsensitiveRaw);
                         // return new CommentStatement(token, token.raw.Substring("remstart".Length, token.raw.Length - ("remstartremend".Length)));
                         break;
-                    case LexemType.KeywordRem when token.raw[0] == '`':
-                        return new CommentStatement(token, token.raw.Substring(1));
+                    case LexemType.KeywordRem when token.caseInsensitiveRaw[0] == '`':
+                        return new CommentStatement(token, token.caseInsensitiveRaw.Substring(1));
                     case LexemType.KeywordRem:
-                        return new CommentStatement(token, token.raw.Substring(3));
+                        return new CommentStatement(token, token.caseInsensitiveRaw.Substring(3));
                     case LexemType.KeywordIf:
                         return ParseIfStatement(token);
                     case LexemType.KeywordWhile:
@@ -473,7 +473,7 @@ namespace DarkBasicYo
 
                         switch (secondToken.type)
                         {
-                            case LexemType.EndStatement when secondToken.raw == ":":
+                            case LexemType.EndStatement when secondToken.caseInsensitiveRaw == ":":
                                 return new LabelDeclarationNode(token, secondToken);
                                 break;
                             case LexemType.EndStatement:
@@ -500,7 +500,7 @@ namespace DarkBasicYo
                                     endToken = _stream.Current,
                                     type = type,
                                     scopeType = scopeType,
-                                    variable = token.raw
+                                    variable = token.caseInsensitiveRaw
                                 };
                             default:
                                 throw new Exception("parser exception! Unknown statement, " + secondToken.type);
@@ -512,7 +512,7 @@ namespace DarkBasicYo
                         // resolve the command using the command index....
                         if (!_commands.TryGetCommandDescriptor(token, out var command))
                         {
-                            throw new Exception("Parser exception! unknown command " + token.raw);
+                            throw new Exception("Parser exception! unknown command " + token.caseInsensitiveRaw);
                         }
 
                         // parse the args!
@@ -654,7 +654,7 @@ namespace DarkBasicYo
             {
                 statements = statements,
                 parameters = parameters,
-                name = nameToken.raw,
+                name = nameToken.caseInsensitiveRaw,
                 startToken = functionToken,
                 endToken = _stream.Current
             };
@@ -981,7 +981,7 @@ namespace DarkBasicYo
                         var nextToken = _stream.Peek;
                         switch (nextToken.type)
                         {
-                            case LexemType.EndStatement when nextToken.raw == ":":
+                            case LexemType.EndStatement when nextToken.caseInsensitiveRaw == ":":
                                 _stream.Advance();
                                 break;
                             case LexemType.EndStatement:
@@ -1349,7 +1349,7 @@ namespace DarkBasicYo
                     _stream.Advance();
                     if (!_commands.TryGetCommandDescriptor(token, out var command))
                     {
-                        throw new Exception("Parser exception! unknown command " + token.raw);
+                        throw new Exception("Parser exception! unknown command " + token.caseInsensitiveRaw);
                     }
 
                     // parse the args!

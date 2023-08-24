@@ -55,7 +55,7 @@ namespace DarkBasicYo.Ast
 
         public VariableRefNode(Token token) : base(token)
         {
-            variableName = token.raw;
+            variableName = token.caseInsensitiveRaw;
         }
 
         public VariableType DefaultTypeByName

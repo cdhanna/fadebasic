@@ -59,7 +59,7 @@ namespace DarkBasicYo.Ast
         public string label;
         public GotoStatement(Token startToken, Token labelToken) : base(startToken, labelToken)
         {
-            label = labelToken.raw;
+            label = labelToken.caseInsensitiveRaw;
         }
 
         protected override string GetString()
@@ -100,7 +100,7 @@ namespace DarkBasicYo.Ast
         public string label;
         public GoSubStatement(Token startToken, Token labelToken) : base(startToken, labelToken)
         {
-            label = labelToken.raw;
+            label = labelToken.caseInsensitiveRaw;
         }
 
         protected override string GetString()

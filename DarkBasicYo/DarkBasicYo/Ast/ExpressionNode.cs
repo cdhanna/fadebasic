@@ -218,9 +218,9 @@ namespace DarkBasicYo.Ast
 
         public LiteralIntExpression(Token token) : base(token)
         {
-            if (!int.TryParse(token.raw, out value))
+            if (!int.TryParse(token.caseInsensitiveRaw, out value))
             {
-                throw new Exception("Parser exception! Expected int, but found " + token.raw);
+                throw new Exception("Parser exception! Expected int, but found " + token.caseInsensitiveRaw);
             }
         }
 
@@ -242,15 +242,15 @@ namespace DarkBasicYo.Ast
 
         public LiteralRealExpression(Token token) : base(token)
         {
-            if (!float.TryParse(token.raw, out value))
+            if (!float.TryParse(token.caseInsensitiveRaw, out value))
             {
-                throw new Exception("Parser exception! Expected float, but found " + token.raw);
+                throw new Exception("Parser exception! Expected float, but found " + token.caseInsensitiveRaw);
             }
         }
 
         protected override string GetString()
         {
-            return startToken.raw;
+            return startToken.caseInsensitiveRaw;
         }
     }
 
@@ -260,7 +260,7 @@ namespace DarkBasicYo.Ast
 
         public LiteralStringExpression(Token token) : base(token)
         {
-            value = token.raw.Substring(1, token.raw.Length - 2); // account for quotes
+            value = token.raw.Substring(1, token.caseInsensitiveRaw.Length - 2); // account for quotes
         }
 
 

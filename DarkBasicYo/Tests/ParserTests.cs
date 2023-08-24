@@ -60,6 +60,16 @@ public partial class ParserTests
         Assert.That(code, Is.EqualTo("((= (ref x),(\"hello\")))"));
     }
 
+    [Test]
+    public void String_Assign_Capitals()
+    {
+        var input = "x = \"Hello World\"";
+        var parser = MakeParser(input);
+        var prog = parser.ParseProgram();
+        
+        var code = prog.ToString();
+        Assert.That(code, Is.EqualTo("((= (ref x),(\"Hello World\")))"));
+    }
     
     [Test]
     public void String_Declare()
@@ -113,6 +123,19 @@ print x";
         Assert.That(prog.statements.Count, Is.EqualTo(1));
         var code = prog.ToString();
         Assert.That(code, Is.EqualTo("((call ink (5),(2)))"));
+    }
+
+    [Test]
+    public void CallHostStatement_ClsIssue()
+    {
+        var input = @"cls";
+        var tokenStream = new TokenStream(_lexer.Tokenize(input, TestCommands.CommandsForTesting));
+        var parser = new Parser(tokenStream, TestCommands.CommandsForTesting);
+        var prog = parser.ParseProgram();
+        
+        Assert.That(prog.statements.Count, Is.EqualTo(1));
+        var code = prog.ToString();
+        Assert.That(code, Is.EqualTo("((call cls))"));
     }
 
 

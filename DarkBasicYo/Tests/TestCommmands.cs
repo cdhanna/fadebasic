@@ -70,6 +70,13 @@ namespace Tests
             return sum;
         }
         
+        [DarkBasicCommand("cls")]
+        public static void ClearScreen([FromVm] VirtualMachine vm, int color=0)
+        {
+            
+        }
+
+        
         
         [DarkBasicCommand("get last")]
         public static int SillyLast(params int[] numbers)
@@ -155,6 +162,12 @@ namespace Tests
         public static void Tuna(ref string x)
         {
             x = "tuna";
+        }
+        
+        [DarkBasicCommand("complexArg")]
+        public static void ComplexArg([FromVm] VirtualMachine vm, RawArg<int> arg)
+        {
+            VmUtil.HandleValue(vm, arg.value * 2, TypeCodes.INT, arg.state, arg.address);
         }
         
         [DarkBasicCommand("rgb")]

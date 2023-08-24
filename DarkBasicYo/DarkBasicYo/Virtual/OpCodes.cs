@@ -84,7 +84,6 @@ namespace DarkBasicYo.Virtual
         /// Expects to find two values in the stack 
         /// </summary>
         public const byte ADD = 2;
-        public const byte ADD2 = 70;
         public const byte MUL = 3;
         public const byte DIVIDE = 4;
         public const byte BREAKPOINT = 255;
@@ -146,7 +145,6 @@ namespace DarkBasicYo.Virtual
         /// Reads a value from the stack, and does nothing with it.
         /// </summary>
         public const byte DISCARD = 15;
-        public const byte DISCARD2 = 50;
 
         /// <summary>
         /// Reads a ptr value from the stack, and that ptr is used as a heap address. The result on the stack is the length (in bytes) of the allocation on the heap

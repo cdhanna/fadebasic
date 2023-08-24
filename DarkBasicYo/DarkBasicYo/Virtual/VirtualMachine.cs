@@ -266,11 +266,6 @@ namespace DarkBasicYo.Virtual
                             // VmUtil.Push(stack, cBytes, vTypeCode);
                             VmUtil.PushSpan(ref stack, cSpan, vTypeCode);
                             break;
-                        case OpCodes.ADD2:
-                            VmUtil.ReadTwoValues(ref stack, out vTypeCode, out aSpan, out bSpan);
-                            VmUtil.Add(ref heap, vTypeCode, aSpan, bSpan, out cSpan);
-                            VmUtil.PushSpan(ref stack, cSpan, vTypeCode);
-                            break;
                         case OpCodes.MUL:
                             // throw new NotImplementedException();
                             VmUtil.ReadTwoValues(ref stack, out vTypeCode, out aSpan, out bSpan);
@@ -356,9 +351,6 @@ namespace DarkBasicYo.Virtual
                             
                             break;
                         case OpCodes.DISCARD:
-                            stack.Pop();
-                            break;
-                        case OpCodes.DISCARD2:
                             stack.Pop();
                             break;
                         case OpCodes.WRITE:

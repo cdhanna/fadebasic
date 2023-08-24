@@ -274,14 +274,14 @@ namespace DarkBasicYo
 
                 } else if (remBlockToken != null && (line.ToLowerInvariant().StartsWith("remend") || lineNumber == lines.Length - 1))
                 {
-                    remBlockToken.raw = remBlockSb.ToString();
+                    remBlockToken.caseInsensitiveRaw = remBlockSb.ToString();
                     tokens.Add(remBlockToken);
                     tokens.Add(new Token
                     {
                         lexem = new Lexem(LexemType.KeywordRemEnd, null),
                         charNumber = 0,
                         lineNumber = lineNumber,
-                        raw = line
+                        caseInsensitiveRaw = line
                     });
                     remBlockToken = null;
                     continue;
@@ -294,7 +294,8 @@ namespace DarkBasicYo
                 for (var charNumber = 0; charNumber < line.Length; charNumber = charNumber)
                 {
                     var foundMatch = false;
-                    var subStr = line.Substring(charNumber).ToLowerInvariant();
+                    var sub = line.Substring(charNumber);
+                    var subStr = sub.ToLowerInvariant();
 
                     for (var lexemId = 0; lexemId < lexems.Count; lexemId++)
                     {
@@ -303,9 +304,11 @@ namespace DarkBasicYo
                         if (matches.Count == 1)
                         {
                             foundMatch = true;
+                            
                             var token = new Token
                             {
-                                raw = matches[0].Value,
+                                caseInsensitiveRaw = matches[0].Value,
+                                raw = sub.Substring(matches[0].Index, matches[0].Length),
                                 lexem = lexem,
                                 lineNumber = lineNumber,
                                 charNumber = charNumber
@@ -321,7 +324,7 @@ namespace DarkBasicYo
                                     break;
                             }
                             
-                            charNumber += token.raw.Length;
+                            charNumber += token.caseInsensitiveRaw.Length;
                             break;
                         }
                         else if (matches.Count > 1)
@@ -343,7 +346,7 @@ namespace DarkBasicYo
                         charNumber = line.Length, 
                         lexem = eolLexem,
                         lineNumber = lineNumber,
-                        raw = "\n"
+                        caseInsensitiveRaw = "\n"
                     });
                 }
                 
@@ -386,6 +389,7 @@ namespace DarkBasicYo
         public int lineNumber;
         public int charNumber;
         public string raw;
+        public string caseInsensitiveRaw;
         public LexemType type => lexem.type;
         public string Location => $"{lineNumber}:{charNumber}";
 

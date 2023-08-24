@@ -2536,6 +2536,18 @@ any input ""darn"", y
     }
     
     [Test]
+    public void CallHost_RefType_AsRaw()
+    {
+        var src = "x = 7: complexArg x:";
+        Setup(src, out var compiler, out var prog);
+        var vm = new VirtualMachine(prog);
+        vm.hostMethods = compiler.methodTable;
+        vm.Execute2();
+        Assert.That(vm.typeRegisters[0], Is.EqualTo(TypeCodes.INT));
+        Assert.That(vm.dataRegisters[0], Is.EqualTo(14));
+    }
+    
+    [Test]
     public void CallHost_Params()
     {
         var src = @"
@@ -2627,6 +2639,19 @@ x$ = concat 1, ""hello"", 2
         Assert.That(str, Is.EqualTo("tuna"));
     }
 
+    [Test]
+    public void CallHost_RefType_String_2()
+    {
+        var src = "tuna x$ ";
+        Setup(src, out var compiler, out var prog);
+        var vm = new VirtualMachine(prog);
+        vm.hostMethods = compiler.methodTable;
+        vm.Execute2();
+        Assert.That(vm.typeRegisters[0], Is.EqualTo(TypeCodes.STRING));
+        vm.heap.Read((int)vm.dataRegisters[0], "tuna".Length * 4, out var memory);
+        var str = VmConverter.ToString(memory);
+        Assert.That(str, Is.EqualTo("tuna"));
+    }
     
     [Test]
     public void CallHost_RefType_Int_FromArrayMulti()

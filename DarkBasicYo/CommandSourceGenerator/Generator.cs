@@ -84,6 +84,7 @@ namespace TunaTester
             return $@"// generated file
 using DarkBasicYo.Virtual;
 using System.Runtime.InteropServices;
+using DarkBasicYo.SourceGenerators;
 using System;
 
 namespace {namespaceStr}
@@ -154,6 +155,7 @@ namespace {namespaceStr}
     {nameof(CommandArgInfo.isOptional)} = {arg.IsOptional.ToString().ToLowerInvariant()},
     {nameof(CommandArgInfo.isRef)} = {arg.IsRef.ToString().ToLowerInvariant()},
     {nameof(CommandArgInfo.isParams)} = {arg.IsParams.ToString().ToLowerInvariant()},
+    {nameof(CommandArgInfo.isRawArg)} = {arg.IsRaw.ToString().ToLowerInvariant()},
     {nameof(CommandArgInfo.typeCode)} = {arg.TypeCode}
 }}";
         }
@@ -274,7 +276,7 @@ public static void {descriptor.MethodName}({nameof(VirtualMachine)} {VM})
 
         static string GetInvokeParameterSource(CommandDescriptor descriptor, ArgDescriptor arg)
         {
-            if (arg.IsRef)
+            if (arg.IsRef && !arg.IsRaw)
             {
                 return $"ref {arg.Name}";
             }
@@ -348,6 +350,23 @@ public static void {descriptor.MethodName}({nameof(VirtualMachine)} {VM})
         static string GenerateVariableReadSource(string typeName, string optionalStr, string name, string stateVariable, string addrVariable)
         {
             // var n = new int[3];
+
+            if (typeName.StartsWith("RawArg<"))
+            {
+                var subTypeName = typeName.Substring("RawArg<".Length, typeName.Length - ("rawArg<1".Length));
+                var src = GenerateVariableReadSource(subTypeName, "default", name + "__Raw", stateVariable, addrVariable);
+
+                src += $@"
+{name} = new {typeName}
+{{
+    {nameof(RawArg<int>.value)} = {name.Replace("var ", "") + "__Raw"},
+    {nameof(RawArg<int>.address)} = {addrVariable.Replace("var ", "")},
+    {nameof(RawArg<int>.state)} = {stateVariable.Replace("var ", "")}
+}};
+";
+                return src;
+            }
+            
             switch (typeName)
             {
                 case "object":
@@ -438,8 +457,9 @@ public static void {descriptor.MethodName}({nameof(VirtualMachine)} {VM})
         public string ParamsLengthVariableName => _parameter.Identifier + "VarParamsLength";
 
         public string TypeName => _parameter.Type.ToString();
-        public bool IsRef => _parameter.Modifiers.Any(SyntaxKind.RefKeyword);
+        public bool IsRef => IsRaw || _parameter.Modifiers.Any(SyntaxKind.RefKeyword);
         public bool IsParams => _parameter.Modifiers.Any(SyntaxKind.ParamsKeyword);
+        public bool IsRaw => TypeName.StartsWith("RawArg");
 
         public bool IsVm => _parameter.AttributeLists.Any(x => x.Attributes.Any(attribute =>
         {
@@ -469,6 +489,8 @@ public static void {descriptor.MethodName}({nameof(VirtualMachine)} {VM})
                     "string" => TypeCodes.STRING,
                     "byte" => TypeCodes.BYTE,
                     "object" => TypeCodes.ANY,
+                    "RawArg<int>" => TypeCodes.INT,
+                    "RawArg<string>" => TypeCodes.STRING,
                     nameof(VirtualMachine) => TypeCodes.VM,
                     _ => throw new Exception($"Type=[{TypeName}] is not a valid arg type")
                 };

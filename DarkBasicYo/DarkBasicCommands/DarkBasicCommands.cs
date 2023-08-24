@@ -34,11 +34,18 @@ namespace DarkBasicYo
         //     return 0;
         // }
         //
-        [DarkBasicCommand("Many")]
-        public static int Many(params int[] many)
+        // [DarkBasicCommand("Many")]
+        // public static int Many(params int[] many)
+        // {
+        //     return many.Length;
+        // }
+        //
+        [DarkBasicCommand("complexArg")]
+        public static void ComplexArg([FromVm] VirtualMachine vm, RawArg<int> arg)
         {
-            return many.Length;
+            VmUtil.HandleValue(vm, 44, TypeCodes.INT, arg.state, arg.address);
         }
+
         //
         //
         //

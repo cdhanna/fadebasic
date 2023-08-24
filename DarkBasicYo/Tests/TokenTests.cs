@@ -23,7 +23,7 @@ public class TokenizeTests
         Assert.That(tokens[0].type, Is.EqualTo(LexemType.LiteralReal));
         Assert.That(tokens[0].lineNumber, Is.EqualTo(0));
         Assert.That(tokens[0].charNumber, Is.EqualTo(0));
-        Assert.That(tokens[0].raw, Is.EqualTo(".5"));
+        Assert.That(tokens[0].caseInsensitiveRaw, Is.EqualTo(".5"));
         Assert.That(tokens[1].type, Is.EqualTo(LexemType.EndStatement));
     }
 
@@ -41,7 +41,7 @@ public class TokenizeTests
         Assert.That(tokens[0].type, Is.EqualTo(LexemType.CommandWord));
         Assert.That(tokens[0].lineNumber, Is.EqualTo(0));
         Assert.That(tokens[0].charNumber, Is.EqualTo(0));
-        Assert.That(tokens[0].raw, Is.EqualTo("print"));
+        Assert.That(tokens[0].caseInsensitiveRaw, Is.EqualTo("print"));
         Assert.That(tokens[1].type, Is.EqualTo(LexemType.EndStatement));
 
     }
@@ -60,20 +60,20 @@ public class TokenizeTests
         Assert.That(tokens[0].type, Is.EqualTo(LexemType.CommandWord));
         Assert.That(tokens[0].lineNumber, Is.EqualTo(0));
         Assert.That(tokens[0].charNumber, Is.EqualTo(0));
-        Assert.That(tokens[0].raw, Is.EqualTo("print"));
+        Assert.That(tokens[0].caseInsensitiveRaw, Is.EqualTo("print"));
         
         Assert.That(tokens[1].type, Is.EqualTo(LexemType.LiteralInt));
-        Assert.That(tokens[1].raw, Is.EqualTo("1"));
+        Assert.That(tokens[1].caseInsensitiveRaw, Is.EqualTo("1"));
         
         Assert.That(tokens[2].type, Is.EqualTo(LexemType.ArgSplitter));
 
         Assert.That(tokens[3].type, Is.EqualTo(LexemType.LiteralInt));
-        Assert.That(tokens[3].raw, Is.EqualTo("4"));
+        Assert.That(tokens[3].caseInsensitiveRaw, Is.EqualTo("4"));
         
         Assert.That(tokens[4].type, Is.EqualTo(LexemType.ArgSplitter));
         
         Assert.That(tokens[5].type, Is.EqualTo(LexemType.LiteralInt));
-        Assert.That(tokens[5].raw, Is.EqualTo("2"));
+        Assert.That(tokens[5].caseInsensitiveRaw, Is.EqualTo("2"));
         
         Assert.That(tokens[6].type, Is.EqualTo(LexemType.EndStatement));
 
@@ -93,12 +93,12 @@ public class TokenizeTests
         Assert.That(tokens[0].type, Is.EqualTo(LexemType.CommandWord));
         Assert.That(tokens[0].lineNumber, Is.EqualTo(0));
         Assert.That(tokens[0].charNumber, Is.EqualTo(0));
-        Assert.That(tokens[0].raw, Is.EqualTo("print"));
+        Assert.That(tokens[0].caseInsensitiveRaw, Is.EqualTo("print"));
         
         Assert.That(tokens[1].type, Is.EqualTo(LexemType.VariableGeneral));
         Assert.That(tokens[1].lineNumber, Is.EqualTo(0));
         Assert.That(tokens[1].charNumber, Is.EqualTo(6));
-        Assert.That(tokens[1].raw, Is.EqualTo("hank"));
+        Assert.That(tokens[1].caseInsensitiveRaw, Is.EqualTo("hank"));
         Assert.That(tokens[2].type, Is.EqualTo(LexemType.EndStatement));
 
     }
@@ -117,12 +117,12 @@ public class TokenizeTests
         Assert.That(tokens[0].type, Is.EqualTo(LexemType.CommandWord));
         Assert.That(tokens[0].lineNumber, Is.EqualTo(0));
         Assert.That(tokens[0].charNumber, Is.EqualTo(0));
-        Assert.That(tokens[0].raw, Is.EqualTo("print"));
+        Assert.That(tokens[0].caseInsensitiveRaw, Is.EqualTo("print"));
         
         Assert.That(tokens[1].type, Is.EqualTo(LexemType.VariableReal));
         Assert.That(tokens[1].lineNumber, Is.EqualTo(0));
         Assert.That(tokens[1].charNumber, Is.EqualTo(6));
-        Assert.That(tokens[1].raw, Is.EqualTo("f#"));
+        Assert.That(tokens[1].caseInsensitiveRaw, Is.EqualTo("f#"));
         Assert.That(tokens[2].type, Is.EqualTo(LexemType.EndStatement));
 
     }
@@ -141,12 +141,12 @@ public class TokenizeTests
         Assert.That(tokens[0].type, Is.EqualTo(LexemType.CommandWord));
         Assert.That(tokens[0].lineNumber, Is.EqualTo(0));
         Assert.That(tokens[0].charNumber, Is.EqualTo(0));
-        Assert.That(tokens[0].raw, Is.EqualTo("print"));
+        Assert.That(tokens[0].caseInsensitiveRaw, Is.EqualTo("print"));
         
         Assert.That(tokens[1].type, Is.EqualTo(LexemType.VariableString));
         Assert.That(tokens[1].lineNumber, Is.EqualTo(0));
         Assert.That(tokens[1].charNumber, Is.EqualTo(6));
-        Assert.That(tokens[1].raw, Is.EqualTo("f$"));
+        Assert.That(tokens[1].caseInsensitiveRaw, Is.EqualTo("f$"));
         Assert.That(tokens[2].type, Is.EqualTo(LexemType.EndStatement));
 
     }
@@ -165,7 +165,7 @@ public class TokenizeTests
         Assert.That(tokens[0].type, Is.EqualTo(LexemType.CommandWord));
         Assert.That(tokens[0].lineNumber, Is.EqualTo(0));
         Assert.That(tokens[0].charNumber, Is.EqualTo(0));
-        Assert.That(tokens[0].raw, Is.EqualTo("wait key"));
+        Assert.That(tokens[0].caseInsensitiveRaw, Is.EqualTo("wait key"));
         Assert.That(tokens[1].type, Is.EqualTo(LexemType.EndStatement));
 
     }
@@ -184,7 +184,7 @@ public class TokenizeTests
         Assert.That(tokens[0].type, Is.EqualTo(LexemType.CommandWord));
         Assert.That(tokens[0].lineNumber, Is.EqualTo(0));
         Assert.That(tokens[0].charNumber, Is.EqualTo(0));
-        Assert.That(tokens[0].raw, Is.EqualTo("wait     key"));
+        Assert.That(tokens[0].caseInsensitiveRaw, Is.EqualTo("wait     key"));
         Assert.That(tokens[1].type, Is.EqualTo(LexemType.EndStatement));
 
     }
@@ -203,7 +203,7 @@ public class TokenizeTests
         Assert.That(tokens[0].type, Is.EqualTo(LexemType.VariableGeneral));
         Assert.That(tokens[0].lineNumber, Is.EqualTo(0));
         Assert.That(tokens[0].charNumber, Is.EqualTo(0));
-        Assert.That(tokens[0].raw, Is.EqualTo("tuna"));
+        Assert.That(tokens[0].caseInsensitiveRaw, Is.EqualTo("tuna"));
         
         Assert.That(tokens[1].type, Is.EqualTo(LexemType.EndStatement));
 
@@ -222,12 +222,12 @@ public class TokenizeTests
         Assert.That(tokens[0].type, Is.EqualTo(LexemType.VariableGeneral));
         Assert.That(tokens[0].lineNumber, Is.EqualTo(0));
         Assert.That(tokens[0].charNumber, Is.EqualTo(0));
-        Assert.That(tokens[0].raw, Is.EqualTo("tuna"));
+        Assert.That(tokens[0].caseInsensitiveRaw, Is.EqualTo("tuna"));
         
         Assert.That(tokens[4].type, Is.EqualTo(LexemType.VariableGeneral));
         Assert.That(tokens[4].lineNumber, Is.EqualTo(0));
         Assert.That(tokens[4].charNumber, Is.EqualTo(15));
-        Assert.That(tokens[4].raw, Is.EqualTo("can"));
+        Assert.That(tokens[4].caseInsensitiveRaw, Is.EqualTo("can"));
         Assert.That(tokens[5].type, Is.EqualTo(LexemType.EndStatement));
 
     }
@@ -393,17 +393,17 @@ print x";
         Assert.That(tokens[0].type, Is.EqualTo(LexemType.LiteralReal));
         Assert.That(tokens[0].lineNumber, Is.EqualTo(0));
         Assert.That(tokens[0].charNumber, Is.EqualTo(0));
-        Assert.That(tokens[0].raw, Is.EqualTo("23.1"));
+        Assert.That(tokens[0].caseInsensitiveRaw, Is.EqualTo("23.1"));
         
         Assert.That(tokens[1].type, Is.EqualTo(LexemType.LiteralReal));
         Assert.That(tokens[1].lineNumber, Is.EqualTo(0));
         Assert.That(tokens[1].charNumber, Is.EqualTo(5));
-        Assert.That(tokens[1].raw, Is.EqualTo("5.3"));
+        Assert.That(tokens[1].caseInsensitiveRaw, Is.EqualTo("5.3"));
         
         Assert.That(tokens[2].type, Is.EqualTo(LexemType.LiteralReal));
         Assert.That(tokens[2].lineNumber, Is.EqualTo(0));
         Assert.That(tokens[2].charNumber, Is.EqualTo(9));
-        Assert.That(tokens[2].raw, Is.EqualTo(".5"));
+        Assert.That(tokens[2].caseInsensitiveRaw, Is.EqualTo(".5"));
         
         Assert.That(tokens[3].type, Is.EqualTo(LexemType.EndStatement));
 
@@ -423,7 +423,7 @@ print x";
         Assert.That(tokens[0].type, Is.EqualTo(LexemType.LiteralString));
         Assert.That(tokens[0].lineNumber, Is.EqualTo(0));
         Assert.That(tokens[0].charNumber, Is.EqualTo(0));
-        Assert.That(tokens[0].raw, Is.EqualTo("\"hello world\""));
+        Assert.That(tokens[0].caseInsensitiveRaw, Is.EqualTo("\"hello world\""));
         Assert.That(tokens[1].type, Is.EqualTo(LexemType.EndStatement));
 
         
@@ -439,12 +439,12 @@ print x";
         Assert.That(tokens.Count, Is.EqualTo(4));
         
         Assert.That(tokens[0].type, Is.EqualTo(LexemType.LiteralString));
-        Assert.That(tokens[0].raw, Is.EqualTo("\"a\""));
+        Assert.That(tokens[0].caseInsensitiveRaw, Is.EqualTo("\"a\""));
         
         Assert.That(tokens[1].type, Is.EqualTo(LexemType.OpPlus));
         
         Assert.That(tokens[2].type, Is.EqualTo(LexemType.LiteralString));
-        Assert.That(tokens[2].raw, Is.EqualTo("\"b\""));
+        Assert.That(tokens[2].caseInsensitiveRaw, Is.EqualTo("\"b\""));
         
         Assert.That(tokens[3].type, Is.EqualTo(LexemType.EndStatement));
     }
@@ -461,15 +461,15 @@ print x";
         Assert.That(tokens.Count, Is.EqualTo(4));
         
         Assert.That(tokens[1].type, Is.EqualTo(LexemType.LiteralString));
-        Assert.That(tokens[1].raw, Is.EqualTo("\"hello \\\" world\""));
+        Assert.That(tokens[1].caseInsensitiveRaw, Is.EqualTo("\"hello \\\" world\""));
         
         
         
         Assert.That(tokens[0].type, Is.EqualTo(LexemType.LiteralInt));
-        Assert.That(tokens[0].raw, Is.EqualTo("1"));
+        Assert.That(tokens[0].caseInsensitiveRaw, Is.EqualTo("1"));
         
         Assert.That(tokens[2].type, Is.EqualTo(LexemType.LiteralInt));
-        Assert.That(tokens[2].raw, Is.EqualTo("2"));
+        Assert.That(tokens[2].caseInsensitiveRaw, Is.EqualTo("2"));
         Assert.That(tokens[3].type, Is.EqualTo(LexemType.EndStatement));
 
 
@@ -506,7 +506,7 @@ print x";
         Assert.That(tokens.Count, Is.EqualTo(2));
         
         Assert.That(tokens[0].type, Is.EqualTo(LexemType.VariableGeneral));
-        Assert.That(tokens[0].raw, Is.EqualTo("tuna"));
+        Assert.That(tokens[0].caseInsensitiveRaw, Is.EqualTo("tuna"));
         
         Assert.That(tokens[1].type, Is.EqualTo(LexemType.EndStatement));
 
@@ -524,7 +524,7 @@ print x";
         Assert.That(tokens.Count, Is.EqualTo(2));
         
         Assert.That(tokens[0].type, Is.EqualTo(LexemType.CommandWord));
-        Assert.That(tokens[0].raw, Is.EqualTo("wait key"));
+        Assert.That(tokens[0].caseInsensitiveRaw, Is.EqualTo("wait key"));
         
         Assert.That(tokens[1].type, Is.EqualTo(LexemType.EndStatement));
 
@@ -541,14 +541,14 @@ print x";
         Assert.That(tokens.Count, Is.EqualTo(4));
         
         Assert.That(tokens[0].type, Is.EqualTo(LexemType.VariableGeneral));
-        Assert.That(tokens[0].raw, Is.EqualTo("a"));
+        Assert.That(tokens[0].caseInsensitiveRaw, Is.EqualTo("a"));
         
         Assert.That(tokens[1].type, Is.EqualTo(LexemType.OpPower));
-        Assert.That(tokens[1].raw, Is.EqualTo("^"));
+        Assert.That(tokens[1].caseInsensitiveRaw, Is.EqualTo("^"));
         
         
         Assert.That(tokens[2].type, Is.EqualTo(LexemType.LiteralInt));
-        Assert.That(tokens[2].raw, Is.EqualTo("2"));
+        Assert.That(tokens[2].caseInsensitiveRaw, Is.EqualTo("2"));
         
         Assert.That(tokens[3].type, Is.EqualTo(LexemType.EndStatement));
 
@@ -568,12 +568,12 @@ print x";
         Assert.That(tokens[0].type, Is.EqualTo(LexemType.LiteralInt));
         Assert.That(tokens[0].lineNumber, Is.EqualTo(0));
         Assert.That(tokens[0].charNumber, Is.EqualTo(0));
-        Assert.That(tokens[0].raw, Is.EqualTo("23"));
+        Assert.That(tokens[0].caseInsensitiveRaw, Is.EqualTo("23"));
         
         Assert.That(tokens[1].type, Is.EqualTo(LexemType.LiteralInt));
         Assert.That(tokens[1].lineNumber, Is.EqualTo(0));
         Assert.That(tokens[1].charNumber, Is.EqualTo(3));
-        Assert.That(tokens[1].raw, Is.EqualTo("5"));
+        Assert.That(tokens[1].caseInsensitiveRaw, Is.EqualTo("5"));
         Assert.That(tokens[2].type, Is.EqualTo(LexemType.EndStatement));
 
     }
@@ -591,13 +591,13 @@ print x";
         Assert.That(tokens[0].type, Is.EqualTo(LexemType.LiteralInt));
         Assert.That(tokens[0].lineNumber, Is.EqualTo(0));
         Assert.That(tokens[0].charNumber, Is.EqualTo(0));
-        Assert.That(tokens[0].raw, Is.EqualTo("23"));
+        Assert.That(tokens[0].caseInsensitiveRaw, Is.EqualTo("23"));
         Assert.That(tokens[1].type, Is.EqualTo(LexemType.EndStatement));
 
         Assert.That(tokens[2].type, Is.EqualTo(LexemType.LiteralInt));
         Assert.That(tokens[2].lineNumber, Is.EqualTo(1));
         Assert.That(tokens[2].charNumber, Is.EqualTo(0));
-        Assert.That(tokens[2].raw, Is.EqualTo("5"));
+        Assert.That(tokens[2].caseInsensitiveRaw, Is.EqualTo("5"));
         Assert.That(tokens[3].type, Is.EqualTo(LexemType.EndStatement));
 
     }
@@ -616,17 +616,17 @@ print x";
         Assert.That(tokens[0].type, Is.EqualTo(LexemType.LiteralInt));
         Assert.That(tokens[0].lineNumber, Is.EqualTo(0));
         Assert.That(tokens[0].charNumber, Is.EqualTo(0));
-        Assert.That(tokens[0].raw, Is.EqualTo("23"));
+        Assert.That(tokens[0].caseInsensitiveRaw, Is.EqualTo("23"));
         
         Assert.That(tokens[1].type, Is.EqualTo(LexemType.OpMinus));
         Assert.That(tokens[1].lineNumber, Is.EqualTo(0));
         Assert.That(tokens[1].charNumber, Is.EqualTo(2));
-        Assert.That(tokens[1].raw, Is.EqualTo("-"));
+        Assert.That(tokens[1].caseInsensitiveRaw, Is.EqualTo("-"));
         
         Assert.That(tokens[2].type, Is.EqualTo(LexemType.LiteralInt));
         Assert.That(tokens[2].lineNumber, Is.EqualTo(0));
         Assert.That(tokens[2].charNumber, Is.EqualTo(3));
-        Assert.That(tokens[2].raw, Is.EqualTo("5"));
+        Assert.That(tokens[2].caseInsensitiveRaw, Is.EqualTo("5"));
         Assert.That(tokens[3].type, Is.EqualTo(LexemType.EndStatement));
 
     }
@@ -643,17 +643,17 @@ print x";
         Assert.That(tokens[0].type, Is.EqualTo(LexemType.LiteralInt));
         Assert.That(tokens[0].lineNumber, Is.EqualTo(0));
         Assert.That(tokens[0].charNumber, Is.EqualTo(0));
-        Assert.That(tokens[0].raw, Is.EqualTo("23"));
+        Assert.That(tokens[0].caseInsensitiveRaw, Is.EqualTo("23"));
         
         Assert.That(tokens[1].type, Is.EqualTo(LexemType.OpPlus));
         Assert.That(tokens[1].lineNumber, Is.EqualTo(0));
         Assert.That(tokens[1].charNumber, Is.EqualTo(2));
-        Assert.That(tokens[1].raw, Is.EqualTo("+"));
+        Assert.That(tokens[1].caseInsensitiveRaw, Is.EqualTo("+"));
         
         Assert.That(tokens[2].type, Is.EqualTo(LexemType.LiteralInt));
         Assert.That(tokens[2].lineNumber, Is.EqualTo(0));
         Assert.That(tokens[2].charNumber, Is.EqualTo(3));
-        Assert.That(tokens[2].raw, Is.EqualTo("5"));
+        Assert.That(tokens[2].caseInsensitiveRaw, Is.EqualTo("5"));
         
         Assert.That(tokens[3].type, Is.EqualTo(LexemType.EndStatement));
 

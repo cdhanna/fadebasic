@@ -1247,7 +1247,7 @@ namespace DarkBasicYo.Virtual
 
 
             // add the offset to the original pointer to get the write location
-            _buffer.Add(OpCodes.ADD2);
+            _buffer.Add(OpCodes.ADD);
 
         }
 
@@ -1271,7 +1271,7 @@ namespace DarkBasicYo.Virtual
             _buffer.Add(OpCodes.BREAKPOINT); // we don't actually want the type code to live on the heap
 
             if (ignoreType)
-            _buffer.Add(OpCodes.DISCARD2); // we don't actually want the type code to live on the heap
+            _buffer.Add(OpCodes.DISCARD); // we don't actually want the type code to live on the heap
 
             // push the size of the write operation- it is the size of the struct we happen to have!
             AddPushInt(_buffer, structType.byteSize);

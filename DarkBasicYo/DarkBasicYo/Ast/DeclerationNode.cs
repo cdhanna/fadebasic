@@ -67,7 +67,7 @@ namespace DarkBasicYo.Ast
         private void SetScope(Token scopeToken)
         {
             this.scopeType = DeclarationScopeType.Local;
-            switch (scopeToken.raw.ToLowerInvariant())
+            switch (scopeToken.caseInsensitiveRaw.ToLowerInvariant())
             {
                 case "global":
                     this.scopeType = DeclarationScopeType.Global;

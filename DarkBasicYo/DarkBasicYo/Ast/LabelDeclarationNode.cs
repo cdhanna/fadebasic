@@ -18,7 +18,7 @@ namespace DarkBasicYo.Ast
         {
             startToken = start;
             endToken = end;
-            label = start.raw;
+            label = start.caseInsensitiveRaw;
             
         }
         protected override string GetString()

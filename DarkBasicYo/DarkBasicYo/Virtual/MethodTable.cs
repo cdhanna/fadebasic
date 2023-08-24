@@ -37,6 +37,7 @@ namespace DarkBasicYo.Virtual
         public bool isOptional;
         public bool isVmArg;
         public bool isParams;
+        public bool isRawArg;
     }
     
     

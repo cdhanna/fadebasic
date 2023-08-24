@@ -1,4 +1,5 @@
 using System;
+using DarkBasicYo.Virtual;
 
 namespace DarkBasicYo.SourceGenerators
 {
@@ -18,4 +19,11 @@ namespace DarkBasicYo.SourceGenerators
     {
         
     }
+
+    public struct RawArg<T>
+    {
+        public T value;
+        public int address;
+        public CommandArgRuntimeState state;
+    } 
 }
