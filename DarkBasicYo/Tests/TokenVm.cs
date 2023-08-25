@@ -2547,6 +2547,37 @@ any input ""darn"", y
         Assert.That(vm.dataRegisters[0], Is.EqualTo(14));
     }
     
+    
+    [Test]
+    public void CallHost_Overload_1()
+    {
+        var src = @"
+x = 1
+x = overloadA x
+";
+        Setup(src, out var compiler, out var prog);
+        var vm = new VirtualMachine(prog);
+        vm.hostMethods = compiler.methodTable;
+        vm.Execute2();
+        Assert.That(vm.typeRegisters[0], Is.EqualTo(TypeCodes.INT));
+        Assert.That(vm.dataRegisters[0], Is.EqualTo(2));
+    }
+
+    [Test]
+    public void CallHost_Overload_2()
+    {
+        var src = @"
+x = 1
+x = overloadA x 4
+";
+        Setup(src, out var compiler, out var prog);
+        var vm = new VirtualMachine(prog);
+        vm.hostMethods = compiler.methodTable;
+        vm.Execute2();
+        Assert.That(vm.typeRegisters[0], Is.EqualTo(TypeCodes.INT));
+        Assert.That(vm.dataRegisters[0], Is.EqualTo(5));
+    }
+    
     [Test]
     public void CallHost_Params()
     {
@@ -2902,6 +2933,54 @@ w$ = x$(2)
         Assert.That(vm.typeRegisters[0], Is.EqualTo(TypeCodes.INT));
         Assert.That(vm.dataRegisters[0], Is.EqualTo(5));
     }
+    [Test]
+    public void CallHost_OpOrder_NewLine_CommaOnNewLine()
+    {
+        var src = @"
+x = min 5
+, 8 * 2";
+        Setup(src, out var compiler, out var prog);
+        var vm = new VirtualMachine(prog);
+        vm.hostMethods = compiler.methodTable;
+        vm.Execute2();
+        
+        Assert.That(vm.typeRegisters[0], Is.EqualTo(TypeCodes.INT));
+        Assert.That(vm.dataRegisters[0], Is.EqualTo(5));
+    }
+    
+    
+    [Test]
+    public void CallHost_OpOrder_NewLine_CommaOnSameLine()
+    {
+        var src = @"
+x = min 5,
+8 * 2";
+        Setup(src, out var compiler, out var prog);
+        var vm = new VirtualMachine(prog);
+        vm.hostMethods = compiler.methodTable;
+        vm.Execute2();
+        
+        Assert.That(vm.typeRegisters[0], Is.EqualTo(TypeCodes.INT));
+        Assert.That(vm.dataRegisters[0], Is.EqualTo(5));
+    }
+
+    [Test]
+    public void CallHost_OpOrder_NewLine_CommaBetweenManyLines()
+    {
+        var src = @"
+x = min 5,
+
+
+8 * 2";
+        Setup(src, out var compiler, out var prog);
+        var vm = new VirtualMachine(prog);
+        vm.hostMethods = compiler.methodTable;
+        vm.Execute2();
+        
+        Assert.That(vm.typeRegisters[0], Is.EqualTo(TypeCodes.INT));
+        Assert.That(vm.dataRegisters[0], Is.EqualTo(5));
+    }
+
     
     [Test]
     public void CallHost_OpOrder3()

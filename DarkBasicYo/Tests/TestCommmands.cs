@@ -146,17 +146,17 @@ namespace Tests
             return sb.ToString();
         }
         //
-        // [DarkBasicCommand("overloadA")]
-        // public static int OverloadA(string x)
-        // {
-        //     return x.Length;
-        // }
-        //     
-        // // [CommandName("overloadA")]
-        // // public static int OverloadA(int x)
-        // // {
-        // //     return x * 2;
-        // // }
+        [DarkBasicCommand("overloadA")]
+        public static int OverloadA(int a)
+        {
+            return a * 2;
+        }
+            
+        [DarkBasicCommand("overloadA")]
+        public static int OverloadA(int x, int b)
+        {
+            return x + b;
+        }
         //
         [DarkBasicCommand("tuna")]
         public static void Tuna(ref string x)

@@ -35,7 +35,7 @@ public class ExpressionTests
     
     [TestCase("\"a\"", "(\"a\")")]
     [TestCase("\"a\" + \"b\"  ", "(+ (\"a\"),(\"b\"))")]
-    [TestCase("refDbl x", "(xcall refDbl (addr (ref x)))")]
+    [TestCase("refDbl x", "(xcall refDbl (ref x))")]
     [TestCase("a.b + len a.c", "(+ ((ref a).(ref b)),(xcall len ((ref a).(ref c))))")]
     [TestCase("*x", "(derefExpr (ref x))")]
     [TestCase("*x(3)", "(derefExpr (ref x[(3)]))")]

@@ -1,5 +1,7 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
+using System.Reflection;
 using System.Text;
 using DarkBasicYo.Ast;
 using DarkBasicYo.Virtual;
@@ -301,6 +303,65 @@ namespace DarkBasicYo
             
         }
 
+        private List<IExpressionNode> ParseAvailableArgs(Token token)
+        {
+            // the rule is, just parse terms while there are commas....
+            var args = new List<IExpressionNode>();
+            
+            bool isOpenParen = _stream.Peek.type == LexemType.ParenOpen;
+            if (isOpenParen)
+            {
+                // discard
+                _stream.Advance();
+            }
+
+            void EnsureCloseParen()
+            {
+                if (isOpenParen)
+                {
+                    if (_stream.Advance().type != LexemType.ParenClose)
+                    {
+                        throw new ParserException("Expected to find close paren for command if there is an open paren",
+                            token, _stream.Current);
+                    }
+                }
+            }
+            
+            var looking = true;
+            while (looking)
+            {
+                var nextToken = _stream.Peek;
+                switch (nextToken.type)
+                {
+                    case LexemType.EOF:
+                        looking = false;
+                        break;
+                    case LexemType.ArgSplitter:
+                        _stream.Advance();
+                        break;
+                    case LexemType.EndStatement:
+                        _stream.Advance();
+                        looking = false;
+                        break;
+                    default:
+                        if (TryParseExpression(out var nextArg))
+                        {
+                            args.Add(nextArg);
+                        }
+                        else
+                        {
+                            looking = false;
+                            
+                        }
+                        break; 
+                }
+            }
+            
+            EnsureCloseParen();
+            return args;
+
+        }
+
         private List<IExpressionNode> ParseCommandArgs(Token token, CommandInfo command)
         {
             var argExpressions = new List<IExpressionNode>();
@@ -520,19 +581,72 @@ namespace DarkBasicYo
 
                     case LexemType.CommandWord:
                         // resolve the command using the command index....
-                        if (!_commands.TryGetCommandDescriptor(token, out var command))
-                        {
-                            throw new Exception("Parser exception! unknown command " + token.caseInsensitiveRaw);
-                        }
-
-                        // parse the args!
-                        var argExpressions = ParseCommandArgs(token, command);
+                        // if (!_commands.TryGetCommandDescriptor(token, out var possibleCommands))
+                        // {
+                        //     throw new Exception("Parser exception! unknown command " + token.caseInsensitiveRaw);
+                        // }
+                        //
+                        // possibleCommands = possibleCommands.ToList(); // make a copy!
+                        //
+                        // // parse the args!
+                        // // var argExpressions = ParseCommandArgs(token, command);
+                        // var commandArgs = ParseAvailableArgs(token);
+                        //
+                        // // now, based on the args that EXIST, we need to boil down the possible commands...
+                        // var invalidCommands = new List<CommandInfo>();
+                        //
+                        // foreach (var possible in possibleCommands)
+                        // {
+                        //     // each arg needs to line up to something that was actually parsed
+                        //     var j = 0; // j is the index into the parsed commands
+                        //     for (var i = 0; i < possible.args.Length; i++)
+                        //     {
+                        //         var expected = possible.args[i];
+                        //         if (expected.isVmArg) continue; // we don't expect to see vms in the parsed expression
+                        //
+                        //         if (expected.isParams) // defacto, we know this MUST be the last index
+                        //         {
+                        //             if (i != possible.args.Length - 1)
+                        //                 throw new ParserException("how can there be a params arg that is not last?",
+                        //                     token);
+                        //             
+                        //             // at this point, all remaining expressions are allows to sit here.
+                        //             j = i;
+                        //             continue;
+                        //         }
+                        //
+                        //         // okay, we are parsing!
+                        //         j++;
+                        //     }
+                        //
+                        //     if (j != possible.args.Length - 1)
+                        //     {
+                        //         invalidCommands.Add(possible);
+                        //     }
+                        // }
+                        //
+                        // possibleCommands = possibleCommands.Except(invalidCommands).ToList();
+                        //
+                        // if (possibleCommands.Count == 0)
+                        // {
+                        //     throw new ParserException("There was an error matching the args to the available command",
+                        //         token);
+                        // }
+                        //
+                        // if (possibleCommands.Count > 1)
+                        // {
+                        //     throw new ParserException(
+                        //         "There are too many possible overloads for the method call, and it is ambigious",
+                        //         token);
+                        // }
+                        //
+                        ParseCommandOverload(token, out var command, out var commandArgs);
                         return new CommandStatement
                         {
                             startToken = token,
                             endToken = _stream.Current,
                             command = command,
-                            args = argExpressions
+                            args = commandArgs
                         };
 
                     case LexemType.KeywordType:
@@ -566,6 +680,103 @@ namespace DarkBasicYo
             }
             
             return result;
+        }
+
+
+        private static bool IsValidArgCollection(CommandInfo command, List<IExpressionNode> args)
+        {
+            // does the list of args match the required args?
+
+            var argPointer = 0;
+            for (var i = 0; i < command.args.Length; i++)
+            {
+                var required = command.args[i];
+
+                if (required.isVmArg)
+                {
+                    continue; 
+                }
+
+                if (required.isParams)
+                {
+                    // we can read the rest of the args
+                    for (var j = argPointer; j < args.Count; j++)
+                    {
+                        argPointer++;
+                    }
+                    continue;
+                }
+
+                if (required.isOptional)
+                {
+                    // we may or may not need this...
+                    if (argPointer < args.Count)
+                    {
+                        argPointer++; // there is a value
+                    }
+                    continue; // whatever, it was optional!
+                }
+
+                if (argPointer <= args.Count)
+                {
+                    argPointer++;
+                }
+                else
+                {
+                    return false;
+                }
+            }
+
+            if (argPointer != args.Count)
+            {
+                return false; // too many args!
+            }
+            // if (argPointer != command.ar)
+            
+            return true;
+
+        }
+        
+        private void ParseCommandOverload(Token token, out CommandInfo command, out List<IExpressionNode> commandArgs)
+        {
+            if (!_commands.TryGetCommandDescriptor(token, out var possibleCommands))
+            {
+                throw new Exception("Parser exception! unknown command " + token.caseInsensitiveRaw);
+            }
+
+            possibleCommands = possibleCommands.ToList(); // make a copy!
+
+            // parse the args!
+            // var argExpressions = ParseCommandArgs(token, command);
+            commandArgs = ParseAvailableArgs(token);
+
+            // now, based on the args that EXIST, we need to boil down the possible commands...
+
+            var actualCommands = new List<CommandInfo>();
+            foreach (var commandOption in possibleCommands)
+            {
+                if (IsValidArgCollection(commandOption, commandArgs))
+                {
+                    actualCommands.Add(commandOption);
+                }
+            }
+            
+            
+            if (actualCommands.Count == 0)
+            {
+                throw new ParserException("There was an error matching the args to the available command",
+                    token);
+            }
+
+            if (actualCommands.Count > 1)
+            {
+                throw new ParserException(
+                    "There are too many possible overloads for the method call, and it is ambigious",
+                    token);
+            }
+
+            command = actualCommands.First();
+
         }
 
 
@@ -1357,13 +1568,16 @@ namespace DarkBasicYo
                 
                 case LexemType.CommandWord:
                     _stream.Advance();
-                    if (!_commands.TryGetCommandDescriptor(token, out var command))
-                    {
-                        throw new Exception("Parser exception! unknown command " + token.caseInsensitiveRaw);
-                    }
 
-                    // parse the args!
-                    var argExpressions = ParseCommandArgs(token, command);
+                    ParseCommandOverload(token, out var command, out var argExpressions);
+                    
+                    // if (!_commands.TryGetCommandDescriptor(token, out var command))
+                    // {
+                    //     throw new Exception("Parser exception! unknown command " + token.caseInsensitiveRaw);
+                    // }
+                    //
+                    // // parse the args!
+                    // var argExpressions = ParseCommandArgs(token, command);
                     outputExpression = new CommandExpression()
                     {
                         startToken = token,

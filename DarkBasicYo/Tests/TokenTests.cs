@@ -126,8 +126,77 @@ public class TokenizeTests
         Assert.That(tokens[2].type, Is.EqualTo(LexemType.EndStatement));
 
     }
-    
-    
+
+
+    private static void CheckTokens(LexemType[] expectedLexemTypes, List<Token> tokens)
+    {
+        
+        for (var i = 0; i < expectedLexemTypes.Length && i < tokens.Count; i++)
+        {
+            var token = tokens[i];
+            if (i >= expectedLexemTypes.Length)
+            {
+                Assert.Fail("there are too many tokens!");
+            }
+
+            var expected = expectedLexemTypes[i];
+            Assert.That(token.type, Is.EqualTo(expected), $"at index=[{i}], expected to find {expected}, but found {token.type}, as [{token.caseInsensitiveRaw}]");
+        }
+        Assert.That(tokens.Count, Is.EqualTo(expectedLexemTypes.Length));
+    }
+
+    [Test]
+    public void Tokenize_Command_Eos()
+    {
+    var input = @"
+x = min 5
+, 8 * 2";
+
+        var lexer = new Lexer();
+        var tokens = lexer.Tokenize(input, TestCommands.CommandsForTesting);
+
+        var expectedLexemTypes = new LexemType[]
+        {
+            LexemType.VariableGeneral,
+            LexemType.OpEqual,
+            LexemType.CommandWord,
+            LexemType.LiteralInt,
+            LexemType.ArgSplitter,
+            LexemType.LiteralInt,
+            LexemType.OpMultiply,
+            LexemType.LiteralInt,
+            LexemType.EndStatement,
+        };
+        CheckTokens(expectedLexemTypes, tokens);
+    }
+
+    [Test]
+    public void Tokenize_Command_Eos2()
+    {
+        var input = @"
+x = min 5,
+8 * 2";
+
+        var lexer = new Lexer();
+        var tokens = lexer.Tokenize(input, TestCommands.CommandsForTesting);
+
+        var expectedLexemTypes = new LexemType[]
+        {
+            LexemType.VariableGeneral,
+            LexemType.OpEqual,
+            LexemType.CommandWord,
+            LexemType.LiteralInt,
+            LexemType.ArgSplitter,
+            LexemType.LiteralInt,
+            LexemType.OpMultiply,
+            LexemType.LiteralInt,
+            LexemType.EndStatement,
+        };
+        CheckTokens(expectedLexemTypes, tokens);
+    }
+
+
+
     [Test]
     public void Tokenize_CommandVarStr()
     {

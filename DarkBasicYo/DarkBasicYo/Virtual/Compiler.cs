@@ -153,7 +153,7 @@ namespace DarkBasicYo.Virtual
             {
                 // methods[i] = HostMethodUtil.BuildHostMethodViaReflection(commands.Commands[i].method);
                 methods[i] = commands.Commands[i];
-                _commandToPtr[commands.Commands[i].name] = i;
+                _commandToPtr[commands.Commands[i].UniqueName] = i;
             }
             methodTable = new HostMethodTable
             {
@@ -1010,11 +1010,22 @@ namespace DarkBasicYo.Virtual
                 if (argDesc.isRef)
                 {
                     var argAddr = argExpr as AddressExpression;
-                    
-                    if (argAddr == null)
-                        throw new Exception(
-                            "Compiler exception: cannot use a ref parameter with an expr that isn't an address expr");
 
+                    if (argAddr == null)
+                    {
+
+                        if (argExpr is IVariableNode v)
+                        {
+                            argAddr = new AddressExpression(v, argExpr.StartToken);
+                        }
+                        else
+                        {
+                            throw new Exception(
+                                "Compiler exception: cannot use a ref parameter with an expr that isn't an address expr");
+                        }
+                        
+                    }
+                       
                     Compile(argAddr);
                 }
                 else
@@ -1026,7 +1037,7 @@ namespace DarkBasicYo.Virtual
             
             
             // find the address of the method
-            if (!_commandToPtr.TryGetValue(commandStatement.command.name, out var commandAddress))
+            if (!_commandToPtr.TryGetValue(commandStatement.command.UniqueName, out var commandAddress))
             {
                 throw new Exception("compiler: could not find method address: " + commandStatement.command);
             }

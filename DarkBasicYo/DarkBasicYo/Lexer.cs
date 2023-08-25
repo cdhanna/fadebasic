@@ -256,8 +256,12 @@ namespace DarkBasicYo
 
             Token remBlockToken = null;
             var remBlockSb = new StringBuilder();
+            var requestEoS = false;
+            var requestEoSCharNumber = 0;
             for (var lineNumber = 0; lineNumber < lines.Length; lineNumber++)
             {
+
+                
                 var line = lines[lineNumber];
 
                 if (remBlockToken == null && line.ToLowerInvariant().StartsWith("remstart"))
@@ -319,7 +323,23 @@ namespace DarkBasicYo
                                 case LexemType.WhiteSpace:
                                     // we ignore white space in token generation
                                     break;
+                                case LexemType.ArgSplitter:
+                                    requestEoS = false;
+                                    tokens.Add(token);
+                                    break;
                                 default:
+                                    
+                                    if (requestEoS)
+                                    {
+                                        requestEoS = false;
+                                        tokens.Add(new Token
+                                        {
+                                            charNumber = requestEoSCharNumber, 
+                                            lexem = eolLexem,
+                                            lineNumber = lineNumber,
+                                            caseInsensitiveRaw = "\n"
+                                        });
+                                    }
                                     tokens.Add(token);
                                     break;
                             }
@@ -339,17 +359,36 @@ namespace DarkBasicYo
                     }
                 }
 
-                if (tokens[tokens.Count - 1].type != LexemType.EndStatement)
+                var previousTokenWasNotEoS = tokens[tokens.Count - 1].type != LexemType.EndStatement;
+                var previousTokenWasNotArgSplitter = tokens[tokens.Count - 1].type != LexemType.ArgSplitter;
+                
+                // if the next token is an arg splitter, than we don't want an EoS either...
+                if (previousTokenWasNotEoS && previousTokenWasNotArgSplitter)
                 {
-                    tokens.Add(new Token
-                    {
-                        charNumber = line.Length, 
-                        lexem = eolLexem,
-                        lineNumber = lineNumber,
-                        caseInsensitiveRaw = "\n"
-                    });
+                    requestEoS = true;
+                    requestEoSCharNumber = line.Length;
+                    // eosInsertIndex.Add();
+                    // tokens.Add(new Token
+                    // {
+                    //     charNumber = line.Length, 
+                    //     lexem = eolLexem,
+                    //     lineNumber = lineNumber,
+                    //     caseInsensitiveRaw = "\n"
+                    // });
                 }
                 
+            }
+            
+            if (requestEoS)
+            {
+                requestEoS = false;
+                tokens.Add(new Token
+                {
+                    charNumber = requestEoSCharNumber, 
+                    lexem = eolLexem,
+                    lineNumber = lines.Length - 1,
+                    caseInsensitiveRaw = "\n"
+                });
             }
 
             return tokens;

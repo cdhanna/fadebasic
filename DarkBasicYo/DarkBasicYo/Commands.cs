@@ -10,12 +10,12 @@ namespace DarkBasicYo
     {
         public readonly List<CommandInfo> Commands;
         public readonly List<IMethodSource> Sources;
-        public readonly Dictionary<string, CommandInfo> Lookup;
+        public readonly Dictionary<string, List<CommandInfo>> Lookup;
 
         public CommandCollection()
         {
             Commands = new List<CommandInfo>();
-            Lookup = new Dictionary<string, CommandInfo>();
+            Lookup = new Dictionary<string, List<CommandInfo>>();
             Sources = new List<IMethodSource>();
         }
        
@@ -27,10 +27,20 @@ namespace DarkBasicYo
             {
                 Commands.AddRange(source.Commands);
             }
-            Lookup = Commands.ToDictionary(c => c.name.ToLowerInvariant());
+
+            Lookup = new Dictionary<string, List<CommandInfo>>();
+            foreach (var command in Commands)
+            {
+                var key = command.name.ToLowerInvariant();
+                if (!Lookup.TryGetValue(key, out var entries))
+                {
+                    Lookup[key] = entries = new List<CommandInfo>();
+                }
+                entries.Add(command);
+            }
         }
         
-        public bool TryGetCommandDescriptor(Token token, out CommandInfo commandDescriptor)
+        public bool TryGetCommandDescriptor(Token token, out List<CommandInfo> commandDescriptor)
         {
             
             var lookup = Regex.Replace(token.caseInsensitiveRaw, "(\\s)+", " ");
