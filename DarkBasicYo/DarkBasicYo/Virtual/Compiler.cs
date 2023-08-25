@@ -1058,7 +1058,7 @@ namespace DarkBasicYo.Virtual
                 // this is a normal variable decl.
                 // scope.Create(declaration.variable, tc);
                 var compiledVar = scope.Create(declaration.variable, tc, declaration.scopeType == DeclarationScopeType.Global);
-
+                
                 if (tc == TypeCodes.STRUCT)
                 {
 

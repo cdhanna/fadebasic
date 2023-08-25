@@ -383,11 +383,21 @@ namespace DarkBasicYo
                     var variableReference = ParseVariableReference();
                     argExpressions.Add(new AddressExpression(variableReference, token));
                 }
-                else if (!argDescriptor.isOptional)
+                else
                 {
-                    var argExpr = ParseWikiExpression();
-                    argExpressions.Add(argExpr);
+                    if (TryParseExpression(out var argExpr))
+                    {
+                        argExpressions.Add(argExpr);
+                    } else if (!argDescriptor.isOptional)
+                    {
+                        throw new ParserException("Required arg, but found none", token, _stream.Current);
+                    }
                 }
+                // else if (!argDescriptor.isOptional)
+                // {
+                //     var argExpr = ParseWikiExpression();
+                //     argExpressions.Add(argExpr);
+                // }
 
                 parsedCount++;
 

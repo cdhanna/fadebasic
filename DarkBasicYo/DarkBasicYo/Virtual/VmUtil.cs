@@ -92,6 +92,7 @@ namespace DarkBasicYo.Virtual
                     vm.heap.Allocate(strBytes.Length, out strPtr);
                     vm.heap.Write(strPtr, strBytes.Length, strBytes);
                     vm.dataRegisters[address] = BitConverter.ToUInt32(BitConverter.GetBytes(strPtr), 0);
+                    vm.typeRegisters[address] = typeCode;
                     break;
                 case CommandArgRuntimeState.HeapRef:
                     

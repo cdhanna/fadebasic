@@ -8,11 +8,16 @@ namespace DarkBasicYo
     {
         
         
-        // [DarkBasicCommand("len")]
-        // public static int Length(string x)
-        // {
-        //     return x.Length;
-        // }
+        [DarkBasicCommand("overload")]
+        public static void Overload_1(int a)
+        {
+        }
+        
+        [DarkBasicCommand("overload")]
+        public static void Overload_1(int a, int b)
+        {
+        }
+        
         // [DarkBasicCommand("flip")]
         // public static string Flip(string x)
         // {
