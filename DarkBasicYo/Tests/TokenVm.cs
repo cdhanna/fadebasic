@@ -397,6 +397,66 @@ ENDIF
 
     
     [Test]
+    public void IfStatement_StringEquality()
+    {
+        var src = @"
+a = 0
+x$ = ""hello""
+IF x$ = ""hello""
+a = 1
+ENDIF
+";
+        Setup(src, out _, out var prog);
+        
+        var vm = new VirtualMachine(prog);
+        vm.Execute().MoveNext();
+        
+        Assert.That(vm.dataRegisters[0], Is.EqualTo(1)); 
+        Assert.That(vm.typeRegisters[0], Is.EqualTo(TypeCodes.INT));
+    }
+
+    
+    [Test]
+    public void IfStatement_StringEquality_NotEqual()
+    {
+        var src = @"
+a = 0
+x$ = ""hello""
+IF x$ = ""hello2""
+a = 1
+ENDIF
+";
+        Setup(src, out _, out var prog);
+        
+        var vm = new VirtualMachine(prog);
+        vm.Execute().MoveNext();
+        
+        Assert.That(vm.dataRegisters[0], Is.EqualTo(0)); 
+        Assert.That(vm.typeRegisters[0], Is.EqualTo(TypeCodes.INT));
+    }
+
+    
+    [Test]
+    public void IfStatement_StringEquality_NotEqual2()
+    {
+        var src = @"
+a = 0
+x$ = ""hello""
+IF x$ = ""world""
+a = 1
+ENDIF
+";
+        Setup(src, out _, out var prog);
+        
+        var vm = new VirtualMachine(prog);
+        vm.Execute().MoveNext();
+        
+        Assert.That(vm.dataRegisters[0], Is.EqualTo(0)); 
+        Assert.That(vm.typeRegisters[0], Is.EqualTo(TypeCodes.INT));
+    }
+
+    
+    [Test]
     public void IfStatement_ConditionalExpression()
     {
         var src = @"
@@ -1986,6 +2046,32 @@ x = (4-5) - (2 - 1)
     }
     
     [Test]
+    public void Math_Ints_Divide()
+    {
+        var src = @"x = 50 / 5";
+        Setup(src, out _, out var prog);
+        
+        var vm = new VirtualMachine(prog);
+        vm.Execute2();
+        Assert.That(vm.dataRegisters[0], Is.EqualTo(10));
+        Assert.That(vm.typeRegisters[0], Is.EqualTo(TypeCodes.INT));
+    }
+    
+    
+    [Test]
+    public void Math_Ints_Mod()
+    {
+        var src = @"x = 50 mod 3";
+        Setup(src, out _, out var prog);
+        
+        var vm = new VirtualMachine(prog);
+        vm.Execute2();
+        Assert.That(vm.dataRegisters[0], Is.EqualTo(2));
+        Assert.That(vm.typeRegisters[0], Is.EqualTo(TypeCodes.INT));
+    }
+
+    
+    [Test]
     public void Math_Ints_Multiply()
     {
         var src = @"x = 3 * 2";
@@ -2673,7 +2759,7 @@ x$ = concat 1, ""hello"", 2
     [Test]
     public void CallHost_RefType_String_2()
     {
-        var src = "tuna x$ ";
+        var src = "tuna x$";
         Setup(src, out var compiler, out var prog);
         var vm = new VirtualMachine(prog);
         vm.hostMethods = compiler.methodTable;
@@ -2772,6 +2858,17 @@ y$ = x$(1)
         Assert.That(vm.dataRegisters[0], Is.EqualTo("hello".Length));
     }
     
+    [Test]
+    public void CallHost_WithDollarSign_Upper()
+    {
+        var src = "x$ = upper$ \"hello\"";
+        Setup(src, out var compiler, out var prog);
+        var vm = new VirtualMachine(prog);
+        vm.hostMethods = compiler.methodTable;
+        vm.Execute2();
+        Assert.That(vm.typeRegisters[0], Is.EqualTo(TypeCodes.STRING));
+        // Assert.That(vm.dataRegisters[0], Is.EqualTo("HELLO".Length));
+    }
     
     [Test]
     public void CallHost_StringArg_FromArray()
@@ -2816,6 +2913,20 @@ w$ = x$(2)
         Assert.That(str, Is.EqualTo("olleh"));
     }
     
+    
+    [Test]
+    public void CallHost_StringReturn_2()
+    {
+        var src = "x$ = str$(32)";
+        Setup(src, out var compiler, out var prog);
+        var vm = new VirtualMachine(prog);
+        vm.hostMethods = compiler.methodTable;
+        vm.Execute2();
+        Assert.That(vm.typeRegisters[0], Is.EqualTo(TypeCodes.STRING));
+        vm.heap.Read((int)vm.dataRegisters[0], "32".Length * 4, out var memory);
+        var str = VmConverter.ToString(memory);
+        Assert.That(str, Is.EqualTo("32"));
+    }
     
     [Test]
     public void CallHost_StringReturn_Assignment()
@@ -2904,6 +3015,23 @@ w$ = x$(2)
         
         Assert.That(vm.typeRegisters[0], Is.EqualTo(TypeCodes.INT));
         Assert.That(vm.dataRegisters[0], Is.EqualTo(3));
+    }
+    
+    
+    [Test]
+    public void CallHost_WithVariableWithAPrefixOfCommand()
+    {
+        var src = @"minX = 0
+minX = min 1,2
+";
+        Setup(src, out var compiler, out var prog);
+        var vm = new VirtualMachine(prog);
+        vm.hostMethods = compiler.methodTable;
+        vm.commands = TestCommands.CommandsForTesting;
+        vm.Execute2();
+        
+        Assert.That(vm.typeRegisters[0], Is.EqualTo(TypeCodes.INT));
+        Assert.That(vm.dataRegisters[0], Is.EqualTo(1));
     }
     
     [Test]
@@ -3008,5 +3136,18 @@ x = min 5,
         
         Assert.That(vm.typeRegisters[0], Is.EqualTo(TypeCodes.INT));
         Assert.That(vm.dataRegisters[0], Is.EqualTo(6));
+    }
+    
+    [Test]
+    public void CallHost_OpOrder_WidthCommand()
+    {
+        var src = "x = min screen width,3";
+        Setup(src, out var compiler, out var prog);
+        var vm = new VirtualMachine(prog);
+        vm.hostMethods = compiler.methodTable;
+        vm.Execute2();
+        
+        Assert.That(vm.typeRegisters[0], Is.EqualTo(TypeCodes.INT));
+        Assert.That(vm.dataRegisters[0], Is.EqualTo(3));
     }
 }

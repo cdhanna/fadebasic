@@ -101,6 +101,14 @@ namespace Tests
         {
             return a + b;
         }
+        
+        //
+        [DarkBasicCommand("screen width")]
+        public static int ScreenWidth()
+        {
+            return 5;
+        }
+        
         //
         [DarkBasicCommand("min")]
         public static int Min(int a, int b)
@@ -164,11 +172,20 @@ namespace Tests
             x = "tuna";
         }
         
+        
+        //
+        [DarkBasicCommand("upper$")]
+        public static string Upper(string x)
+        {
+            return x.ToUpperInvariant();
+        }
+        
         [DarkBasicCommand("complexArg")]
         public static void ComplexArg([FromVm] VirtualMachine vm, RawArg<int> arg)
         {
             VmUtil.HandleValue(vm, arg.value * 2, TypeCodes.INT, arg.state, arg.address);
         }
+        
         
         [DarkBasicCommand("rgb")]
         public static int RgbToHex(byte r, byte g, byte b)
@@ -184,6 +201,46 @@ namespace Tests
         public static void Ink([FromVm] VirtualMachine vm, int foreground, int background)
         {
             
+        }
+        
+        
+        
+        [DarkBasicCommand("write byte")]
+        public static string WriteData(int fileNumber, byte data)
+        {
+            throw new NotImplementedException("");
+        }
+        [DarkBasicCommand("write float")]
+        public static string WriteData(int fileNumber, float data)
+        {
+            throw new NotImplementedException("");
+        }
+        [DarkBasicCommand("write long")]
+        public static string WriteData(int fileNumber, long data)
+        {
+            throw new NotImplementedException("");
+        }
+        [DarkBasicCommand("write string")]
+        public static string WriteData(int fileNumber, string data)
+        {
+            throw new NotImplementedException("");
+        }
+        [DarkBasicCommand("write word")]
+        public static string WriteData(int fileNumber, short data)
+        {
+            throw new NotImplementedException("");
+        }
+        
+        [DarkBasicCommand("get dir$")]
+        public static string GetWorkingDirectory()
+        {
+            throw new NotImplementedException("get the working directory");
+        }
+        
+        [DarkBasicCommand("str$")]
+        public static string Str(object x)
+        {
+            return x?.ToString() ?? "";
         }
     }
 }

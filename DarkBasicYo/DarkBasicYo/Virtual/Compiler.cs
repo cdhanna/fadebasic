@@ -1771,6 +1771,9 @@ namespace DarkBasicYo.Virtual
                         case OperationType.Divide:
                             _buffer.Add(OpCodes.DIVIDE);
                             break;
+                        case OperationType.Mod:
+                            _buffer.Add(OpCodes.MOD);
+                            break;
                         case OperationType.Subtract:
                             // negate the second value, and add.
                             AddPushInt(_buffer, -1);

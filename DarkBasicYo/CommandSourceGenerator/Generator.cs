@@ -11,7 +11,6 @@ using Microsoft.CodeAnalysis.Text;
 
 namespace DarkBasicYo.SourceGenerators
 {
-
     [Generator]
     public class CommandSourceGenerator : ISourceGenerator
     {
@@ -204,6 +203,9 @@ public static void {descriptor.MethodName}({nameof(VirtualMachine)} {VM})
                         sb.AppendLine(GetInvokeSource(descriptor));
                         break;
                     case "byte":
+                    case "float":
+                    case "long":
+                    case "short":
                     case "int":
                         sb.AppendLine($"var {result} = {GetInvokeSource(descriptor)}");
 
@@ -238,6 +240,10 @@ public static void {descriptor.MethodName}({nameof(VirtualMachine)} {VM})
                     {
                         case "object":
                             break;
+                        case "float":
+                        case "long":
+                        case "short":
+                        case "byte":
                         case "int":
                             sb.AppendLine($"{nameof(VmUtil)}.{nameof(VmUtil.HandleValue)}<{parameter.TypeName}>(" +
                                           $"{VM}, " +
@@ -379,6 +385,9 @@ public static void {descriptor.MethodName}({nameof(VirtualMachine)} {VM})
                                   $");");
                     break;
                 case "byte":
+                case "long":
+                case "float":
+                case "short":
                 case "int":
                     return ($"{nameof(VmUtil)}.{nameof(VmUtil.ReadValue)}<{typeName}>(" +
                                   $"{VM}, " +
@@ -425,8 +434,14 @@ public static void {descriptor.MethodName}({nameof(VirtualMachine)} {VM})
                 {
                     case "int":
                         return TypeCodes.INT;
+                    case "float":
+                        return TypeCodes.REAL;
                     case "byte":
                         return TypeCodes.BYTE;
+                    case "long":
+                        return TypeCodes.DWORD;
+                    case "short":
+                        return TypeCodes.WORD;
                     case "string":
                         return TypeCodes.STRING;
                     default:
@@ -486,8 +501,11 @@ public static void {descriptor.MethodName}({nameof(VirtualMachine)} {VM})
                 return tn switch
                 {
                     "int" => TypeCodes.INT,
+                    "float" => TypeCodes.REAL,
                     "string" => TypeCodes.STRING,
                     "byte" => TypeCodes.BYTE,
+                    "long" => TypeCodes.DWORD,
+                    "short" => TypeCodes.WORD,
                     "object" => TypeCodes.ANY,
                     "RawArg<int>" => TypeCodes.INT,
                     "RawArg<string>" => TypeCodes.STRING,

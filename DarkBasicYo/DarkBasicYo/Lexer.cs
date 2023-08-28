@@ -117,13 +117,21 @@ namespace DarkBasicYo
          * AND, OR, XOR and NOT
          */
 
+        static Lexer()
+        {
+            foreach (var l in Lexems)
+            {
+                //l.priority = (int.MinValue + 10) + l.priority;
+            }
+        }
+
         public static List<Lexem> Lexems = new List<Lexem>
         {
             new Lexem(LexemType.EndStatement, new Regex("^:")),
             new Lexem(LexemType.ArgSplitter, new Regex("^,")),
             new Lexem(LexemType.FieldSplitter, new Regex("^\\.")),
             
-            new Lexem(LexemType.WhiteSpace, new Regex("^(\\s|\\t|\\n)+")),
+            new Lexem(-10,LexemType.WhiteSpace, new Regex("^(\\s|\\t|\\n)+")),
             new Lexem(LexemType.ParenOpen, new Regex("^\\(")),
             new Lexem(LexemType.ParenClose, new Regex("^\\)")),
             new Lexem(LexemType.OpPlus, new Regex("^\\+")),
@@ -207,7 +215,7 @@ namespace DarkBasicYo
             
             new Lexem(-2, LexemType.VariableString, new Regex("^([a-zA-Z][a-zA-Z0-9_]*)\\$")),
             new Lexem(-2, LexemType.VariableReal, new Regex("^([a-zA-Z][a-zA-Z0-9_]*)#")),
-            new Lexem(2, LexemType.VariableGeneral, new Regex("^[a-zA-Z][a-zA-Z0-9_]*")),
+            new Lexem( 2, LexemType.VariableGeneral, new Regex("^[a-zA-Z][a-zA-Z0-9_]*")),
             // new Lexem(-2, LexemType.Label, new Regex("^[a-zA-Z][a-zA-Z0-9_]*:")),
         };
 
@@ -231,12 +239,16 @@ namespace DarkBasicYo
                     {
                         case ' ':
                             return "(\\s|\\t)+";
+                        case '$':
+                            return "\\$";
                         default:
                             return $"({char.ToLower(x)}|{char.ToUpper(x)})";
                     }
                 });
                 var pattern = "^" + string.Join("", components);
-                var commandLexem = new Lexem(-(pattern.Length * 100), LexemType.CommandWord, new Regex(pattern));
+              
+                // pattern += "(\\b|$)";
+                var commandLexem = new Lexem(-((pattern.Length) * 100), LexemType.CommandWord, new Regex(pattern));
                 lexems.Add(commandLexem);
             }
 
@@ -250,7 +262,7 @@ namespace DarkBasicYo
                 // }
             });
 
-            var lines = input.Split(new string[]{"\n"}, StringSplitOptions.RemoveEmptyEntries);
+            var lines = input.Split(new string[]{"\n"}, StringSplitOptions.None);
 
             var eolLexem = new Lexem(LexemType.EndStatement, null);
 
@@ -260,9 +272,9 @@ namespace DarkBasicYo
             var requestEoSCharNumber = 0;
             for (var lineNumber = 0; lineNumber < lines.Length; lineNumber++)
             {
-
                 
                 var line = lines[lineNumber];
+                if (string.IsNullOrEmpty(line)) continue;
 
                 if (remBlockToken == null && line.ToLowerInvariant().StartsWith("remstart"))
                 {
@@ -301,10 +313,13 @@ namespace DarkBasicYo
                     var sub = line.Substring(charNumber);
                     var subStr = sub.ToLowerInvariant();
 
+                    Token bestToken = null;
+                    
                     for (var lexemId = 0; lexemId < lexems.Count; lexemId++)
                     {
                         var lexem = lexems[lexemId];
                         var matches = lexem.regex.Matches(subStr);
+
                         if (matches.Count == 1)
                         {
                             foundMatch = true;
@@ -317,41 +332,47 @@ namespace DarkBasicYo
                                 lineNumber = lineNumber,
                                 charNumber = charNumber
                             };
-
-                            switch (lexem.type)
+                            if (bestToken == null || token.raw.Length > bestToken.raw.Length)
                             {
-                                case LexemType.WhiteSpace:
-                                    // we ignore white space in token generation
-                                    break;
-                                case LexemType.ArgSplitter:
-                                    requestEoS = false;
-                                    tokens.Add(token);
-                                    break;
-                                default:
-                                    
-                                    if (requestEoS)
-                                    {
-                                        requestEoS = false;
-                                        tokens.Add(new Token
-                                        {
-                                            charNumber = requestEoSCharNumber, 
-                                            lexem = eolLexem,
-                                            lineNumber = lineNumber,
-                                            caseInsensitiveRaw = "\n"
-                                        });
-                                    }
-                                    tokens.Add(token);
-                                    break;
+                                bestToken = token;
                             }
-                            
-                            charNumber += token.caseInsensitiveRaw.Length;
-                            break;
+
+                            // break;
                         }
                         else if (matches.Count > 1)
                         {
                             throw new Exception("Token exception! Too many matches!");
                         }
                     }
+                    
+                    
+                    switch (bestToken.type)
+                    {
+                        case LexemType.WhiteSpace:
+                            // we ignore white space in token generation
+                            break;
+                        case LexemType.ArgSplitter:
+                            requestEoS = false;
+                            tokens.Add(bestToken);
+                            break;
+                        default:
+                                    
+                            if (requestEoS)
+                            {
+                                requestEoS = false;
+                                tokens.Add(new Token
+                                {
+                                    charNumber = requestEoSCharNumber, 
+                                    lexem = eolLexem,
+                                    lineNumber = lineNumber,
+                                    caseInsensitiveRaw = "\n"
+                                });
+                            }
+                            tokens.Add(bestToken);
+                            break;
+                    }
+                            
+                    charNumber += bestToken.caseInsensitiveRaw.Length;
 
                     if (!foundMatch)
                     {
@@ -400,7 +421,7 @@ namespace DarkBasicYo
     public class Lexem
     {
         public readonly Regex regex;
-        public readonly int priority;
+        public int priority;
         public readonly LexemType type;
 
         public Lexem()
@@ -481,7 +502,17 @@ namespace DarkBasicYo
 
 
         public bool IsEof => Index >= _tokens.Count;
-       
+
+        public int Save()
+        {
+            return Index;
+        }
+
+        public void Restore(int index)
+        {
+            Index = index;
+            Current = _tokens[index];
+        }
     }
 
 }

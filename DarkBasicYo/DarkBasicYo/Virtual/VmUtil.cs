@@ -232,6 +232,10 @@ namespace DarkBasicYo.Virtual
                     ReadValue<int>(vm, default, out var intValue, out state, out address);
                     value = intValue;
                     break;
+                case TypeCodes.REAL:
+                    ReadValue<float>(vm, default, out var floatValue, out state, out address);
+                    value = floatValue;
+                    break;
                 default:
                     throw new Exception("uh oh, the any type isn't supported for the actual read type");
             }
@@ -508,7 +512,7 @@ namespace DarkBasicYo.Virtual
         
         
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        public static void EqualTo(byte aTypeCode, ReadOnlySpan<byte> aSpan, ReadOnlySpan<byte> bSpan, out ReadOnlySpan<byte> c)
+        public static void EqualTo(ref FastStack<byte> stack, ref VmHeap heap, byte aTypeCode, ReadOnlySpan<byte> aSpan, ReadOnlySpan<byte> bSpan, out ReadOnlySpan<byte> c)
         {
             var a = aSpan.ToArray();
             var b = bSpan.ToArray();
@@ -531,11 +535,43 @@ namespace DarkBasicYo.Virtual
                 case TypeCodes.REAL:
                     float aReal = BitConverter.ToSingle(a, 0);
                     float bReal = BitConverter.ToSingle(b, 0);
-                    float sumReal = ((Math.Abs(bReal - aReal) <= float.Epsilon) ? 1 : 0);
+                    int sumReal = ((Math.Abs(bReal - aReal) <= float.Epsilon) ? 1 : 0);
                     c = BitConverter.GetBytes(sumReal);
                     break;
+                case TypeCodes.STRING:
+                    c = new byte[] { 0 };
+                    
+                    // read the data at a
+                    // VmUtil.ReadAsInt();
+
+                    var aPtr = BitConverter.ToInt32(a);
+                    var bPtr = BitConverter.ToInt32(b);
+                    
+                    heap.GetAllocationSize(aPtr, out var aSize);
+                    heap.GetAllocationSize(bPtr, out var bSize);
+
+                    if (aSize != bSize)
+                    {
+                        c = BitConverter.GetBytes(0);
+                        break;
+                    }
+                    
+                    heap.ReadSpan(aPtr, aSize, out var aMem);
+                    heap.ReadSpan(bPtr, bSize, out var bMem);
+
+                    c = BitConverter.GetBytes(1);
+                    for (var i = 0; i < aSize; i++)
+                    {
+                        if (aMem[i] != bMem[i])
+                        {
+                            c = BitConverter.GetBytes(0);
+                            break;
+                        }
+                    }
+
+                    break;
                 default:
-                    throw new Exception("Unsupported add operation");
+                    throw new Exception("Unsupported equality operation");
             }
         }
 
@@ -550,19 +586,19 @@ namespace DarkBasicYo.Virtual
                 case TypeCodes.BYTE:
                     byte aByte = a[0];
                     byte bByte = b[0];
-                    byte sumByte = (byte)(aByte / bByte);
+                    byte sumByte = (byte)(bByte / aByte);
                     c = new byte[] { sumByte };
                     break;
                 case TypeCodes.WORD:
                     short aShort = BitConverter.ToInt16(a, 0);
                     short bShort = BitConverter.ToInt16(b, 0);
-                    short sumShort = (short)(aShort / bShort);
+                    short sumShort = (short)(bShort / aShort);
                     c = BitConverter.GetBytes(sumShort);
                     break;
                 case TypeCodes.INT:
                     int aInt = BitConverter.ToInt32(a, 0);
                     int bInt = BitConverter.ToInt32(b, 0);
-                    int sumInt = (int)(aInt / bInt);
+                    int sumInt = (int)(bInt / aInt);
                     c = BitConverter.GetBytes(sumInt);
                     break;
                 case TypeCodes.REAL:
@@ -572,10 +608,46 @@ namespace DarkBasicYo.Virtual
                     c = BitConverter.GetBytes(sumReal);
                     break;
                 default:
-                    throw new Exception("Unsupported add operation");
+                    throw new Exception("Unsupported divide operation");
             }
         }
 
+        
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public static void Mod(byte aTypeCode, ReadOnlySpan<byte> aSpan, ReadOnlySpan<byte> bSpan, out ReadOnlySpan<byte> c)
+        {
+            byte[] a = aSpan.ToArray();
+            byte[] b = bSpan.ToArray();
+            switch (aTypeCode)
+            {
+                case TypeCodes.BYTE:
+                    byte aByte = a[0];
+                    byte bByte = b[0];
+                    byte sumByte = (byte)(bByte % aByte);
+                    c = new byte[] { sumByte };
+                    break;
+                case TypeCodes.WORD:
+                    short aShort = BitConverter.ToInt16(a, 0);
+                    short bShort = BitConverter.ToInt16(b, 0);
+                    short sumShort = (short)(bShort % aShort);
+                    c = BitConverter.GetBytes(sumShort);
+                    break;
+                case TypeCodes.INT:
+                    int aInt = BitConverter.ToInt32(a, 0);
+                    int bInt = BitConverter.ToInt32(b, 0);
+                    int sumInt = (int)(bInt % aInt);
+                    c = BitConverter.GetBytes(sumInt);
+                    break;
+                case TypeCodes.REAL:
+                    float aReal = BitConverter.ToSingle(a, 0);
+                    float bReal = BitConverter.ToSingle(b, 0);
+                    float sumReal = (bReal % aReal);
+                    c = BitConverter.GetBytes(sumReal);
+                    break;
+                default:
+                    throw new Exception("Unsupported mod operation");
+            }
+        }
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public static void Add(ref VmHeap heap, byte aTypeCode, ReadOnlySpan<byte> aSpan, ReadOnlySpan<byte> bSpan, out ReadOnlySpan<byte> c)
         {

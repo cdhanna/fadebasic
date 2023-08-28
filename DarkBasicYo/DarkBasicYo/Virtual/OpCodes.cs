@@ -93,14 +93,12 @@ namespace DarkBasicYo.Virtual
         public const byte GTE = 26;
         public const byte LTE = 27;
         public const byte EQ = 28;
-        // public const byte NEQ = 29;
         public const byte MOD = 30;
         public const byte POWER = 31;
         public const byte AND = 32;
         public const byte OR = 33;
         public const byte NOT = 34;
         
-
         /// <summary>
         /// the next byte in the INS is the Address, and then it expects to find a value in the stack
         /// </summary>

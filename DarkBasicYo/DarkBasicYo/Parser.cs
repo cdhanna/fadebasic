@@ -640,7 +640,8 @@ namespace DarkBasicYo
                         //         token);
                         // }
                         //
-                        ParseCommandOverload(token, out var command, out var commandArgs);
+                        // ParseCommandOverload(token, out var command, out var commandArgs);
+                        ParseCommandOverload2(token, out var command, out var commandArgs);
                         return new CommandStatement
                         {
                             startToken = token,
@@ -735,6 +736,158 @@ namespace DarkBasicYo
             
             return true;
 
+        }
+
+        private bool TryParseCommandFlavor(CommandInfo command, out List<IExpressionNode> args, out int tokenJump)
+        {
+            var start = _stream.Save();
+            var startToken = _stream.Current;
+            tokenJump = -1;
+            args = new List<IExpressionNode>();
+            
+            
+            bool isOpenParen = _stream.Peek.type == LexemType.ParenOpen;
+            if (isOpenParen)
+            {
+                // discard
+                _stream.Advance();
+            }
+
+            bool EnsureCloseParen()
+            {
+                if (isOpenParen)
+                {
+                    if (_stream.Advance().type != LexemType.ParenClose)
+                    {
+                        return false;
+                    }
+                }
+
+                return true;
+            }
+            
+            for (var i = 0; i < command.args.Length; i++)
+            {
+                var required = command.args[i];
+
+                if (required.isVmArg)
+                {
+                    continue; // we don't parse these
+                }
+                
+                // okay, we need an argument...
+                if (!TryParseExpression(out var expr))
+                {
+                    // there is no arg!
+                    // that can only be okay if this command is optional
+                    if (required.isOptional || required.isParams)
+                    {
+                        continue;
+                    } 
+                    
+                    // whoops, this didn't work out.
+                    _stream.Restore(start);
+                    return false;
+                }
+                else
+                {
+                    // we got an expression, add it to our arg list
+                    args.Add(expr);
+
+                    if (required.isParams)
+                    {
+                        i--; // silly, but, allow this arg to be parsed again, since there can be many params...
+                    }
+                    
+                    // if the next token is an arg splitter, we can accept that...
+                    switch (_stream.Peek.type)
+                    {
+                        case LexemType.ArgSplitter:
+                            _stream.Advance();
+                            break;
+                        default:
+                            break; // idk, hopefully it is an expression, I guess?
+                    }
+                }
+            }
+
+            if (!EnsureCloseParen())
+            {
+                _stream.Restore(start);
+                return false;
+            }
+            tokenJump = _stream.Save();
+            _stream.Restore(start);
+            return true;
+        }
+
+        private void ParseCommandOverload2(Token token, out CommandInfo foundCommand, out List<IExpressionNode> commandArgs)
+        {
+            /*
+             * Okay, so, we need to parse the expressions one at a time, and invalidate commands as we go,
+             * until there is only one command left...
+             *
+             * x = screen width - 5
+             * // this isn't obvious if its "screen width with one arg, negative 5",
+             *    screen width(-5)
+             * //  or "screen width with zero args, minus 5"
+             *    screen width() - 5
+             *
+             * wel'll make the decisions to infer that unless otherwise directed, we assign them as args. 
+             *
+             * screenwidth ()
+             * screenwidth (int screen) // this overload may need an int
+             *
+             * 
+             * 
+             */
+            if (!_commands.TryGetCommandDescriptor(token, out var possibleCommands))
+            {
+                throw new Exception("Parser exception! unknown command " + token.caseInsensitiveRaw);
+            }
+
+            // var possibleArgs = new List<IExpressionNode>[possibleCommands.Count];
+            foundCommand = possibleCommands[0];
+            var found = false;
+            commandArgs = new List<IExpressionNode>();
+            int foundJump = -1;
+            for (var i = 0 ; i < possibleCommands.Count; i ++)
+            {
+                var option = possibleCommands[i];
+                if (TryParseCommandFlavor(option, out var args, out var jump))
+                {
+                    if (found)
+                    {
+                        // we'll pick the command with the longest arg path
+                        if (commandArgs.Count == args.Count)
+                        {
+                            throw new ParserException("command ambigious", _stream.Current);
+                        }
+
+                        if (args.Count > commandArgs.Count)
+                        {
+                            foundCommand = option;
+                            commandArgs = args;
+                            foundJump = jump;
+                        }
+                    }
+                    else
+                    {
+                        // this is the first find!
+                        found = true;
+                        foundCommand = option;
+                        commandArgs = args;
+                        foundJump = jump;
+                    }
+                }
+            }
+
+            if (!found)
+            {
+                throw new ParserException("No overload for method found", _stream.Current);
+            }
+            
+            _stream.Restore(foundJump);
         }
         
         private void ParseCommandOverload(Token token, out CommandInfo command, out List<IExpressionNode> commandArgs)
@@ -1569,7 +1722,8 @@ namespace DarkBasicYo
                 case LexemType.CommandWord:
                     _stream.Advance();
 
-                    ParseCommandOverload(token, out var command, out var argExpressions);
+                    // ParseCommandOverload(token, out var command, out var argExpressions);
+                    ParseCommandOverload2(token, out var command, out var argExpressions);
                     
                     // if (!_commands.TryGetCommandDescriptor(token, out var command))
                     // {

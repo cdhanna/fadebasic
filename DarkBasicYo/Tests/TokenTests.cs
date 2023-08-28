@@ -195,6 +195,124 @@ x = min 5,
         CheckTokens(expectedLexemTypes, tokens);
     }
 
+    
+    [Test]
+    public void Tokenize_Command_WithDollarSign()
+    {
+        var input = @"
+upper$ ""hello"" ";
+
+        var lexer = new Lexer();
+        var tokens = lexer.Tokenize(input, TestCommands.CommandsForTesting);
+
+        var expectedLexemTypes = new LexemType[]
+        {
+            LexemType.CommandWord,
+            LexemType.LiteralString,
+            LexemType.EndStatement,
+        };
+        CheckTokens(expectedLexemTypes, tokens);
+    }
+
+    
+    [Test]
+    public void Tokenize_Command_WithDollarSign2()
+    {
+        var input = @"
+print get dir$";
+
+        var lexer = new Lexer();
+        var tokens = lexer.Tokenize(input, TestCommands.CommandsForTesting);
+
+        var expectedLexemTypes = new LexemType[]
+        {
+            LexemType.CommandWord,
+            LexemType.CommandWord,
+            LexemType.EndStatement,
+        };
+        CheckTokens(expectedLexemTypes, tokens);
+    }
+
+    
+    [Test]
+    public void Tokenize_Command_WithDollarSign3()
+    {
+        var input = @"
+print get dir$ x";
+
+        var lexer = new Lexer();
+        var tokens = lexer.Tokenize(input, TestCommands.CommandsForTesting);
+
+        var expectedLexemTypes = new LexemType[]
+        {
+            LexemType.CommandWord,
+            LexemType.CommandWord,
+            LexemType.VariableGeneral,
+            LexemType.EndStatement,
+        };
+        CheckTokens(expectedLexemTypes, tokens);
+    }
+
+    
+    [Test]
+    public void Tokenize_Command_WithDollarSign4()
+    {
+        var input = @"
+x = str$(32)";
+
+        var lexer = new Lexer();
+        var tokens = lexer.Tokenize(input, TestCommands.CommandsForTesting);
+
+        var expectedLexemTypes = new LexemType[]
+        {
+            LexemType.VariableGeneral,
+            LexemType.OpEqual,
+            LexemType.CommandWord,
+            LexemType.ParenOpen,
+            LexemType.LiteralInt,
+            LexemType.ParenClose,
+            LexemType.EndStatement,
+        };
+        CheckTokens(expectedLexemTypes, tokens);
+    }
+
+    
+    [Test]
+    public void Tokenize_Command_PrefixVariable()
+    {
+        var input = @"
+minX = 2";
+
+        var lexer = new Lexer();
+        var tokens = lexer.Tokenize(input, TestCommands.CommandsForTesting);
+
+        var expectedLexemTypes = new LexemType[]
+        {
+            LexemType.VariableGeneral,
+            LexemType.OpEqual,
+            LexemType.LiteralInt,
+            LexemType.EndStatement,
+        };
+        CheckTokens(expectedLexemTypes, tokens);
+    }
+
+    [Test]
+    public void Tokenize_Command_PrefixVariable2()
+    {
+        var input = @"
+minX";
+
+        var lexer = new Lexer();
+        var tokens = lexer.Tokenize(input, TestCommands.CommandsForTesting);
+
+        var expectedLexemTypes = new LexemType[]
+        {
+            LexemType.VariableGeneral,
+            LexemType.EndStatement,
+        };
+        CheckTokens(expectedLexemTypes, tokens);
+    }
+
 
 
     [Test]

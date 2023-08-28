@@ -267,7 +267,6 @@ namespace DarkBasicYo.Virtual
                             VmUtil.PushSpan(ref stack, cSpan, vTypeCode);
                             break;
                         case OpCodes.MUL:
-                            // throw new NotImplementedException();
                             VmUtil.ReadTwoValues(ref stack, out vTypeCode, out aSpan, out bSpan);
                             VmUtil.Multiply(vTypeCode, aSpan, bSpan, out cSpan);
                             VmUtil.PushSpan(ref stack, cSpan, vTypeCode);
@@ -275,6 +274,11 @@ namespace DarkBasicYo.Virtual
                         case OpCodes.DIVIDE:
                             VmUtil.ReadTwoValues(ref stack, out vTypeCode, out aSpan, out bSpan);
                             VmUtil.Divide(vTypeCode, aSpan, bSpan, out cSpan);
+                            VmUtil.PushSpan(ref stack, cSpan, vTypeCode);
+                            break;
+                        case OpCodes.MOD:
+                            VmUtil.ReadTwoValues(ref stack, out vTypeCode, out aSpan, out bSpan);
+                            VmUtil.Mod(vTypeCode, aSpan, bSpan, out cSpan);
                             VmUtil.PushSpan(ref stack, cSpan, vTypeCode);
                             break;
                         case OpCodes.GT:
@@ -298,11 +302,9 @@ namespace DarkBasicYo.Virtual
                             VmUtil.PushSpan(ref stack, cSpan, vTypeCode);
                             break;
                         case OpCodes.EQ:
-                            // throw new NotImplementedException();
-
                             VmUtil.ReadTwoValues(ref stack, out vTypeCode, out aSpan, out bSpan);
-                            VmUtil.EqualTo(vTypeCode, aSpan, bSpan, out cSpan);
-                            VmUtil.PushSpan(ref stack, cSpan, vTypeCode);
+                            VmUtil.EqualTo(ref stack, ref heap, vTypeCode, aSpan, bSpan, out cSpan);
+                            VmUtil.PushSpan(ref stack, cSpan, TypeCodes.INT);
                             break;
                         case OpCodes.STORE:
 

@@ -43,7 +43,7 @@ namespace DarkBasicYo
         public bool TryGetCommandDescriptor(Token token, out List<CommandInfo> commandDescriptor)
         {
             
-            var lookup = Regex.Replace(token.caseInsensitiveRaw, "(\\s)+", " ");
+            var lookup = Regex.Replace(token.caseInsensitiveRaw.Trim(), "(\\s)+", " ");
             // var lookup = Regex.Replace(token.raw, "(\\s||\\t)*", " ");
             return Lookup.TryGetValue(lookup, out commandDescriptor);
         }

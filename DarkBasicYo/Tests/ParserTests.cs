@@ -152,6 +152,32 @@ print x";
         Assert.That(code, Is.EqualTo("((= (ref x),(+ (1),(xcall add (2),(3)))))"));
     }
     
+    
+    [Test]
+    public void CallHostStatement_WithParens()
+    {
+        var input = @"x$ = str$(32)";
+        var tokenStream = new TokenStream(_lexer.Tokenize(input, TestCommands.CommandsForTesting));
+        var parser = new Parser(tokenStream, TestCommands.CommandsForTesting);
+        var prog = parser.ParseProgram();
+        
+        Assert.That(prog.statements.Count, Is.EqualTo(1));
+        var code = prog.ToString();
+        Assert.That(code, Is.EqualTo("((= (ref x$),(xcall str$ (32))))"));
+    }
+    [Test]
+    public void CallHostStatement_WithParens_Without()
+    {
+        var input = @"x$ = str$ 32";
+        var tokenStream = new TokenStream(_lexer.Tokenize(input, TestCommands.CommandsForTesting));
+        var parser = new Parser(tokenStream, TestCommands.CommandsForTesting);
+        var prog = parser.ParseProgram();
+        
+        Assert.That(prog.statements.Count, Is.EqualTo(1));
+        var code = prog.ToString();
+        Assert.That(code, Is.EqualTo("((= (ref x$),(xcall str$ (32))))"));
+    }
+    
     [Test]
     public void CallHost_Params_1()
     {
