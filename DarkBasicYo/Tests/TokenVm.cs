@@ -2265,7 +2265,7 @@ endtype
 y as egg
 y.x = 50
 y.z$ = ""hello""
-w = y.x + len y.z$
+w = y.x + len(y.z$)
 ";
         Setup(src, out var compiler, out var prog);
         var vm = new VirtualMachine(prog);
@@ -2635,11 +2635,26 @@ any input ""darn"", y
     
     
     [Test]
+    public void CallHost_FileEndIssue()
+    {
+        var src = @"
+x = file end(10)=10
+";
+        Setup(src, out var compiler, out var prog);
+        var vm = new VirtualMachine(prog);
+        vm.hostMethods = compiler.methodTable;
+        vm.Execute2();
+        Assert.That(vm.typeRegisters[0], Is.EqualTo(TypeCodes.INT));
+        Assert.That(vm.dataRegisters[0], Is.EqualTo(1));
+    }
+
+    
+    [Test]
     public void CallHost_Overload_1()
     {
         var src = @"
 x = 1
-x = overloadA x
+x = overloadA(x)
 ";
         Setup(src, out var compiler, out var prog);
         var vm = new VirtualMachine(prog);
@@ -2654,7 +2669,7 @@ x = overloadA x
     {
         var src = @"
 x = 1
-x = overloadA x 4
+x = overloadA(x,4)
 ";
         Setup(src, out var compiler, out var prog);
         var vm = new VirtualMachine(prog);
@@ -2669,7 +2684,7 @@ x = overloadA x 4
     {
         var src = @"
 x = 1
-x = x + sum 2,3,6
+x = x + sum(2,3,6)
 ";
         Setup(src, out var compiler, out var prog);
         var vm = new VirtualMachine(prog);
@@ -2684,7 +2699,7 @@ x = x + sum 2,3,6
     public void CallHost_Params_Empty()
     {
         var src = @"
-x = sum + 12
+x = sum() + 12
 ";
         Setup(src, out var compiler, out var prog);
         var vm = new VirtualMachine(prog);
@@ -2699,7 +2714,7 @@ x = sum + 12
     {
         var src = @"
 x = 1
-x = x + sum2 2,3,6
+x = x + sum2 (2,3,6)
 ";
         Setup(src, out var compiler, out var prog);
         var vm = new VirtualMachine(prog);
@@ -2714,7 +2729,7 @@ x = x + sum2 2,3,6
     public void CallHost_Params_Order()
     {
         var src = @"
-x = get last 1,2,3
+x = get last( 1,2,3)
 ";
         Setup(src, out var compiler, out var prog);
         var vm = new VirtualMachine(prog);
@@ -2729,7 +2744,7 @@ x = get last 1,2,3
     public void CallHost_Params_Object()
     {
         var src = @"
-x$ = concat 1, ""hello"", 2
+x$ = concat( 1, ""hello"", 2)
 ";
         Setup(src, out var compiler, out var prog);
         var vm = new VirtualMachine(prog);
@@ -2849,7 +2864,7 @@ y$ = x$(1)
     [Test]
     public void CallHost_StringArg()
     {
-        var src = "x = len \"hello\"";
+        var src = "x = len(\"hello\")";
         Setup(src, out var compiler, out var prog);
         var vm = new VirtualMachine(prog);
         vm.hostMethods = compiler.methodTable;
@@ -2861,7 +2876,7 @@ y$ = x$(1)
     [Test]
     public void CallHost_WithDollarSign_Upper()
     {
-        var src = "x$ = upper$ \"hello\"";
+        var src = "x$ = upper$(\"hello\")";
         Setup(src, out var compiler, out var prog);
         var vm = new VirtualMachine(prog);
         vm.hostMethods = compiler.methodTable;
@@ -2876,9 +2891,9 @@ y$ = x$(1)
         var src = @"
 dim x$(3)
 x$(1) = ""hello""
-y = len x$(1)
-z$ = reverse x$(1)
-x$(2) = reverse x$(1)
+y = len(x$(1))
+z$ = reverse(x$(1))
+x$(2) = reverse(x$(1))
 w$ = x$(2)
 ";
         Setup(src, out var compiler, out var prog);
@@ -2902,7 +2917,7 @@ w$ = x$(2)
     [Test]
     public void CallHost_StringReturn()
     {
-        var src = "x$ = reverse \"hello\"";
+        var src = "x$ = reverse(\"hello\")";
         Setup(src, out var compiler, out var prog);
         var vm = new VirtualMachine(prog);
         vm.hostMethods = compiler.methodTable;
@@ -2931,7 +2946,7 @@ w$ = x$(2)
     [Test]
     public void CallHost_StringReturn_Assignment()
     {
-        var src = "x$ = \"hello\": y$ = reverse x$";
+        var src = "x$ = \"hello\": y$ =reverse( x$)";
         Setup(src, out var compiler, out var prog);
         var vm = new VirtualMachine(prog);
         vm.hostMethods = compiler.methodTable;
@@ -2951,7 +2966,7 @@ w$ = x$(2)
     [Test]
     public void CallHost_StringReturn_Expression()
     {
-        var src = "x$ = \"hello\": y$ = \"world\" + reverse x$";
+        var src = "x$ = \"hello\": y$ = \"world\" + reverse (x$)";
         Setup(src, out var compiler, out var prog);
         var vm = new VirtualMachine(prog);
         vm.hostMethods = compiler.methodTable;
@@ -3007,7 +3022,7 @@ w$ = x$(2)
     [Test]
     public void CallHostAdd()
     {
-        var src = "x = add 1,2";
+        var src = "x = add(1,2)";
         Setup(src, out var compiler, out var prog);
         var vm = new VirtualMachine(prog);
         vm.hostMethods = compiler.methodTable;
@@ -3022,7 +3037,7 @@ w$ = x$(2)
     public void CallHost_WithVariableWithAPrefixOfCommand()
     {
         var src = @"minX = 0
-minX = min 1,2
+minX = min(1,2)
 ";
         Setup(src, out var compiler, out var prog);
         var vm = new VirtualMachine(prog);
@@ -3037,7 +3052,7 @@ minX = min 1,2
     [Test]
     public void CallHost_OpOrder()
     {
-        var src = "x = min 5,8 + 1";
+        var src = "x = min(5,8 + 1)";
         Setup(src, out var compiler, out var prog);
         var vm = new VirtualMachine(prog);
         vm.hostMethods = compiler.methodTable;
@@ -3052,7 +3067,7 @@ minX = min 1,2
     [Test]
     public void CallHost_OpOrder2()
     {
-        var src = "x = min 5, 8 * 2";
+        var src = "x = min(5, 8 * 2)";
         Setup(src, out var compiler, out var prog);
         var vm = new VirtualMachine(prog);
         vm.hostMethods = compiler.methodTable;
@@ -3065,8 +3080,8 @@ minX = min 1,2
     public void CallHost_OpOrder_NewLine_CommaOnNewLine()
     {
         var src = @"
-x = min 5
-, 8 * 2";
+x = min (5
+, 8 * 2)";
         Setup(src, out var compiler, out var prog);
         var vm = new VirtualMachine(prog);
         vm.hostMethods = compiler.methodTable;
@@ -3081,8 +3096,8 @@ x = min 5
     public void CallHost_OpOrder_NewLine_CommaOnSameLine()
     {
         var src = @"
-x = min 5,
-8 * 2";
+x = min (5,
+8 * 2)";
         Setup(src, out var compiler, out var prog);
         var vm = new VirtualMachine(prog);
         vm.hostMethods = compiler.methodTable;
@@ -3096,10 +3111,10 @@ x = min 5,
     public void CallHost_OpOrder_NewLine_CommaBetweenManyLines()
     {
         var src = @"
-x = min 5,
+x = min (5,
 
 
-8 * 2";
+8 * 2)";
         Setup(src, out var compiler, out var prog);
         var vm = new VirtualMachine(prog);
         vm.hostMethods = compiler.methodTable;
@@ -3113,7 +3128,7 @@ x = min 5,
     [Test]
     public void CallHost_OpOrder3()
     {
-        var src = "x = (min 5, 8) * 2";
+        var src = "x = min(5, 8) * 2";
         Setup(src, out var compiler, out var prog);
         var vm = new VirtualMachine(prog)
         {
@@ -3128,7 +3143,7 @@ x = min 5,
     [Test]
     public void CallHost_OpOrder4()
     {
-        var src = "x = 1 + min 5, 8";
+        var src = "x = 1 + min(5, 8)";
         Setup(src, out var compiler, out var prog);
         var vm = new VirtualMachine(prog);
         vm.hostMethods = compiler.methodTable;
@@ -3141,7 +3156,7 @@ x = min 5,
     [Test]
     public void CallHost_OpOrder_WidthCommand()
     {
-        var src = "x = min screen width,3";
+        var src = "x = min( screen width(),3)";
         Setup(src, out var compiler, out var prog);
         var vm = new VirtualMachine(prog);
         vm.hostMethods = compiler.methodTable;

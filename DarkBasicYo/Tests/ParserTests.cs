@@ -142,7 +142,7 @@ print x";
     [Test]
     public void CallHostStatement_Expr()
     {
-        var input = @"x = 1 + add 2,3";
+        var input = @"x = 1 + add(2,3)";
         var tokenStream = new TokenStream(_lexer.Tokenize(input, TestCommands.CommandsForTesting));
         var parser = new Parser(tokenStream, TestCommands.CommandsForTesting);
         var prog = parser.ParseProgram();
@@ -168,7 +168,7 @@ print x";
     [Test]
     public void CallHostStatement_WithParens_Without()
     {
-        var input = @"x$ = str$ 32";
+        var input = @"x$ = str$(32)";
         var tokenStream = new TokenStream(_lexer.Tokenize(input, TestCommands.CommandsForTesting));
         var parser = new Parser(tokenStream, TestCommands.CommandsForTesting);
         var prog = parser.ParseProgram();
@@ -177,6 +177,65 @@ print x";
         var code = prog.ToString();
         Assert.That(code, Is.EqualTo("((= (ref x$),(xcall str$ (32))))"));
     }
+    
+    
+    [Test]
+    public void CallHostStatement_WithFirstArgUsingParens()
+    {
+        var input = @"add(x + 1, 2)";
+        var tokenStream = new TokenStream(_lexer.Tokenize(input, TestCommands.CommandsForTesting));
+        var parser = new Parser(tokenStream, TestCommands.CommandsForTesting);
+        var prog = parser.ParseProgram();
+        
+        Assert.That(prog.statements.Count, Is.EqualTo(1));
+        var code = prog.ToString();
+        Assert.That(code, Is.EqualTo("((call add (+ (ref x),(1)),(2)))"));
+    }
+
+
+    [Test]
+    public void CallHostStatement_WithFirstArgUsingParens3()
+    {
+        var input = @"add (x + 1, 2)";
+        var tokenStream = new TokenStream(_lexer.Tokenize(input, TestCommands.CommandsForTesting));
+        var parser = new Parser(tokenStream, TestCommands.CommandsForTesting);
+        var prog = parser.ParseProgram();
+        
+        Assert.That(prog.statements.Count, Is.EqualTo(1));
+        var code = prog.ToString();
+        Assert.That(code, Is.EqualTo("((call add (+ (ref x),(1)),(2)))"));
+    }
+
+
+    
+    [Test]
+    public void CallHostStatement_WithEmptyParens()
+    {
+        var input = @"screen width()";
+        var tokenStream = new TokenStream(_lexer.Tokenize(input, TestCommands.CommandsForTesting));
+        var parser = new Parser(tokenStream, TestCommands.CommandsForTesting);
+        var prog = parser.ParseProgram();
+        
+        Assert.That(prog.statements.Count, Is.EqualTo(1));
+        var code = prog.ToString();
+        Assert.That(code, Is.EqualTo("((call screen width))"));
+    }
+    
+    
+    [Test]
+    public void CallHostStatement_WithParensSingle()
+    {
+        // y = add(x, x) + 1
+        var input = @"x = file end (2)=2";
+        var tokenStream = new TokenStream(_lexer.Tokenize(input, TestCommands.CommandsForTesting));
+        var parser = new Parser(tokenStream, TestCommands.CommandsForTesting);
+        var prog = parser.ParseProgram();
+        
+        Assert.That(prog.statements.Count, Is.EqualTo(1));
+        var code = prog.ToString();
+        Assert.That(code, Is.EqualTo("((= (ref x),(?= (xcall file end (2)),(2))))"));
+    }
+    
     
     [Test]
     public void CallHost_Params_1()
@@ -1123,7 +1182,7 @@ ENDIF
     public void AssignmentWithCommandAndField()
     {
         var input = @"
-x = a.b + len a.c
+x = a.b + len(a.c)
 ";
         var parser = MakeParser(input);
         var prog = parser.ParseProgram();

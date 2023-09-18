@@ -611,7 +611,6 @@ namespace DarkBasicYo.Virtual
                     throw new Exception("Unsupported divide operation");
             }
         }
-
         
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public static void Mod(byte aTypeCode, ReadOnlySpan<byte> aSpan, ReadOnlySpan<byte> bSpan, out ReadOnlySpan<byte> c)

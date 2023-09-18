@@ -138,6 +138,7 @@ namespace {namespaceStr}
     {nameof(CommandInfo.sig)} = ""{descriptor.Sig}"",
     {nameof(CommandInfo.methodIndex)} = {index},
     {nameof(CommandInfo.executor)} = {descriptor.MethodName},
+    {nameof(CommandInfo.returnType)} = {descriptor.ReturnTypeCode},
     {nameof(CommandInfo.args)} = new {nameof(CommandArgInfo)}[] 
     {{
         {string.Join("\n,", descriptor.Parameters.Select((x, xi) => GetArgInfoSource(descriptor, x, xi)))}
@@ -432,6 +433,8 @@ public static void {descriptor.MethodName}({nameof(VirtualMachine)} {VM})
             {
                 switch (ReturnType)
                 {
+                    case "void":
+                        return TypeCodes.VOID;
                     case "int":
                         return TypeCodes.INT;
                     case "float":

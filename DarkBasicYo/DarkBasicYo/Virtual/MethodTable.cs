@@ -28,6 +28,8 @@ namespace DarkBasicYo.Virtual
         public int methodIndex; // how to run this command.
         public CommandArgInfo[] args;
         public CommandExecution executor;
+        public byte returnType;
+        
         public string UniqueName => name + sig;
     }
 

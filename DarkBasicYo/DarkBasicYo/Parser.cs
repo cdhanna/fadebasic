@@ -574,7 +574,7 @@ namespace DarkBasicYo
                                     variable = token.caseInsensitiveRaw
                                 };
                             default:
-                                throw new Exception("parser exception! Unknown statement, " + secondToken.type);
+                                throw new ParserException("parser exception! Unknown statement, " + secondToken.type, secondToken);
                         }
 
                         break;
@@ -744,18 +744,60 @@ namespace DarkBasicYo
             var startToken = _stream.Current;
             tokenJump = -1;
             args = new List<IExpressionNode>();
+
+            var requiresParens = command.returnType != TypeCodes.VOID;
             
             
             bool isOpenParen = _stream.Peek.type == LexemType.ParenOpen;
+
+            if (requiresParens)
+            {
+                if (!isOpenParen)
+                {
+                    return false;
+                }
+
+                _stream.Advance(); // discard the open paren!
+            }
+            
+            IExpressionNode firstExpr = null;
             if (isOpenParen)
             {
+                // there may be an expression here... or this could just be opening the function
+                if (!TryParseExpression(out firstExpr))
+                {
+                    // if we couldn't parse the expression, then these parens are just for opening the function
+                    if (!requiresParens)
+                    {
+                        _stream.Advance();
+                    }
+
+                    isOpenParen = true;
+                }
+                else
+                {
+                    isOpenParen = false;
+                }
                 // discard
-                _stream.Advance();
+                // add (3+2)*2, 4
+                // add (3+2*2,4)
+            }
+
+            bool TryGetNextExpr(out IExpressionNode expr)
+            {
+                if (firstExpr != null)
+                {
+                    expr = firstExpr;
+                    firstExpr = null;
+                    return true;
+                }
+
+                return TryParseExpression(out expr);
             }
 
             bool EnsureCloseParen()
             {
-                if (isOpenParen)
+                if (requiresParens || isOpenParen)
                 {
                     if (_stream.Advance().type != LexemType.ParenClose)
                     {
@@ -776,7 +818,10 @@ namespace DarkBasicYo
                 }
                 
                 // okay, we need an argument...
-                if (!TryParseExpression(out var expr))
+                
+                
+                
+                if (!TryGetNextExpr(out var expr))
                 {
                     // there is no arg!
                     // that can only be okay if this command is optional
@@ -1742,14 +1787,24 @@ namespace DarkBasicYo
                     
                     break;
                 case LexemType.ParenOpen:
+
+
+                    var checkpoint = _stream.Save();
                     _stream.Advance();
 
-                    var expr = ParseWikiExpression();
+                    if (!TryParseExpression(out var expr))
+                    {
+                        _stream.Restore(checkpoint);
+                        outputExpression = null;
+                        return false;
+                    }
                     var closeToken = _stream.Advance(); // move past closing...
 
                     if (closeToken.type != LexemType.ParenClose)
                     {
-                        throw new ParserException("expected closing paren", closeToken);
+                        _stream.Restore(checkpoint);
+                        outputExpression = null;
+                        return false;
                     }
 
                     outputExpression = expr;

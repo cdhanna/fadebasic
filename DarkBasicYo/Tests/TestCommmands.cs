@@ -242,5 +242,12 @@ namespace Tests
         {
             return x?.ToString() ?? "";
         }
+        
+                
+        [DarkBasicCommand("file end")]
+        public static int IsFileEnd([FromVm] VirtualMachine vm, int fileNumber)
+        {
+            return fileNumber; // eh?
+        }
     }
 }
