@@ -864,10 +864,10 @@ x = 1
         var parser = MakeParser(input);
         var prog = parser.ParseProgram();
         
-        Assert.That(prog.statements.Count, Is.EqualTo(2));
+        Assert.That(prog.statements.Count, Is.EqualTo(1));
         var code = prog.ToString();
         Console.WriteLine(code);
-        Assert.That(code, Is.EqualTo("((rem hello\nblah blah\nnothing\n),(= (ref x),(1)))"));
+        Assert.That(code, Is.EqualTo("((= (ref x),(1)))"));
     }
     
     [TestCase("REM")]
@@ -881,11 +881,10 @@ x = 1
         var parser = MakeParser(input);
         var prog = parser.ParseProgram();
         
-        Assert.That(prog.statements.Count, Is.EqualTo(2));
+        Assert.That(prog.statements.Count, Is.EqualTo(1));
         var code = prog.ToString();
         Console.WriteLine(code);
         Assert.That(code, Is.EqualTo(@"(
-(rem hello x = 1 this is a "" line),
 (= (ref x),(1))
 )".ReplaceLineEndings("")));
     }
@@ -901,12 +900,11 @@ x = 2
         var parser = MakeParser(input);
         var prog = parser.ParseProgram();
         
-        Assert.That(prog.statements.Count, Is.EqualTo(3));
+        Assert.That(prog.statements.Count, Is.EqualTo(2));
         var code = prog.ToString();
         Console.WriteLine(code);
         Assert.That(code, Is.EqualTo(@"(
 (= (ref x),(1)),
-(rem what),
 (= (ref x),(2))
 )".ReplaceLineEndings("")));
     }

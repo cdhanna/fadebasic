@@ -98,7 +98,9 @@ namespace DarkBasicYo
         VariableGeneral,
         VariableReal,
         VariableString,
-        CommandWord
+        CommandWord,
+        
+        Constant
     }
 
     public class Lexer
@@ -127,6 +129,7 @@ namespace DarkBasicYo
 
         public static List<Lexem> Lexems = new List<Lexem>
         {
+            new Lexem(LexemType.Constant, new Regex("^\\s*#constant\\s+([a-zA-Z][a-zA-Z0-9_]*)\\s+(.*)\\s*$")),
             new Lexem(LexemType.EndStatement, new Regex("^:")),
             new Lexem(LexemType.ArgSplitter, new Regex("^,")),
             new Lexem(LexemType.FieldSplitter, new Regex("^\\.")),
@@ -187,11 +190,15 @@ namespace DarkBasicYo
             new Lexem(LexemType.KeywordDeclareArray, new Regex("^dim")),
             new Lexem(LexemType.KeywordUnDeclareArray, new Regex("^undim")),
 
-            new Lexem(LexemType.KeywordRem, new Regex("^(rem)(.*)$")),
-            new Lexem(LexemType.KeywordRem, new Regex("^`(.*)$")),
-            new Lexem(-2, LexemType.KeywordRemStart, new Regex("^remstart(.*)$")),
-            new Lexem(-2, LexemType.KeywordRemEnd, new Regex("^remend")),
+            new Lexem(LexemType.WhiteSpace, new Regex("^`(.*)$")),
+            new Lexem(LexemType.WhiteSpace, new Regex("^rem(.*)$")),
+            // new Lexem(LexemType.WhiteSpace, new Regex("^remstart(.*)remend")),
             
+            // new Lexem(LexemType.KeywordRem, new Regex("^(rem)(.*)$")),
+            // new Lexem(LexemType.KeywordRem, new Regex("^`(.*)$")),
+            new Lexem(-2, LexemType.KeywordRemStart, new Regex("^remstart(.)$")),
+            new Lexem(-2, LexemType.KeywordRemEnd, new Regex("^remend")),
+            //
             new Lexem(LexemType.KeywordType, new Regex("^type")),
             new Lexem(LexemType.KeywordEndType, new Regex("^endtype")),
             
@@ -227,6 +234,8 @@ namespace DarkBasicYo
             {
                 commands = new CommandCollection();
             }
+
+            var constantTable = new Dictionary<string, string>();
 
             var lexems = Lexems.ToList();
             // commands
@@ -287,18 +296,18 @@ namespace DarkBasicYo
                     remBlockSb.Clear();
                     remBlockSb.AppendLine(line.Substring("remstart".Length));
                     continue;
-
+                
                 } else if (remBlockToken != null && (line.ToLowerInvariant().StartsWith("remend") || lineNumber == lines.Length - 1))
                 {
                     remBlockToken.caseInsensitiveRaw = remBlockSb.ToString();
-                    tokens.Add(remBlockToken);
-                    tokens.Add(new Token
-                    {
-                        lexem = new Lexem(LexemType.KeywordRemEnd, null),
-                        charNumber = 0,
-                        lineNumber = lineNumber,
-                        caseInsensitiveRaw = line
-                    });
+                    // tokens.Add(remBlockToken);
+                    // tokens.Add(new Token
+                    // {
+                    //     lexem = new Lexem(LexemType.KeywordRemEnd, null),
+                    //     charNumber = 0,
+                    //     lineNumber = lineNumber,
+                    //     caseInsensitiveRaw = line
+                    // });
                     remBlockToken = null;
                     continue;
                 } else if (remBlockToken != null)
@@ -314,6 +323,7 @@ namespace DarkBasicYo
                     var subStr = sub.ToLowerInvariant();
 
                     Token bestToken = null;
+                    MatchCollection bestMatches = null;
                     
                     for (var lexemId = 0; lexemId < lexems.Count; lexemId++)
                     {
@@ -335,6 +345,7 @@ namespace DarkBasicYo
                             if (bestToken == null || token.raw.Length > bestToken.raw.Length)
                             {
                                 bestToken = token;
+                                bestMatches = matches;
                             }
 
                             // break;
@@ -354,6 +365,25 @@ namespace DarkBasicYo
                         case LexemType.ArgSplitter:
                             requestEoS = false;
                             tokens.Add(bestToken);
+                            break;
+                        case LexemType.Constant:
+                            // replace all instances of string...
+                            var toRemove = bestMatches[0].Groups[1].Value;
+                            var toAdd = bestMatches[0].Groups[2].Value;
+
+                            constantTable[toRemove] = toAdd;
+                            // var prefix = line.Substring(0, charNumber);
+                            // var suffix = line.Substring(charNumber + toRemove.Length);
+                            //
+                            // var replacementLine = prefix + toAdd + suffix;
+                            break;
+                        case LexemType.VariableGeneral when constantTable.TryGetValue(bestToken.raw, out var replacement):
+                            var prefix = line.Substring(0, charNumber);
+                            var suffix = line.Substring(charNumber + bestToken.raw.Length);
+                            
+                            var replacementLine = prefix + replacement + suffix;
+                            line = replacementLine;
+                            continue;
                             break;
                         default:
                                     
@@ -380,8 +410,8 @@ namespace DarkBasicYo
                     }
                 }
 
-                var previousTokenWasNotEoS = tokens[tokens.Count - 1].type != LexemType.EndStatement;
-                var previousTokenWasNotArgSplitter = tokens[tokens.Count - 1].type != LexemType.ArgSplitter;
+                var previousTokenWasNotEoS = tokens.Count > 0 ? tokens[tokens.Count - 1].type != LexemType.EndStatement : false;
+                var previousTokenWasNotArgSplitter = tokens.Count > 0 ? tokens[tokens.Count - 1].type != LexemType.ArgSplitter : true;
                 
                 // if the next token is an arg splitter, than we don't want an EoS either...
                 if (previousTokenWasNotEoS && previousTokenWasNotArgSplitter)

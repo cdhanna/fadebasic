@@ -126,6 +126,87 @@ public class TokenizeTests
         Assert.That(tokens[2].type, Is.EqualTo(LexemType.EndStatement));
 
     }
+    
+    
+    [Test]
+    public void Tokenize_Constant_LiteralInt()
+    {
+        var input = @"#constant x 1
+y = x";
+
+        var lexer = new Lexer();
+        var tokens = lexer.Tokenize(input, TestCommands.CommandsForTesting);
+
+        var expectedLexemTypes = new LexemType[]
+        {
+            LexemType.VariableGeneral,
+            LexemType.OpEqual,
+            LexemType.LiteralInt,
+            LexemType.EndStatement,
+        };
+        CheckTokens(expectedLexemTypes, tokens);
+    }
+
+    
+    [Test]
+    public void Tokenize_Constant_LiteralInt_WithComment()
+    {
+        var input = @"#constant x 1  `hello
+y = x";
+
+        var lexer = new Lexer();
+        var tokens = lexer.Tokenize(input, TestCommands.CommandsForTesting);
+
+        var expectedLexemTypes = new LexemType[]
+        {
+            LexemType.VariableGeneral,
+            LexemType.OpEqual,
+            LexemType.LiteralInt,
+            LexemType.EndStatement,
+        };
+        CheckTokens(expectedLexemTypes, tokens);
+    }
+
+    
+    [Test]
+    public void Tokenize_Constant_LiteralInt2()
+    {
+        // spt, there are extra spaces at the end of the string!
+        var input = @"#constant x 1   
+y = x";
+
+        var lexer = new Lexer();
+        var tokens = lexer.Tokenize(input, TestCommands.CommandsForTesting);
+
+        var expectedLexemTypes = new LexemType[]
+        {
+            LexemType.VariableGeneral,
+            LexemType.OpEqual,
+            LexemType.LiteralInt,
+            LexemType.EndStatement,
+        };
+        CheckTokens(expectedLexemTypes, tokens);
+    }
+
+    
+    [Test]
+    public void Tokenize_Constant_LiteralString()
+    {
+        var input = @"#constant x ""hello""
+y = x";
+
+        var lexer = new Lexer();
+        var tokens = lexer.Tokenize(input, TestCommands.CommandsForTesting);
+
+        var expectedLexemTypes = new LexemType[]
+        {
+            LexemType.VariableGeneral,
+            LexemType.OpEqual,
+            LexemType.LiteralString,
+            LexemType.EndStatement,
+        };
+        CheckTokens(expectedLexemTypes, tokens);
+    }
 
 
     private static void CheckTokens(LexemType[] expectedLexemTypes, List<Token> tokens)
@@ -465,6 +546,22 @@ minX";
     
     
     [Test]
+    public void Tokenize_RemLine()
+    {
+        var input = @"
+rem hello this is a test
+";
+
+        var lexer = new Lexer();
+        var tokens = lexer.Tokenize(input);
+        
+        Assert.That(tokens.Count, Is.EqualTo(0));
+        
+        // Assert.That(tokens[0].type, Is.EqualTo(LexemType.EndStatement));
+    }
+    
+    
+    [Test]
     public void Tokenize_RemStart_RemEnd()
     {
         var input = @"
@@ -476,10 +573,8 @@ Remend
         var lexer = new Lexer();
         var tokens = lexer.Tokenize(input);
         
-        Assert.That(tokens.Count, Is.EqualTo(2));
+        Assert.That(tokens.Count, Is.EqualTo(0));
         
-        Assert.That(tokens[0].type, Is.EqualTo(LexemType.KeywordRemStart));
-        Assert.That(tokens[1].type, Is.EqualTo(LexemType.KeywordRemEnd));
         // Assert.That(tokens[2].type, Is.EqualTo(LexemType.EndStatement));
 
     }

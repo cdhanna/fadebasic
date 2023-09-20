@@ -267,4 +267,43 @@ ENDFUNCTION
     }
 
 
+    [Test]
+    public void Constant_LiteralInt()
+    {
+        var input = @"
+#constant x 1
+y = x
+";
+        var parser = MakeParser(input);
+        var prog = parser.ParseProgram();
+        
+        Assert.That(prog.statements.Count, Is.EqualTo(1));
+        var code = prog.ToString();
+        Console.WriteLine(code);
+        Assert.That(code, Is.EqualTo(@"(
+(= (ref y),(1))
+)".ReplaceLineEndings("")));
+    }
+
+    
+    [Test]
+    public void Constant_LiteralInt2()
+    {
+        var input = @"
+#constant x 1 
+#constant z 3  
+y = x + z
+";
+        var parser = MakeParser(input);
+        var prog = parser.ParseProgram();
+        
+        Assert.That(prog.statements.Count, Is.EqualTo(1));
+        var code = prog.ToString();
+        Console.WriteLine(code);
+        Assert.That(code, Is.EqualTo(@"(
+(= (ref y),(+ (1),(3)))
+)".ReplaceLineEndings("")));
+    }
+
+    
 }
