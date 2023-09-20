@@ -56,29 +56,39 @@ public class Vms
 //
 //     }
 //
-//     [Benchmark()]
-//     public void Dbp_Cached()
-//     {
-//         _vm.Execute2();
-//     }
+     // [Benchmark()]
+     // public void Dbp_Cached()
+     // {
+     //     _vm.Execute2();
+     // }
+     //
+     // [Benchmark()]
+     // public void Csharp()
+     // {
+     //     int[] x = new int[] { 2, 4, 6, 8 };
+     //     int y = x[0] * x[1];
+     // }
+     
 //     
 //     [Benchmark()]
 //     public void Lua()
 //     {
 //         Script.RunString(@"
-// x = { 2, 1, 3, 4}
-// y = x[1] * x[2]
+// x = 1
+// y = 2
+// z = 3
 // ");
 //     }
 
 
-//     [Benchmark()]
-//     public void Lua_Cached()
-//     {
-//         _lua.DoString(@"
-// x = { 2, 1, 3, 4}
-// y = x[1] * x[2]
-// ");
-//     }
+    [Benchmark()]
+    public void Lua_Cached()
+    {
+        _lua.DoString(@"
+x = 1
+y = 2
+z = 3
+");
+    }
 //     
 }
