@@ -12,6 +12,8 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "DarkBasicCommands", "DarkBa
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "CLI", "CLI\CLI.csproj", "{50997112-99B4-481D-9DB8-C87C78CE14FA}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "LSP", "LSP\LSP.csproj", "{3C16BA65-8DD8-4973-B379-F92B49956314}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -43,5 +45,9 @@ Global
 		{50997112-99B4-481D-9DB8-C87C78CE14FA}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{50997112-99B4-481D-9DB8-C87C78CE14FA}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{50997112-99B4-481D-9DB8-C87C78CE14FA}.Release|Any CPU.Build.0 = Release|Any CPU
+		{3C16BA65-8DD8-4973-B379-F92B49956314}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{3C16BA65-8DD8-4973-B379-F92B49956314}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{3C16BA65-8DD8-4973-B379-F92B49956314}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{3C16BA65-8DD8-4973-B379-F92B49956314}.Release|Any CPU.Build.0 = Release|Any CPU
 	EndGlobalSection
 EndGlobal
