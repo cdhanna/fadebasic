@@ -6,11 +6,24 @@ using DarkBasicYo.Virtual;
 namespace DarkBasicYo.Ast
 {
 
-    public interface IStatementNode : IAstNode
+    public interface IStatementNode : IAstNode, IAstVisitable
     {
     }
 
-    public class TypeDefinitionMember : AstNode
+    public class NoOpStatement : AstNode, IStatementNode
+    {
+        protected override string GetString()
+        {
+            return "noop";
+        }
+
+        public IEnumerable<IAstVisitable> IterateChildNodes()
+        {
+            yield break;
+        }
+    }
+
+    public class TypeDefinitionMember : AstNode, IAstVisitable
     {
         public VariableRefNode name;
         public ITypeReferenceNode type;
@@ -25,6 +38,12 @@ namespace DarkBasicYo.Ast
         protected override string GetString()
         {
             return $"{name} as {type}";
+        }
+
+        public IEnumerable<IAstVisitable> IterateChildNodes()
+        {
+            yield return name;
+            yield return type;
         }
     }
 
@@ -43,6 +62,13 @@ namespace DarkBasicYo.Ast
         {
             return $"type {name.variableName} {string.Join(",", declarations.Select(x => x.ToString()))}";
         }
+
+        public IEnumerable<IAstVisitable> IterateChildNodes()
+        {
+            yield return name;
+            foreach (var decl in declarations)
+                yield return decl;
+        }
     }
 
     public class EndProgramStatement : AstNode, IStatementNode
@@ -51,6 +77,11 @@ namespace DarkBasicYo.Ast
         protected override string GetString()
         {
             return "end";
+        }
+
+        public IEnumerable<IAstVisitable> IterateChildNodes()
+        {
+            yield break;
         }
     }
     
@@ -66,6 +97,11 @@ namespace DarkBasicYo.Ast
         {
             return $"goto {label}";
         }
+
+        public IEnumerable<IAstVisitable> IterateChildNodes()
+        {
+            yield break;
+        }
     }
 
     public class ExpressionStatement : AstNode, IStatementNode
@@ -79,6 +115,11 @@ namespace DarkBasicYo.Ast
         {
             return $"expr {expression}";
         }
+
+        public IEnumerable<IAstVisitable> IterateChildNodes()
+        {
+            yield return expression;
+        }
     }
     
     
@@ -91,6 +132,11 @@ namespace DarkBasicYo.Ast
         protected override string GetString()
         {
             return $"ret";
+        }
+
+        public IEnumerable<IAstVisitable> IterateChildNodes()
+        {
+            yield break;
         }
     }
 
@@ -106,6 +152,11 @@ namespace DarkBasicYo.Ast
         protected override string GetString()
         {
             return $"gosub {label}";
+        }
+
+        public IEnumerable<IAstVisitable> IterateChildNodes()
+        {
+            yield break;
         }
     }
 
@@ -124,6 +175,12 @@ namespace DarkBasicYo.Ast
             }
             return $"call {command.name}{argString}";
         }
+
+        public IEnumerable<IAstVisitable> IterateChildNodes()
+        {
+            foreach (var arg in args) yield return arg;
+
+        }
     }
 
     public class AssignmentStatement : AstNode, IStatementNode
@@ -140,6 +197,12 @@ namespace DarkBasicYo.Ast
         {
             return $"= {variable},{expression}";
         }
+
+        public IEnumerable<IAstVisitable> IterateChildNodes()
+        {
+            yield return variable;
+            yield return expression;
+        }
     }
 
     public class ExitLoopStatement : AstNode, IStatementNode
@@ -151,6 +214,11 @@ namespace DarkBasicYo.Ast
         protected override string GetString()
         {
             return "break";
+        }
+
+        public IEnumerable<IAstVisitable> IterateChildNodes()
+        {
+            yield break;
         }
     }
 
@@ -166,6 +234,11 @@ namespace DarkBasicYo.Ast
         protected override string GetString()
         {
             return $"do ({string.Join(",", statements.Select(x => x.ToString()))})";
+        }
+
+        public IEnumerable<IAstVisitable> IterateChildNodes()
+        {
+            foreach (var statement in statements) yield return statement;
         }
     }
     
@@ -195,6 +268,16 @@ namespace DarkBasicYo.Ast
         {
             return $"for {variableNode},{startValueExpression},{endValueExpression},{stepValueExpression},({string.Join(",", statements.Select(x => x.ToString()))})";
         }
+
+        public IEnumerable<IAstVisitable> IterateChildNodes()
+        {
+            yield return variableNode;
+            yield return startValueExpression;
+            yield return endValueExpression;
+            yield return stepValueExpression;
+            foreach (var statement in statements) yield return statement;
+
+        }
     }
     
     public class WhileStatement : AstNode, IStatementNode
@@ -206,6 +289,12 @@ namespace DarkBasicYo.Ast
         {
             return $"while {condition} {string.Join(",", statements.Select(x => x.ToString()))}";
         }
+        
+        public IEnumerable<IAstVisitable> IterateChildNodes()
+        {
+            yield return condition;
+            foreach (var statement in statements) yield return statement;
+        }
     }
     
     public class RepeatUntilStatement : AstNode, IStatementNode
@@ -216,6 +305,12 @@ namespace DarkBasicYo.Ast
         protected override string GetString()
         {
             return $"repeat {condition} {string.Join(",", statements.Select(x => x.ToString()))}";
+        }
+
+        public IEnumerable<IAstVisitable> IterateChildNodes()
+        {
+            yield return condition;
+            foreach (var statement in statements) yield return statement;
         }
     }
 
@@ -235,6 +330,14 @@ namespace DarkBasicYo.Ast
             }
             return $"switch {expression} ({string.Join(",", statements.Select(x => x.ToString()))})";
         }
+
+        public IEnumerable<IAstVisitable> IterateChildNodes()
+        {
+            yield return expression;
+            if (cases != null) foreach (var caseInstance in cases)
+                yield return caseInstance;
+            yield return defaultCase;
+        }
     }
 
     public class CaseStatement : AstNode, IStatementNode
@@ -245,6 +348,14 @@ namespace DarkBasicYo.Ast
         {
             return $"case {string.Join(",", values.Select(x => x.ToString()))} ({string.Join(",", statements.Select((x => x.ToString())))})";
         }
+
+        public IEnumerable<IAstVisitable> IterateChildNodes()
+        {
+            foreach (var value in values)
+                yield return value;
+            foreach (var statement in statements)
+                yield return statement;
+        }
     }
 
     public class DefaultCaseStatement : AstNode, IStatementNode
@@ -253,6 +364,12 @@ namespace DarkBasicYo.Ast
         protected override string GetString()
         {
             return $"case default ({string.Join(",", statements.Select((x => x.ToString())))})";
+        }
+
+        public IEnumerable<IAstVisitable> IterateChildNodes()
+        {
+            foreach (var statement in statements)
+                yield return statement;
         }
     }
 
@@ -285,6 +402,15 @@ namespace DarkBasicYo.Ast
             
             return $"if {condition} ({string.Join(",", positiveStatements)}){negativeStr}";
         }
+
+        public IEnumerable<IAstVisitable> IterateChildNodes()
+        {
+            yield return condition;
+            foreach (var statement in positiveStatements)
+                yield return statement;
+            foreach (var statement in negativeStatements)
+                yield return statement;
+        }
     }
 
     public class CommentStatement : AstNode, IStatementNode
@@ -298,6 +424,11 @@ namespace DarkBasicYo.Ast
         protected override string GetString()
         {
             return $"rem{comment}";
+        }
+
+        public IEnumerable<IAstVisitable> IterateChildNodes()
+        {
+            yield break;
         }
     }
 

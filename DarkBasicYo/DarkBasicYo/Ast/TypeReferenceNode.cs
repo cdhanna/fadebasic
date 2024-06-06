@@ -4,7 +4,7 @@ using System.Collections.Generic;
 namespace DarkBasicYo.Ast
 {
 
-    public interface ITypeReferenceNode : IAstNode
+    public interface ITypeReferenceNode : IAstNode, IAstVisitable
     {
         VariableType variableType { get; }
     }
@@ -26,6 +26,10 @@ namespace DarkBasicYo.Ast
         }
 
         public VariableType variableType => VariableType.Struct;
+        public IEnumerable<IAstVisitable> IterateChildNodes()
+        {
+            yield return variableNode;
+        }
     }
     
     public class TypeReferenceNode : AstNode, ITypeReferenceNode
@@ -68,10 +72,14 @@ namespace DarkBasicYo.Ast
 
             return variableType;
         }
-
         protected override string GetString()
         {
             return variableType.ToString().ToLowerInvariant();
+        }
+
+        public IEnumerable<IAstVisitable> IterateChildNodes()
+        {
+            yield break;
         }
     }
 }

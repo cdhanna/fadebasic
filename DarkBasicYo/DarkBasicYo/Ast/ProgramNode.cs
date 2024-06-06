@@ -3,13 +3,14 @@ using System.Linq;
 
 namespace DarkBasicYo.Ast
 {
-    public class ProgramNode : AstNode
+    public class ProgramNode : AstNode, IAstVisitable
     {
         public ProgramNode(Token start) : base(start)
         {
 
         }
 
+        public List<ParseError> errors = new List<ParseError>();
         public List<IStatementNode> statements = new List<IStatementNode>();
         public List<TypeDefinitionStatement> typeDefinitions = new List<TypeDefinitionStatement>();
         public List<LabelDefinition> labels = new List<LabelDefinition>();
@@ -20,6 +21,18 @@ namespace DarkBasicYo.Ast
             allStatements.AddRange(typeDefinitions);
             allStatements.AddRange(statements);
             return $"{string.Join(",", allStatements.Select(x => x.ToString()))}";
+        }
+
+        public IEnumerable<IAstVisitable> IterateChildNodes()
+        {
+            foreach (var statement in statements)
+            {
+                yield return statement;
+            }
+            foreach (var type in typeDefinitions)
+            {
+                yield return type;
+            }
         }
     }
 }

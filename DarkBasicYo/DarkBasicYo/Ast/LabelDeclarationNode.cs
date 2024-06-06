@@ -1,3 +1,5 @@
+using System.Collections.Generic;
+
 namespace DarkBasicYo.Ast
 {
     public class LabelDefinition
@@ -24,6 +26,11 @@ namespace DarkBasicYo.Ast
         protected override string GetString()
         {
             return $"label {label}";
+        }
+
+        public IEnumerable<IAstVisitable> IterateChildNodes()
+        {
+            yield break;
         }
     }
 }

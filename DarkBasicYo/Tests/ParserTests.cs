@@ -16,7 +16,12 @@ public partial class ParserTests
         _commands = TestCommands.CommandsForTesting;
     }
 
-    TokenStream Tokenize(string input) => new TokenStream(_lexer.Tokenize(input, _commands));
+    TokenStream Tokenize(string input)
+    {
+        var output = _lexer.TokenizeWithErrors(input, _commands);
+        return output.stream;
+        // new TokenStream(_lexer.Tokenize(input, _commands));
+    } 
 
     Parser MakeParser(string input) => new Parser(Tokenize(input), _commands);
     

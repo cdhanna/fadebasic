@@ -45,6 +45,8 @@ namespace DarkBasicYo
             _commands = commands;
         }
 
+        public List<LexerError> GetLexingErrors() => _stream.Errors;
+
         public ProgramNode ParseProgram()
         {
             var program = new ProgramNode(_stream.Current);
@@ -86,21 +88,36 @@ namespace DarkBasicYo
             {
                 case LexemType.VariableGeneral:
                     // we know we have something that looks like "local x", so the next token MUST be "as", and then there MUST be a type.
-                    var asToken = _stream.Advance();
+                    var asToken = _stream.Peek;
+                    ParseError error = null;
                     if (asToken.type != LexemType.KeywordAs)
                     {
-                        throw new ParserException("expected keyword, as", scopeToken, asToken);
+                        error = new ParseError(asToken, ErrorCodes.ScopedDeclarationExpectedAs);
                     }
+                    else
+                    {
+                        _stream.Advance(); // skip As token
+                    }
+                    
                     var typeReference = ParseTypeReference();
+                    if (error != null)
+                    {
+                        typeReference.Errors.Insert(0, error);
+                    }
                     return new DeclarationStatement(scopeToken, new VariableRefNode(next), typeReference);
                     
                 case LexemType.KeywordDeclareArray:
                     var decl = ParseDimStatement(next);
                     return new DeclarationStatement(scopeToken, decl);
-                    throw new NotImplementedException("scope array");
-                    break;
                 default:
-                    throw new ParserException("Expected either variable or dim ", scopeToken, next);
+                    var patchToken = _stream.CreatePatchToken(LexemType.VariableGeneral, "_")[0];
+
+                    _stream.AdvanceUntil(LexemType.EndStatement);
+                    var fake = new DeclarationStatement(scopeToken, new VariableRefNode(patchToken),
+                        new TypeReferenceNode(VariableType.Integer, patchToken));
+                    fake.Errors.Add(new ParseError(patchToken, ErrorCodes.ScopedDeclarationInvalid));
+                    return fake;
+                    
             }
         }
 
@@ -115,38 +132,81 @@ namespace DarkBasicYo
         {
             // dim
             var next = _stream.Advance();
+            var errors = new List<ParseError>();
             switch (next.type)
             {
                 case LexemType.VariableString:
                 case LexemType.VariableReal:
                 case LexemType.VariableGeneral:
                     // dim x
-                    var openParenToken = _stream.Advance();
+                    var openParenToken = _stream.Peek;
                     if (openParenToken.type != LexemType.ParenOpen)
                     {
-                        throw new ParserException("Expected open paren ", openParenToken);
+                        errors.Add(new ParseError(openParenToken, ErrorCodes.ArrayDeclarationMissingOpenParen));
                     }
-
-                    var rankExpressions = new List<IExpressionNode>();
-                    for (var rankIndex = 0; rankIndex < 5; rankIndex++) // 5 is the magic "max dimension"
+                    else
                     {
-                        var rankExpression = ParseWikiExpression();
-                        rankExpressions.Add(rankExpression);
-                        var closeOrComma = _stream.Advance();
-                        var closeFound = false;
-                        switch (closeOrComma.type)
+                        _stream.Advance(); // skip the (
+                    }
+                    
+                    var rankExpressions = new List<IExpressionNode>();
+                    var rankIndex = -1;
+                    while (true)
+                    // for (var rankIndex = 0; rankIndex < 5; rankIndex++) // 5 is the magic "max dimension"
+                    {
+                        rankIndex++;
+                        var curr = _stream.Current;
+                        if (!TryParseExpression(out var rankExpression, out var recovery))
                         {
-                            case LexemType.ParenClose:
-                                closeFound = true;
-                                break;
-                            case LexemType.ArgSplitter:
-                                if (rankIndex + 1 == 5)
-                                {
-                                    throw new ParserException("arrays can only have 5 dimensions", closeOrComma);
-                                }
-                                break;
-                            default:
-                                throw new ParserException("Expected close paren or comma", openParenToken);
+                            if (rankIndex == 0)
+                            {
+                                errors.Add(new ParseError(curr, ErrorCodes.ArrayDeclarationRequiresSize));
+                            }
+                            else
+                            {
+                                // errors.Add();
+                            }
+                            _stream.Patch(recovery.index, recovery.correctiveTokens);
+
+                            if (!TryParseExpression(out rankExpression, out _))
+                            {
+                                throw new Exception("Failed to patch stream");
+                            }
+                        }
+                        // var rankExpression = ParseWikiExpression();
+                        rankExpressions.Add(rankExpression);
+                        var closeFound = false;
+                        var looking = true;
+                        while (looking)
+                        {
+                            var closeOrComma = _stream.Advance();
+                            switch (closeOrComma.type)
+                            {
+                                case LexemType.ParenClose:
+                                    closeFound = true;
+                                    looking = false;
+                                    break;
+                                case LexemType.ArgSplitter:
+                                    if (rankIndex + 1 == 5)
+                                    {
+                                        errors.Add(new ParseError(closeOrComma, ErrorCodes.ArrayDeclarationSizeLimit));
+                                    }
+                                    looking = false;
+
+                                    break;
+                                case LexemType.EndStatement:
+                                case LexemType.EOF:
+                                    errors.Add(new ParseError(closeOrComma,
+                                        ErrorCodes.ArrayDeclarationMissingCloseParen));
+                                    closeFound = true;
+                                    looking = false;
+
+                                    break;
+                                default:
+                                    errors.Add(new ParseError(closeOrComma,
+                                        ErrorCodes.ArrayDeclarationInvalidSizeExpression));
+                                    break;
+                            }
                         }
 
                         if (closeFound)
@@ -158,21 +218,46 @@ namespace DarkBasicYo
                     // so far, we have dim x(n)
                     // next, we _could_ have an AS, or it could be an end-of-statement
 
-                    if (_stream.Peek?.type == LexemType.KeywordAs)
+                    // if (_stream.Peek?.type == LexemType.KeywordAs)
+                    // {
+                    //   
+                    // }
+
+                    switch (_stream.Peek?.type)
                     {
-                        _stream.Advance(); // discard the "as"
-                        var typeReference = ParseTypeReference();
-                        return new DeclarationStatement(dimToken, new VariableRefNode(next), typeReference,
-                            rankExpressions.ToArray());
+                        case LexemType.KeywordAs:
+                            _stream.Advance(); // discard the "as"
+                            var typeReference = ParseTypeReference();
+                            var sub = new DeclarationStatement(dimToken, new VariableRefNode(next), typeReference,
+                                rankExpressions.ToArray());
+                            sub.Errors.AddRange(errors);
+                            return sub;
+                        default:
+                            break;
+                        // case LexemType.EndStatement:
+                        // case LexemType.EOF:
+                        //     break;
+                        // default:
+                        //     // error case?
+                        //     errors.Add(new ParseError(_stream.Current, ErrorCodes.ArrayDeclarationInvalidSizeExpression));
+                        //
+                        //     _stream.AdvanceUntil(LexemType.EndStatement);
+                        //     break;
                     }
                     
-                    return new DeclarationStatement(
+                    var statement = new DeclarationStatement(
                         dimToken, 
                         new VariableRefNode(next), 
                         rankExpressions.ToArray());
+                    statement.Errors = errors;
+                    return statement;
                     break;
                 default:
-                    throw new ParserException("Expected variable declaration ", next);
+                    var patchToken = _stream.CreatePatchToken(LexemType.VariableGeneral, "_")[0];
+                    var fake = new DeclarationStatement(dimToken, new VariableRefNode(patchToken),
+                        new IExpressionNode[1]);
+                    fake.Errors.Add(new ParseError(patchToken, ErrorCodes.ArrayDeclarationInvalid));
+                    return fake;
             }
         }
 
@@ -212,7 +297,7 @@ namespace DarkBasicYo
                         case LexemType.ParenOpen:
                             _stream.Advance();
                             var rankExpressions = new List<IExpressionNode>();
-                            
+                            ParseError error = null;
                             // var statements = new List<IStatementNode>();
                             var looking = true;
                             while (looking)
@@ -221,7 +306,17 @@ namespace DarkBasicYo
                                 switch (nextToken.type)
                                 {
                                     case LexemType.EOF:
-                                        throw new ParserException("Hit end of file without a closing paren", nextToken);
+
+                                        error = new ParseError(next,
+                                            ErrorCodes.VariableIndexMissingCloseParen);
+                                        // _stream.Patch();
+                                        // _stream.Advance()
+                                        
+                                        // normally we would pretend this is a ) to signal the end,
+                                        //  but since this was triggered by EOF, there is no point looking forward anyway.
+                                        looking = false; 
+                                        break;
+                                        
                                     case LexemType.EndStatement:
                                     case LexemType.ArgSplitter:
                                         _stream.Advance();
@@ -273,6 +368,10 @@ namespace DarkBasicYo
                                 rankExpressions = rankExpressions,
                                 variableName = token.caseInsensitiveRaw
                             };
+                            if (error != null)
+                            {
+                                indexValue.Errors.Add(error);
+                            }
                             
                             if (_stream.Peek?.type == LexemType.FieldSplitter)
                             {
@@ -298,7 +397,11 @@ namespace DarkBasicYo
                     
                     break;
                 default:
-                    throw new ParserException("expected a variable reference", token);
+                    
+                    // to correct the error, return a fake variable reference with a logged error
+                    var fakeRef = new VariableRefNode(_stream.CreatePatchToken(LexemType.VariableGeneral, "_", -2)[0]);
+                    fakeRef.Errors.Add(new ParseError(fakeRef.startToken, ErrorCodes.VariableReferenceMissing));
+                    return fakeRef;
             }
             
         }
@@ -559,7 +662,7 @@ namespace DarkBasicYo
                                     startToken = token,
                                     endToken = _stream.Current,
                                     variable = reference,
-                                    expression = expr,
+                                    expression = expr
                                 };
                             case LexemType.KeywordAs:
                                 var type = ParseTypeReference();
@@ -574,73 +677,17 @@ namespace DarkBasicYo
                                     variable = token.caseInsensitiveRaw
                                 };
                             default:
-                                throw new ParserException("parser exception! Unknown statement, " + secondToken.type, secondToken);
+                                
+                                // this is an error case, and the most general solution is to skip ahead to an end-statement and start anew. 
+                                _stream.AdvanceUntil(LexemType.EndStatement);
+                                var statement = new NoOpStatement();
+                                statement.Errors.Add(new ParseError(secondToken, ErrorCodes.AmbiguousDeclarationOrAssignment));
+                                return statement;
                         }
 
                         break;
 
                     case LexemType.CommandWord:
-                        // resolve the command using the command index....
-                        // if (!_commands.TryGetCommandDescriptor(token, out var possibleCommands))
-                        // {
-                        //     throw new Exception("Parser exception! unknown command " + token.caseInsensitiveRaw);
-                        // }
-                        //
-                        // possibleCommands = possibleCommands.ToList(); // make a copy!
-                        //
-                        // // parse the args!
-                        // // var argExpressions = ParseCommandArgs(token, command);
-                        // var commandArgs = ParseAvailableArgs(token);
-                        //
-                        // // now, based on the args that EXIST, we need to boil down the possible commands...
-                        // var invalidCommands = new List<CommandInfo>();
-                        //
-                        // foreach (var possible in possibleCommands)
-                        // {
-                        //     // each arg needs to line up to something that was actually parsed
-                        //     var j = 0; // j is the index into the parsed commands
-                        //     for (var i = 0; i < possible.args.Length; i++)
-                        //     {
-                        //         var expected = possible.args[i];
-                        //         if (expected.isVmArg) continue; // we don't expect to see vms in the parsed expression
-                        //
-                        //         if (expected.isParams) // defacto, we know this MUST be the last index
-                        //         {
-                        //             if (i != possible.args.Length - 1)
-                        //                 throw new ParserException("how can there be a params arg that is not last?",
-                        //                     token);
-                        //             
-                        //             // at this point, all remaining expressions are allows to sit here.
-                        //             j = i;
-                        //             continue;
-                        //         }
-                        //
-                        //         // okay, we are parsing!
-                        //         j++;
-                        //     }
-                        //
-                        //     if (j != possible.args.Length - 1)
-                        //     {
-                        //         invalidCommands.Add(possible);
-                        //     }
-                        // }
-                        //
-                        // possibleCommands = possibleCommands.Except(invalidCommands).ToList();
-                        //
-                        // if (possibleCommands.Count == 0)
-                        // {
-                        //     throw new ParserException("There was an error matching the args to the available command",
-                        //         token);
-                        // }
-                        //
-                        // if (possibleCommands.Count > 1)
-                        // {
-                        //     throw new ParserException(
-                        //         "There are too many possible overloads for the method call, and it is ambigious",
-                        //         token);
-                        // }
-                        //
-                        // ParseCommandOverload(token, out var command, out var commandArgs);
                         ParseCommandOverload2(token, out var command, out var commandArgs);
                         return new CommandStatement
                         {
@@ -655,7 +702,17 @@ namespace DarkBasicYo
                         
                         break;
                     default:
-                        throw new ParserException($"Unknown token type=[{token.type}]", token);
+                        _stream.AdvanceUntil(LexemType.EndStatement);
+                        return new NoOpStatement
+                        {
+                            startToken = token,
+                            endToken = _stream.Current,
+                            Errors = new List<ParseError>()
+                            {
+                                new ParseError(token, ErrorCodes.UnknownStatement)
+                            }
+                        };
+                    
                 }
 
                 /*
@@ -981,7 +1038,9 @@ namespace DarkBasicYo
         private ParameterNode ParseParameterNode()
         {
             var typeMember = ParseTypeMember();
-            return new ParameterNode(typeMember.name, typeMember.type);
+            var node = new ParameterNode(typeMember.name, typeMember.type);
+            node.Errors.AddRange(typeMember.Errors);
+            return node;
         }
 
         private FunctionReturnStatement ParseExitFunction(Token endToken)
@@ -992,48 +1051,73 @@ namespace DarkBasicYo
         
         private FunctionStatement ParseFunction(Token functionToken)
         {
-            // parse the name
+            var errors = new List<ParseError>();
 
-            var nameToken = _stream.Advance();
+            // parse the name
+            var nameToken = _stream.Peek;
             if (nameToken.type != LexemType.VariableGeneral)
             {
-                throw new ParserException("Exepcted to find valid function name", nameToken);
+                nameToken = _stream.CreatePatchToken(LexemType.VariableGeneral, "_")[0];
+                errors.Add(new ParseError(functionToken, ErrorCodes.FunctionMissingName));
             }
-            
-            if (_stream.Advance().type != LexemType.ParenOpen)
+            else
             {
-                throw new ParserException("Expected to find open paren", _stream.Current);
+                _stream.Advance();
+            }
+
+            if (_stream.Peek.type != LexemType.ParenOpen)
+            {
+                errors.Add(new ParseError(functionToken, ErrorCodes.FunctionMissingOpenParen));
+            }
+            else
+            {
+                _stream.Advance(); // consume open paren
             }
             
             // now we need to parse a set of arguments....
-            // TODO: 
             var parameters = new List<ParameterNode>();
             var looking = true;
+            Token peekToken = _stream.Current;
             while (looking)
             {
                 var nextToken = _stream.Peek;
                 switch (nextToken.type)
                 {
                     case LexemType.EOF:
-                        throw new ParserException("Hit end of file without a closing function parameter list", nextToken);
+                        looking = false;
+                        break;
                     case LexemType.ArgSplitter:
                     case LexemType.EndStatement:
                         _stream.Advance();
                         break;
+                    case LexemType.KeywordEndFunction:
+                        looking = false;
+                        break;
+                        
                     case LexemType.ParenClose:
                         _stream.Advance();
                         looking = false;
+                        peekToken = nextToken;
                         break;
                     default:
                         var member = ParseParameterNode();
                         parameters.Add(member);
+                        peekToken = nextToken;
+                        // errors.Add(new ParseError(nextToken, ErrorCodes.FunctionMissingCloseParen));
+                        // looking = false; // let the if statement for closing paren catch this...
                         break; 
+                }
+
+                if (looking)
+                {
                 }
             }
             
             if (_stream.Current.type != LexemType.ParenClose)
             {
-                throw new ParserException("Expected to find open paren", _stream.Current);
+                // we can safely ignore the lack of a close and just continue...
+                errors.Add(new ParseError(peekToken, ErrorCodes.FunctionMissingCloseParen));
+                
             }
 
             // now we need to parse all the statements
@@ -1045,7 +1129,10 @@ namespace DarkBasicYo
                 switch (nextToken.type)
                 {
                     case LexemType.EOF:
-                        throw new ParserException("Hit end of file without a closing function statement", nextToken);
+                        errors.Add(new ParseError(functionToken, ErrorCodes.FunctionMissingEndFunction));
+                        looking = false;
+                        break;
+                        
                     case LexemType.EndStatement:
                         _stream.Advance();
                         break;
@@ -1061,6 +1148,11 @@ namespace DarkBasicYo
                         
                         looking = false;
                         break;
+                    case LexemType.KeywordFunction:
+                        var illegalFunctionMember = ParseStatement();
+                        statements.Add(illegalFunctionMember);
+                        illegalFunctionMember.Errors.Add(new ParseError(nextToken, ErrorCodes.FunctionDefinedInsideFunction));
+                        break;
                     default:
                         var member = ParseStatement();
                         statements.Add(member);
@@ -1071,6 +1163,7 @@ namespace DarkBasicYo
 
             return new FunctionStatement
             {
+                Errors = errors,
                 statements = statements,
                 parameters = parameters,
                 name = nameToken.caseInsensitiveRaw,
@@ -1087,12 +1180,16 @@ namespace DarkBasicYo
             var looking = true;
             DefaultCaseStatement defaultCase = null;
             List<CaseStatement> caseStatements = new List<CaseStatement>();
+            var errors = new List<ParseError>();
             while (looking)
             {
                 switch (_stream.Peek.type)
                 {
                     case LexemType.EOF:
-                        throw new ParserException("Hit end of file without a closing select statement", switchToken);
+                        errors.Add(new ParseError(switchToken, ErrorCodes.SelectStatementMissingEndSelect));
+                        looking = false;
+                        break;
+                        
                     case LexemType.EndStatement:
                         _stream.Advance();
                         break;
@@ -1104,8 +1201,16 @@ namespace DarkBasicYo
                             case LexemType.KeywordCaseDefault:
                                 if (defaultCase != null)
                                 {
-                                    throw new ParserException("Select statement can only have 1 default case",
-                                        defaultCase.StartToken);
+                                    errors.Add(new ParseError(_stream.Peek, ErrorCodes.MultipleDefaultCasesFound));
+                                    // even though this default case is bad, we'd like to know if there are parse errors in the inner statements.
+                                    var badCaseStatement = ParseDefaultCase(caseToken);
+                                    var fakeCaseStatement = new CaseStatement
+                                    {
+                                        values = new List<ILiteralNode>(),
+                                        statements = badCaseStatement.statements
+                                    };
+                                    caseStatements.Add(fakeCaseStatement);
+                                    break;
                                 }
                                 defaultCase = ParseDefaultCase(caseToken);
                                 break;
@@ -1122,33 +1227,45 @@ namespace DarkBasicYo
                         looking = false;
                         _stream.Advance(); // discard token
                         break;
+                    default:
+                        // invalid token was given to us
+                        errors.Add(new ParseError(_stream.Peek, ErrorCodes.SelectStatementUnknownCase));
+                        _stream.Advance(); // discard token
+                        break;
                 }
             }
 
-            return new SwitchStatement
+            var statement = new SwitchStatement
             {
                 startToken = switchToken,
                 endToken = _stream.Current,
                 cases = caseStatements,
                 defaultCase = defaultCase,
-                expression = expression
+                expression = expression,
+                Errors = errors
             };
+            return statement;
 
         }
 
         private CaseStatement ParseCaseStatement(Token caseToken)
         {
+            
             var literals = ParseLiteralList(_stream.Advance());
 
             var statements = new List<IStatementNode>();
             var looking = true;
+            var errors = new List<ParseError>();
             while (looking)
             {
                 var nextToken = _stream.Peek;
                 switch (nextToken.type)
                 {
                     case LexemType.EOF:
-                        throw new ParserException("Hit end of file without a closing case statement", caseToken);
+                        errors.Add(new ParseError(caseToken, ErrorCodes.CaseStatementMissingEndCase));
+                        looking = false;
+                        break;
+                        
                     case LexemType.EndStatement:
                         _stream.Advance();
                         break;
@@ -1157,7 +1274,10 @@ namespace DarkBasicYo
                         looking = false;
                         break;
                     case LexemType.KeywordEndSelect:
-                        throw new ParserException("Must close all cases before ending select statement", caseToken);
+                        errors.Add(new ParseError(caseToken, ErrorCodes.CaseStatementMissingEndCase));
+                        looking = false;
+                        break;
+                        
                     default:
                         var member = ParseStatement();
                         statements.Add(member);
@@ -1167,6 +1287,7 @@ namespace DarkBasicYo
 
             return new CaseStatement
             {
+                Errors = errors,
                 startToken = caseToken,
                 endToken = _stream.Current,
                 statements = statements,
@@ -1181,13 +1302,17 @@ namespace DarkBasicYo
             
             var statements = new List<IStatementNode>();
             var looking = true;
+            var errors = new List<ParseError>();
             while (looking)
             {
                 var nextToken = _stream.Peek;
                 switch (nextToken.type)
                 {
                     case LexemType.EOF:
-                        throw new ParserException("Hit end of file without a closing case statement", caseToken);
+                        errors.Add(new ParseError(caseToken, ErrorCodes.CaseStatementMissingEndCase));
+                        looking = false;
+                        break;
+                        
                     case LexemType.EndStatement:
                         _stream.Advance();
                         break;
@@ -1196,7 +1321,10 @@ namespace DarkBasicYo
                         looking = false;
                         break;
                     case LexemType.KeywordEndSelect:
-                        throw new ParserException("Must close all cases before ending select statement", caseToken);
+                        errors.Add(new ParseError(caseToken, ErrorCodes.CaseStatementMissingEndCase));
+                        looking = false;
+                        break;
+                        
                     default:
                         var member = ParseStatement();
                         statements.Add(member);
@@ -1206,6 +1334,7 @@ namespace DarkBasicYo
 
             return new DefaultCaseStatement
             {
+                Errors = errors,
                 startToken = caseToken,
                 endToken = _stream.Current,
                 statements = statements
@@ -1215,20 +1344,37 @@ namespace DarkBasicYo
         private ForStatement ParseForStatement(Token forToken)
         {
             var variable = ParseVariableReference();
+            var errors = new List<ParseError>();
             
             // next token must be an equal token.
+            if (_stream.IsEof)
+            {
+                var fakeValue = new LiteralIntExpression(_stream.CreatePatchToken(LexemType.LiteralInt, "0")[0]);
+                var brokenFor = new ForStatement(forToken, forToken, variable, fakeValue, fakeValue, fakeValue,
+                    new List<IStatementNode>());
+                
+                brokenFor.Errors.Add(new ParseError(forToken, ErrorCodes.ForStatementMissingOpening));
+                return brokenFor;
+            }
+            var equalCheckpoint = _stream.Save();
             var equalToken = _stream.Advance();
             if (equalToken.type != LexemType.OpEqual)
             {
-                throw new ParserException("Expected to find equal symbol", equalToken);
+                // just pretend there _was_ an equal... by skipping back a token.
+                _stream.Restore(equalCheckpoint);
+                errors.Add(new ParseError(equalToken, ErrorCodes.ForStatementMissingOpening));
+                
             }
 
             var startExpr = ParseWikiExpression();
             // next token must be a TO token
+            var toCheckpoint = _stream.Save();
             var toToken = _stream.Advance();
             if (toToken.type != LexemType.KeywordTo)
             {
-                throw new ParserException("Expected to find TO symbol", toToken);
+                _stream.Restore(toCheckpoint);
+                errors.Add(new ParseError(toToken, ErrorCodes.ForStatementMissingTo));
+                
             }
 
             var endExpr = ParseWikiExpression();
@@ -1256,7 +1402,10 @@ namespace DarkBasicYo
                 switch (nextToken.type)
                 {
                     case LexemType.EOF:
-                        throw new ParserException("Hit end of file without a closing NEXT statement", nextToken);
+                        errors.Add(new ParseError(forToken, ErrorCodes.ForStatementMissingNext));
+                        looking = false;
+                        break;
+                        
                     case LexemType.EndStatement:
                         _stream.Advance();
                         break;
@@ -1271,21 +1420,27 @@ namespace DarkBasicYo
                 }
             }
 
-            return new ForStatement(
+            var forStatement = new ForStatement(
                 forToken, _stream.Current, variable, startExpr, endExpr, stepExpr, statements);
+            forStatement.Errors = errors;
+            return forStatement;
         }
 
         private DoLoopStatement ParseDoLoopStatement(Token doToken)
         {
             var statements = new List<IStatementNode>();
             var looking = true;
+            ParseError error = null;
             while (looking)
             {
                 var nextToken = _stream.Peek;
                 switch (nextToken.type)
                 {
                     case LexemType.EOF:
-                        throw new ParserException("Hit end of file without a closing loop statement", nextToken);
+                        error = new ParseError(doToken, ErrorCodes.DoStatementMissingLoop);
+                        looking = false;
+                        break;
+                        
                     case LexemType.EndStatement:
                         _stream.Advance();
                         break;
@@ -1300,21 +1455,31 @@ namespace DarkBasicYo
                 }
             }
 
-            return new DoLoopStatement(doToken, _stream.Current, statements);
+            var doStatement = new DoLoopStatement(doToken, _stream.Current, statements);
+            if (error != null)
+            {
+                doStatement.Errors.Add(error);
+            }
+
+            return doStatement;
         }
 
         
-        private RepeatUntilStatement ParseRepeatUntil(Token whileToken)
+        private RepeatUntilStatement ParseRepeatUntil(Token repeatToken)
         {
             var statements = new List<IStatementNode>();
             var looking = true;
+            ParseError error = null;
             while (looking)
             {
                 var nextToken = _stream.Peek;
                 switch (nextToken.type)
                 {
                     case LexemType.EOF:
-                        throw new ParserException("Hit end of file without a closing until statement", nextToken);
+                        error = new ParseError(repeatToken, ErrorCodes.RepeatStatementMissingUntil);
+                        looking = false;
+                        break;
+                        
                     case LexemType.EndStatement:
                         _stream.Advance();
                         break;
@@ -1330,13 +1495,19 @@ namespace DarkBasicYo
             }
             var condition = ParseWikiExpression();
 
-            return new RepeatUntilStatement
+            var repeatStatement = new RepeatUntilStatement
             {
-                startToken = whileToken,
+                startToken = repeatToken,
                 endToken = _stream.Current,
                 statements = statements,
                 condition = condition
             };
+            if (error != null)
+            {
+                repeatStatement.Errors.Add(error);
+            }
+
+            return repeatStatement;
         }
 
         
@@ -1345,13 +1516,17 @@ namespace DarkBasicYo
             var condition = ParseWikiExpression();
             var statements = new List<IStatementNode>();
             var looking = true;
+            ParseError error = null;
             while (looking)
             {
                 var nextToken = _stream.Peek;
                 switch (nextToken.type)
                 {
                     case LexemType.EOF:
-                        throw new ParserException("Hit end of file without a closing endWhile statement", nextToken);
+                        error = new ParseError(whileToken, ErrorCodes.WhileStatementMissingEndWhile);
+                        looking = false;
+                        break;
+                        
                     case LexemType.EndStatement:
                         _stream.Advance();
                         break;
@@ -1366,20 +1541,26 @@ namespace DarkBasicYo
                 }
             }
 
-            return new WhileStatement
+            var whileStatement = new WhileStatement
             {
                 startToken = whileToken,
                 endToken = _stream.Current,
                 statements = statements,
                 condition = condition
             };
+            if (error != null)
+            {
+                whileStatement.Errors.Add(error);
+            }
+
+            return whileStatement;
         }
         
         private IfStatement ParseIfStatement(Token ifToken)
         {
             // the next term is an expression.
             var condition = ParseWikiExpression();
-            
+
             // and then there is a split
             var next = _stream.Advance();
             var positiveStatements = new List<IStatementNode>();
@@ -1387,6 +1568,7 @@ namespace DarkBasicYo
             var statements = positiveStatements;
             var looking = true;
 
+            ParseError error = null;
             switch (next.type)
             {
                 case LexemType.KeywordThen:
@@ -1407,7 +1589,7 @@ namespace DarkBasicYo
                             case LexemType.EOF:
                                 looking = false;
                                 break;
-                                // throw new ParserException("Hit end of file without a closing type statement", nextToken);
+                                
                             case LexemType.KeywordEndIf:
                                 _stream.Advance();
                                 looking = false;
@@ -1433,7 +1615,11 @@ namespace DarkBasicYo
                         switch (nextToken.type)
                         {
                             case LexemType.EOF:
-                                throw new ParserException("Hit end of file without a closing type statement", nextToken);
+
+                                error = new ParseError(ifToken, ErrorCodes.IfStatementMissingEndIf);
+                                looking = false;
+                                break;
+                                
                             case LexemType.EndStatement:
                                 _stream.Advance();
                                 break;
@@ -1452,8 +1638,13 @@ namespace DarkBasicYo
                         }
                     }
 
-                    return new IfStatement(ifToken, _stream.Current, condition, positiveStatements, negativeStatements);
-                    
+                    var ifStatement = new IfStatement(ifToken, _stream.Current, condition, positiveStatements, negativeStatements);
+                    if (error != null)
+                    {
+                        ifStatement.Errors.Add(error);
+                    }
+
+                    return ifStatement;
             }
 
         }
@@ -1467,7 +1658,10 @@ namespace DarkBasicYo
                     return new GotoStatement(gotoToken, next);
                     
                 default:
-                    throw new ParserException("Expected label for goto statement", gotoToken, next);
+                    var patchToken = _stream.CreatePatchToken(LexemType.VariableGeneral, "_")[0];
+                    var statement = new GotoStatement(gotoToken, patchToken);
+                    statement.Errors.Add(new ParseError(gotoToken, ErrorCodes.GotoMissingLabel));
+                    return statement;
             }
         }
         private GoSubStatement ParseGoSub(Token gotoToken)
@@ -1479,7 +1673,10 @@ namespace DarkBasicYo
                     return new GoSubStatement(gotoToken, next);
                     
                 default:
-                    throw new ParserException("Expected label for goto statement", gotoToken, next);
+                    var patchToken = _stream.CreatePatchToken(LexemType.VariableGeneral, "_")[0];
+                    var statement = new GoSubStatement(gotoToken, patchToken);
+                    statement.Errors.Add(new ParseError(gotoToken, ErrorCodes.GoSubMissingLabel));
+                    return statement;
             }
         }
         
@@ -1511,47 +1708,62 @@ namespace DarkBasicYo
                     }
                     break;
                 default:
-                    throw new ParserException("Expected a variable name", token);
+                    var error = new ParseError(token, ErrorCodes.ExpectedParameter);
+                    var patchToken = _stream.CreatePatchToken(LexemType.VariableGeneral, "_")[0];
+                    var fake = new TypeDefinitionMember(patchToken, patchToken, new VariableRefNode(patchToken),
+                        new TypeReferenceNode(VariableType.Integer, patchToken));
+                    fake.Errors.Add(error);
+                    return fake;
             }
         }
 
         private TypeDefinitionStatement ParseTypeDefinition(Token start)
         {
-            var nameToken = _stream.Advance();
-            switch (nameToken.type)
+            // var nameToken = _stream.Advance();
+            var errors = new List<ParseError>();
+
+            var nameToken = _stream.Peek;
+            if (nameToken.type != LexemType.VariableGeneral)
             {
-                case LexemType.VariableGeneral:
-
-                    var members = new List<TypeDefinitionMember>();
-                    var name = new VariableRefNode(nameToken);
-
-                    var lookingForMembers = true;
-                    while (lookingForMembers)
-                    {
-                        var peek = _stream.Peek;
-                        switch (peek.type)
-                        {
-                            case LexemType.EOF:
-                                throw new ParserException("Hit end of file without a closing type statement", peek);
-                            case LexemType.EndStatement:
-                                _stream.Advance();
-                                break;
-                            case LexemType.KeywordEndType:
-                                _stream.Advance();
-                                lookingForMembers = false;
-                                break;
-                            default:
-                                var member = ParseTypeMember();
-                                members.Add(member);
-                                break;
-                        }
-                    }
-
-                    return new TypeDefinitionStatement(start, _stream.Current, name, members);
-                    break;
-                default:
-                    throw new ParserException("expected a type name", nameToken);
+                errors.Add(new ParseError(start, ErrorCodes.TypeDefMissingName));
+                nameToken = _stream.CreatePatchToken(LexemType.VariableGeneral, "_")[0];
             }
+            else
+            {
+                _stream.Advance(); // move past name
+            }
+            
+            var members = new List<TypeDefinitionMember>();
+            var name = new VariableRefNode(nameToken);
+
+            var lookingForMembers = true;
+            while (lookingForMembers)
+            {
+                var peek = _stream.Peek;
+                switch (peek.type)
+                {
+                    case LexemType.EOF:
+                        errors.Add(new ParseError(start, ErrorCodes.TypeDefMissingEndType));
+                        lookingForMembers = false;
+                        break;
+                                
+                    case LexemType.EndStatement:
+                        _stream.Advance();
+                        break;
+                    case LexemType.KeywordEndType:
+                        _stream.Advance();
+                        lookingForMembers = false;
+                        break;
+                    default:
+                        var member = ParseTypeMember();
+                        members.Add(member);
+                        break;
+                }
+            }
+
+            var statement = new TypeDefinitionStatement(start, _stream.Current, name, members);
+            statement.Errors = errors;
+            return statement;
         }
 
         private ITypeReferenceNode ParseTypeReference()
@@ -1573,7 +1785,21 @@ namespace DarkBasicYo
                 case LexemType.VariableGeneral:
                     return new StructTypeReferenceNode(new VariableRefNode(token));
                 default:
-                    throw new ParserException("Parser exception! Expected type reference, but found " + token.type, token);
+
+                    if (token.type == LexemType.EndStatement)
+                    {
+                        var patchToken = _stream.CreatePatchToken(LexemType.KeywordTypeInteger, "integer", -2)[0];
+                        var node = new TypeReferenceNode(patchToken);
+                        node.Errors.Add(new ParseError(patchToken, ErrorCodes.DeclarationMissingTypeRef));
+                        return node;
+                    }
+                    else
+                    {
+                        var patchToken = _stream.CreatePatchToken(LexemType.KeywordTypeInteger, "integer", -1)[0];
+                        var node = new TypeReferenceNode(patchToken);
+                        node.Errors.Add(new ParseError(patchToken, ErrorCodes.DeclarationInvalidTypeRef));
+                        return node;
+                    }
             }
         }
 
@@ -1657,8 +1883,13 @@ namespace DarkBasicYo
 
         public bool TryParseExpression(out IExpressionNode expr)
         {
+            return TryParseExpression(out expr, out _);
+        }
+        
+        public bool TryParseExpression(out IExpressionNode expr, out ProgramRecovery recovery)
+        {
             expr = null;
-            if (!TryParseWikiTerm(out var term))
+            if (!TryParseWikiTerm(out var term, out recovery))
             {
                 return false;
             }
@@ -1712,7 +1943,11 @@ namespace DarkBasicYo
                 case LexemType.LiteralString:
                     return new LiteralStringExpression(token);
                 default:
-                    throw new ParserException("Expected a literal", token);
+                    var patchToken = _stream.CreatePatchToken(LexemType.LiteralInt, "0", -2)[0];
+                    var error = new ParseError(patchToken, ErrorCodes.ExpectedLiteralInt);
+                    var node = new LiteralIntExpression(patchToken);
+                    node.Errors.Add(error);
+                    return node;
             }
         }
 
@@ -1749,18 +1984,28 @@ namespace DarkBasicYo
 
         private IExpressionNode ParseWikiTerm()
         {
-            var start = _stream.Peek;
-            if (!TryParseWikiTerm(out var expr))
+
+
+            if (!TryParseWikiTerm(out var expr, out var error))
             {
-                throw new ParserException("Expected to find an expression term", start);
+                _stream.Patch(error.index, error.correctiveTokens);
+                if (!TryParseWikiTerm(out expr, out var nextError))
+                {
+                    throw new Exception("Unable to patch stream");
+                }
+                else
+                {
+                    expr.Errors.Add(error.error);
+                }
             }
             
             return expr;
         }
         
-        private bool TryParseWikiTerm(out IExpressionNode outputExpression)
+        private bool TryParseWikiTerm(out IExpressionNode outputExpression, out ProgramRecovery recovery)
         {
             var token = _stream.Peek;
+            recovery = null;
             switch (token.type)
             {
                 
@@ -1770,11 +2015,6 @@ namespace DarkBasicYo
                     // ParseCommandOverload(token, out var command, out var argExpressions);
                     ParseCommandOverload2(token, out var command, out var argExpressions);
                     
-                    // if (!_commands.TryGetCommandDescriptor(token, out var command))
-                    // {
-                    //     throw new Exception("Parser exception! unknown command " + token.caseInsensitiveRaw);
-                    // }
-                    //
                     // // parse the args!
                     // var argExpressions = ParseCommandArgs(token, command);
                     outputExpression = new CommandExpression()
@@ -1792,16 +2032,31 @@ namespace DarkBasicYo
                     var checkpoint = _stream.Save();
                     _stream.Advance();
 
-                    if (!TryParseExpression(out var expr))
+                    if (!TryParseExpression(out var expr, out var innerRecovery))
                     {
+                        recovery = new ProgramRecovery(
+                            new ParseError(_stream.Current, ErrorCodes.ExpressionMissingAfterOpenParen),
+                            _stream.Index, innerRecovery, new List<Token>
+                            {
+                                new Token { lexem = new Lexem(LexemType.ParenClose) }
+                            }
+                        );
                         _stream.Restore(checkpoint);
                         outputExpression = null;
+                       
                         return false;
                     }
                     var closeToken = _stream.Advance(); // move past closing...
 
                     if (closeToken.type != LexemType.ParenClose)
                     {
+                        recovery = new ProgramRecovery(
+                            new ParseError(token, ErrorCodes.ExpressionMissingCloseParen),
+                            _stream.Index - 1, new List<Token>
+                            {
+                                new Token { lexem = new Lexem(LexemType.ParenClose) }
+                            }
+                        );
                         _stream.Restore(checkpoint);
                         outputExpression = null;
                         return false;
@@ -1866,8 +2121,14 @@ namespace DarkBasicYo
                     break;
                 default:
                     outputExpression = null;
+                    recovery = new ProgramRecovery(new ParseError(_stream.Current, ErrorCodes.ExpressionMissing),
+                        _stream.Index, _stream.CreatePatchToken(LexemType.LiteralInt, "0"));
+                    // recovery = new ProgramRecovery
+                    // {
+                    //     error = new ProgramError(_stream.Current, ErrorCodes.ExpressionMissing),
+                    //     correctiveTokens = _stream.CreatePatchToken(LexemType.LiteralInt, "0")
+                    // };
                     break;
-                    // throw new ParserException("Cannot match single, " + token.type, token);
             }
 
             return outputExpression != null;

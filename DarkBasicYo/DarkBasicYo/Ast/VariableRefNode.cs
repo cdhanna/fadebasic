@@ -24,6 +24,11 @@ namespace DarkBasicYo.Ast
         {
             return $"deref {ptrExpression}";
         }
+
+        public IEnumerable<IAstVisitable> IterateChildNodes()
+        {
+            yield return ptrExpression;
+        }
     }
     
     public class StructFieldReference : AstNode, IVariableNode
@@ -36,6 +41,12 @@ namespace DarkBasicYo.Ast
         {
             return $"{left}.{right}";
         }
+
+        public IEnumerable<IAstVisitable> IterateChildNodes()
+        {
+            yield return left;
+            yield return right;
+        }
     }
     
     public class ArrayIndexReference : AstNode, IVariableNode
@@ -47,9 +58,15 @@ namespace DarkBasicYo.Ast
         {
             return $"ref {variableName}[{string.Join(",", rankExpressions.Select(x => x.ToString()))}]";
         }
+
+        public IEnumerable<IAstVisitable> IterateChildNodes()
+        {
+            foreach (var rankExpr in rankExpressions) yield return rankExpr;
+
+        }
     }
 
-    public class VariableRefNode : AstNode, IVariableNode
+    public class VariableRefNode : AstNode, IVariableNode, IAstVisitable
     {
         public string variableName;
 
@@ -79,6 +96,11 @@ namespace DarkBasicYo.Ast
         protected override string GetString()
         {
             return $"ref {variableName}";
+        }
+
+        public IEnumerable<IAstVisitable> IterateChildNodes()
+        {
+            yield break; // no children.
         }
     }
 }

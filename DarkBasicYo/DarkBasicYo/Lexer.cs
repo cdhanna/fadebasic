@@ -103,6 +103,23 @@ namespace DarkBasicYo
         Constant
     }
 
+    public class LexerResults
+    {
+        public List<Token> tokens;
+        public TokenStream stream;
+        public List<LexerError> tokenErrors;
+    }
+
+    [DebuggerDisplay("{Display}")]
+    public class LexerError
+    {
+        public int lineNumber, charNumber;
+        public ErrorCode error;
+        public string text;
+
+        public string Display => $"[{lineNumber}:{charNumber}:{text}] - {error}";
+    }
+    
     public class Lexer
     {
 
@@ -226,14 +243,20 @@ namespace DarkBasicYo
             // new Lexem(-2, LexemType.Label, new Regex("^[a-zA-Z][a-zA-Z0-9_]*:")),
         };
 
-
         public List<Token> Tokenize(string input, CommandCollection commands = default)
+        {
+            var res = TokenizeWithErrors(input, commands);
+            return res.tokens;
+        }
+        public LexerResults TokenizeWithErrors(string input, CommandCollection commands = default)
         {
             var tokens = new List<Token>();
             if (commands == default)
             {
                 commands = new CommandCollection();
             }
+
+            var errors = new List<LexerError>();
 
             var constantTable = new Dictionary<string, string>();
 
@@ -355,58 +378,71 @@ namespace DarkBasicYo
                             throw new Exception("Token exception! Too many matches!");
                         }
                     }
-                    
-                    
-                    switch (bestToken.type)
-                    {
-                        case LexemType.WhiteSpace:
-                            // we ignore white space in token generation
-                            break;
-                        case LexemType.ArgSplitter:
-                            requestEoS = false;
-                            tokens.Add(bestToken);
-                            break;
-                        case LexemType.Constant:
-                            // replace all instances of string...
-                            var toRemove = bestMatches[0].Groups[1].Value;
-                            var toAdd = bestMatches[0].Groups[2].Value;
 
-                            constantTable[toRemove] = toAdd;
-                            // var prefix = line.Substring(0, charNumber);
-                            // var suffix = line.Substring(charNumber + toRemove.Length);
-                            //
-                            // var replacementLine = prefix + toAdd + suffix;
-                            break;
-                        case LexemType.VariableGeneral when constantTable.TryGetValue(bestToken.raw, out var replacement):
-                            var prefix = line.Substring(0, charNumber);
-                            var suffix = line.Substring(charNumber + bestToken.raw.Length);
-                            
-                            var replacementLine = prefix + replacement + suffix;
-                            line = replacementLine;
-                            continue;
-                            break;
-                        default:
-                                    
-                            if (requestEoS)
-                            {
+                    if (bestToken != null)
+                    {
+                        switch (bestToken.type)
+                        {
+                            case LexemType.WhiteSpace:
+                                // we ignore white space in token generation
+                                break;
+                            case LexemType.ArgSplitter:
                                 requestEoS = false;
-                                tokens.Add(new Token
+                                tokens.Add(bestToken);
+                                break;
+                            case LexemType.Constant:
+                                // replace all instances of string...
+                                var toRemove = bestMatches[0].Groups[1].Value;
+                                var toAdd = bestMatches[0].Groups[2].Value;
+
+                                constantTable[toRemove] = toAdd;
+                                // var prefix = line.Substring(0, charNumber);
+                                // var suffix = line.Substring(charNumber + toRemove.Length);
+                                //
+                                // var replacementLine = prefix + toAdd + suffix;
+                                break;
+                            case LexemType.VariableGeneral
+                                when constantTable.TryGetValue(bestToken.raw, out var replacement):
+                                var prefix = line.Substring(0, charNumber);
+                                var suffix = line.Substring(charNumber + bestToken.raw.Length);
+
+                                var replacementLine = prefix + replacement + suffix;
+                                line = replacementLine;
+                                continue;
+                                break;
+                            default:
+
+                                if (requestEoS)
                                 {
-                                    charNumber = requestEoSCharNumber, 
-                                    lexem = eolLexem,
-                                    lineNumber = lineNumber,
-                                    caseInsensitiveRaw = "\n"
-                                });
-                            }
-                            tokens.Add(bestToken);
-                            break;
+                                    requestEoS = false;
+                                    tokens.Add(new Token
+                                    {
+                                        charNumber = requestEoSCharNumber,
+                                        lexem = eolLexem,
+                                        lineNumber = lineNumber,
+                                        caseInsensitiveRaw = "\n"
+                                    });
+                                }
+
+                                tokens.Add(bestToken);
+                                break;
+                        }
+
+
+                        charNumber += bestToken.caseInsensitiveRaw.Length;
                     }
-                            
-                    charNumber += bestToken.caseInsensitiveRaw.Length;
 
                     if (!foundMatch)
                     {
-                        throw new Exception($"Token exception! No match for {subStr} at {lineNumber}:{charNumber}");
+                        errors.Add(new LexerError
+                        {
+                            charNumber = charNumber,
+                            lineNumber = lineNumber,
+                            text = sub,
+                            error = ErrorCodes.LexerUnmatchedText
+                        });
+                        charNumber += sub.Length;
+                        // throw new Exception($"Token exception! No match for {subStr} at {lineNumber}:{charNumber}");
                     }
                 }
 
@@ -442,7 +478,12 @@ namespace DarkBasicYo
                 });
             }
 
-            return tokens;
+            return new LexerResults
+            {
+                tokens = tokens,
+                stream = new TokenStream(tokens, errors),
+                tokenErrors = errors
+            };
         }
 
 
@@ -458,6 +499,11 @@ namespace DarkBasicYo
         {
         }
 
+        public Lexem(LexemType type)
+        {
+            this.type = type;
+        }
+        
         public Lexem(LexemType type, Regex regex)
         {
             this.type = type;
@@ -484,11 +530,20 @@ namespace DarkBasicYo
         public string Location => $"{lineNumber}:{charNumber}";
 
         public Lexem lexem;
+
+
+        public static bool AreLocationsEqual(Token a, Token b)
+        {
+            if (a == null || b == null) return false;
+            return a.lineNumber == b.lineNumber && a.charNumber == b.charNumber;
+        }
     }
 
     public class TokenStream
     {
+        public List<LexerError> Errors { get; }
         private readonly List<Token> _tokens;
+        
 
         public int Index { get; private set; }
 
@@ -510,8 +565,13 @@ namespace DarkBasicYo
             return res;
         }
 
-        public TokenStream(List<Token> tokens)
+        public TokenStream(List<Token> tokens) : this(tokens, new List<LexerError>())
         {
+        }
+
+        public TokenStream(List<Token> tokens, List<LexerError> errors)
+        {
+            Errors = errors;
             _tokens = tokens;
             Current = _tokens[0];
             _maxIndex = tokens.Count;
@@ -530,6 +590,20 @@ namespace DarkBasicYo
             return Current = _tokens[Index++];
         }
 
+        public Token AdvanceUntil(LexemType type)
+        {
+            while (Current.type != type && Current.type != LexemType.EOF)
+            {
+                Current = _tokens[Index++];
+            }
+
+            return Current;
+        }
+
+        public void Patch(int index, List<Token> tokens)
+        {
+            _tokens.InsertRange(index , tokens);
+        }
 
         public bool IsEof => Index >= _tokens.Count;
 
@@ -542,6 +616,22 @@ namespace DarkBasicYo
         {
             Index = index;
             Current = _tokens[index];
+        }
+
+        public List<Token> CreatePatchToken(LexemType type, string s, int offset=0)
+        {
+            var copyToken = _tokens[Math.Min(_tokens.Count - 1, Index + offset)];
+            return new List<Token>
+            {
+                new Token
+                {
+                    charNumber = copyToken.charNumber,
+                    lineNumber = copyToken.lineNumber,
+                    caseInsensitiveRaw = s.ToLowerInvariant(),
+                    raw = s,
+                    lexem = new Lexem(type)
+                }
+            };
         }
     }
 
