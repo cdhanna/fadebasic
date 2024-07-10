@@ -1,3 +1,4 @@
+using System;
 using System.Linq;
 using DarkBasicYo.SourceGenerators;
 using DarkBasicYo.Virtual;
@@ -6,7 +7,18 @@ namespace DarkBasicYo
 {
     public partial class DarkBasicCommands
     {
+        [DarkBasicCommand("farts2")]
+        public static void farts2(int barf, int n)
+        {
+            var x = barf * n;
+            Console.Write(x);
+        }
         
+[DarkBasicCommand("double")]
+public static int Double(int x)
+{
+    return x * 2;
+}
         
         [DarkBasicCommand("overload")]
         public static void Overload_1(int a)

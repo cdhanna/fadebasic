@@ -22,6 +22,93 @@ n = 3
         
     }
     
+    [Test]
+    public void ParseError_UseVariableBeforeDefined()
+    {
+        var input = @"
+x = a
+";
+        var parser = MakeParser(input);
+        var prog = parser.ParseProgram();
+
+        var errors = prog.GetAllErrors();
+        Assert.That(errors.Count, Is.EqualTo(1));
+        Assert.That(errors[0].Display, Is.EqualTo($"[1:4] - {ErrorCodes.InvalidReference} | unknown symbol, a"));
+    }
+    
+    
+    [Test]
+    public void ParseError_UseVariableBeforeDefined_Safe()
+    {
+        var input = @"
+a = 1
+x = a
+";
+        var parser = MakeParser(input);
+        var prog = parser.ParseProgram();
+
+        var errors = prog.GetAllErrors();
+        Assert.That(errors.Count, Is.EqualTo(0));
+        // Assert.That(errors[0].Display, Is.EqualTo($"[1:0] - {ErrorCodes.GotoMissingLabel}"));
+    }
+    
+    [Test]
+    public void ParseError_Command_Unknown()
+    {
+        var input = @"
+thisCommandDoesNotExist()
+";
+        var parser = MakeParser(input);
+        var prog = parser.ParseProgram();
+
+        var errors = prog.GetAllErrors();
+        Assert.That(errors.Count, Is.EqualTo(1));
+        // Assert.That(errors[0].Display, Is.EqualTo($"[1:0] - {ErrorCodes.GotoMissingLabel}"));
+    }
+    
+    
+    [Test]
+    public void ParseError_Command_TooManyParameters()
+    {
+        var input = @"
+add(1,2,3)
+";
+        var parser = MakeParser(input);
+        var prog = parser.ParseProgram();
+
+        var errors = prog.GetAllErrors();
+        Assert.That(errors.Count, Is.EqualTo(1));
+        // Assert.That(errors[0].Display, Is.EqualTo($"[1:0] - {ErrorCodes.GotoMissingLabel}"));
+    }
+    
+    [Test]
+    public void ParseError_Command_TooFewParameters()
+    {
+        var input = @"
+add(1)
+";
+        var parser = MakeParser(input);
+        var prog = parser.ParseProgram();
+
+        var errors = prog.GetAllErrors();
+        Assert.That(errors.Count, Is.EqualTo(1));
+        // Assert.That(errors[0].Display, Is.EqualTo($"[1:0] - {ErrorCodes.GotoMissingLabel}"));
+    }
+    
+    
+    [Test]
+    public void ParseError_Command_InvalidTypes()
+    {
+        var input = @"
+add(1, ""toast"")
+";
+        var parser = MakeParser(input);
+        var prog = parser.ParseProgram();
+
+        var errors = prog.GetAllErrors();
+        Assert.That(errors.Count, Is.EqualTo(1));
+        // Assert.That(errors[0].Display, Is.EqualTo($"[1:0] - {ErrorCodes.GotoMissingLabel}"));
+    }
     
     [Test]
     public void ParseError_VariableReference_ArrayIndexWithoutClosingParen()
@@ -42,14 +129,16 @@ x = y(
     public void ParseError_VariableReference_MissingAfterDotIndex()
     {
         var input = @"
+y = 1
 x = y.
 ";
         var parser = MakeParser(input);
         var prog = parser.ParseProgram();
 
+        // TODO: this test is breaking because the progressive parser is injecting a "_" variable name silently, but that isn't referencable.
         var errors = prog.GetAllErrors();
         Assert.That(errors.Count, Is.EqualTo(1));
-        Assert.That(errors[0].Display, Is.EqualTo($"[1:5] - {ErrorCodes.VariableReferenceMissing}"));
+        Assert.That(errors[0].Display, Is.EqualTo($"[2:5] - {ErrorCodes.VariableReferenceMissing}"));
     }
 
     
@@ -174,6 +263,51 @@ endfunction";
         Assert.That(errors[0].Display, Is.EqualTo($"[2:4] - {ErrorCodes.FunctionDefinedInsideFunction}"));
     }
     
+    [Test]
+    public void ParseError_Function_ParameterOutOfScope()
+    {
+        var input = @"
+function toast(x)
+endfunction
+a = x";
+        var parser = MakeParser(input);
+        var prog = parser.ParseProgram();
+
+        var errors = prog.GetAllErrors();
+        Assert.That(errors.Count, Is.EqualTo(1));
+        Assert.That(errors[0].Display, Is.EqualTo($"[3:4] - {ErrorCodes.InvalidReference} | unknown symbol, x"));
+    }
+    
+    
+    [Test]
+    public void ParseError_Function_CanUseGlobal()
+    {
+        var input = @"
+global y as int
+function toast(x)
+x = y
+endfunction";
+        var parser = MakeParser(input);
+        var prog = parser.ParseProgram();
+
+        var errors = prog.GetAllErrors();
+        Assert.That(errors.Count, Is.EqualTo(0));
+    }
+    
+    [Test]
+    public void ParseError_Function_InvalidSymbol()
+    {
+        var input = @"
+function toast(x)
+x = y
+endfunction";
+        var parser = MakeParser(input);
+        var prog = parser.ParseProgram();
+
+        var errors = prog.GetAllErrors();
+        Assert.That(errors.Count, Is.EqualTo(1));
+        Assert.That(errors[0].Display, Is.EqualTo($"[2:4] - {ErrorCodes.InvalidReference} | unknown symbol, y"));
+    }
     
     [Test]
     public void ParseError_Function_InvalidArg_Multiple()
@@ -369,6 +503,43 @@ endtype
         Assert.That(errors.Count, Is.EqualTo(1));
         Assert.That(errors[0].Display, Is.EqualTo($"[1:0] - {ErrorCodes.TypeDefMissingName}"));
     }
+    
+    
+    [Test]
+    public void ParseError_TypeDef_BadFieldAssignment()
+    {
+        var input = @"
+TYPE egg
+    x
+ENDTYPE
+fish AS egg
+fish.y = 1
+";
+        var parser = MakeParser(input);
+        var prog = parser.ParseProgram();
+
+        var errors = prog.GetAllErrors();
+        Assert.That(errors.Count, Is.EqualTo(1));
+        Assert.That(errors[0].Display, Is.EqualTo($"[1:0] - {ErrorCodes.InvalidReference}"));
+    }
+
+    
+    [Test]
+    public void ParseError_TypeDef_BadFieldAssignment_NoVariable()
+    {
+        var input = @"
+TYPE sampleToastThing
+    x
+ENDTYPE
+nothing.x = 1
+";
+        var parser = MakeParser(input);
+        var prog = parser.ParseProgram();
+
+        var errors = prog.GetAllErrors();
+        Assert.That(errors.Count, Is.EqualTo(1));
+        Assert.That(errors[0].Display, Is.EqualTo($"[4:0] - {ErrorCodes.InvalidReference} | nothing"));
+    }
 
     
     [Test]
@@ -501,6 +672,7 @@ x = 3
     public void ParseError_Switch_MissingEndselect()
     {
         var input = @"
+x=1
 select x
 
 ";
@@ -509,7 +681,7 @@ select x
 
         var errors = prog.GetAllErrors();
         Assert.That(errors.Count, Is.EqualTo(1));
-        Assert.That(errors[0].Display, Is.EqualTo($"[1:0] - {ErrorCodes.SelectStatementMissingEndSelect}"));
+        Assert.That(errors[0].Display, Is.EqualTo($"[2:0] - {ErrorCodes.SelectStatementMissingEndSelect}"));
     }
     
     
@@ -518,7 +690,7 @@ select x
     public void ParseError_Switch_BadToken()
     {
         var input = @"
-select x
+x=1:select x
     for
 endselect
 ";
@@ -531,10 +703,49 @@ endselect
     }
 
     
+    
+    [Test]
+    public void ParseError_Switch_InvalidSwitchVariable()
+    {
+        var input = @"
+select x
+    case 1
+    endcase
+endselect
+";
+        var parser = MakeParser(input);
+        var prog = parser.ParseProgram();
+
+        var errors = prog.GetAllErrors();
+        Assert.That(errors.Count, Is.EqualTo(1));
+        Assert.That(errors[0].Display, Is.EqualTo($"[1:7] - {ErrorCodes.InvalidReference} | unknown symbol, x"));
+    }
+    
+    
+    [Test]
+    public void ParseError_Switch_InnerScopeErros()
+    {
+        var input = @"
+x = 1
+select x
+    case 1
+        y = n
+    endcase
+endselect
+";
+        var parser = MakeParser(input);
+        var prog = parser.ParseProgram();
+
+        var errors = prog.GetAllErrors();
+        Assert.That(errors.Count, Is.EqualTo(1));
+        Assert.That(errors[0].Display, Is.EqualTo($"[4:12] - {ErrorCodes.InvalidReference} | unknown symbol, n"));
+    }
+    
     [Test]
     public void ParseError_Switch_Case_MissingEndCase()
     {
         var input = @"
+x = 1
 select x
     case 1
 endselect
@@ -544,7 +755,7 @@ endselect
 
         var errors = prog.GetAllErrors();
         Assert.That(errors.Count, Is.EqualTo(1));
-        Assert.That(errors[0].Display, Is.EqualTo($"[2:4] - {ErrorCodes.CaseStatementMissingEndCase}"));
+        Assert.That(errors[0].Display, Is.EqualTo($"[3:4] - {ErrorCodes.CaseStatementMissingEndCase}"));
     }
     
     
@@ -552,7 +763,7 @@ endselect
     public void ParseError_Switch_Case_MissingCondition()
     {
         var input = @"
-select x
+x = 1: select x
     case 
     endcase
 endselect
@@ -570,7 +781,7 @@ endselect
     public void ParseError_Switch_Case_BadToken()
     {
         var input = @"
-select x
+x=1:select x
     case for
     endcase
 endselect
@@ -588,14 +799,14 @@ endselect
     public void ParseError_Switch_Case_Eof()
     {
         var input = @"
-select x
+x=1:select x
     case";
         var parser = MakeParser(input);
         var prog = parser.ParseProgram();
 
         var errors = prog.GetAllErrors();
         Assert.That(errors.Count, Is.EqualTo(3));
-        Assert.That(errors[0].Display, Is.EqualTo($"[1:0] - {ErrorCodes.SelectStatementMissingEndSelect}"));
+        Assert.That(errors[0].Display, Is.EqualTo($"[1:4] - {ErrorCodes.SelectStatementMissingEndSelect}"));
         Assert.That(errors[1].Display, Is.EqualTo($"[2:4] - {ErrorCodes.CaseStatementMissingEndCase}"));
         Assert.That(errors[2].Display, Is.EqualTo($"[2:4] - {ErrorCodes.ExpectedLiteralInt}"));
     }
@@ -605,6 +816,7 @@ select x
     public void ParseError_Switch_DefaultCase_Eof()
     {
         var input = @"
+x = 1
 select x
     case default";
         var parser = MakeParser(input);
@@ -612,8 +824,8 @@ select x
 
         var errors = prog.GetAllErrors();
         Assert.That(errors.Count, Is.EqualTo(2));
-        Assert.That(errors[0].Display, Is.EqualTo($"[1:0] - {ErrorCodes.SelectStatementMissingEndSelect}"));
-        Assert.That(errors[1].Display, Is.EqualTo($"[2:4] - {ErrorCodes.CaseStatementMissingEndCase}"));
+        Assert.That(errors[0].Display, Is.EqualTo($"[2:0] - {ErrorCodes.SelectStatementMissingEndSelect}"));
+        Assert.That(errors[1].Display, Is.EqualTo($"[3:4] - {ErrorCodes.CaseStatementMissingEndCase}"));
     }
     
     
@@ -621,7 +833,7 @@ select x
     public void ParseError_Switch_DefaultCase_MissingEndCase()
     {
         var input = @"
-select x
+x=1:select x
     case default
 endselect
 ";
@@ -638,7 +850,7 @@ endselect
     public void ParseError_Switch_DoubleDefault()
     {
         var input = @"
-select x
+x=1:select x
     case default
     endcase
     case default
@@ -657,7 +869,7 @@ endselect";
     public void ParseError_Switch_DoubleDefault_FindsInnerErrors()
     {
         var input = @"
-select x
+x=1:select x
     case default
     endcase
     case default

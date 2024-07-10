@@ -1,0 +1,67 @@
+2024-06-09 16:09:35.217 -04:00 [INF] connected.
+2024-06-09 16:09:35.609 -04:00 [INF] fuck this
+2024-06-09 16:09:35.671 -04:00 [INF] fuck this too 2
+2024-06-09 16:09:35.673 -04:00 [INF] inside ctor
+2024-06-09 16:09:35.673 -04:00 [INF] Fooooo!
+2024-06-09 16:09:35.674 -04:00 [WRN] No ConfigurationItems have been defined, configuration won't surface any configuration from the client!
+2024-06-09 16:09:35.690 -04:00 [INF] Opened file:///Users/chrishanna/Documents/Github/DarkBasicVsCode/sample/test.basic
+2024-06-09 16:10:13.404 -04:00 [INF] Changed file:///Users/chrishanna/Documents/Github/DarkBasicVsCode/sample/test.basic
+2024-06-09 16:11:00.305 -04:00 [INF] Changed file:///Users/chrishanna/Documents/Github/DarkBasicVsCode/sample/test.basic
+2024-06-09 16:11:27.846 -04:00 [INF] Changed file:///Users/chrishanna/Documents/Github/DarkBasicVsCode/sample/test.basic
+2024-06-09 16:12:30.690 -04:00 [INF] connected.
+2024-06-09 16:12:31.074 -04:00 [INF] fuck this
+2024-06-09 16:12:31.132 -04:00 [INF] fuck this too 2
+2024-06-09 16:12:31.133 -04:00 [INF] inside ctor
+2024-06-09 16:12:31.134 -04:00 [INF] Fooooo!
+2024-06-09 16:12:31.135 -04:00 [WRN] No ConfigurationItems have been defined, configuration won't surface any configuration from the client!
+2024-06-09 16:12:31.150 -04:00 [INF] Opened file:///Users/chrishanna/Documents/Github/DarkBasicVsCode/sample/test.basic
+2024-06-09 16:12:38.280 -04:00 [INF] Changed file:///Users/chrishanna/Documents/Github/DarkBasicVsCode/sample/test.basic
+2024-06-09 16:12:39.112 -04:00 [INF] Saved file:///Users/chrishanna/Documents/Github/DarkBasicVsCode/sample/test.basic
+2024-06-09 16:13:11.596 -04:00 [INF] Changed file:///Users/chrishanna/Documents/Github/DarkBasicVsCode/sample/test.basic
+2024-06-09 16:13:31.483 -04:00 [INF] Changed file:///Users/chrishanna/Documents/Github/DarkBasicVsCode/sample/test.basic
+2024-06-09 16:13:39.935 -04:00 [INF] Changed file:///Users/chrishanna/Documents/Github/DarkBasicVsCode/sample/test.basic
+2024-06-09 16:14:09.235 -04:00 [INF] Changed file:///Users/chrishanna/Documents/Github/DarkBasicVsCode/sample/test.basic
+2024-06-09 16:14:42.273 -04:00 [INF] Changed file:///Users/chrishanna/Documents/Github/DarkBasicVsCode/sample/test.basic
+2024-06-09 16:20:00.444 -04:00 [INF] Changed file:///Users/chrishanna/Documents/Github/DarkBasicVsCode/sample/test.basic
+2024-06-09 16:20:01.617 -04:00 [INF] Saved file:///Users/chrishanna/Documents/Github/DarkBasicVsCode/sample/test.basic
+2024-06-09 16:20:09.375 -04:00 [INF] Changed file:///Users/chrishanna/Documents/Github/DarkBasicVsCode/sample/test.basic
+2024-06-09 16:20:14.693 -04:00 [INF] Changed file:///Users/chrishanna/Documents/Github/DarkBasicVsCode/sample/test.basic
+2024-06-09 16:20:14.734 -04:00 [INF] Closed file:///Users/chrishanna/Documents/Github/DarkBasicVsCode/sample/test.basic
+2024-06-09 16:20:19.822 -04:00 [INF] Opened file:///Users/chrishanna/Documents/Github/DarkBasicVsCode/sample/test.basic
+2024-06-09 16:21:28.064 -04:00 [INF] connected.
+2024-06-09 16:21:28.434 -04:00 [INF] fuck this
+2024-06-09 16:21:28.491 -04:00 [INF] fuck this too 2
+2024-06-09 16:21:28.493 -04:00 [INF] inside ctor
+2024-06-09 16:21:28.493 -04:00 [INF] Fooooo!
+2024-06-09 16:21:28.501 -04:00 [WRN] No ConfigurationItems have been defined, configuration won't surface any configuration from the client!
+2024-06-09 16:21:28.509 -04:00 [INF] Opened file:///Users/chrishanna/Documents/Github/DarkBasicVsCode/sample/test.basic
+2024-06-09 16:21:51.170 -04:00 [INF] Changed file:///Users/chrishanna/Documents/Github/DarkBasicVsCode/sample/test.basic
+2024-06-09 16:22:24.385 -04:00 [INF] connected.
+2024-06-09 16:22:24.792 -04:00 [INF] fuck this
+2024-06-09 16:22:24.855 -04:00 [INF] fuck this too 2
+2024-06-09 16:22:24.856 -04:00 [INF] inside ctor
+2024-06-09 16:22:24.857 -04:00 [INF] Fooooo!
+2024-06-09 16:22:24.867 -04:00 [WRN] No ConfigurationItems have been defined, configuration won't surface any configuration from the client!
+2024-06-09 16:22:24.875 -04:00 [INF] Opened file:///Users/chrishanna/Documents/Github/DarkBasicVsCode/sample/test.basic
+2024-06-09 16:22:31.847 -04:00 [INF] Changed file:///Users/chrishanna/Documents/Github/DarkBasicVsCode/sample/test.basic
+2024-06-09 16:22:43.794 -04:00 [INF] Changed file:///Users/chrishanna/Documents/Github/DarkBasicVsCode/sample/test.basic
+2024-06-09 16:22:43.797 -04:00 [FTL] Failed to handle request textDocument/didChange
+System.ArgumentOutOfRangeException: startIndex cannot be larger than length of string. (Parameter 'startIndex')
+   at System.String.ThrowSubstringArgumentOutOfRange(Int32 startIndex, Int32 length)
+   at System.String.Substring(Int32 startIndex)
+   at LSP.Services.Document.ApplyChange(TextDocumentContentChangeEvent change, Document& document) in /Users/chrishanna/Documents/Github/dby/DarkBasicYo/LSP/Services/DocumentService.cs:line 25
+   at LSP.Services.DocumentService.ApplyChanges(DocumentUri uri, IEnumerable`1 changes) in /Users/chrishanna/Documents/Github/dby/DarkBasicYo/LSP/Services/DocumentService.cs:line 47
+   at LSP.Handlers.TextDocumentSyncHandler.Handle(DidChangeTextDocumentParams request, CancellationToken cancellationToken) in /Users/chrishanna/Documents/Github/dby/DarkBasicYo/LSP/Handlers/TextDocumentSyncHandler.cs:line 59
+   at OmniSharp.Extensions.JsonRpc.JsonRpcServerServiceCollectionExtensions.RequestHandlerDecorator`2.Handle(T request, CancellationToken cancellationToken)
+   at MediatR.Internal.RequestHandlerWrapperImpl`2.<>c__DisplayClass1_0.<Handle>g__Handler|0()
+   at OmniSharp.Extensions.LanguageServer.Server.Pipelines.SemanticTokensDeltaPipeline`2.Handle(TRequest request, CancellationToken cancellationToken, RequestHandlerDelegate`1 next)
+   at OmniSharp.Extensions.LanguageServer.Server.Pipelines.ResolveCommandPipeline`2.Handle(TRequest request, CancellationToken cancellationToken, RequestHandlerDelegate`1 next)
+   at MediatR.Pipeline.RequestPreProcessorBehavior`2.Handle(TRequest request, CancellationToken cancellationToken, RequestHandlerDelegate`1 next)
+   at MediatR.Pipeline.RequestPostProcessorBehavior`2.Handle(TRequest request, CancellationToken cancellationToken, RequestHandlerDelegate`1 next)
+   at MediatR.Pipeline.RequestExceptionProcessorBehavior`2.Handle(TRequest request, CancellationToken cancellationToken, RequestHandlerDelegate`1 next)
+   at MediatR.Pipeline.RequestExceptionProcessorBehavior`2.Handle(TRequest request, CancellationToken cancellationToken, RequestHandlerDelegate`1 next)
+   at MediatR.Pipeline.RequestExceptionActionProcessorBehavior`2.Handle(TRequest request, CancellationToken cancellationToken, RequestHandlerDelegate`1 next)
+   at MediatR.Pipeline.RequestExceptionActionProcessorBehavior`2.Handle(TRequest request, CancellationToken cancellationToken, RequestHandlerDelegate`1 next)
+   at OmniSharp.Extensions.JsonRpc.RequestRouterBase`1.<RouteNotification>g__InnerRoute|6_0(IServiceScopeFactory serviceScopeFactory, TDescriptor descriptor, Object params, CancellationToken token)
+   at OmniSharp.Extensions.JsonRpc.RequestRouterBase`1.RouteNotification(IRequestDescriptor`1 descriptors, Notification notification, CancellationToken token)
+   at OmniSharp.Extensions.JsonRpc.DefaultRequestInvoker.<>c__DisplayClass11_0.<<RouteNotification>b__3>d.MoveNext()

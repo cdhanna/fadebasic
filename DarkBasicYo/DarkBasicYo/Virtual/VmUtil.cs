@@ -544,8 +544,8 @@ namespace DarkBasicYo.Virtual
                     // read the data at a
                     // VmUtil.ReadAsInt();
 
-                    var aPtr = BitConverter.ToInt32(a);
-                    var bPtr = BitConverter.ToInt32(b);
+                    var aPtr = BitConverter.ToInt32(a, 0);
+                    var bPtr = BitConverter.ToInt32(b, 0);
                     
                     heap.GetAllocationSize(aPtr, out var aSize);
                     heap.GetAllocationSize(bPtr, out var bSize);

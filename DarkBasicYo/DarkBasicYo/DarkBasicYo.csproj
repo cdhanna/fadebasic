@@ -1,39 +1,16 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
     <PropertyGroup>
-        <TargetFramework>netstandard2.1</TargetFramework>
-<!--        <ImplicitUsings>enable</ImplicitUsings>-->
-
+        <TargetFrameworks>netstandard2.0;netstandard2.1</TargetFrameworks>
+        <LangVersion>8.0</LangVersion>
     </PropertyGroup>
 
-<!--    <ItemGroup>-->
-<!--      <ProjectReference Include="..\CommandSourceGenerator\CommandSourceGenerator.csproj" OutputItemType="Analyzer" ReferenceOutputAssembly="true" />-->
-<!--    </ItemGroup>-->
-
-<!--&lt;!&ndash;    <PropertyGroup>&ndash;&gt;-->
-<!--&lt;!&ndash;        &ndash;&gt;-->
-<!--&lt;!&ndash;        &lt;!&ndash; Use following lines to write the generated files to disk. &ndash;&gt;&ndash;&gt;-->
-<!--&lt;!&ndash;        <EmitCompilerGeneratedFiles>true</EmitCompilerGeneratedFiles>&ndash;&gt;-->
-<!--&lt;!&ndash;        <CompilerGeneratedFilesOutputPath>$(BaseIntermediateOutputPath)\GeneratedFiles</CompilerGeneratedFilesOutputPath>&ndash;&gt;-->
-<!--&lt;!&ndash;    </PropertyGroup>&ndash;&gt;-->
-<!--&lt;!&ndash;    &ndash;&gt;-->
-<!--&lt;!&ndash;    <PropertyGroup>&ndash;&gt;-->
-<!--&lt;!&ndash;        <EmitCompilerGeneratedFiles>true</EmitCompilerGeneratedFiles>&ndash;&gt;-->
-<!--&lt;!&ndash;        <CompilerGeneratedFilesOutputPath>Generated</CompilerGeneratedFilesOutputPath>&ndash;&gt;-->
-<!--&lt;!&ndash;    </PropertyGroup>&ndash;&gt;-->
-<!--&lt;!&ndash;    <ItemGroup>&ndash;&gt;-->
-<!--&lt;!&ndash;        &lt;!&ndash; Don't include the output from a previous source generator execution into future runs; the */** trick here ensures that there's&ndash;&gt;-->
-<!--&lt;!&ndash;        at least one subdirectory, which is our key that it's coming from a source generator as opposed to something that is coming from&ndash;&gt;-->
-<!--&lt;!&ndash;        some other tool. &ndash;&gt;&ndash;&gt;-->
-<!--&lt;!&ndash;&lt;!&ndash;        <Compile Remove="$(CompilerGeneratedFilesOutputPath)/*/**/*.cs" />&ndash;&gt;&ndash;&gt;-->
-<!--&lt;!&ndash;    </ItemGroup>&ndash;&gt;-->
-
-<!--    <ItemGroup>-->
-<!--      <PackageReference Include="Microsoft.Net.Compilers.Toolset" Version="4.6.0">-->
-<!--        <PrivateAssets>all</PrivateAssets>-->
-<!--        <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>-->
-<!--      </PackageReference>-->
-<!--    </ItemGroup>-->
+    <ItemGroup Label="Net Standard 2.0 Dependencies"  Condition="'$(TargetFramework)' == 'netstandard2.0'">
+        <PackageReference Include="System.Memory" Version="4.5.5"/>
+    </ItemGroup>
+    <ItemGroup>
+        <PackageReference Include="System.Runtime.Loader" Version="4.3.0"/>
+    </ItemGroup>
     
     <Target Name="CopyDll" AfterTargets="Build">
         <Message Text="Copying the dll!" Importance="high" />

@@ -3,6 +3,7 @@
 using System;
 using System.IO.Pipes;
 using System.Threading.Tasks;
+using DarkBasicYo.ApplicationSupport.Project;
 using LSP.Handlers;
 using LSP.Services;
 using Microsoft.Extensions.DependencyInjection;
@@ -37,6 +38,8 @@ public static class Program
 
         try
         {
+            ProjectLoader.Initialize(); // initialize msbuild.
+            
             var server = await LanguageServer.From(options =>
                 {
                     options.OnUnhandledException = ex =>
@@ -57,22 +60,28 @@ public static class Program
                         .WithServices(x => x.AddLogging(b => b.SetMinimumLevel(LogLevel.Trace)))
                         .OnInitialize((languageServer, request, token) =>
                         {
-                            Log.Logger.Information("fuck this");
-
+                            var docService = languageServer.Services.GetService<DocumentService>();
+                            var projectService = languageServer.Services.GetService<ProjectService>();
+                            docService.Populate(request.RootUri);
+                            
+                            foreach (var (uri, text) in docService.AllProjects())
+                            {
+                                projectService.LoadProject(uri);
+                            }
+                            // TODO: populate
                             // var foo = languageServer.Services.GetService<Foo>();
                             // foo.SayFoo();
                             return Task.CompletedTask;
                         })
-
+                        
                         .WithHandler<TextDocumentSyncHandler>()
+                        .WithHandler<ProjectTextDocumentSyncHandler>()
                         // .WithHandler<FoldingRangeHandler>()
                         // .WithHandler<DocumentSymbolHandler>()
                         .WithHandler<SemanticTokenHandler>()
                         // .WithHandler<DiagnosticsHandler>()
                         .OnStarted((languageServer, token) =>
                         {
-                            Log.Logger.Information("fuck this too");
-
                             var foo = languageServer.Services.GetService<Foo>();
                             foo.SayFoo();
 
@@ -95,5 +104,8 @@ public static class Program
     {
         // Console.WriteLine("configuring services");
         services.AddSingleton<Foo>();
+        services.AddSingleton<DocumentService>();
+        services.AddSingleton<CompilerService>();
+        services.AddSingleton<ProjectService>();
     }
 }

@@ -22,7 +22,7 @@ namespace DarkBasicYo.Ast
             return $"arg {variable} as {type}";
         }
 
-        public IEnumerable<IAstVisitable> IterateChildNodes()
+        public override IEnumerable<IAstVisitable> IterateChildNodes()
         {
             yield return variable;
             yield return type;
@@ -44,7 +44,7 @@ namespace DarkBasicYo.Ast
             return $"retfunc {returnExpression}";
         }
 
-        public IEnumerable<IAstVisitable> IterateChildNodes()
+        public override IEnumerable<IAstVisitable> IterateChildNodes()
         {
             yield return returnExpression;
         }
@@ -61,7 +61,7 @@ namespace DarkBasicYo.Ast
             return $"func {name} ({string.Join(",", parameters.Select(x => x.ToString()))}),({string.Join(",", statements.Select(x => x.ToString()))})";
         }
 
-        public IEnumerable<IAstVisitable> IterateChildNodes()
+        public override IEnumerable<IAstVisitable> IterateChildNodes()
         {
             foreach (var parameter in parameters) yield return parameter;
             foreach (var statement in statements) yield return statement;

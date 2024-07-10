@@ -23,7 +23,7 @@ namespace DarkBasicYo.Ast
             return $"{string.Join(",", allStatements.Select(x => x.ToString()))}";
         }
 
-        public IEnumerable<IAstVisitable> IterateChildNodes()
+        public override IEnumerable<IAstVisitable> IterateChildNodes()
         {
             foreach (var statement in statements)
             {

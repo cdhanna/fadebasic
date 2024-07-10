@@ -4,6 +4,7 @@ using System.Linq;
 using System.Reflection;
 using System.Text;
 using DarkBasicYo.Ast;
+using DarkBasicYo.Ast.Visitors;
 using DarkBasicYo.Virtual;
 
 namespace DarkBasicYo
@@ -30,6 +31,108 @@ namespace DarkBasicYo
             Message = message;
             Start = start;
             End = end;
+        }
+    }
+
+    /// <summary>
+    /// TODO: delete this. This was put in to catch scoping errors, but actually, those are better done post parse.
+    /// </summary>
+    public class Scope
+    {
+
+        public HashSet<string> labels = new HashSet<string>();
+        public Dictionary<string, HashSet<string>> typeNameToTypeMembers = new Dictionary<string, HashSet<string>>();
+        public HashSet<string> globalVariables = new HashSet<string>();
+        public Stack<List<string>> localVariables = new Stack<List<string>>();
+
+        public Scope()
+        {
+            localVariables.Push(new List<string>());
+        }
+        
+        public void BeginFunction(List<ParameterNode> parameters)
+        {
+            localVariables.Push(new List<string>());
+
+            foreach (var parameter in parameters)
+            {
+                localVariables.Peek().Add(parameter.variable.variableName);
+            }
+        }
+
+        public void EndFunction()
+        {
+            localVariables.Pop();
+        }
+
+        public void AddLabel(LabelDeclarationNode labelDecl)
+        {
+            labels.Add(labelDecl.label);
+        }
+
+        public void AddAssignment(AssignmentStatement assignment)
+        {
+            if (assignment.variable is VariableRefNode variableRef)
+            {
+                // an assignment defaults to a local decl.
+                localVariables.Peek().Add(variableRef.variableName);
+            }
+        }
+        
+        public void AddDeclaration(DeclarationStatement declStatement)
+        {
+            if (declStatement.scopeType == DeclarationScopeType.Global)
+            {
+                globalVariables.Add(declStatement.variable);
+            }
+            else
+            {
+                localVariables.Peek().Add(declStatement.variable);
+            }
+        }
+
+
+        public bool TryGetVariable(string variableName)
+        {
+            // is it a type?
+            // if (typeNameToTypeMembers.TryGetValue(variableName, out var _))
+            // {
+            //     return true;
+            // }
+            
+            // is it a local?
+            if (localVariables.Peek().Contains(variableName))
+            {
+                return true;
+            }
+            
+            // is it a global?
+            if (globalVariables.Contains(variableName))
+            {
+                return true;
+            }
+
+            return false;
+        }
+
+        public void AddVariable(VariableRefNode variable)
+        {
+            localVariables.Peek().Add(variable.variableName);
+        }
+
+        public void AddType(TypeDefinitionStatement type)
+        {
+            var members = typeNameToTypeMembers[type.name.variableName] = new HashSet<string>();
+            foreach (var member in type.declarations)
+            {
+                members.Add(member.name.variableName);
+            }
+            // type.declarations[0].
+        }
+
+        public bool TryGetLabel(string label)
+        {
+            return labels.Contains(label);
         }
     }
 
@@ -75,6 +178,8 @@ namespace DarkBasicYo
 
 
             program.endToken = _stream.Current;
+            
+            program.AddScopeRelatedErrors();
             return program;
         }
         
@@ -104,11 +209,13 @@ namespace DarkBasicYo
                     {
                         typeReference.Errors.Insert(0, error);
                     }
-                    return new DeclarationStatement(scopeToken, new VariableRefNode(next), typeReference);
+                    var declStatement = new DeclarationStatement(scopeToken, new VariableRefNode(next), typeReference);
                     
+                    return declStatement;
                 case LexemType.KeywordDeclareArray:
                     var decl = ParseDimStatement(next);
-                    return new DeclarationStatement(scopeToken, decl);
+                    var arrayDeclStatement = new DeclarationStatement(scopeToken, decl);
+                    return arrayDeclStatement;
                 default:
                     var patchToken = _stream.CreatePatchToken(LexemType.VariableGeneral, "_")[0];
 
@@ -648,8 +755,8 @@ namespace DarkBasicYo
                         switch (secondToken.type)
                         {
                             case LexemType.EndStatement when secondToken.caseInsensitiveRaw == ":":
-                                return new LabelDeclarationNode(token, secondToken);
-                                break;
+                                var labelDecl = new LabelDeclarationNode(token, secondToken);
+                                return labelDecl;
                             case LexemType.EndStatement:
                                 return new ExpressionStatement(reference); // TODO: eh?
 
@@ -657,18 +764,19 @@ namespace DarkBasicYo
                                 var expr = ParseWikiExpression();
                                 
                                 // we actually need to emit a declaration node and an assignment. 
-                                return new AssignmentStatement
+                                var assignment = new AssignmentStatement
                                 {
                                     startToken = token,
                                     endToken = _stream.Current,
                                     variable = reference,
                                     expression = expr
                                 };
+                                return assignment;
                             case LexemType.KeywordAs:
                                 var type = ParseTypeReference();
                                 // TODO: if the type is an array, then we should make the scope global by default.
                                 var scopeType = DeclarationScopeType.Local;
-                                return new DeclarationStatement
+                                var decl = new DeclarationStatement
                                 {
                                     startToken = token,
                                     endToken = _stream.Current,
@@ -676,6 +784,7 @@ namespace DarkBasicYo
                                     scopeType = scopeType,
                                     variable = token.caseInsensitiveRaw
                                 };
+                                return decl;
                             default:
                                 
                                 // this is an error case, and the most general solution is to skip ahead to an end-statement and start anew. 
@@ -1119,7 +1228,8 @@ namespace DarkBasicYo
                 errors.Add(new ParseError(peekToken, ErrorCodes.FunctionMissingCloseParen));
                 
             }
-
+            
+            
             // now we need to parse all the statements
             var statements = new List<IStatementNode>();
             looking = true;
@@ -1159,7 +1269,7 @@ namespace DarkBasicYo
                         break; 
                 }
             }
-            
+
 
             return new FunctionStatement
             {

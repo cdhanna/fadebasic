@@ -91,7 +91,8 @@ ENDFUNCTION
 ";
         var parser = MakeParser(input);
         var prog = parser.ParseProgram();
-        
+        prog.AssertNoParseErrors();
+
         Assert.That(prog.statements.Count, Is.EqualTo(1));
         var code = prog.ToString();
         Console.WriteLine(code);
@@ -111,7 +112,8 @@ ENDFUNCTION 5
 ";
         var parser = MakeParser(input);
         var prog = parser.ParseProgram();
-        
+        prog.AssertNoParseErrors();
+
         Assert.That(prog.statements.Count, Is.EqualTo(1));
         var code = prog.ToString();
         Console.WriteLine(code);
@@ -154,7 +156,8 @@ x = 2
 ";
         var parser = MakeParser(input);
         var prog = parser.ParseProgram();
-        
+        prog.AssertNoParseErrors();
+
         Assert.That(prog.statements.Count, Is.EqualTo(2));
         var code = prog.ToString();
         Console.WriteLine(code);

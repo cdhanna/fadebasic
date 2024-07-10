@@ -92,7 +92,7 @@ namespace DarkBasicYo.Ast
             return $"dim {scopeType.ToString().ToLowerInvariant()},{variable},{type},({string.Join(",", ranks.Select(x => x.ToString()))})";
         }
 
-        public IEnumerable<IAstVisitable> IterateChildNodes()
+        public override IEnumerable<IAstVisitable> IterateChildNodes()
         {
             yield return type;
             if (ranks != null) foreach (var rank in ranks) yield return rank;

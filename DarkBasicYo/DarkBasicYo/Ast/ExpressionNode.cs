@@ -142,7 +142,7 @@ namespace DarkBasicYo.Ast
             return $"xcall {command.name}{argString}";
         }
 
-        public IEnumerable<IAstVisitable> IterateChildNodes()
+        public override IEnumerable<IAstVisitable> IterateChildNodes()
         {
             foreach (var arg in args) yield return arg;
 
@@ -165,7 +165,7 @@ namespace DarkBasicYo.Ast
             return $"{OperationUtil.ToString(operationType)} {rhs}";
         }
 
-        public IEnumerable<IAstVisitable> IterateChildNodes()
+        public override IEnumerable<IAstVisitable> IterateChildNodes()
         {
             yield return rhs;
         }
@@ -193,7 +193,7 @@ namespace DarkBasicYo.Ast
             return $"{OperationUtil.ToString(operationType)} {lhs},{rhs}";
         }
 
-        public IEnumerable<IAstVisitable> IterateChildNodes()
+        public override IEnumerable<IAstVisitable> IterateChildNodes()
         {
             yield return lhs;
             yield return rhs;
@@ -216,7 +216,7 @@ namespace DarkBasicYo.Ast
             return $"derefExpr {expression}";
         }
 
-        public IEnumerable<IAstVisitable> IterateChildNodes()
+        public override IEnumerable<IAstVisitable> IterateChildNodes()
         {
             yield return expression;
         }
@@ -238,7 +238,7 @@ namespace DarkBasicYo.Ast
             return $"addr {variableNode}";
         }
 
-        public IEnumerable<IAstVisitable> IterateChildNodes()
+        public override IEnumerable<IAstVisitable> IterateChildNodes()
         {
             yield return variableNode;
         }
@@ -266,7 +266,7 @@ namespace DarkBasicYo.Ast
             return value.ToString();
         }
 
-        public IEnumerable<IAstVisitable> IterateChildNodes()
+        public override IEnumerable<IAstVisitable> IterateChildNodes()
         {
             yield break;
         }
@@ -290,7 +290,7 @@ namespace DarkBasicYo.Ast
             return startToken.caseInsensitiveRaw;
         }
 
-        public IEnumerable<IAstVisitable> IterateChildNodes()
+        public override IEnumerable<IAstVisitable> IterateChildNodes()
         {
             yield break;
         }
@@ -311,7 +311,7 @@ namespace DarkBasicYo.Ast
             return startToken.raw;
         }
 
-        public IEnumerable<IAstVisitable> IterateChildNodes()
+        public override IEnumerable<IAstVisitable> IterateChildNodes()
         {
             yield break;
         }

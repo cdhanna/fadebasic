@@ -1,82 +1,183 @@
-﻿using System;
+﻿    using System;
 using System.Collections.Generic;
-using System.Linq;
+    using System.Collections.Immutable;
+    using System.Linq;
 using System.Runtime.InteropServices;
 using System.Text;
 using DarkBasicYo.Virtual;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp;
 using Microsoft.CodeAnalysis.CSharp.Syntax;
-using Microsoft.CodeAnalysis.Text;
+    using Microsoft.CodeAnalysis.Diagnostics;
+    using Microsoft.CodeAnalysis.Text;
 
 namespace DarkBasicYo.SourceGenerators
 {
     [Generator]
-    public class CommandSourceGenerator : ISourceGenerator
+    public class CommandSourceGenerator : IIncrementalGenerator
     {
+        
+        
         public static List<string> Logs { get; } = new List<string>();
 
         public static void Print(string msg) => Logs.Add("//\t" + msg);
         
-        public static void FlushLogs(GeneratorExecutionContext context)
-        {
-            context.AddSource($"GeneratedLogs.g.cs", $@"
-//autogen
-namespace GeneratedLogs 
-{{
-    public class LogsLogs 
-    {{
-        {string.Join("\n", Logs)}
-    }}
-}}
-");
-            // context.AddSource($"logs.g.cs", SourceText.From(string.Join("\n", Logs), Encoding.UTF8));
-        }
+//         public static void FlushLogs(GeneratorExecutionContext context)
+//         {
+//             context.AddSource($"GeneratedLogs.g.cs", $@"
+// //autogen
+// namespace GeneratedLogs 
+// {{
+//     public class LogsLogs 
+//     {{
+//         {string.Join("\n", Logs)}
+//     }}
+// }}
+// ");
+//             // context.AddSource($"logs.g.cs", SourceText.From(string.Join("\n", Logs), Encoding.UTF8));
+//         }
         
         private const string VM = "__vm";
         
-        public void Initialize(GeneratorInitializationContext context)
+        
+        static bool CouldBeMethod(SyntaxNode node)
         {
-            context.RegisterForSyntaxNotifications(() => new Receiver());
+            return node is MethodDeclarationSyntax; // TODO: add static check?
         }
 
-        public void Execute(GeneratorExecutionContext context)
+        static CommandDescriptor GetMethodInfo(GeneratorAttributeSyntaxContext context)
         {
-            try
+            var methodNode = context.TargetNode as MethodDeclarationSyntax;
+            if (!Receiver.TryGetCommandAttribute(methodNode, out var attributeNode, out var classNode))
             {
-                var receiver = context.SyntaxReceiver as Receiver;
+                return null;
+            }
 
-                foreach (var kvp in receiver.classNameToCommandList)
-                {
-                    var fileName = $"{kvp.Key.Item1}CallUtil.g.cs";
-                    var source = ToSource(kvp.Key.Item1, kvp.Key.Item2, kvp.Value);
+            return new CommandDescriptor
+            {
+                methodSyntax = methodNode,
+                classSyntax = classNode,
+                attributeSyntax = attributeNode
+            };
+        }
+        
+        public void Initialize(IncrementalGeneratorInitializationContext context)
+        {
 
-                    context.AddSource(fileName, source);
-                }
+            var provider = context.SyntaxProvider.ForAttributeWithMetadataName("DarkBasicYo.SourceGenerators." + nameof(DarkBasicCommandAttribute),
+                (node, _) => CouldBeMethod(node),
+                (transformContext, _) => GetMethodInfo(transformContext))
+                .Where(x => x != null)
+                // .SelectMany((x, _) => )
+                .Collect()
+                .SelectMany((x, _) => x.GroupBy(n => n.classSyntax.Identifier.Text).Select(y => y.ToList()))
+                .WithTrackingName("dark basic commands")
+                ;
 
+            context.RegisterSourceOutput(provider, (spc, commands) =>
+            {
+                var className = commands[0].classSyntax.Identifier.Text;
+                var namespaceName = commands[0].NamespaceName;
+                var fileName = $"{className}CallUtil.g.cs";
 
-                context.AddSource($"TunaTester.g.cs", $@"
-//autogen
-namespace TunaTester 
+                var source = ToSource(className, namespaceName, commands);
+                
+                var metaFileName = $"{className}MetaData.g.cs";
+                var metaSource = ToMetaSource(className, namespaceName, commands);
+
+                spc.AddSource(fileName, source);
+                spc.AddSource(metaFileName, metaSource);
+            });
+        }
+        
+//         public void Execute(GeneratorExecutionContext context)
+//         {
+//             try
+//             {
+//                 var receiver = context.SyntaxReceiver as Receiver;
+//
+//                 foreach (var kvp in receiver.classNameToCommandList)
+//                 {
+//                     var fileName = $"{kvp.Key.Item1}CallUtil.g.cs";
+//                     var source = ToSource(kvp.Key.Item1, kvp.Key.Item2, kvp.Value);
+//
+//                     var metaFileName = $"{kvp.Key.Item1}MetaData.g.cs";
+//                     var metaSource = ToMetaSource(kvp.Key.Item1, kvp.Key.Item2, kvp.Value);
+//                     
+//                     context.AddSource(fileName, source);
+//                     context.AddSource(metaFileName, metaSource);
+//                 }
+//                 
+//                 context.AddSource($"TunaTester.g.cs", $@"
+// //autogen
+// namespace TunaTester 
+// {{
+//     public class TunaTest 
+//     {{
+// // {receiver.methodNames}
+//         // {receiver.classNameToCommandList.Count}
+//     }}
+// }}
+// ");
+//             }
+//             catch (Exception ex)
+//             {
+//                 Print(ex.GetType().Name + " -- " + ex.Message);
+//                 Print(ex.StackTrace);
+//             }
+//             finally
+//             {
+//                 FlushLogs(context);
+//             }
+//         }
+
+        string ToMetaSource(string name, string namespaceStr, List<CommandDescriptor> descriptors)
+        {
+            // TODO: write a class that has the json const str.
+            var json = GetInfosModel(descriptors);
+
+//             
+            var escaped = json.Replace("\"", "\"\"");
+            return $@"// generate file
+using System;
+namespace {namespaceStr}
 {{
-    public class TunaTest 
+    public static class {name}MetaData
     {{
-// {receiver.methodNames}
-        // {receiver.classNameToCommandList.Count}
+        public const string COMMANDS_JSON = @""{escaped}"";
     }}
 }}
-");
-            }
-            catch (Exception ex)
-            {
-                Print(ex.Message);
-            }
-            finally
-            {
-                FlushLogs(context);
-            }
+";
+            
+        }
+        
+
+        static string ToJson(CommandInfo info)
+        {
+            return $@"{{
+""{nameof(info.returnType)}"": {info.returnType},
+""{nameof(info.methodIndex)}"": {info.methodIndex},
+""{nameof(info.name)}"": ""{info.name}"",
+""{nameof(info.sig)}"": ""{info.sig}"",
+""{nameof(info.UniqueName)}"": ""{info.UniqueName}"",
+""{nameof(info.args)}"": [{string.Join(",", info.args.Select(ToJson))}
+]
+}}
+";
         }
 
+        static string ToJson(CommandArgInfo arg)
+        {
+            return $@"{{
+""{nameof(arg.isVmArg)}"": {arg.isVmArg},
+""{nameof(arg.isOptional)}"": {arg.isOptional},
+""{nameof(arg.isParams)}"": {arg.isParams},
+""{nameof(arg.isRef)}"": {arg.isRef},
+""{nameof(arg.isRawArg)}"": {arg.isRawArg},
+""{nameof(arg.typeCode)}"": {arg.typeCode}
+}}";
+        }
+        
         static string ToSource(string name, string namespaceStr, List<CommandDescriptor> descriptor)
         {
             // {string.Join("\n", descriptor.Select(GetMethodSource))}
@@ -128,6 +229,44 @@ namespace {namespaceStr}
         //     
         //     return sb.ToString();
         // }
+
+        static string GetInfosModel(List<CommandDescriptor> descriptors)
+        {
+            
+            var json = $@"{{
+ ""commands"": [{string.Join(",", descriptors.Select(GetInfoJson))}]
+}}";
+            return json;
+        }
+
+        static string GetInfoJson(CommandDescriptor descriptor, int index)
+        {
+            return $@"
+{{
+    ""methodIndex"": {index},
+    ""{nameof(descriptor.MethodName)}"": ""{descriptor.MethodName}"",
+    ""{nameof(descriptor.ReturnType)}"": ""{descriptor.ReturnType}"",
+    ""{nameof(descriptor.ReturnTypeCode)}"": {descriptor.ReturnTypeCode},
+    ""{nameof(descriptor.CallName)}"": {descriptor.CallName},
+    ""{nameof(descriptor.Sig)}"": ""{descriptor.Sig}"",
+    ""{nameof(descriptor.Parameters)}"": [{string.Join(",", descriptor.Parameters.Select(GetArgJson))}]
+}}";
+        }
+
+        static string GetArgJson(ArgDescriptor arg, int index)
+        {
+            return $@"
+{{
+    ""{nameof(arg.IsOptional)}"": {(arg.IsOptional ? "true" : "false")},
+    ""{nameof(arg.IsParams)}"": {(arg.IsParams ? "true" : "false")},
+    ""{nameof(arg.IsRaw)}"": {(arg.IsRaw ? "true" : "false")},
+    ""{nameof(arg.IsRef)}"": {(arg.IsRef ? "true" : "false")},
+    ""{nameof(arg.IsVm)}"": {(arg.IsVm ? "true" : "false")}, 
+    ""{nameof(arg.TypeCode)}"": {arg.TypeCode},
+    ""{nameof(arg.TypeName)}"": ""{arg.TypeName}""
+}}";
+            
+        }
         
         
         static string GetInfoSource(CommandDescriptor descriptor, int index)
@@ -146,6 +285,7 @@ namespace {namespaceStr}
 }}
 ";
         }
+
 
         static string GetArgInfoSource(CommandDescriptor command, ArgDescriptor arg, int index)
         {
@@ -411,6 +551,7 @@ public static void {descriptor.MethodName}({nameof(VirtualMachine)} {VM})
                     throw new NotImplementedException("that type isn't supported for reading " + typeName);
             }
         }
+
     }
 
     public class CommandDescriptor
@@ -528,6 +669,7 @@ public static void {descriptor.MethodName}({nameof(VirtualMachine)} {VM})
     
     public class Receiver : ISyntaxReceiver
     {
+        
         public string methodNames;
 
         public List<CommandDescriptor> commands = new List<CommandDescriptor>();
@@ -559,7 +701,7 @@ public static void {descriptor.MethodName}({nameof(VirtualMachine)} {VM})
             
         }
 
-        static bool TryGetCommandAttribute(MethodDeclarationSyntax methodSyntax, out AttributeSyntax commandAttributeSyntax, out ClassDeclarationSyntax classSyntax)
+        public static bool TryGetCommandAttribute(MethodDeclarationSyntax methodSyntax, out AttributeSyntax commandAttributeSyntax, out ClassDeclarationSyntax classSyntax)
         {
             commandAttributeSyntax = null;
             classSyntax = null;

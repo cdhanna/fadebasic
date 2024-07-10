@@ -31,6 +31,7 @@ public class DiagnosticsHandler : DocumentDiagnosticHandlerBase
     {
         var content = await File.ReadAllTextAsync(DocumentUri.GetFileSystemPath(request), cancellationToken);
 
+        
         // var lexer = new Lexer();
         // var stream = lexer.Tokenize(content);
         // var parser = new Parser(new TokenStream(stream), new CommandCollection());

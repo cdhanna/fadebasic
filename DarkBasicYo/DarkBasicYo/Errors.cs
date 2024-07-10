@@ -55,23 +55,28 @@ namespace DarkBasicYo
     {
         public TokenRange location;
         public ErrorCode errorCode;
+        public string message;
 
-        public string Display => $"{location} - {errorCode}";
+        public string Display => $"{location} - {errorCode}{(string.IsNullOrEmpty(message) ? "": $" | {message}")}";
         public ParseError()
         {
             
         }
 
-        public ParseError(Token atToken, ErrorCode errorCode)
+        public ParseError(Token atToken, ErrorCode errorCode, string message="")
         {
             this.errorCode = errorCode;
+            this.message = message;
             this.location = new TokenRange { start = atToken, end = atToken };
         }
     }
 
     public static class ErrorCodes
     {
+        // 000 series represents lexer issues
         public static readonly ErrorCode LexerUnmatchedText = "[0001] Unknown text";
+        
+        // 100 series represents parse issues
         public static readonly ErrorCode ExpressionMissingAfterOpenParen = "[0100] No expression after open paren";
         public static readonly ErrorCode ExpressionMissingCloseParen = "[0101] Missing closing paren";
         public static readonly ErrorCode ExpressionMissing = "[0102] No valid expression found";
@@ -111,6 +116,10 @@ namespace DarkBasicYo
         public static readonly ErrorCode TypeDefMissingEndType = "[0144] Type definition missing closing EndType clause";
         public static readonly ErrorCode TypeDefMissingName = "[0145] Type definition missing name";
         public static readonly ErrorCode UnknownStatement = "[0146] Invalid statement";
+        
+        // 200 series represents post-parse issues
+        public static readonly ErrorCode InvalidReference = "[0200] Invalid reference";
+        public static readonly ErrorCode UnknownLabel = "[0201] Unknown label";
     }
 
     public struct ErrorCode

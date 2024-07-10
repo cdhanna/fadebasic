@@ -573,7 +573,7 @@ namespace DarkBasicYo
         {
             Errors = errors;
             _tokens = tokens;
-            Current = _tokens[0];
+            Current = _tokens.Count > 0 ? _tokens[0] : null;
             _maxIndex = tokens.Count;
         }
 

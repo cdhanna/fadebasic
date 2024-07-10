@@ -3,6 +3,7 @@ using System.IO;
 using System.Threading;
 using System.Threading.Tasks;
 using DarkBasicYo;
+using LSP.Services;
 using Microsoft.Extensions.Logging;
 using OmniSharp.Extensions.LanguageServer.Protocol;
 using OmniSharp.Extensions.LanguageServer.Protocol.Client.Capabilities;
@@ -14,10 +15,12 @@ namespace LSP.Handlers;
 public class SemanticTokenHandler : SemanticTokensHandlerBase
 {
     private readonly ILogger<SemanticTokenHandler> _logger;
+    private readonly DocumentService _docs;
 
-    public SemanticTokenHandler(ILogger<SemanticTokenHandler> logger)
+    public SemanticTokenHandler(ILogger<SemanticTokenHandler> logger, DocumentService docs)
     {
         _logger = logger;
+        _docs = docs;
     }
     protected override SemanticTokensRegistrationOptions CreateRegistrationOptions(SemanticTokensCapability capability,
         ClientCapabilities clientCapabilities)
@@ -41,8 +44,13 @@ public class SemanticTokenHandler : SemanticTokensHandlerBase
     protected override async Task Tokenize(SemanticTokensBuilder builder, ITextDocumentIdentifierParams identifier,
         CancellationToken cancellationToken)
     {
-        var content = await File.ReadAllTextAsync(DocumentUri.GetFileSystemPath(identifier.TextDocument), cancellationToken);
-
+        // builder.
+        
+        // var content = await File.ReadAllTextAsync(DocumentUri.GetFileSystemPath(identifier.TextDocument), cancellationToken);
+        if (!_docs.TryGetSourceDocument(identifier.TextDocument.Uri, out var content))
+        {
+            throw new Exception("No content available");
+        }
         try
         {
             var lexer = new Lexer();
@@ -54,6 +62,7 @@ public class SemanticTokenHandler : SemanticTokensHandlerBase
                 builder.Push(token.lineNumber, token.charNumber, token.raw.Length, ConvertSymbol(token.type),
                     new SemanticTokenModifier[] { });
             }
+            
 
             builder.Commit();
         }
@@ -68,29 +77,88 @@ public class SemanticTokenHandler : SemanticTokensHandlerBase
         switch (lexem)
         {
             case LexemType.KeywordRem:
+            case LexemType.KeywordRemStart:
+            case LexemType.KeywordRemEnd:
                 return SemanticTokenType.Comment;
             
             case LexemType.KeywordFunction:
                 return SemanticTokenType.Function;
+            case LexemType.KeywordExitFunction:
             case LexemType.KeywordEndFunction:
                 return SemanticTokenType.Function;
             
             
             
+            case LexemType.VariableString:
+            case LexemType.VariableReal:
             case LexemType.VariableGeneral:
                 return SemanticTokenType.Parameter;
             
             case LexemType.KeywordTo:
             case LexemType.KeywordNext:
             case LexemType.KeywordFor:
+            case LexemType.KeywordStep:
+            case LexemType.KeywordDo:
+            case LexemType.KeywordLoop:
+            case LexemType.KeywordWhile:
+            case LexemType.KeywordEndWhile:
+            case LexemType.KeywordRepeat:
+            case LexemType.KeywordUntil:
+            case LexemType.KeywordAnd:
+            case LexemType.KeywordAs:
+            case LexemType.KeywordCase:
+            case LexemType.KeywordElse:
+            case LexemType.KeywordIf:
+            case LexemType.KeywordEndIf:
+            case LexemType.KeywordGoto:
+            case LexemType.KeywordOr:
+            case LexemType.KeywordScope:
+            case LexemType.KeywordSelect:
+            case LexemType.KeywordEndSelect:
+            case LexemType.KeywordCaseDefault:
+            case LexemType.KeywordThen:
+            case LexemType.KeywordGoSub:
+            case LexemType.ArgSplitter:
+            case LexemType.FieldSplitter:
+            case LexemType.KeywordDeclareArray:
+            case LexemType.KeywordUnDeclareArray:
                 return SemanticTokenType.Keyword;
                 
+            case LexemType.KeywordType:
+            case LexemType.KeywordEndType:
+            case LexemType.KeywordEndCase:
+                return SemanticTokenType.Struct;
+            
+            case LexemType.KeywordTypeBoolean:
+            case LexemType.KeywordTypeInteger:
+            case LexemType.KeywordTypeDoubleFloat:
+            case LexemType.KeywordTypeDoubleInteger:
+            case LexemType.KeywordTypeByte:
+            case LexemType.KeywordTypeString:
+            case LexemType.KeywordTypeWord:
+            case LexemType.KeywordTypeDWord:
+                return SemanticTokenType.Type;
+
             case LexemType.ParenClose:
             case LexemType.ParenOpen:
+            case LexemType.OpPlus:
             case LexemType.OpEqual:
+            case LexemType.OpDivide:
+            case LexemType.OpGt:
+            case LexemType.OpGte:
+            case LexemType.OpLt:
+            case LexemType.OpLte:
+            case LexemType.OpMinus:
+            case LexemType.OpMod:
+            case LexemType.OpMultiply:
+            case LexemType.OpPower:
+            case LexemType.OpNotEqual:
                 return SemanticTokenType.Operator;
             case LexemType.LiteralInt:
+            case LexemType.LiteralReal:
                 return SemanticTokenType.Number;
+            case LexemType.LiteralString:
+                return SemanticTokenType.String;
             default:
                 return SemanticTokenType.Comment;
         }

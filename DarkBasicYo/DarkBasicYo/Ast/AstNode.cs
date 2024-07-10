@@ -8,7 +8,7 @@ namespace DarkBasicYo.Ast
         Token StartToken { get; }
         Token EndToken { get; }
     }
-    public abstract class AstNode : IAstNode
+    public abstract class AstNode : IAstNode, IAstVisitable
     {
         public Token startToken;
         public Token endToken;
@@ -17,6 +17,8 @@ namespace DarkBasicYo.Ast
         public Token EndToken => endToken;
 
         public List<ParseError> Errors { get; set; } = new List<ParseError>();
+
+        public VariableType ParsedType = VariableType.Void;
         
         protected AstNode()
         {
@@ -41,6 +43,22 @@ namespace DarkBasicYo.Ast
 
         protected abstract string GetString();
 
+
+        public abstract IEnumerable<IAstVisitable> IterateChildNodes();
+
+
+        
+        public void Visit(Action<IAstVisitable> onVisit, Action<IAstVisitable> onExit=null)
+        {
+            onVisit(this);
+            var nodes = IterateChildNodes();
+            foreach (var node in nodes)
+            {
+                if (node == null) continue;
+                node.Visit(onVisit, onExit);
+            }
+            onExit?.Invoke(this);
+        }
     }
 
 
@@ -48,16 +66,16 @@ namespace DarkBasicYo.Ast
     {
         IEnumerable<IAstVisitable> IterateChildNodes();
 
-        public void Visit(Action<IAstVisitable> onVisit)
-        {
-            onVisit(this);
-            var nodes = IterateChildNodes();
-            foreach (var node in nodes)
-            {
-                if (node == null) continue;
-                node.Visit(onVisit);
-            }
-        }
+        public void Visit(Action<IAstVisitable> onVisit, Action<IAstVisitable> onExit=null);
+        // {
+        //     onVisit(this);
+        //     var nodes = IterateChildNodes();
+        //     foreach (var node in nodes)
+        //     {
+        //         if (node == null) continue;
+        //         node.Visit(onVisit);
+        //     }
+        // }
     }
 
     public static class ErrorVisitorExtensions

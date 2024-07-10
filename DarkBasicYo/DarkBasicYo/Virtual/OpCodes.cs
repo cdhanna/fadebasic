@@ -76,6 +76,11 @@ namespace DarkBasicYo.Virtual
     public static class OpCodes
     {
         /// <summary>
+        /// Debug op-code.
+        /// </summary>
+        public const byte BREAKPOINT = 255;
+
+        /// <summary>
         /// Pushes the next literal value
         /// </summary>
         public const byte PUSH = 1;
@@ -86,7 +91,6 @@ namespace DarkBasicYo.Virtual
         public const byte ADD = 2;
         public const byte MUL = 3;
         public const byte DIVIDE = 4;
-        public const byte BREAKPOINT = 255;
         public const byte ABS = 5;
         public const byte GT = 24;
         public const byte LT = 25;

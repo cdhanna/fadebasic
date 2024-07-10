@@ -4,6 +4,13 @@ using DarkBasicYo.Virtual;
 
 namespace Tests;
 
+public static class ParserTestUtil
+{
+    public static void AssertNoParseErrors(this ProgramNode prog)
+    {
+        Assert.That(prog.GetAllErrors().Count, Is.EqualTo(0), "parse errors: " + string.Join("\n", prog.GetAllErrors().Select(x => x.Display)));
+    }
+}
 public partial class ParserTests
 {
     private Lexer _lexer;
@@ -24,6 +31,7 @@ public partial class ParserTests
     } 
 
     Parser MakeParser(string input) => new Parser(Tokenize(input), _commands);
+    
     
     [Test]
     public void Simple()
@@ -447,6 +455,7 @@ NEXT
         Assert.That(prog.statements.Count, Is.EqualTo(1));
         var code = prog.ToString();
         Console.WriteLine(code);
+        prog.AssertNoParseErrors();
         Assert.That(code, Is.EqualTo(@"(
 (for (ref x),(1),(10),(1),((= (ref y),(ref x))))
 )".ReplaceLineEndings("")));
@@ -467,6 +476,8 @@ NEXT
         Assert.That(prog.statements.Count, Is.EqualTo(1));
         var code = prog.ToString();
         Console.WriteLine(code);
+        prog.AssertNoParseErrors();
+
         Assert.That(code, Is.EqualTo(@"(
 (for (ref x),(1),(10),(4),((= (ref y),(ref x))))
 )".ReplaceLineEndings("")));
@@ -484,9 +495,10 @@ NEXT
         var parser = MakeParser(input);
         var prog = parser.ParseProgram();
         
-        Assert.That(prog.statements.Count, Is.EqualTo(1));
+        Assert.That(prog.statements.Count, Is.EqualTo(2)); // technically the x array isn't defined, but it doesnt matter for this test
         var code = prog.ToString();
         Console.WriteLine(code);
+        
         Assert.That(code, Is.EqualTo(@"(
 (for (ref x[(3)]),(1),(10),(4),((= (ref y),(ref x))))
 )".ReplaceLineEndings("")));
@@ -623,7 +635,7 @@ GOTO Label
 ";
         var parser = MakeParser(input);
         var prog = parser.ParseProgram();
-        
+        prog.AssertNoParseErrors();
         Assert.That(prog.statements.Count, Is.EqualTo(2));
         var code = prog.ToString();
         Console.WriteLine(code);
@@ -644,7 +656,7 @@ Label:
 ";
         var parser = MakeParser(input);
         var prog = parser.ParseProgram();
-        
+        prog.AssertNoParseErrors();
         Assert.That(prog.statements.Count, Is.EqualTo(2));
         var code = prog.ToString();
         Console.WriteLine(code);
@@ -665,7 +677,8 @@ RETURN
 ";
         var parser = MakeParser(input);
         var prog = parser.ParseProgram();
-        
+        prog.AssertNoParseErrors();
+
         Assert.That(prog.statements.Count, Is.EqualTo(3));
         var code = prog.ToString();
         Console.WriteLine(code);
@@ -685,7 +698,8 @@ x as integer
 endtype";
         var parser = MakeParser(input);
         var prog = parser.ParseProgram();
-        
+        prog.AssertNoParseErrors();
+
         Assert.That(prog.typeDefinitions.Count, Is.EqualTo(1));
         var code = prog.ToString();
         Console.WriteLine(code);
@@ -705,7 +719,7 @@ y
 endtype";
         var parser = MakeParser(input);
         var prog = parser.ParseProgram();
-        
+        prog.AssertNoParseErrors();
         Assert.That(prog.typeDefinitions.Count, Is.EqualTo(1));
         var code = prog.ToString();
         Console.WriteLine(code);
@@ -724,7 +738,8 @@ y$
 endtype";
         var parser = MakeParser(input);
         var prog = parser.ParseProgram();
-        
+        prog.AssertNoParseErrors();
+
         Assert.That(prog.typeDefinitions.Count, Is.EqualTo(1));
         var code = prog.ToString();
         Console.WriteLine(code);
@@ -746,7 +761,8 @@ y$
 endtype";
         var parser = MakeParser(input);
         var prog = parser.ParseProgram();
-        
+        prog.AssertNoParseErrors();
+
         var code = prog.ToString();
         Console.WriteLine(code);
         Assert.That(code, Is.EqualTo(@"(
@@ -768,7 +784,8 @@ y.x = 2
 ";
         var parser = MakeParser(input);
         var prog = parser.ParseProgram();
-        
+        prog.AssertNoParseErrors();
+
         var code = prog.ToString();
         Console.WriteLine(code);
         Assert.That(code, Is.EqualTo(@"(
@@ -790,7 +807,8 @@ endtype
 ";
         var parser = MakeParser(input);
         var prog = parser.ParseProgram();
-        
+        prog.AssertNoParseErrors();
+
         var code = prog.ToString();
         Console.WriteLine(code);
         Assert.That(code, Is.EqualTo(@"(
@@ -809,7 +827,8 @@ IF 3 THEN x = 1
 ";
         var parser = MakeParser(input);
         var prog = parser.ParseProgram();
-        
+        prog.AssertNoParseErrors();
+
         Assert.That(prog.statements.Count, Is.EqualTo(1));
         var code = prog.ToString();
         Console.WriteLine(code);
@@ -828,7 +847,8 @@ x = 2
 ";
         var parser = MakeParser(input);
         var prog = parser.ParseProgram();
-        
+        prog.AssertNoParseErrors();
+
         Assert.That(prog.statements.Count, Is.EqualTo(2));
         var code = prog.ToString();
         Console.WriteLine(code);
@@ -847,7 +867,8 @@ x = 2
 ";
         var parser = MakeParser(input);
         var prog = parser.ParseProgram();
-        
+        prog.AssertNoParseErrors();
+
         Assert.That(prog.statements.Count, Is.EqualTo(1));
         var code = prog.ToString();
         Console.WriteLine(code);
@@ -1044,7 +1065,8 @@ ENDSELECT
 ";
         var parser = MakeParser(input);
         var prog = parser.ParseProgram();
-        
+        prog.AssertNoParseErrors();
+
         Assert.That(prog.statements.Count, Is.EqualTo(1));
         var code = prog.ToString();
         Console.WriteLine(code);
@@ -1063,7 +1085,8 @@ IF 3 THEN x = 1: x = 2 ELSE x = 3
 ";
         var parser = MakeParser(input);
         var prog = parser.ParseProgram();
-        
+        prog.AssertNoParseErrors();
+
         Assert.That(prog.statements.Count, Is.EqualTo(1));
         var code = prog.ToString();
         Console.WriteLine(code);
@@ -1085,7 +1108,8 @@ ENDIF
 ";
         var parser = MakeParser(input);
         var prog = parser.ParseProgram();
-        
+        prog.AssertNoParseErrors();
+
         Assert.That(prog.statements.Count, Is.EqualTo(1));
         var code = prog.ToString();
         Console.WriteLine(code);
@@ -1106,7 +1130,8 @@ ENDIF
 ";
         var parser = MakeParser(input);
         var prog = parser.ParseProgram();
-        
+        prog.AssertNoParseErrors();
+
         Assert.That(prog.statements.Count, Is.EqualTo(1));
         var code = prog.ToString();
         Console.WriteLine(code);
@@ -1129,7 +1154,8 @@ ENDIF
 ";
         var parser = MakeParser(input);
         var prog = parser.ParseProgram();
-        
+        prog.AssertNoParseErrors();
+
         Assert.That(prog.statements.Count, Is.EqualTo(1));
         var code = prog.ToString();
         Console.WriteLine(code);
@@ -1150,7 +1176,8 @@ ENDIF
 ";
         var parser = MakeParser(input);
         var prog = parser.ParseProgram();
-        
+        prog.AssertNoParseErrors();
+
         Assert.That(prog.statements.Count, Is.EqualTo(1));
         var code = prog.ToString();
         Console.WriteLine(code);

@@ -28,7 +28,7 @@ namespace DarkBasicYo.Ast
             return $"label {label}";
         }
 
-        public IEnumerable<IAstVisitable> IterateChildNodes()
+        public override IEnumerable<IAstVisitable> IterateChildNodes()
         {
             yield break;
         }

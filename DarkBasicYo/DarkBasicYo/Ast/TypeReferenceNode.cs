@@ -26,7 +26,7 @@ namespace DarkBasicYo.Ast
         }
 
         public VariableType variableType => VariableType.Struct;
-        public IEnumerable<IAstVisitable> IterateChildNodes()
+        public override IEnumerable<IAstVisitable> IterateChildNodes()
         {
             yield return variableNode;
         }
@@ -77,7 +77,7 @@ namespace DarkBasicYo.Ast
             return variableType.ToString().ToLowerInvariant();
         }
 
-        public IEnumerable<IAstVisitable> IterateChildNodes()
+        public override IEnumerable<IAstVisitable> IterateChildNodes()
         {
             yield break;
         }
