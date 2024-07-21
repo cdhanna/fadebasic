@@ -7,7 +7,28 @@ namespace DarkBasicYo.Ast
     {
         Token StartToken { get; }
         Token EndToken { get; }
+        TypeInfo ParsedType { get; }
     }
+
+    public struct TypeInfo
+    {
+        public VariableType type;
+        public string structName;
+        public int rank; // when positive, its an array.
+        public bool IsArray => rank > 0;
+
+        public static TypeInfo FromVariableType(VariableType variableType, int rank=0, string structName=null) => new TypeInfo
+        {
+            type = variableType,
+            structName = structName,
+            rank = rank
+        };
+        
+        public static readonly TypeInfo Void = new TypeInfo { type = VariableType.Void };
+        public static readonly TypeInfo Int = new TypeInfo { type = VariableType.Integer };
+
+    } 
+    
     public abstract class AstNode : IAstNode, IAstVisitable
     {
         public Token startToken;
@@ -18,7 +39,7 @@ namespace DarkBasicYo.Ast
 
         public List<ParseError> Errors { get; set; } = new List<ParseError>();
 
-        public VariableType ParsedType = VariableType.Void;
+        public TypeInfo ParsedType { get; set; } = TypeInfo.Void;
         
         protected AstNode()
         {

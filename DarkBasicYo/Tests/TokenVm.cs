@@ -735,7 +735,7 @@ y = 1
         var vm = new VirtualMachine(prog);
         vm.Execute().MoveNext();
         
-        Assert.That(vm.dataRegisters[0], Is.EqualTo(142)); // on July 30th, it happened to be that it got to 142, but that is entirely by instructions run... 
+        Assert.That(vm.dataRegisters[0], Is.EqualTo(142)); // on July 30th 2023, it happened to be that it got to 142, but that is entirely by instructions run... 
         Assert.That(vm.typeRegisters[0], Is.EqualTo(TypeCodes.INT));
         
         Assert.That(vm.dataRegisters[1], Is.EqualTo(0)); // the point is that the loop never exits
@@ -2614,6 +2614,7 @@ any input ""darn"", y
     {
         var src = "x = 7: refDbl x: x = x * 2";
         Setup(src, out var compiler, out var prog);
+        _exprAst.AssertNoParseErrors();
         var vm = new VirtualMachine(prog);
         vm.hostMethods = compiler.methodTable;
         vm.Execute2();

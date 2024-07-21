@@ -416,7 +416,7 @@ END
 Function Test(a, b)
 EndFunction b
 ";
-        Setup(src, out _, out var prog);
+        Setup(src, out var compiler, out var prog);
         
         var vm = new VirtualMachine(prog);
         vm.Execute().MoveNext();

@@ -38,6 +38,52 @@ x = a
     
     
     [Test]
+    public void ParseError_UseVariableBeforeDefined_SelfReference()
+    {
+        var input = @"
+x = x
+";
+        var parser = MakeParser(input);
+        var prog = parser.ParseProgram();
+
+        var errors = prog.GetAllErrors();
+        Assert.That(errors.Count, Is.EqualTo(1));
+        Assert.That(errors[0].Display, Is.EqualTo($"[1:4] - {ErrorCodes.InvalidReference} | unknown symbol, x"));
+    }
+
+    
+    [Test]
+    public void ParseError_UseVariableDeclaredThroughCommand()
+    {
+        var input = @"
+inc a
+x = a
+";
+        var parser = MakeParser(input);
+        var prog = parser.ParseProgram();
+
+        var errors = prog.GetAllErrors();
+        Assert.That(errors.Count, Is.EqualTo(0), string.Join("\n", errors.Select(x => x.Display)));
+        // Assert.That(errors[0].Display, Is.EqualTo($"[1:4] - {ErrorCodes.InvalidReference} | unknown symbol, a"));
+    }
+    
+    
+    [Test]
+    public void ParseError_UseVariableDeclaredThroughCommand_Compound()
+    {
+        // this shouldn't fail, because retandref declares a before it is used in the second parameter slot.
+        var input = @"
+add(retandref(a), a)
+";
+        var parser = MakeParser(input);
+        var prog = parser.ParseProgram();
+
+        var errors = prog.GetAllErrors();
+        Assert.That(errors.Count, Is.EqualTo(0), string.Join("\n", errors.Select(x => x.Display)));
+    }
+
+    
+    [Test]
     public void ParseError_UseVariableBeforeDefined_Safe()
     {
         var input = @"
@@ -52,6 +98,22 @@ x = a
         // Assert.That(errors[0].Display, Is.EqualTo($"[1:0] - {ErrorCodes.GotoMissingLabel}"));
     }
     
+    
+    [Test]
+    public void ParseError_Command_ReferenceUnknownVariable()
+    {
+        var input = @"
+add(1,a)
+";
+        var parser = MakeParser(input);
+        var prog = parser.ParseProgram();
+
+        var errors = prog.GetAllErrors();
+        Assert.That(errors.Count, Is.EqualTo(1));
+        Assert.That(errors[0].Display, Is.EqualTo($"[1:6] - {ErrorCodes.InvalidReference} | unknown symbol, a"));
+    }
+
+    
     [Test]
     public void ParseError_Command_Unknown()
     {
@@ -62,8 +124,8 @@ thisCommandDoesNotExist()
         var prog = parser.ParseProgram();
 
         var errors = prog.GetAllErrors();
-        Assert.That(errors.Count, Is.EqualTo(1));
-        // Assert.That(errors[0].Display, Is.EqualTo($"[1:0] - {ErrorCodes.GotoMissingLabel}"));
+        prog.AssertParseErrors(1);
+        Assert.That(errors[0].Display, Is.EqualTo($"[1:0] - {ErrorCodes.InvalidReference} | unknown symbol, thiscommanddoesnotexist"));
     }
     
     
@@ -77,8 +139,8 @@ add(1,2,3)
         var prog = parser.ParseProgram();
 
         var errors = prog.GetAllErrors();
-        Assert.That(errors.Count, Is.EqualTo(1));
-        // Assert.That(errors[0].Display, Is.EqualTo($"[1:0] - {ErrorCodes.GotoMissingLabel}"));
+        prog.AssertParseErrors(1);
+        Assert.That(errors[0].Display, Is.EqualTo($"[1:0] - {ErrorCodes.CommandNoOverloadFound}"));
     }
     
     [Test]
@@ -92,7 +154,7 @@ add(1)
 
         var errors = prog.GetAllErrors();
         Assert.That(errors.Count, Is.EqualTo(1));
-        // Assert.That(errors[0].Display, Is.EqualTo($"[1:0] - {ErrorCodes.GotoMissingLabel}"));
+        Assert.That(errors[0].Display, Is.EqualTo($"[1:0] - {ErrorCodes.CommandNoOverloadFound}"));
     }
     
     
@@ -114,14 +176,15 @@ add(1, ""toast"")
     public void ParseError_VariableReference_ArrayIndexWithoutClosingParen()
     {
         var input = @"
+DIM y(1)
 x = y(
 ";
         var parser = MakeParser(input);
         var prog = parser.ParseProgram();
 
         var errors = prog.GetAllErrors();
-        Assert.That(errors.Count, Is.EqualTo(1));
-        Assert.That(errors[0].Display, Is.EqualTo($"[1:5] - {ErrorCodes.VariableIndexMissingCloseParen}"));
+        prog.AssertParseErrors(1);
+        Assert.That(errors[0].Display, Is.EqualTo($"[2:5] - {ErrorCodes.VariableIndexMissingCloseParen}"));
     }
     
     
@@ -520,9 +583,159 @@ fish.y = 1
 
         var errors = prog.GetAllErrors();
         Assert.That(errors.Count, Is.EqualTo(1));
-        Assert.That(errors[0].Display, Is.EqualTo($"[1:0] - {ErrorCodes.InvalidReference}"));
+        Assert.That(errors[0].Display, Is.EqualTo($"[5:5] - {ErrorCodes.StructFieldDoesNotExist}"));
+    }
+    
+    
+    
+    
+    [Test]
+    public void ParseError_TypeDef_FieldDeclaredTwice()
+    {
+        var input = @"
+TYPE nut
+    y
+    x
+    y
+ENDTYPE
+";
+        var parser = MakeParser(input);
+        var prog = parser.ParseProgram();
+
+        var errors = prog.GetAllErrors();
+        prog.AssertParseErrors(1);
+        Assert.That(errors[0].Display, Is.EqualTo($"[4:4] - {ErrorCodes.SymbolAlreadyDeclared}"));
     }
 
+    
+    [Test]
+    public void ParseError_TypeDef_UnknownSubField()
+    {
+        var input = @"
+TYPE nut
+    y as egg
+ENDTYPE
+";
+        var parser = MakeParser(input);
+        var prog = parser.ParseProgram();
+
+        var errors = prog.GetAllErrors();
+        Assert.That(errors.Count, Is.EqualTo(1));
+        Assert.That(errors[0].Display, Is.EqualTo($"[2:4,2:9] - {ErrorCodes.StructFieldReferencesUnknownStruct}"));
+    }
+    
+    
+    [Test]
+    public void ParseError_TypeDef_RecursiveSelf()
+    {
+        var input = @"
+TYPE nut
+    y as nut
+ENDTYPE
+";
+        var parser = MakeParser(input);
+        var prog = parser.ParseProgram();
+
+        var errors = prog.GetAllErrors();
+        Assert.That(errors.Count, Is.EqualTo(1));
+        Assert.That(errors[0].Display, Is.EqualTo($"[2:4,2:9] - {ErrorCodes.StructFieldsRecursive}"));
+    }
+    
+    
+    [Test]
+    public void ParseError_TypeDef_RecursiveChain2()
+    {
+        var input = @"
+TYPE chicken
+    y as egg
+ENDTYPE
+TYPE egg 
+    x as chicken
+ENDTYPE
+";
+        var parser = MakeParser(input);
+        var prog = parser.ParseProgram();
+
+        var errors = prog.GetAllErrors();
+        prog.AssertParseErrors(2);
+        Assert.That(errors[0].Display, Is.EqualTo($"[2:4,2:9] - {ErrorCodes.StructFieldsRecursive}"));
+        Assert.That(errors[1].Display, Is.EqualTo($"[5:4,5:9] - {ErrorCodes.StructFieldsRecursive}"));
+    }
+    
+    [Test]
+    public void ParseError_TypeDef_BadFieldAssignment_Nested_Works()
+    {
+        var input = @"
+TYPE egg
+    x
+ENDTYPE
+TYPE nut
+    y as egg
+ENDTYPE
+fish AS nut
+fish.y.x = 1
+";
+        var parser = MakeParser(input);
+        var prog = parser.ParseProgram();
+
+        var errors = prog.GetAllErrors();
+        prog.AssertNoParseErrors();
+    }
+    
+    [Test]
+    public void ParseError_TypeDef_BadFieldAssignment_Nested()
+    {
+        var input = @"
+TYPE egg
+    x
+ENDTYPE
+TYPE nut
+    y as egg
+ENDTYPE
+fish AS nut
+fish.y.z = 1
+";
+        var parser = MakeParser(input);
+        var prog = parser.ParseProgram();
+
+        var errors = prog.GetAllErrors();
+        prog.AssertParseErrors(1);
+        Assert.That(errors[0].Display, Is.EqualTo($"[8:7] - {ErrorCodes.StructFieldDoesNotExist}"));
+    }
+    [Test]
+    public void ParseError_TypeDef_BadFieldAssignment_NotAStruct()
+    {
+        var input = @"
+fish AS integer
+fish.y = 1
+";
+        var parser = MakeParser(input);
+        var prog = parser.ParseProgram();
+
+        var errors = prog.GetAllErrors();
+        Assert.That(errors.Count, Is.EqualTo(1));
+        Assert.That(errors[0].Display, Is.EqualTo($"[2:0] - {ErrorCodes.ExpressionIsNotAStruct}"));
+    }
+    
+    
+    [Test]
+    public void ParseError_TypeDef_UnknownVariableRoot()
+    {
+        var input = @"
+TYPE egg
+    x
+ENDTYPE
+fish AS egg
+notfish.y = 1
+";
+        var parser = MakeParser(input);
+        var prog = parser.ParseProgram();
+
+        var errors = prog.GetAllErrors();
+        Assert.That(errors.Count, Is.EqualTo(1));
+        Assert.That(errors[0].Display, Is.EqualTo($"[5:0] - {ErrorCodes.InvalidReference} | unknown symbol, notfish"));
+    }
+    
     
     [Test]
     public void ParseError_TypeDef_BadFieldAssignment_NoVariable()
@@ -538,7 +751,7 @@ nothing.x = 1
 
         var errors = prog.GetAllErrors();
         Assert.That(errors.Count, Is.EqualTo(1));
-        Assert.That(errors[0].Display, Is.EqualTo($"[4:0] - {ErrorCodes.InvalidReference} | nothing"));
+        Assert.That(errors[0].Display, Is.EqualTo($"[4:0] - {ErrorCodes.InvalidReference} | unknown symbol, nothing"));
     }
 
     
@@ -650,7 +863,6 @@ until
         Assert.That(errors.Count, Is.EqualTo(1));
         Assert.That(errors[0].Display, Is.EqualTo($"[2:0] - {ErrorCodes.ExpressionMissing}"));
     }
-
     
     [Test]
     public void ParseError_DoLoop_MissingLoop()
@@ -1000,6 +1212,21 @@ x = 1 + 3
     }
 
 
+    [Test]
+    public void ParseError_VariableDecl_RedeclAssign()
+    {
+        var input = @"
+x as int
+x as word
+";
+        var parser = MakeParser(input);
+        var prog = parser.ParseProgram();
+
+        var errors = prog.GetAllErrors();
+        Assert.That(errors.Count, Is.EqualTo(1));
+        // Assert.That(errors[0].Display, Is.EqualTo($"[1:2] - {ErrorCodes.AmbiguousDeclarationOrAssignment}"));
+    }
+
     
     [Test]
     public void ParseError_VariableDecl_Unknown()
@@ -1044,6 +1271,197 @@ x as
         var errors = prog.GetAllErrors();
         Assert.That(errors.Count, Is.EqualTo(1));
         Assert.That(errors[0].Display, Is.EqualTo($"[1:2] - {ErrorCodes.DeclarationMissingTypeRef}"));
+    }
+
+    
+    [Test]
+    public void ParseError_VariableDec_Double()
+    {
+        var input = @"
+x as integer
+x as integer
+";
+        var parser = MakeParser(input);
+        var prog = parser.ParseProgram();
+
+        var errors = prog.GetAllErrors();
+        prog.AssertParseErrors(1);
+        Assert.That(errors[0].Display, Is.EqualTo($"[2:0] - {ErrorCodes.SymbolAlreadyDeclared}"));
+    }
+
+    
+    [Test]
+    public void ParseError_Assignment_Array()
+    {
+        var input = @"
+DIM x(3)
+x(2) = 1
+";
+        var parser = MakeParser(input);
+        var prog = parser.ParseProgram();
+
+        var errors = prog.GetAllErrors();
+        prog.AssertNoParseErrors();
+        // Assert.That(errors[0].Display, Is.EqualTo($"[1:6] - {ErrorCodes.ExpressionMissing}"));
+    }
+
+    
+    [Test]
+    public void ParseError_Assignment_Array_CardinalityError_MissingExpr()
+    {
+        var input = @"
+DIM x(3,2)
+x(2) = 1
+";
+        var parser = MakeParser(input);
+        var prog = parser.ParseProgram();
+
+        var errors = prog.GetAllErrors();
+        prog.AssertParseErrors(1);
+        Assert.That(errors[0].Display, Is.EqualTo($"[2:0,2:3] - {ErrorCodes.ArrayCardinalityMismatch}"));
+    }
+    
+    [Test]
+    public void ParseError_Assignment_Array_CardinalityError_ExtraExpr()
+    {
+        var input = @"
+DIM x(3,2)
+x(2,3,1) = 1
+";
+        var parser = MakeParser(input);
+        var prog = parser.ParseProgram();
+
+        var errors = prog.GetAllErrors();
+        prog.AssertParseErrors(1);
+        Assert.That(errors[0].Display, Is.EqualTo($"[2:0,2:7] - {ErrorCodes.ArrayCardinalityMismatch}"));
+    }
+
+    [Test]
+    public void ParseError_Assignment_ArrayStruct_Works()
+    {
+        var input = @"
+TYPE egg
+    x
+ENDTYPE
+DIM x(3) as egg
+x(2).x = 2
+";
+        var parser = MakeParser(input);
+        var prog = parser.ParseProgram();
+
+        var errors = prog.GetAllErrors();
+        prog.AssertNoParseErrors();
+        // Assert.That(errors[0].Display, Is.EqualTo($"[1:6] - {ErrorCodes.ExpressionMissing}"));
+    }
+    
+    
+    [Test]
+    public void ParseError_Assignment_ArrayStruct_InvalidExpr()
+    {
+        var input = @"
+TYPE egg
+    x
+ENDTYPE
+DIM x(3) as egg
+x(y).x = 2
+";
+        var parser = MakeParser(input);
+        var prog = parser.ParseProgram();
+
+        var errors = prog.GetAllErrors();
+        prog.AssertParseErrors(1);
+        Assert.That(errors[0].Display, Is.EqualTo($"[5:2] - {ErrorCodes.InvalidReference} | unknown symbol, y"));
+    }
+    
+    
+    [Test]
+    public void ParseError_Assignment_ArrayStruct_ExprsDeclaredInOrder()
+    {
+        var input = @"
+TYPE egg
+    x
+ENDTYPE
+DIM x(3,2) as egg
+`this should be valid because retandref declares a
+x(retandref(a),a).x = 2
+";
+        var parser = MakeParser(input);
+        var prog = parser.ParseProgram();
+
+        var errors = prog.GetAllErrors();
+        prog.AssertParseErrors(0);
+        // Assert.That(errors[0].Display, Is.EqualTo($"[5:2] - {ErrorCodes.InvalidReference} | unknown symbol, y"));
+    }
+    
+    
+    [Test]
+    public void ParseError_Assignment_ArrayStruct_InvalidCardinality()
+    {
+        var input = @"
+TYPE egg
+    x
+ENDTYPE
+DIM x(3,2) as egg
+x(2).x = 2
+";
+        var parser = MakeParser(input);
+        var prog = parser.ParseProgram();
+
+        var errors = prog.GetAllErrors();
+        prog.AssertParseErrors(1);
+        Assert.That(errors[0].Display, Is.EqualTo($"[5:0,5:3] - {ErrorCodes.ArrayCardinalityMismatch}"));
+    }
+    
+    
+    [Test]
+    public void ParseError_Assignment_ArrayStruct_InvalidField()
+    {
+        var input = @"
+TYPE egg
+    x
+ENDTYPE
+DIM x(3) as egg
+x(2).y = 2
+";
+        var parser = MakeParser(input);
+        var prog = parser.ParseProgram();
+
+        var errors = prog.GetAllErrors();
+        prog.AssertParseErrors(1);
+        Assert.That(errors[0].Display, Is.EqualTo($"[5:5] - {ErrorCodes.StructFieldDoesNotExist}"));
+    }
+
+    
+    [Test]
+    public void ParseError_Assignment_ArrayStruct_Undeclared()
+    {
+        var input = @"
+x(2).x = 2
+";
+        var parser = MakeParser(input);
+        var prog = parser.ParseProgram();
+
+        var errors = prog.GetAllErrors();
+        prog.AssertParseErrors(1);
+        Assert.That(errors[0].Display, Is.EqualTo($"[1:0,1:3] - {ErrorCodes.InvalidReference}"));
+    }
+    
+    [Test]
+    public void ParseError_Assignment_ArrayStruct_NotArray()
+    {
+        var input = @"
+TYPE egg
+    x
+ENDTYPE
+x as egg
+x(2).x = 2
+";
+        var parser = MakeParser(input);
+        var prog = parser.ParseProgram();
+
+        var errors = prog.GetAllErrors();
+        prog.AssertParseErrors(1);
+        Assert.That(errors[0].Display, Is.EqualTo($"[5:0,5:3] - {ErrorCodes.CannotIndexIntoNonArray}"));
     }
 
     

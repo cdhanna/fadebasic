@@ -8,7 +8,6 @@ namespace DarkBasicYo.Ast
 
     public interface IExpressionNode : IAstNode, IAstVisitable
     {
-
     }
 
     public interface ILiteralNode : IExpressionNode
@@ -131,7 +130,8 @@ namespace DarkBasicYo.Ast
     {
         public CommandInfo command;
         public List<IExpressionNode> args = new List<IExpressionNode>();
-
+        public List<int> argMap = new List<int>();
+        
         protected override string GetString()
         {
             var argString = string.Join(",", args.Select(x => x.ToString()));
@@ -169,6 +169,7 @@ namespace DarkBasicYo.Ast
         {
             yield return rhs;
         }
+
     }
 
     public class BinaryOperandExpression : AstNode, IExpressionNode
@@ -198,6 +199,7 @@ namespace DarkBasicYo.Ast
             yield return lhs;
             yield return rhs;
         }
+
     }
 
     public class DereferenceExpression : AstNode, IExpressionNode
@@ -270,6 +272,7 @@ namespace DarkBasicYo.Ast
         {
             yield break;
         }
+
     }
 
 

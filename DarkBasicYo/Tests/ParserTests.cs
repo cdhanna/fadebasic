@@ -8,7 +8,12 @@ public static class ParserTestUtil
 {
     public static void AssertNoParseErrors(this ProgramNode prog)
     {
-        Assert.That(prog.GetAllErrors().Count, Is.EqualTo(0), "parse errors: " + string.Join("\n", prog.GetAllErrors().Select(x => x.Display)));
+        prog.AssertParseErrors(0);
+        // Assert.That(prog.GetAllErrors().Count, Is.EqualTo(0), "parse errors: " + string.Join("\n", prog.GetAllErrors().Select(x => x.Display)));
+    }
+    public static void AssertParseErrors(this ProgramNode prog, int count)
+    {
+        Assert.That(prog.GetAllErrors().Count, Is.EqualTo(count), "parse errors: " + string.Join("\n", prog.GetAllErrors().Select(x => x.Display)));
     }
 }
 public partial class ParserTests
@@ -495,7 +500,8 @@ NEXT
         var parser = MakeParser(input);
         var prog = parser.ParseProgram();
         
-        Assert.That(prog.statements.Count, Is.EqualTo(2)); // technically the x array isn't defined, but it doesnt matter for this test
+        // prog.AssertNoParseErrors();
+        Assert.That(prog.statements.Count, Is.EqualTo(1)); // technically the x array isn't defined, but it doesnt matter for this test
         var code = prog.ToString();
         Console.WriteLine(code);
         
@@ -1055,6 +1061,7 @@ ENDSELECT
     public void Switch_Multiple_ValuesOnMultipleLines()
     {
         var input = @"
+x = 1
 SELECT x
     CASE    1, 
             2
@@ -1067,10 +1074,11 @@ ENDSELECT
         var prog = parser.ParseProgram();
         prog.AssertNoParseErrors();
 
-        Assert.That(prog.statements.Count, Is.EqualTo(1));
+        Assert.That(prog.statements.Count, Is.EqualTo(2));
         var code = prog.ToString();
         Console.WriteLine(code);
         Assert.That(code, Is.EqualTo(@"(
+(= (ref x),(1)),
 (switch (ref x) ((case (1),(2),(5) ((= (ref x),(1))))))
 )".ReplaceLineEndings("")));
     }

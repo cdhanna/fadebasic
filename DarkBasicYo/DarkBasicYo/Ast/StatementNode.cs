@@ -165,6 +165,7 @@ namespace DarkBasicYo.Ast
     {
         public CommandInfo command;
         public List<IExpressionNode> args = new List<IExpressionNode>();
+        public List<int> argMap = new List<int>();
 
         protected override string GetString()
         {

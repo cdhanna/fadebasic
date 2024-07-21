@@ -135,6 +135,14 @@ namespace Tests
         {
             return string.Join(";", variable);
         }
+
+        [DarkBasicCommand("retandref")]
+        public static int ReturnAndRef(ref int a)
+        {
+            // this command is interesting because it can declare a variable via the ref param, and also as a return.
+            a = 3;
+            return a;
+        }
         
         //
         [DarkBasicCommand("len")]

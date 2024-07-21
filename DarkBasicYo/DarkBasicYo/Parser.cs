@@ -6,6 +6,7 @@ using System.Text;
 using DarkBasicYo.Ast;
 using DarkBasicYo.Ast.Visitors;
 using DarkBasicYo.Virtual;
+using TypeInfo = DarkBasicYo.Ast.TypeInfo;
 
 namespace DarkBasicYo
 {
@@ -34,29 +35,81 @@ namespace DarkBasicYo
         }
     }
 
-    /// <summary>
-    /// TODO: delete this. This was put in to catch scoping errors, but actually, those are better done post parse.
-    /// </summary>
+    public class Symbol
+    {
+        public string text;
+        public TypeInfo typeInfo;
+        public IAstNode source;
+
+        public Symbol()
+        {
+            
+        }
+    }
+
+    public class SymbolTable : Dictionary<string, Symbol>
+    {
+        public void Add(Symbol symbol)
+        {
+            Add(symbol.text, symbol);
+        }
+        public new void Add(string variableName, Symbol symbol)
+        {
+            if (variableName == "_") return;
+            base.Add(variableName, symbol);
+        }
+    }
+    
     public class Scope
     {
 
         public HashSet<string> labels = new HashSet<string>();
-        public Dictionary<string, HashSet<string>> typeNameToTypeMembers = new Dictionary<string, HashSet<string>>();
-        public HashSet<string> globalVariables = new HashSet<string>();
-        public Stack<List<string>> localVariables = new Stack<List<string>>();
+        public Dictionary<string, SymbolTable> typeNameToTypeMembers = new Dictionary<string, SymbolTable>();
+        public SymbolTable globalVariables = new SymbolTable();
+        public Stack<SymbolTable> localVariables = new Stack<SymbolTable>();
+        // public Stack<List<Symbol>> localVariables = new Stack<List<Symbol>>();
 
         public Scope()
         {
-            localVariables.Push(new List<string>());
+            localVariables.Push(new SymbolTable());
+        }
+
+        public static Scope CreateStructScope(Scope scope, SymbolTable typeSymbols)
+        {
+            var typeScope = new Scope();
+            typeScope.typeNameToTypeMembers = scope.typeNameToTypeMembers;
+
+            foreach (var kvp in typeSymbols)
+            {
+                typeScope.localVariables.Peek().Add(kvp.Key, kvp.Value);
+            }
+
+            return typeScope;
+            // typeScope.AddDeclaration();
         }
         
         public void BeginFunction(List<ParameterNode> parameters)
         {
-            localVariables.Push(new List<string>());
+            var table = new SymbolTable();
+            localVariables.Push(table);
 
             foreach (var parameter in parameters)
             {
-                localVariables.Peek().Add(parameter.variable.variableName);
+                var symbol = new Symbol
+                {
+                    text = parameter.variable.variableName,
+                    typeInfo = TypeInfo.FromVariableType(parameter.type.variableType),
+                    source = parameter
+                };
+                if (parameter.type is StructTypeReferenceNode typeRef)
+                {
+                    symbol.typeInfo = new TypeInfo
+                    {
+                        structName = typeRef.variableNode.variableName,
+                        type = VariableType.Struct
+                    };
+                }
+                table.Add(parameter.variable.variableName, symbol);
             }
         }
 
@@ -72,67 +125,266 @@ namespace DarkBasicYo
 
         public void AddAssignment(AssignmentStatement assignment)
         {
-            if (assignment.variable is VariableRefNode variableRef)
+
+            /*
+             * if there isn't a declr yet, then the compiler will implicitly create one based off the implied type.
+             * So in this step, we just need to record that the RHS symbol exists in the variableRef case.
+             *
+             * In the array/struct case, the variable MUST already exist.
+             *
+             *
+             * This would also be a reasonable time to get the type of the RHS
+             */
+            switch (assignment.variable)
             {
-                // an assignment defaults to a local decl.
-                localVariables.Peek().Add(variableRef.variableName);
+                case VariableRefNode variableRef: // a = 3
+                    // declr is optional...
+                    if (TryGetSymbol(variableRef.variableName, out var existingSymbol))
+                    {
+                        // TODO: we could check for type consistency here?
+                    }
+                    else // no symbol exists, so this is a defacto local variable
+                    {
+                        var locals = GetVariables(DeclarationScopeType.Local);
+                        locals.Add(variableRef.variableName, new Symbol
+                        {
+                            text = variableRef.variableName,
+                            typeInfo = TypeInfo.FromVariableType(variableRef.DefaultTypeByName),
+                            source = variableRef
+                        });
+                    }
+                    break;
+                case ArrayIndexReference indexRef: // a(1,2) = 1
+                    // it isn't possible to assign an array without declaring it first- 
+                    //  which means no new scopes need to be added.
+                    break;
+                case DeReference deRef: // *x = 3
+                    // it isn't possible to de-ref a vairable without declaring it first- 
+                    //  which means no new scopes need to be added.
+                    break;
+                case StructFieldReference structRef: // a.x.y = 1
+                    // it isn't possible to assign to a struct field without declaring it first- 
+                    //  which means no new scopes need to be added.
+                    // but on the other hand, we do need to validate that the variable exists!
+
+                    // switch (structRef.left)
+                    // {
+                    //     case VariableRefNode leftVariable:
+                    //         if (!TryGetSymbol(leftVariable.variableName, out var leftSymbol))
+                    //         {
+                    //             
+                    //         }
+                    //         break;
+                    //     default:
+                    //         throw new NotImplementedException("I don't know how to handle this yet. jjsa");
+                    // }
+                    break;
             }
+            
+            // if (assignment.variable is VariableRefNode variableRef)
+            // {
+            //     // an assignment defaults to a local decl.
+            //
+            //     // variableRef.DefaultTypeByName
+            //     var symbol = new Symbol
+            //     {
+            //         text = variableRef.variableName,
+            //         // typeInfo = 
+            //     };
+            //     
+            //     localVariables.Peek().Add(variableRef.variableName);
+            // }
         }
         
         public void AddDeclaration(DeclarationStatement declStatement)
         {
-            if (declStatement.scopeType == DeclarationScopeType.Global)
+            var table = GetVariables(declStatement.scopeType);
+            if (table.ContainsKey(declStatement.variable))
             {
-                globalVariables.Add(declStatement.variable);
+                // this is an error; we cannot declare a variable twice in the same scope.
+                declStatement.Errors.Add(new ParseError(declStatement.StartToken, ErrorCodes.SymbolAlreadyDeclared));
+                
+                // don't do anything with this.
+                return;
+            }
+
+            switch (declStatement.type)
+            {
+                case TypeReferenceNode typeReference:
+                    table.Add(declStatement.variable, new Symbol
+                    {
+                        text = declStatement.variable,
+                        typeInfo = TypeInfo.FromVariableType(typeReference.variableType, 
+                            rank: declStatement.ranks?.Length ?? 0, 
+                            structName: null),
+                        source = declStatement
+                    });
+                    break;
+                case StructTypeReferenceNode structTypeReference:
+                    table.Add(declStatement.variable, new Symbol
+                    {
+                        text = declStatement.variable,
+                        typeInfo = TypeInfo.FromVariableType(structTypeReference.variableType, 
+                            rank: declStatement.ranks?.Length ?? 0, 
+                            structName: structTypeReference.variableNode.variableName),
+                        source = declStatement
+                    });
+                    break;
+            }
+            
+        }
+
+        SymbolTable GetVariables(DeclarationScopeType scopeType)
+        {
+            if (scopeType == DeclarationScopeType.Global)
+            {
+                return globalVariables;
             }
             else
             {
-                localVariables.Peek().Add(declStatement.variable);
+                return localVariables.Peek();
             }
         }
 
-
-        public bool TryGetVariable(string variableName)
+        public bool TryGetType(string typeName, out SymbolTable typeSymbols)
         {
-            // is it a type?
-            // if (typeNameToTypeMembers.TryGetValue(variableName, out var _))
-            // {
-            //     return true;
-            // }
-            
-            // is it a local?
-            if (localVariables.Peek().Contains(variableName))
-            {
-                return true;
-            }
-            
-            // is it a global?
-            if (globalVariables.Contains(variableName))
-            {
-                return true;
-            }
-
-            return false;
+            return typeNameToTypeMembers.TryGetValue(typeName, out typeSymbols);
         }
+
+        public bool TryGetSymbol(string variableName, out Symbol symbol)
+        {
+            if (GetVariables(DeclarationScopeType.Local).TryGetValue(variableName, out symbol))
+            {
+                return true;
+            } else if (GetVariables(DeclarationScopeType.Global).TryGetValue(variableName, out symbol))
+            {
+                return true;
+            } else
+            {
+                return false;
+            }
+        }
+
+        // public bool TryGetVariable(string variableName)
+        // {
+        //     // is it a type?
+        //     // if (typeNameToTypeMembers.TryGetValue(variableName, out var _))
+        //     // {
+        //     //     return true;
+        //     // }
+        //     
+        //     // is it a local?
+        //     if (localVariables.Peek().Contains(variableName))
+        //     {
+        //         return true;
+        //     }
+        //     
+        //     // is it a global?
+        //     if (globalVariables.Contains(variableName))
+        //     {
+        //         return true;
+        //     }
+        //
+        //     return false;
+        // }
 
         public void AddVariable(VariableRefNode variable)
         {
-            localVariables.Peek().Add(variable.variableName);
+            localVariables.Peek().Add(variable.variableName, new Symbol
+            {
+                text = variable.variableName, 
+                typeInfo = TypeInfo.FromVariableType(variable.DefaultTypeByName),
+                source = variable
+            });
+        }
+
+        public bool TryAddVariable(VariableRefNode variable)
+        {
+            var symbolTable = localVariables.Peek();
+            var symbol = new Symbol
+            {
+                text = variable.variableName,
+                typeInfo = TypeInfo.FromVariableType(variable.DefaultTypeByName),
+                source = variable
+            };
+            if (symbolTable.TryGetValue(variable.variableName, out var existing))
+            {
+                return false; // TODO: maybe validate?
+            }
+            else
+            {
+                symbolTable.Add(variable.variableName, symbol);
+                return true;
+            }
         }
 
         public void AddType(TypeDefinitionStatement type)
         {
-            var members = typeNameToTypeMembers[type.name.variableName] = new HashSet<string>();
+            var members = typeNameToTypeMembers[type.name.variableName] = new SymbolTable();
             foreach (var member in type.declarations)
             {
-                members.Add(member.name.variableName);
+                var symbol = new Symbol
+                {
+                    text = member.name.variableName,
+                    source = member
+                };
+                switch (member.type)
+                {
+                    // Note: it isn't possible to define an array inside a struct, so we don't need to worry about that.
+                    case TypeReferenceNode typeRefNode:
+                        symbol.typeInfo = TypeInfo.FromVariableType(typeRefNode.variableType);
+                        break;
+                    case StructTypeReferenceNode structRefNode:
+                        symbol.typeInfo = TypeInfo.FromVariableType(VariableType.Struct, structName: structRefNode.variableNode.variableName);
+                        // throw new NotImplementedException();
+                        break;
+                }
+
+                if (members.ContainsKey(symbol.text))
+                {
+                    member.Errors.Add(new ParseError(member, ErrorCodes.SymbolAlreadyDeclared));
+                }
+                else
+                {
+                    members.Add(symbol);
+                }
             }
-            // type.declarations[0].
         }
 
         public bool TryGetLabel(string label)
         {
             return labels.Contains(label);
+        }
+
+        public void AddCommand(CommandExpression commandExpr) =>
+            AddCommand(commandExpr.command, commandExpr.args, commandExpr.argMap);
+        
+        public void AddCommand(CommandInfo command, List<IExpressionNode> args, List<int> argMap)
+        {
+
+            for (var i = 0; i < args.Count; i++)
+            {
+                var argExpr = args[i];
+                var argDesc = command.args[argMap[i]];
+                if (argDesc.isRef)
+                {
+                    if (argExpr is VariableRefNode variableRefNode)
+                    {
+                        TryAddVariable(variableRefNode);
+                    }
+                }
+            }
+
+            foreach (var expr in args)
+            {
+                switch (expr)
+                {
+                    case CommandExpression commandExpr:
+                        // recursive call could explode given highly nested call stack. 
+                        AddCommand(commandExpr.command, commandExpr.args, commandExpr.argMap);
+                        break;
+                }
+            }
         }
     }
 
@@ -179,7 +431,9 @@ namespace DarkBasicYo
 
             program.endToken = _stream.Current;
             
+            // program.AddTypeInfo();
             program.AddScopeRelatedErrors();
+            
             return program;
         }
         
@@ -797,14 +1051,17 @@ namespace DarkBasicYo
                         break;
 
                     case LexemType.CommandWord:
-                        ParseCommandOverload2(token, out var command, out var commandArgs);
-                        return new CommandStatement
+                        ParseCommandOverload2(token, out var command, out var commandArgs, out var argMap, out var errors);
+                        var commandStatement = new CommandStatement
                         {
                             startToken = token,
                             endToken = _stream.Current,
                             command = command,
-                            args = commandArgs
+                            args = commandArgs,
+                            argMap = argMap,
                         };
+                        commandStatement.Errors.AddRange(errors);
+                        return commandStatement;
 
                     case LexemType.KeywordType:
                         return ParseTypeDefinition(token);
@@ -904,12 +1161,13 @@ namespace DarkBasicYo
 
         }
 
-        private bool TryParseCommandFlavor(CommandInfo command, out List<IExpressionNode> args, out int tokenJump)
+        private bool TryParseCommandFlavor(CommandInfo command, out List<IExpressionNode> args, out List<int> argExprMap, out int tokenJump)
         {
             var start = _stream.Save();
             var startToken = _stream.Current;
             tokenJump = -1;
             args = new List<IExpressionNode>();
+            argExprMap = new List<int>(); // this is a parallel array to the args list; and the values represent the index of the CommandArgInfo that the arg expression is part of.
 
             var requiresParens = command.returnType != TypeCodes.VOID;
             
@@ -1004,6 +1262,7 @@ namespace DarkBasicYo
                 {
                     // we got an expression, add it to our arg list
                     args.Add(expr);
+                    argExprMap.Add(i);
 
                     if (required.isParams)
                     {
@@ -1031,8 +1290,8 @@ namespace DarkBasicYo
             _stream.Restore(start);
             return true;
         }
-
-        private void ParseCommandOverload2(Token token, out CommandInfo foundCommand, out List<IExpressionNode> commandArgs)
+        
+        private void ParseCommandOverload2(Token token, out CommandInfo foundCommand, out List<IExpressionNode> commandArgs, out List<int> argMap, out List<ParseError> errors)
         {
             /*
              * Okay, so, we need to parse the expressions one at a time, and invalidate commands as we go,
@@ -1061,11 +1320,13 @@ namespace DarkBasicYo
             foundCommand = possibleCommands[0];
             var found = false;
             commandArgs = new List<IExpressionNode>();
+            argMap = new List<int>();
+            errors = new List<ParseError>();
             int foundJump = -1;
             for (var i = 0 ; i < possibleCommands.Count; i ++)
             {
                 var option = possibleCommands[i];
-                if (TryParseCommandFlavor(option, out var args, out var jump))
+                if (TryParseCommandFlavor(option, out var args, out var foundArgMap, out var jump))
                 {
                     if (found)
                     {
@@ -1079,6 +1340,7 @@ namespace DarkBasicYo
                         {
                             foundCommand = option;
                             commandArgs = args;
+                            argMap = foundArgMap;
                             foundJump = jump;
                         }
                     }
@@ -1088,6 +1350,7 @@ namespace DarkBasicYo
                         found = true;
                         foundCommand = option;
                         commandArgs = args;
+                        argMap = foundArgMap;
                         foundJump = jump;
                     }
                 }
@@ -1095,7 +1358,59 @@ namespace DarkBasicYo
 
             if (!found)
             {
-                throw new ParserException("No overload for method found", _stream.Current);
+                /*
+                 * the command WAS a valid token parse, but we couldn't find any overload.
+                 * that means we can pick the first option and inject it into the parse tree with errors
+                 * but it is tricky how to get the jump-ahead token index, so that we do not parse them incorrectly later...
+                 * 
+                 */
+
+                foundCommand = possibleCommands[0];
+                commandArgs = new List<IExpressionNode>(); // don't actually need to fill these...
+                argMap = new List<int>();
+                errors.Add(new ParseError(token, ErrorCodes.CommandNoOverloadFound));
+                bool isOpenParen = _stream.Peek.type == LexemType.ParenOpen;
+                _stream.Advance(); // discard open paren...
+
+                while (!_stream.IsEof)
+                {
+                    var next = _stream.Peek;
+                    var isDone = false;
+                    switch (next.type)
+                    {
+                        case LexemType.ParenClose when isOpenParen:
+                            isDone = true;
+                            _stream.Advance(); // discard close paren
+                            break;
+                        case LexemType.EOF:
+                        case LexemType.EndStatement:
+                            isDone = true;
+                            _stream.Advance(); // discard 
+                            // the expression line is done parsing... 
+                            break;
+                        case LexemType.ArgSplitter:
+                            // parse the next expression
+                            _stream.Advance(); // discard
+
+                            break;
+                        default:
+                            if (!TryParseExpression(out var arg))
+                            {
+                                throw new NotImplementedException("uh oh whoops");
+                            }
+                            commandArgs.Add(arg);
+                            argMap.Add(0);
+                            break;
+                    }
+
+                    if (isDone)
+                    {
+                        break;
+                    }
+                }
+
+                return;
+                // throw new ParserException("No overload for method found", _stream.Current);
             }
             
             _stream.Restore(foundJump);
@@ -2123,7 +2438,7 @@ namespace DarkBasicYo
                     _stream.Advance();
 
                     // ParseCommandOverload(token, out var command, out var argExpressions);
-                    ParseCommandOverload2(token, out var command, out var argExpressions);
+                    ParseCommandOverload2(token, out var command, out var argExpressions, out var argMap, out var errors);
                     
                     // // parse the args!
                     // var argExpressions = ParseCommandArgs(token, command);
@@ -2132,8 +2447,10 @@ namespace DarkBasicYo
                         startToken = token,
                         endToken = _stream.Current,
                         command = command,
-                        args = argExpressions
+                        args = argExpressions,
+                        argMap = argMap
                     };
+                    outputExpression.Errors.AddRange(errors);
                     
                     break;
                 case LexemType.ParenOpen:

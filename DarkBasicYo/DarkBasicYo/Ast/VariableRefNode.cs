@@ -53,7 +53,11 @@ namespace DarkBasicYo.Ast
     {
         public string variableName;
         public List<IExpressionNode> rankExpressions = new List<IExpressionNode>();
-        
+
+        public ArrayIndexReference()
+        {
+            
+        }
         protected override string GetString()
         {
             return $"ref {variableName}[{string.Join(",", rankExpressions.Select(x => x.ToString()))}]";

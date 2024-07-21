@@ -1,5 +1,6 @@
 using System.Collections.Generic;
 using System.Diagnostics;
+using DarkBasicYo.Ast;
 
 namespace DarkBasicYo
 {
@@ -69,6 +70,17 @@ namespace DarkBasicYo
             this.message = message;
             this.location = new TokenRange { start = atToken, end = atToken };
         }
+
+        public ParseError(IAstNode node, ErrorCode errorCode, string message = "")
+        {
+            this.errorCode = errorCode;
+            this.message = message;
+            this.location = new TokenRange
+            {
+                start = node.StartToken,
+                end = node.EndToken
+            };
+        }
     }
 
     public static class ErrorCodes
@@ -116,10 +128,21 @@ namespace DarkBasicYo
         public static readonly ErrorCode TypeDefMissingEndType = "[0144] Type definition missing closing EndType clause";
         public static readonly ErrorCode TypeDefMissingName = "[0145] Type definition missing name";
         public static readonly ErrorCode UnknownStatement = "[0146] Invalid statement";
+        public static readonly ErrorCode CommandNoOverloadFound = "[0147] No overload for command";
         
         // 200 series represents post-parse issues
         public static readonly ErrorCode InvalidReference = "[0200] Invalid reference";
         public static readonly ErrorCode UnknownLabel = "[0201] Unknown label";
+        public static readonly ErrorCode ExpressionIsNotAStruct = "[0202] Expression is not a type-type, and cannot be indexed";
+        public static readonly ErrorCode UnknownStructRef = "[0203] Expression references an unknown Type";
+        public static readonly ErrorCode StructFieldDoesNotExist = "[0204] Member is not declared in Type";
+        public static readonly ErrorCode StructFieldReferencesUnknownStruct = "[0205] Member is not a declared Type";
+        public static readonly ErrorCode StructFieldsRecursive = "[0206] A recursive declaration has been detected";
+        public static readonly ErrorCode CannotIndexIntoNonArray = "[0207] Cannot index into non array variable";
+        public static readonly ErrorCode ArrayCardinalityMismatch = "[0208] Incorrect number of index expressions";
+        
+        // 300 series represents type issues
+        public static readonly ErrorCode SymbolAlreadyDeclared = "[0300] Symbol already declared";
     }
 
     public struct ErrorCode
