@@ -43,7 +43,7 @@ namespace DarkBasicYo.Virtual
         public VmHeap heap;
         
         public HostMethodTable hostMethods;
-        public CommandCollection commands;
+        public CommandCollection commands; // TODO: remove.
         public FastStack<int> methodStack;
 
         public VirtualScope globalScope;
@@ -103,12 +103,12 @@ namespace DarkBasicYo.Virtual
                 int insPtr;
                 
                 // var sw = new Stopwatch();
-                
+                var incrementer = instructionBatchCount > 0 ? 1 : 0;
                 for (var i = 0; 
-                     i < instructionBatchCount 
+                     (instructionBatchCount == 0 || i < instructionBatchCount)
                         && instructionIndex < program.Length 
                         && !isSuspendRequested; 
-                     i++)
+                     i += incrementer)
                 {
                     // if at end of program, exit.
                     // if (instructionIndex >= program.Length)

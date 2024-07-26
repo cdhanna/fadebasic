@@ -1,87 +1,105 @@
 ﻿// See https://aka.ms/new-console-template for more information
 
 using System.CommandLine;
+using System.CommandLine.Builder;
+using System.CommandLine.Invocation;
+using System.CommandLine.Parsing;
 using System.Text.Json.Serialization;
 using DarkBasicYo;
+using DarkBasicYo.ApplicationSupport.Project;
+using DarkBasicYo.Commands;
 using Newtonsoft.Json;
+using Serilog;
+using Serilog.Core;
+using Serilog.Events;
 using JsonConverter = Newtonsoft.Json.JsonConverter;
 
 
-/*
-dbp lex <src> <output>
-dbp parse <src> <output>
-dbp compile <src> <output>
-dbp run <src>
-*/
-
 var root = new RootCommand();
+var builder = new CommandLineBuilder(root);
 
-var srcArg = new Argument<string>("srcPath", "path to dbp source code");
-srcArg.AddValidator(x =>
+var logOption = new Option<string>("--log", getDefaultValue: () => "info");
+logOption.AddAlias("--logs");
+logOption.AddAlias("-l");
+root.AddGlobalOption(logOption);
+
+
+builder.AddMiddleware(context =>
 {
-    var value = x.GetValueOrDefault<string>();
-    if (!File.Exists(value))
-    {
-        x.ErrorMessage = "file does not exist";
+    { // set up logging
+                
+        var levelSwitch = new LoggingLevelSwitch
+        {
+            MinimumLevel = ParseLogLevel(context.ParseResult.GetValueForOption(logOption))
+        };
+
+        Log.Logger = new LoggerConfiguration()
+            .WriteTo.Console()
+            .MinimumLevel.ControlledBy(levelSwitch)
+            .CreateLogger();
     }
-});
 
-var outOption = new Option<string>("--output", "path to write output");
-outOption.AddAlias("-o");
+    { // set up services
+        ProjectLoader.Initialize();
+    }
 
-var compressedJsonOption = new Option<bool>("--compact", "when true, written json will be compact");
-compressedJsonOption.AddAlias("-c");
-compressedJsonOption.SetDefaultValue(false);
+    { // start services
+        
+    }
 
-root.AddGlobalOption(compressedJsonOption);
+}, MiddlewareOrder.Configuration);
 
-var lexCommand = new Command("lex", "tokenize dbp source code");
-lexCommand.AddAlias("l");
-lexCommand.AddArgument(srcArg);
-lexCommand.AddOption(outOption);
-lexCommand.SetHandler((srcPath, outPath, compact) =>
+
+
+// var srcArg = new Argument<string>("srcPath", "path to dbp source code");
+// srcArg.AddValidator(x =>
+// {
+//     var value = x.GetValueOrDefault<string>();
+//     if (!File.Exists(value))
+//     {
+//         x.ErrorMessage = "file does not exist";
+//     }
+// });
+//
+// var outOption = new Option<string>("--output", "path to write output");
+// outOption.AddAlias("-o");
+//
+// var compressedJsonOption = new Option<bool>("--compact", "when true, written json will be compact");
+// compressedJsonOption.AddAlias("-c");
+// compressedJsonOption.SetDefaultValue(false);
+//
+// root.AddGlobalOption(compressedJsonOption);
+
+
+
 {
-    var src = File.ReadAllText(srcPath);
-    var dbp = new DarkBasic();
-    var res = dbp.Tokenize(src);
-    var json = JsonConvert.SerializeObject(res, compact ? Formatting.None : Formatting.Indented);
+    // register commands
+    CompileToLaunchableCommand.Bind(root);
+    RunLaunchableCommand.Bind(root);
+}
 
-    if (string.IsNullOrEmpty(outPath))
-    {
-        Console.WriteLine(json);
-    }
-    else
-    {
-        File.WriteAllText(outPath + ".json", json);
-    }
-    
-}, srcArg, outOption, compressedJsonOption);
-root.AddCommand(lexCommand);
+var app = builder
+    .UseHelp()
+    .UseDefaults()
+    .Build();
+
+await app.InvokeAsync(args);
 
 
-var parseCommand = new Command("parse", "parse dbp source code");
-parseCommand.AddAlias("p");
-parseCommand.AddArgument(srcArg);
-parseCommand.AddOption(outOption);
-parseCommand.SetHandler((srcPath, outPath, compact) =>
+
+static LogEventLevel ParseLogLevel(string? optionValue)
 {
-    var src = File.ReadAllText(srcPath);
-    var dbp = new DarkBasic();
-    var res = dbp.Parse(src);
-    // var json = JsonConvert.SerializeObject(res, compact ? Formatting.None : Formatting.Indented);
-
-    var json = res.ToString();
-    if (string.IsNullOrEmpty(outPath))
+    var value = optionValue?.ToLowerInvariant().Trim()[0] ?? 'i';
+    switch (value)
     {
-        Console.WriteLine(json);
+        case 'v': return LogEventLevel.Verbose;
+        case 'd': return LogEventLevel.Debug;
+        case 'w': return LogEventLevel.Warning;
+        case 'e': return LogEventLevel.Error;
+        case 'f': return LogEventLevel.Fatal;
+            
+        default:
+        case 'i': return LogEventLevel.Information;
+
     }
-    else
-    {
-        File.WriteAllText(outPath + ".json", json);
-    }
-}, srcArg, outOption, compressedJsonOption);
-root.AddCommand(parseCommand);
-
-await root.InvokeAsync(args);
-
-
+}

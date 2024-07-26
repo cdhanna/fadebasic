@@ -16,9 +16,13 @@ public class SemanticTokenHandler : SemanticTokensHandlerBase
 {
     private readonly ILogger<SemanticTokenHandler> _logger;
     private readonly DocumentService _docs;
+    private CompilerService _compiler;
 
-    public SemanticTokenHandler(ILogger<SemanticTokenHandler> logger, DocumentService docs)
+    public SemanticTokenHandler(
+        ILogger<SemanticTokenHandler> logger, 
+        DocumentService docs, CompilerService compiler)
     {
+        _compiler = compiler;
         _logger = logger;
         _docs = docs;
     }
@@ -47,15 +51,19 @@ public class SemanticTokenHandler : SemanticTokensHandlerBase
         // builder.
         
         // var content = await File.ReadAllTextAsync(DocumentUri.GetFileSystemPath(identifier.TextDocument), cancellationToken);
-        if (!_docs.TryGetSourceDocument(identifier.TextDocument.Uri, out var content))
-        {
-            throw new Exception("No content available");
-        }
+        // if (!_docs.TryGetSourceDocument(identifier.TextDocument.Uri, out var content))
+        // {
+        //     throw new Exception("No content available");
+        // }
         try
         {
-            var lexer = new Lexer();
-            var tokens = lexer.Tokenize(content);
+            if (!_compiler.TryGetLexerResults(identifier.TextDocument.Uri, out var results))
+            {
+                return;
+            }
 
+            var tokens = results.tokens;
+            
             foreach (var token in tokens)
             {
                 if (token.raw == null) continue;
@@ -94,6 +102,7 @@ public class SemanticTokenHandler : SemanticTokensHandlerBase
             case LexemType.VariableGeneral:
                 return SemanticTokenType.Parameter;
             
+            case LexemType.KeywordEnd:
             case LexemType.KeywordTo:
             case LexemType.KeywordNext:
             case LexemType.KeywordFor:
@@ -122,11 +131,12 @@ public class SemanticTokenHandler : SemanticTokensHandlerBase
             case LexemType.FieldSplitter:
             case LexemType.KeywordDeclareArray:
             case LexemType.KeywordUnDeclareArray:
+            case LexemType.CommandWord:
+            case LexemType.KeywordEndCase:
                 return SemanticTokenType.Keyword;
                 
             case LexemType.KeywordType:
             case LexemType.KeywordEndType:
-            case LexemType.KeywordEndCase:
                 return SemanticTokenType.Struct;
             
             case LexemType.KeywordTypeBoolean:

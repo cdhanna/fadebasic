@@ -28,6 +28,7 @@ public static class Program
         Log.Logger = new LoggerConfiguration()
             .Enrich.FromLogContext()
             .WriteTo.File("log.txt", rollingInterval: RollingInterval.Day)
+            .WriteTo.Console()
             .MinimumLevel.Information()
             .CreateLogger();
         
@@ -57,7 +58,12 @@ public static class Program
                         )
                         .AddDefaultLoggingProvider()
                         .WithServices(ConfigureServices)
-                        .WithServices(x => x.AddLogging(b => b.SetMinimumLevel(LogLevel.Trace)))
+                        .WithServices(x => x.AddLogging(b =>
+                        {
+                            b.SetMinimumLevel(LogLevel.Trace);
+                            b.AddSerilog(Log.Logger);
+                            b.AddLanguageProtocolLogging();
+                        }))
                         .OnInitialize((languageServer, request, token) =>
                         {
                             var docService = languageServer.Services.GetService<DocumentService>();

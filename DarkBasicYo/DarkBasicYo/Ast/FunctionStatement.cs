@@ -53,8 +53,14 @@ namespace DarkBasicYo.Ast
     public class FunctionStatement : AstNode, IStatementNode
     {
         public string name;
+        public Token nameToken;
         public List<ParameterNode> parameters = new List<ParameterNode>();
         public List<IStatementNode> statements = new List<IStatementNode>();
+
+        public FunctionStatement()
+        {
+            
+        }
         
         protected override string GetString()
         {

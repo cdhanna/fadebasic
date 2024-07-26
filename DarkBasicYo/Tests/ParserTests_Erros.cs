@@ -252,6 +252,36 @@ endfunction
     
     
     [Test]
+    public void ParseError_Function_CallBeforeDefined_Works()
+    {
+        var input = @"
+x = test(1)
+function test(a)
+endfunction
+";
+        var parser = MakeParser(input);
+        var prog = parser.ParseProgram();
+        prog.AssertNoParseErrors();
+    }
+    
+    [Test]
+    public void ParseError_Function_DefinedTwice()
+    {
+        var input = @"
+function test()
+endfunction
+function test(a)
+endfunction
+";
+        var parser = MakeParser(input);
+        var prog = parser.ParseProgram();
+
+        var errors = prog.GetAllErrors();
+        prog.AssertParseErrors(1);
+        Assert.That(errors[0].Display, Is.EqualTo($"[3:9] - {ErrorCodes.FunctionAlreadyDeclared}"));
+    }
+    
+    [Test]
     public void ParseError_Function_MissingOpenParen()
     {
         var input = @"

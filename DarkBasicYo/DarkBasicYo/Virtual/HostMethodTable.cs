@@ -13,6 +13,20 @@ namespace DarkBasicYo.Virtual
         {
             method = methods[methodAddr];
         }
+
+        public static HostMethodTable FromCommandCollection(CommandCollection collection)
+        {
+            var methods = new CommandInfo[collection.Commands.Count];
+            for (var i = 0; i < methods.Length; i++)
+            {
+                methods[i] = collection.Commands[i];
+            }
+
+            return new HostMethodTable
+            {
+                methods = methods
+            };
+        }
     }
 
     public static class HostMethodUtil

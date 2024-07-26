@@ -10,10 +10,24 @@ namespace DarkBasicYo.ApplicationSupport.Project
         public string targetFramework;
 
         /// <summary>
+        /// a project must specify a .csproj path that will be used to launch the program.
+        /// When the the project is launched,
+        ///  the basic-project will be compiled, and
+        ///  the byte-code will be saved inside a class-file relative to the launch csproj,
+        ///  COMPILED_BASIC_SCRIPT.cs
+        ///
+        ///  then the csproj will be launched, and the expectation is that the program
+        ///  will boot the byte-code stored in COMPILED_BASIC_SCRIPT.byteCode
+        ///
+        ///  
+        /// </summary>
+        public string absoluteLaunchCsProjPath;
+
+        /// <summary>
         /// a project must manually specify a list of source files.
         /// The order of the list is important, as the final compiled program will be the concatenation of all files.
         /// </summary>
-        public HashSet<string> absoluteSourceFiles;
+        public List<string> absoluteSourceFiles;
 
         /// <summary>
         /// project command sources define a local collection of .csproj files
@@ -21,11 +35,6 @@ namespace DarkBasicYo.ApplicationSupport.Project
         /// </summary>
         public List<ProjectCommandSource> projectLibraries;
         
-        /// <summary>
-        /// list of built in libraries. These version numbers will match the installed
-        /// project version, because they are the same?
-        /// </summary>
-        public List<string> standardLibraries;
         
     }
 

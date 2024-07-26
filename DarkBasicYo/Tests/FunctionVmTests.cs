@@ -438,6 +438,7 @@ EndFunction a + b
 ";
         Setup(src, out _, out var prog);
         
+        this._exprAst.AssertNoParseErrors();
         var vm = new VirtualMachine(prog);
         vm.Execute().MoveNext();
         

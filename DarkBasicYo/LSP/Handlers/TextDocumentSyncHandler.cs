@@ -57,6 +57,8 @@ public class TextDocumentSyncHandler : TextDocumentSyncHandlerBase
     {
         _logger.LogInformation("Opened " + request.TextDocument.Uri);
         _docs.SetSourceDocument(request.TextDocument.Uri, request.TextDocument.Text);
+        _compiler.Update(request.TextDocument.Uri);
+
         return Unit.Task;
     }
 

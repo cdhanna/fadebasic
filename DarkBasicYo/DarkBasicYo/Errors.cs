@@ -140,6 +140,7 @@ namespace DarkBasicYo
         public static readonly ErrorCode StructFieldsRecursive = "[0206] A recursive declaration has been detected";
         public static readonly ErrorCode CannotIndexIntoNonArray = "[0207] Cannot index into non array variable";
         public static readonly ErrorCode ArrayCardinalityMismatch = "[0208] Incorrect number of index expressions";
+        public static readonly ErrorCode FunctionAlreadyDeclared = "[0209] Functions do not support overloads";
         
         // 300 series represents type issues
         public static readonly ErrorCode SymbolAlreadyDeclared = "[0300] Symbol already declared";

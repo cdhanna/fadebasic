@@ -1,0 +1,8 @@
+name: toast2
+launchProject: ../Launch_Console/Launch_Console.csproj
+sourceFiles:
+  - ./test.basic
+projectReferences:
+  - csProjPath: /Users/chrishanna/Documents/Github/dby/DarkBasicYo/DarkBasicCommands/DarkBasicCommands.csproj
+    classNames:
+      - 'DarkBasicYo.DarkBasicCommands'

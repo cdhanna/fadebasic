@@ -69,7 +69,7 @@ ENDFUNCTION
         var parser = MakeParser(input);
         var prog = parser.ParseProgram();
         
-        Assert.That(prog.statements.Count, Is.EqualTo(1));
+        Assert.That(prog.functions.Count, Is.EqualTo(1));
         var code = prog.ToString();
         Console.WriteLine(code);
         Assert.That(code, Is.EqualTo(@"(
@@ -93,7 +93,7 @@ ENDFUNCTION
         var prog = parser.ParseProgram();
         prog.AssertNoParseErrors();
 
-        Assert.That(prog.statements.Count, Is.EqualTo(1));
+        Assert.That(prog.functions.Count, Is.EqualTo(1));
         var code = prog.ToString();
         Console.WriteLine(code);
         Assert.That(code, Is.EqualTo(@"(
@@ -114,7 +114,7 @@ ENDFUNCTION 5
         var prog = parser.ParseProgram();
         prog.AssertNoParseErrors();
 
-        Assert.That(prog.statements.Count, Is.EqualTo(1));
+        Assert.That(prog.functions.Count, Is.EqualTo(1));
         var code = prog.ToString();
         Console.WriteLine(code);
         Assert.That(code, Is.EqualTo(@"(
@@ -135,12 +135,13 @@ x = 2
         var parser = MakeParser(input);
         var prog = parser.ParseProgram();
         
-        Assert.That(prog.statements.Count, Is.EqualTo(2));
+        Assert.That(prog.statements.Count, Is.EqualTo(1));
+        Assert.That(prog.functions.Count, Is.EqualTo(1));
         var code = prog.ToString();
         Console.WriteLine(code);
         Assert.That(code, Is.EqualTo(@"(
-(func hello (),((= (ref x),(1)))),
-(= (ref x),(2))
+(= (ref x),(2)),
+(func hello (),((= (ref x),(1))))
 )".ReplaceLineEndings("")));
     }
 
@@ -158,12 +159,13 @@ x = 2
         var prog = parser.ParseProgram();
         prog.AssertNoParseErrors();
 
-        Assert.That(prog.statements.Count, Is.EqualTo(2));
+        Assert.That(prog.statements.Count, Is.EqualTo(1));
+        Assert.That(prog.functions.Count, Is.EqualTo(1));
         var code = prog.ToString();
         Console.WriteLine(code);
         Assert.That(code, Is.EqualTo(@"(
-(func hello (),((= (ref x),(1)),(retfunc (+ (ref x),(1))))),
-(= (ref x),(2))
+(= (ref x),(2)),
+(func hello (),((= (ref x),(1)),(retfunc (+ (ref x),(1)))))
 )".ReplaceLineEndings("")));
     }
 
@@ -179,7 +181,7 @@ ENDFUNCTION
         var parser = MakeParser(input);
         var prog = parser.ParseProgram();
         
-        Assert.That(prog.statements.Count, Is.EqualTo(1));
+        Assert.That(prog.functions.Count, Is.EqualTo(1));
         var code = prog.ToString();
         Console.WriteLine(code);
         Assert.That(code, Is.EqualTo(@"(
@@ -199,7 +201,7 @@ ENDFUNCTION
         var parser = MakeParser(input);
         var prog = parser.ParseProgram();
         
-        Assert.That(prog.statements.Count, Is.EqualTo(1));
+        Assert.That(prog.functions.Count, Is.EqualTo(1));
         var code = prog.ToString();
         Console.WriteLine(code);
         Assert.That(code, Is.EqualTo(@"(
@@ -219,7 +221,7 @@ ENDFUNCTION
         var parser = MakeParser(input);
         var prog = parser.ParseProgram();
         
-        Assert.That(prog.statements.Count, Is.EqualTo(1));
+        Assert.That(prog.functions.Count, Is.EqualTo(1));
         var code = prog.ToString();
         Console.WriteLine(code);
         Assert.That(code, Is.EqualTo(@"(
@@ -239,7 +241,7 @@ ENDFUNCTION
         var parser = MakeParser(input);
         var prog = parser.ParseProgram();
         
-        Assert.That(prog.statements.Count, Is.EqualTo(1));
+        Assert.That(prog.functions.Count, Is.EqualTo(1));
         var code = prog.ToString();
         Console.WriteLine(code);
         Assert.That(code, Is.EqualTo(@"(
@@ -261,7 +263,7 @@ ENDFUNCTION
         var parser = MakeParser(input);
         var prog = parser.ParseProgram();
         
-        Assert.That(prog.statements.Count, Is.EqualTo(1));
+        Assert.That(prog.functions.Count, Is.EqualTo(1));
         var code = prog.ToString();
         Console.WriteLine(code);
         Assert.That(code, Is.EqualTo(@"(

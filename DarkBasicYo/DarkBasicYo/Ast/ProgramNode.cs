@@ -13,6 +13,7 @@ namespace DarkBasicYo.Ast
         public List<ParseError> errors = new List<ParseError>();
         public List<IStatementNode> statements = new List<IStatementNode>();
         public List<TypeDefinitionStatement> typeDefinitions = new List<TypeDefinitionStatement>();
+        public List<FunctionStatement> functions = new List<FunctionStatement>();
         public List<LabelDefinition> labels = new List<LabelDefinition>();
         protected override string GetString()
         {
@@ -20,6 +21,7 @@ namespace DarkBasicYo.Ast
             // allStatements.AddRange(labels);
             allStatements.AddRange(typeDefinitions);
             allStatements.AddRange(statements);
+            allStatements.AddRange(functions);
             return $"{string.Join(",", allStatements.Select(x => x.ToString()))}";
         }
 
@@ -28,6 +30,10 @@ namespace DarkBasicYo.Ast
             foreach (var statement in statements)
             {
                 yield return statement;
+            }
+            foreach (var function in functions)
+            {
+                yield return function;
             }
             foreach (var type in typeDefinitions)
             {

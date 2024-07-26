@@ -67,6 +67,8 @@ namespace DarkBasicYo
         public Dictionary<string, SymbolTable> typeNameToTypeMembers = new Dictionary<string, SymbolTable>();
         public SymbolTable globalVariables = new SymbolTable();
         public Stack<SymbolTable> localVariables = new Stack<SymbolTable>();
+
+        public Dictionary<string, Symbol> functionTable = new Dictionary<string, Symbol>();
         // public Stack<List<Symbol>> localVariables = new Stack<List<Symbol>>();
 
         public Scope()
@@ -88,10 +90,25 @@ namespace DarkBasicYo
             // typeScope.AddDeclaration();
         }
         
-        public void BeginFunction(List<ParameterNode> parameters)
+        public void BeginFunction(FunctionStatement function)
         {
+            var parameters = function.parameters;
             var table = new SymbolTable();
             localVariables.Push(table);
+
+            if (functionTable.TryGetValue(function.name, out var existing))
+            {
+                function.Errors.Add(new ParseError(function.nameToken, ErrorCodes.FunctionAlreadyDeclared)); 
+            }
+            else
+            {
+                functionTable.Add(function.name, new Symbol
+                {
+                    text = function.name, 
+                    typeInfo = TypeInfo.Void, // TODO: it would be cool if we could get the exitfunction and endfunction return values...
+                    source = function
+                });
+            }
 
             foreach (var parameter in parameters)
             {
@@ -265,28 +282,6 @@ namespace DarkBasicYo
             }
         }
 
-        // public bool TryGetVariable(string variableName)
-        // {
-        //     // is it a type?
-        //     // if (typeNameToTypeMembers.TryGetValue(variableName, out var _))
-        //     // {
-        //     //     return true;
-        //     // }
-        //     
-        //     // is it a local?
-        //     if (localVariables.Peek().Contains(variableName))
-        //     {
-        //         return true;
-        //     }
-        //     
-        //     // is it a global?
-        //     if (globalVariables.Contains(variableName))
-        //     {
-        //         return true;
-        //     }
-        //
-        //     return false;
-        // }
 
         public void AddVariable(VariableRefNode variable)
         {
@@ -411,6 +406,9 @@ namespace DarkBasicYo
                 var statement = ParseStatement();
                 switch (statement)
                 {
+                    case FunctionStatement functionStatement:
+                        program.functions.Add(functionStatement);
+                        break;
                     case TypeDefinitionStatement typeStatement:
                         program.typeDefinitions.Add(typeStatement);
                         break;
@@ -1396,7 +1394,7 @@ namespace DarkBasicYo
                         default:
                             if (!TryParseExpression(out var arg))
                             {
-                                throw new NotImplementedException("uh oh whoops");
+                                arg = new LiteralIntExpression(_stream.CreatePatchToken(LexemType.LiteralInt, "0")[0]);
                             }
                             commandArgs.Add(arg);
                             argMap.Add(0);
@@ -1588,6 +1586,7 @@ namespace DarkBasicYo
 
             return new FunctionStatement
             {
+                nameToken = nameToken,
                 Errors = errors,
                 statements = statements,
                 parameters = parameters,

@@ -50,17 +50,20 @@ public static class ProjectLoader
             });
         }
 
-        var sourceFiles = new HashSet<string>();
+        var sourceFiles = new List<string>();
         foreach (var source in model.sourceFiles)
         {
             var absSource = Path.GetFullPath(source);
             sourceFiles.Add(absSource);
         }
+
+        var absLaunchProject = Path.Combine(projectDir,model.launchProject);
         
         var ctx = new ProjectContext
         {
             name = model.name,
             absoluteContextDir = projectDir,
+            absoluteLaunchCsProjPath = absLaunchProject,
             targetFramework = model.targetFramework,
             absoluteSourceFiles = sourceFiles,
             projectLibraries = projectLibraries
@@ -73,6 +76,7 @@ public static class ProjectLoader
     {
         public string name;
         public string targetFramework;
+        public string launchProject;
         public List<string> sourceFiles = new List<string>();
         public List<ProjectCsharpReference> projectReferences = new List<ProjectCsharpReference>();
     }

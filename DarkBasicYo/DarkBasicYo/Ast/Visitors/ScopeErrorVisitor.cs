@@ -18,6 +18,13 @@ namespace DarkBasicYo.Ast.Visitors
             {
                 scope.AddType(type);
             }
+
+            foreach (var function in program.functions)
+            {
+                scope.BeginFunction(function);
+                CheckStatements(function.statements, scope);
+                scope.EndFunction();
+            }
             CheckTypeInfo2(scope);
             CheckStatements(program.statements, scope);
         }
@@ -127,7 +134,7 @@ namespace DarkBasicYo.Ast.Visitors
                         // scope.EndFunction();
                         break;
                     case FunctionStatement functionStatement:
-                        scope.BeginFunction(functionStatement.parameters);
+                        scope.BeginFunction(functionStatement);
                         CheckStatements(functionStatement.statements, scope);
                         scope.EndFunction();
                         break;
@@ -341,6 +348,11 @@ namespace DarkBasicYo.Ast.Visitors
                     case ArrayIndexReference arrayRef:
                         if (!scope.TryGetSymbol(arrayRef.variableName, out _) && arrayRef.variableName != "_")
                         {
+                            if (scope.functionTable.TryGetValue(arrayRef.variableName, out _))
+                            {
+                                // ah, this is a function!
+                                break;
+                            }
                             child.Errors.Add(new ParseError(child.StartToken, ErrorCodes.InvalidReference, $"unknown symbol, {arrayRef.variableName}"));
                         }
                         break;

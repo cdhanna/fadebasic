@@ -23,6 +23,8 @@ public class CompilerService
     private ProjectService _projects;
     private readonly ILanguageServerFacade _facade;
 
+    private Dictionary<DocumentUri, LexerResults> _docToLexResults = new Dictionary<DocumentUri, LexerResults>();
+
     public CompilerService(ILogger<CompilerService> logger, 
         DocumentService docs, 
         ProjectService projects,
@@ -34,6 +36,22 @@ public class CompilerService
         _logger = logger;
     }
 
+    public bool TryGetLexerResults(DocumentUri srcUri, out LexerResults lexerResults)
+    {
+        if (_docToLexResults.TryGetValue(srcUri, out lexerResults))
+        {
+            return true;
+        }
+        
+        Update(srcUri);
+        if (_docToLexResults.TryGetValue(srcUri, out lexerResults))
+        {
+            return true;
+        }
+
+        return false;
+    }
+    
     public void Update(DocumentUri srcUri)
     {
         if (!_docs.TryGetSourceDocument(srcUri, out var fullText))
@@ -62,7 +80,8 @@ public class CompilerService
                 
                 var tokenizer = new Lexer();
                 var tokenData = tokenizer.TokenizeWithErrors(fullText, project.Item2);
-
+                _docToLexResults[srcUri] = tokenData; // TODO: what if there is more than one project?
+                
                 var parser = new Parser(tokenData.stream, project.Item2);
                 var program = parser.ParseProgram();
 

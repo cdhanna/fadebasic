@@ -7,18 +7,39 @@ namespace DarkBasicYo
 {
     public partial class DarkBasicCommands
     {
+        
+        [DarkBasicCommand("print")]
+        public static void Print(object x)
+        {
+            Console.WriteLine(x);
+        }
+             
+        [DarkBasicCommand("double")]
+        public static int Double(int x)
+        {
+            return x * 2;
+        }
+        
+        [DarkBasicCommand("reflect count")]
+        public static int ReflectCount([FromVm] VirtualMachine vm)
+        {
+            return vm.hostMethods.methods.Length;
+        }
+        
+        [DarkBasicCommand("toast")]
+        public static void Toast(ref int n)
+        {
+            n *= 2;
+            Console.Write(n);
+        }
+        
         [DarkBasicCommand("farts2")]
         public static void farts2(int barf, int n)
         {
             var x = barf * n;
             Console.Write(x);
         }
-        
-[DarkBasicCommand("double")]
-public static int Double(int x)
-{
-    return x * 2;
-}
+   
         
         [DarkBasicCommand("overload")]
         public static void Overload_1(int a)
@@ -62,6 +83,7 @@ public static int Double(int x)
         {
             VmUtil.HandleValue(vm, 44, TypeCodes.INT, arg.state, arg.address);
         }
+        
 
         //
         //

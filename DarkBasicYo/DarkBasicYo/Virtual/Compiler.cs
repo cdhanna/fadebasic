@@ -143,7 +143,8 @@ namespace DarkBasicYo.Virtual
 
         private List<FunctionCallReplacement> _functionCallReplacements = new List<FunctionCallReplacement>();
         private Dictionary<string, int> _functionTable = new Dictionary<string, int>();
-
+        
+        
         public Compiler(CommandCollection commands)
         {
             // this.commands = commands;
@@ -177,6 +178,12 @@ namespace DarkBasicYo.Virtual
             foreach (var statement in program.statements)
             {
                 Compile(statement);
+            }
+
+            // TODO: inject 'end'? 
+            foreach (var function in program.functions)
+            {
+                Compile(function);
             }
             
             // replace all label instructions...
