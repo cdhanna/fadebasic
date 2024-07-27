@@ -1,0 +1,18 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+    <PropertyGroup>
+        <AssemblyName>FadeBasic.Core</AssemblyName>
+        <TargetFrameworks>netstandard2.0;netstandard2.1</TargetFrameworks>
+        <LangVersion>8.0</LangVersion>
+        <RootNamespace>FadeBasic</RootNamespace>
+    </PropertyGroup>
+
+    <ItemGroup Label="Net Standard 2.0 Dependencies"  Condition="'$(TargetFramework)' == 'netstandard2.0'">
+        <PackageReference Include="System.Memory" Version="4.5.5"/>
+    </ItemGroup>
+    <ItemGroup>
+        <PackageReference Include="System.Runtime.Loader" Version="4.3.0"/>
+    </ItemGroup>
+    
+
+</Project>

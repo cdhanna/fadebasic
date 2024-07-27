@@ -1,0 +1,6 @@
+name: toast
+targetFramework: netstandard2.0
+projectReferences:
+  - csProjPath: '../../../../../../FadeBasicCommands/FadeBasicCommands.csproj'
+    classNames: 
+      - 'FadeBasic.FadeBasicCommands'

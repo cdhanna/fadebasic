@@ -1,0 +1,103 @@
+using System;
+using System.Linq;
+using FadeBasic.SourceGenerators;
+using FadeBasic.Virtual;
+
+namespace FadeBasic
+{
+    public partial class FadeBasicCommands
+    {
+        
+        [FadeBasicCommand("print")]
+        public static void Print(object x)
+        {
+            Console.WriteLine(x);
+        }
+             
+        [FadeBasicCommand("double")]
+        public static int Double(int x)
+        {
+            return x * 2;
+        }
+        
+        [FadeBasicCommand("reflect count")]
+        public static int ReflectCount([FromVm] VirtualMachine vm)
+        {
+            return vm.hostMethods.methods.Length;
+        }
+        
+        [FadeBasicCommand("toast")]
+        public static void Toast(ref int n)
+        {
+            n *= 2;
+            Console.Write(n);
+        }
+        
+        [FadeBasicCommand("farts2")]
+        public static void farts2(int barf, int n)
+        {
+            var x = barf * n;
+            Console.Write(x);
+        }
+   
+        
+        [FadeBasicCommand("overload")]
+        public static void Overload_1(int a)
+        {
+        }
+        
+        [FadeBasicCommand("overload")]
+        public static void Overload_1(int a, int b)
+        {
+        }
+        
+        // [FadeBasicCommand("flip")]
+        // public static string Flip(string x)
+        // {
+        //     return x.Reverse().ToString();
+        // }
+        //
+        // [FadeBasicCommand("Ana2")]
+        // public static int Ana3(int y)
+        // {
+        //     return y * 2;
+        // }
+        //
+
+        //
+        // [FadeBasicCommand("any input")]
+        // public static int Ana()
+        // {
+        //     // return y * 2;
+        //     return 0;
+        // }
+        //
+        // [FadeBasicCommand("Many")]
+        // public static int Many(params int[] many)
+        // {
+        //     return many.Length;
+        // }
+        //
+        [FadeBasicCommand("complexArg")]
+        public static void ComplexArg([FromVm] VirtualMachine vm, RawArg<int> arg)
+        {
+            VmUtil.HandleValue(vm, 44, TypeCodes.INT, arg.state, arg.address);
+        }
+        
+
+        //
+        //
+        //
+        // [FadeBasicCommand("standard double2")]
+        //  public static int StandardDoubleffff(int x, int y=3)
+        //  {
+        //      return x * 2;
+        //  }
+        //  
+        //  [FadeBasicCommand("refTest")]
+        //  public static int RefTest(ref int x)
+        //  {
+        //      return x * 2;
+        //  }
+    }
+}

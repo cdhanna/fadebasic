@@ -1,6 +1,0 @@
-name: toast
-targetFramework: netstandard2.0
-projectReferences:
-  - csProjPath: '../../../../../../DarkBasicCommands/DarkBasicCommands.csproj'
-    classNames: 
-      - 'DarkBasicYo.DarkBasicCommands'
