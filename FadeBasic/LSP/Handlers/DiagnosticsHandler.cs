@@ -10,7 +10,7 @@ using OmniSharp.Extensions.LanguageServer.Protocol.Client.Capabilities;
 using OmniSharp.Extensions.LanguageServer.Protocol.Document;
 using OmniSharp.Extensions.LanguageServer.Protocol.Models;
 using DocumentUri = OmniSharp.Extensions.LanguageServer.Protocol.DocumentUri;
-
+using FadeBasic;
 namespace LSP.Handlers;
 
 public class DiagnosticsHandler : DocumentDiagnosticHandlerBase
@@ -20,10 +20,10 @@ public class DiagnosticsHandler : DocumentDiagnosticHandlerBase
     {
         return new DiagnosticsRegistrationOptions
         {
-            DocumentSelector = TextDocumentSelector.ForLanguage("basicScript"),
+            DocumentSelector = TextDocumentSelector.ForLanguage(FadeBasicConstants.FadeBasicLanguage),
             InterFileDependencies = false,
             WorkspaceDiagnostics = false,
-            Id = "basicScriptDiag"
+            Id = "fadeBasicDiag"
         };
     }
 

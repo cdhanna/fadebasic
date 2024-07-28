@@ -2,6 +2,9 @@
 using System;
 using System.Collections.Generic;
 using System.Collections.Immutable;
+using System.Diagnostics;
+using System.Linq;
+using System.Threading.Tasks;
 using FadeBasic;
 using FadeBasic.Ast;
 using Microsoft.Extensions.Logging;
@@ -56,12 +59,14 @@ public class CompilerService
     {
         if (!_docs.TryGetSourceDocument(srcUri, out var fullText))
         {
+            _logger.LogError("cannot find source file " + srcUri);
             throw new Exception("cannot find src file");
         }
 
         if (!TryGetProjectContexts(srcUri, out var projectUris))
         {
             // do nothing. This src is not listed in a valid project.
+            _logger.LogWarning("unknown source file edit does not belong to any project");
             return;
         }
         
@@ -75,16 +80,40 @@ public class CompilerService
             {
                 if (!_projects.TryGetProject(projectUri, out var project))
                 {
+                    _logger.LogWarning("project uri not found");
                     continue;
                 }
                 
                 var tokenizer = new Lexer();
                 var tokenData = tokenizer.TokenizeWithErrors(fullText, project.Item2);
                 _docToLexResults[srcUri] = tokenData; // TODO: what if there is more than one project?
-                
-                var parser = new Parser(tokenData.stream, project.Item2);
-                var program = parser.ParseProgram();
+                //
+                var parser = new Parser(new TokenStream(tokenData.tokens.ToList()), project.Item2);
 
+                foreach (var lexError in tokenData.tokenErrors)
+                {
+                    _logger.LogInformation("lexer error: " + lexError.Display);
+                    // TODO: this should not parse.
+                }
+
+                var sw = new Stopwatch();
+                sw.Start();
+                var done = false;
+                var _ = Task.Run(async () =>
+                {
+                    await Task.Delay(1000); // wait a second. // TODO: take this out at some point, or don't just hard it code it to a second.
+                    if (!done)
+                    {
+                        _logger.LogError("Compiler took too long! Likely a bug has happened!");
+                    }
+                    else
+                    {
+                        _logger.LogInformation("compiler took " + sw.ElapsedMilliseconds);
+                    }
+                });
+                var program = parser.ParseProgram();
+                done = true;
+                sw.Stop();
                 foreach (var err in program.GetAllErrors())
                 {
                     diagnostics.Add(new Diagnostic()
@@ -97,7 +126,7 @@ public class CompilerService
                             startCharacter: err.location.start.charNumber,
                             endLine: err.location.end.lineNumber,
                             endCharacter: err.location.end.charNumber),
-                        Source = "basicScript",
+                        Source = FadeBasicConstants.FadeBasicLanguage,
                         Tags = new Container<DiagnosticTag>()
                     });
                 }
@@ -112,7 +141,8 @@ public class CompilerService
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex.GetType().Name + " -- " + ex.Message + " \n " + ex.StackTrace);
+            _logger.LogInformation("uh oh! " + ex?.Message);
+            // _logger.LogError(ex.GetType().Name + " -- " + ex.Message + " \n " + ex.StackTrace);
         }
     }
 

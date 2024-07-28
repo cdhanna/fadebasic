@@ -7,6 +7,7 @@ using LSP.Services;
 using MediatR;
 
 namespace LSP.Handlers;
+using FadeBasic;
 using Microsoft.Extensions.Logging;
 using OmniSharp.Extensions.LanguageServer.Protocol;
 using OmniSharp.Extensions.LanguageServer.Protocol.Client.Capabilities;
@@ -94,7 +95,7 @@ public class ProjectTextDocumentSyncHandler: TextDocumentSyncHandlerBase
         _logger.LogInformation("registered");
 
         return new TextDocumentSyncRegistrationOptions() {
-            DocumentSelector = TextDocumentSelector.ForPattern("**/*.basicProject.yaml"),
+            DocumentSelector = TextDocumentSelector.ForPattern($"**/*{FadeBasic.FadeBasicConstants.FadeBasicProjectExt}"),
             Change = TextDocumentSyncKind.Full,
             Save = new SaveOptions() { IncludeText = true }
         };

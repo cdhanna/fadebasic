@@ -106,8 +106,14 @@ namespace FadeBasic
     public class LexerResults
     {
         public List<Token> tokens;
+        public List<Token> comments;
         public TokenStream stream;
         public List<LexerError> tokenErrors;
+
+        public LexerResults()
+        {
+            
+        }
     }
 
     [DebuggerDisplay("{Display}")]
@@ -207,8 +213,8 @@ namespace FadeBasic
             new Lexem(LexemType.KeywordDeclareArray, new Regex("^dim")),
             new Lexem(LexemType.KeywordUnDeclareArray, new Regex("^undim")),
 
-            new Lexem(LexemType.WhiteSpace, new Regex("^`(.*)$")),
-            new Lexem(LexemType.WhiteSpace, new Regex("^rem(.*)$")),
+            new Lexem(LexemType.KeywordRem, new Regex("^`(.*)$")),
+            new Lexem(LexemType.KeywordRem, new Regex("^rem(.*)$")),
             // new Lexem(LexemType.WhiteSpace, new Regex("^remstart(.*)remend")),
             
             // new Lexem(LexemType.KeywordRem, new Regex("^(rem)(.*)$")),
@@ -251,6 +257,7 @@ namespace FadeBasic
         public LexerResults TokenizeWithErrors(string input, CommandCollection commands = default)
         {
             var tokens = new List<Token>();
+            var comments = new List<Token>();
             if (commands == default)
             {
                 commands = new CommandCollection();
@@ -307,7 +314,8 @@ namespace FadeBasic
                 
                 var line = lines[lineNumber];
                 if (string.IsNullOrEmpty(line)) continue;
-
+                
+                    
                 if (remBlockToken == null && line.ToLowerInvariant().StartsWith("remstart"))
                 {
                     remBlockToken = new Token
@@ -316,6 +324,7 @@ namespace FadeBasic
                         charNumber = 0,
                         lineNumber = lineNumber,
                     };
+                    
                     remBlockSb.Clear();
                     remBlockSb.AppendLine(line.Substring("remstart".Length));
                     continue;
@@ -331,6 +340,8 @@ namespace FadeBasic
                     //     lineNumber = lineNumber,
                     //     caseInsensitiveRaw = line
                     // });
+                    comments.Add(remBlockToken);
+
                     remBlockToken = null;
                     continue;
                 } else if (remBlockToken != null)
@@ -347,7 +358,8 @@ namespace FadeBasic
 
                     Token bestToken = null;
                     MatchCollection bestMatches = null;
-                    
+
+                    var hadRemCandidate = false;
                     for (var lexemId = 0; lexemId < lexems.Count; lexemId++)
                     {
                         var lexem = lexems[lexemId];
@@ -365,6 +377,7 @@ namespace FadeBasic
                                 lineNumber = lineNumber,
                                 charNumber = charNumber
                             };
+                           
                             if (bestToken == null || token.raw.Length > bestToken.raw.Length)
                             {
                                 bestToken = token;
@@ -383,8 +396,12 @@ namespace FadeBasic
                     {
                         switch (bestToken.type)
                         {
+                            case LexemType.KeywordRem:
+                                comments.Add(bestToken);
+                                break;
                             case LexemType.WhiteSpace:
                                 // we ignore white space in token generation
+                                // this could be a rem token...
                                 break;
                             case LexemType.ArgSplitter:
                                 requestEoS = false;
@@ -481,6 +498,7 @@ namespace FadeBasic
             return new LexerResults
             {
                 tokens = tokens,
+                comments = comments,
                 stream = new TokenStream(tokens, errors),
                 tokenErrors = errors
             };

@@ -26,11 +26,6 @@ public class TextDocumentSyncHandler : TextDocumentSyncHandlerBase
     private readonly ILanguageServerFacade _facade;
     private readonly DocumentService _docs;
 
-    private readonly TextDocumentSelector _textDocumentSelector = new TextDocumentSelector(
-        new TextDocumentFilter {
-            Pattern = "**/*.basic"
-        }
-    );
 
     private CompilerService _compiler;
     public TextDocumentSyncKind Change { get; } = TextDocumentSyncKind.Full;
@@ -50,7 +45,7 @@ public class TextDocumentSyncHandler : TextDocumentSyncHandlerBase
     
     public override TextDocumentAttributes GetTextDocumentAttributes(DocumentUri uri)
     {
-        return new TextDocumentAttributes(uri, "basicScript");
+        return new TextDocumentAttributes(uri, FadeBasicConstants.FadeBasicLanguage);
     }
 
     public override Task<Unit> Handle(DidOpenTextDocumentParams request, CancellationToken cancellationToken)
@@ -64,7 +59,6 @@ public class TextDocumentSyncHandler : TextDocumentSyncHandlerBase
 
     public override Task<Unit> Handle(DidChangeTextDocumentParams request, CancellationToken cancellationToken)
     {
-        _logger.LogInformation("Changed " + request.TextDocument.Uri);
         var fullText = request.ContentChanges.FirstOrDefault().Text;
         _docs.SetSourceDocument(request.TextDocument.Uri, fullText);
         // Range = new Range(
@@ -116,16 +110,12 @@ public class TextDocumentSyncHandler : TextDocumentSyncHandlerBase
 
     public override Task<Unit> Handle(DidSaveTextDocumentParams request, CancellationToken cancellationToken)
     {
-        _logger.LogInformation("Saved " + request.TextDocument.Uri);
-
         return Unit.Task;
 
     }
 
     public override Task<Unit> Handle(DidCloseTextDocumentParams request, CancellationToken cancellationToken)
     {
-        _logger.LogInformation("Closed " + request.TextDocument.Uri);
-
         // _docs.ClearSourceDocument(request.TextDocument.Uri);
         return Unit.Task;
 
@@ -136,7 +126,7 @@ public class TextDocumentSyncHandler : TextDocumentSyncHandlerBase
     {
         // _logger.LogInformation("getting config");
         return new TextDocumentSyncRegistrationOptions() {
-            DocumentSelector = TextDocumentSelector.ForPattern("**/*.basic"),
+            DocumentSelector = TextDocumentSelector.ForPattern($"**/*{FadeBasicConstants.FadeBasicScriptExt}"),
             Change = Change,
             Save = new SaveOptions() { IncludeText = true }
         };

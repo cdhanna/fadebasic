@@ -129,6 +129,8 @@ namespace FadeBasic
         public static readonly ErrorCode TypeDefMissingName = "[0145] Type definition missing name";
         public static readonly ErrorCode UnknownStatement = "[0146] Invalid statement";
         public static readonly ErrorCode CommandNoOverloadFound = "[0147] No overload for command";
+        public static readonly ErrorCode FunctionCannotUseCommandName = "[0148] function name is already a reserved command";
+        public static readonly ErrorCode FunctionParameterCardinalityMismatch = "[0149] function has incorrect number of parameters";
         
         // 200 series represents post-parse issues
         public static readonly ErrorCode InvalidReference = "[0200] Invalid reference";

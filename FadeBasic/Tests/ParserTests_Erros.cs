@@ -130,6 +130,96 @@ thisCommandDoesNotExist()
     
     
     [Test]
+    public void ParseError_Command_Incomplete()
+    {
+        // this used to hang forever... figure out why!
+        var input = @"
+for x = 1 to 10
+    jerk
+next
+";
+        var parser = MakeParser(input);
+        var prog = parser.ParseProgram();
+
+        var errors = prog.GetAllErrors();
+        prog.AssertParseErrors(1);
+        Assert.That(errors[0].Display, Is.EqualTo($"[2:4] - {ErrorCodes.CommandNoOverloadFound}"));
+    }
+    
+    
+    [Test]
+    public void ParseError_Command_Incomplete_WithFunction()
+    {
+        // this used to hang forever... figure out why!
+        var input = @"
+for x = 1 to 10
+    jerk randoThing(
+next
+function randoThing(a, b)
+endfunction a + b
+";
+        var parser = MakeParser(input);
+        var prog = parser.ParseProgram();
+
+        var errors = prog.GetAllErrors();
+        prog.AssertParseErrors(2);
+        Assert.That(errors[0].Display, Is.EqualTo($"[2:19] - {ErrorCodes.VariableIndexMissingCloseParen}"));
+        Assert.That(errors[1].Display, Is.EqualTo($"[2:9] - {ErrorCodes.FunctionParameterCardinalityMismatch}"));
+    }
+    
+    
+    [Test]
+    public void ParseError_Command_Incomplete_WithFunction_AndComma()
+    {
+        // this used to hang forever... figure out why!
+        var input = @"
+for x = 1 to 10
+    jerk randoThing(1,
+next
+function randoThing(a, b)
+endfunction a + b
+";
+        var parser = MakeParser(input);
+        var prog = parser.ParseProgram();
+
+        var errors = prog.GetAllErrors();
+        prog.AssertParseErrors(2);
+        Assert.That(errors[0].Display, Is.EqualTo($"[2:19] - {ErrorCodes.VariableIndexMissingCloseParen}"));
+        Assert.That(errors[1].Display, Is.EqualTo($"[2:9] - {ErrorCodes.FunctionParameterCardinalityMismatch}"));
+
+    }
+    
+    [Test]
+    public void ParseError_Function_CannotUseCommandName()
+    {
+        // this used to hang forever... figure out why!
+        var input = @"
+function add(a, b)
+endfunction a + b
+";
+        var parser = MakeParser(input);
+        var prog = parser.ParseProgram();
+        var errors = prog.GetAllErrors();
+
+        prog.AssertParseErrors(1);
+        Assert.That(errors[0].Display, Is.EqualTo($"[1:0] - {ErrorCodes.FunctionCannotUseCommandName}"));
+    }
+    
+    [Test]
+    public void ParseError_Function_ShouldWork()
+    {
+        // this used to hang forever... figure out why!
+        var input = @"
+function randoThing(a, b)
+endfunction a + b
+";
+        var parser = MakeParser(input);
+        var prog = parser.ParseProgram();
+
+        prog.AssertNoParseErrors();
+    }
+
+    [Test]
     public void ParseError_Command_TooManyParameters()
     {
         var input = @"
@@ -296,6 +386,28 @@ endfunction
         Assert.That(errors[0].Display, Is.EqualTo($"[1:0] - {ErrorCodes.FunctionMissingOpenParen}"));
     }
     
+    
+    [Test]
+    public void ParseError_Function_IncorrectParameters()
+    {
+        var input = @"
+for x = 1 to 3
+    jerk toast(x,) 
+next
+
+end
+
+function toast(a, b)
+endfunction a + b
+";
+        var parser = MakeParser(input);
+        var prog = parser.ParseProgram();
+
+        var errors = prog.GetAllErrors();
+        prog.AssertParseErrors(1);
+        Assert.That(errors[0].Display, Is.EqualTo($"[2:9] - {ErrorCodes.FunctionParameterCardinalityMismatch}"));
+    }
+    
     [Test]
     public void ParseError_Function_MissingCloseParen()
     {
@@ -386,6 +498,27 @@ endfunction";
         var errors = prog.GetAllErrors();
         Assert.That(errors.Count, Is.EqualTo(0));
     }
+    
+    [Test]
+    public void ParseError_Function_CanUseGlobal2()
+    {
+        var input = @"
+global number as integer
+
+function mult(a, b)
+    for n = 1 to b
+        number = number + a
+    next
+endfunction
+";
+        var parser = MakeParser(input);
+        var prog = parser.ParseProgram();
+
+        var errors = prog.GetAllErrors();
+        prog.AssertNoParseErrors();
+    }
+
+
     
     [Test]
     public void ParseError_Function_InvalidSymbol()

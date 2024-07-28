@@ -31,7 +31,7 @@ public static class RunLaunchableCommand
             var noGenerate = ctx.ParseResult.GetValueForOption(generateFlag);
             if (!PathUtil.TryGetProjectPath(projPath, out projPath))
             {
-                Log.Error("Cannot find a valid project");
+                Log.Error($"Cannot find a valid project from path=[{projPath}]");
                 return;
             }
             

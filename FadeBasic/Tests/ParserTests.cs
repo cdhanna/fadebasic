@@ -893,6 +893,11 @@ nothing
 REMEND
 x = 1
 ";
+        var lex = _lexer.TokenizeWithErrors(input, _commands);
+        Assert.That(lex.comments.Count, Is.EqualTo(1));
+
+        Assert.That(lex.comments[0].caseInsensitiveRaw.StartsWith("REMSTART"));
+        
         var parser = MakeParser(input);
         var prog = parser.ParseProgram();
         
@@ -902,6 +907,26 @@ x = 1
         Assert.That(code, Is.EqualTo("((= (ref x),(1)))"));
     }
     
+    
+    [Test]
+    public void RemStart_WithNoEnd()
+    {
+        var input = @"
+REMSTART hello
+blah blah
+nothing
+x = 1
+";
+        var lex = _lexer.TokenizeWithErrors(input, _commands);
+        Assert.That(lex.comments.Count, Is.EqualTo(1));
+
+        var parser = MakeParser(input);
+        var prog = parser.ParseProgram();
+        
+        Assert.That(prog.statements.Count, Is.EqualTo(0));
+    }
+
+    
     [TestCase("REM")]
     [TestCase("`")]
     public void Rem(string commentPhrase)
@@ -910,10 +935,16 @@ x = 1
 {commentPhrase} hello x = 1 this is a "" line
 x = 1
 ";
+        
+        var lex = _lexer.TokenizeWithErrors(input, _commands);
+        Assert.That(lex.comments.Count, Is.EqualTo(1));
+
+        
         var parser = MakeParser(input);
         var prog = parser.ParseProgram();
         
         Assert.That(prog.statements.Count, Is.EqualTo(1));
+        
         var code = prog.ToString();
         Console.WriteLine(code);
         Assert.That(code, Is.EqualTo(@"(
@@ -929,6 +960,9 @@ x = 1
 x = 1 {commentPhrase} what
 x = 2
 ";
+        var lex = _lexer.TokenizeWithErrors(input, _commands);
+        Assert.That(lex.comments.Count, Is.EqualTo(1));
+
         var parser = MakeParser(input);
         var prog = parser.ParseProgram();
         

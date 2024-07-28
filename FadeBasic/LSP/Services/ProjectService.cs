@@ -10,6 +10,7 @@ using OmniSharp.Extensions.LanguageServer.Protocol.Document;
 using OmniSharp.Extensions.LanguageServer.Protocol.Models;
 using OmniSharp.Extensions.LanguageServer.Protocol.Server;
 using Range = OmniSharp.Extensions.LanguageServer.Protocol.Models.Range;
+using FadeBasic;
 
 namespace LSP.Services;
 
@@ -68,7 +69,7 @@ public class ProjectService
                     startCharacter: 0,
                     endLine: 0,
                     endCharacter: 1),
-                Source = "basicScript",
+                Source = FadeBasicConstants.FadeBasicLanguage,
             });
         }
         finally

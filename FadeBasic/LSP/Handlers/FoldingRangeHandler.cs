@@ -1,6 +1,7 @@
 using System.Collections.Generic;
 using System.Threading;
 using System.Threading.Tasks;
+using FadeBasic;
 using OmniSharp.Extensions.LanguageServer.Protocol.Client.Capabilities;
 using OmniSharp.Extensions.LanguageServer.Protocol.Document;
 using OmniSharp.Extensions.LanguageServer.Protocol.Models;
@@ -29,7 +30,7 @@ public class FoldingRangeHandler : IFoldingRangeHandler
     {
         return new FoldingRangeRegistrationOptions
         {
-            DocumentSelector = new TextDocumentSelector(TextDocumentFilter.ForLanguage("basicScript"))
+            DocumentSelector = new TextDocumentSelector(TextDocumentFilter.ForLanguage(FadeBasicConstants.FadeBasicLanguage))
         };
     }
 }

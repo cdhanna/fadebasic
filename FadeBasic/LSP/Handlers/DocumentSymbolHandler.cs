@@ -7,6 +7,7 @@ using OmniSharp.Extensions.LanguageServer.Protocol;
 using OmniSharp.Extensions.LanguageServer.Protocol.Client.Capabilities;
 using OmniSharp.Extensions.LanguageServer.Protocol.Document;
 using OmniSharp.Extensions.LanguageServer.Protocol.Models;
+using FadeBasic;
 
 namespace LSP.Handlers;
 
@@ -76,7 +77,7 @@ public class DocumentSymbolHandler : IDocumentSymbolHandler
     {
         return new DocumentSymbolRegistrationOptions
         {
-            DocumentSelector = TextDocumentSelector.ForLanguage("basicScript"),
+            DocumentSelector = TextDocumentSelector.ForLanguage(FadeBasicConstants.FadeBasicLanguage),
 
         };
     }

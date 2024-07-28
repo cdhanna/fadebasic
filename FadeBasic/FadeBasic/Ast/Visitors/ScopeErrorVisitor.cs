@@ -18,15 +18,23 @@ namespace FadeBasic.Ast.Visitors
             {
                 scope.AddType(type);
             }
+            
+            
+            foreach (var function in program.functions)
+            {
+                scope.DeclareFunction(function);
+            }
 
+            CheckTypeInfo2(scope);
+            CheckStatements(program.statements, scope);
+            
+            
             foreach (var function in program.functions)
             {
                 scope.BeginFunction(function);
                 CheckStatements(function.statements, scope);
                 scope.EndFunction();
             }
-            CheckTypeInfo2(scope);
-            CheckStatements(program.statements, scope);
         }
 
         static void CheckTypeInfo2(Scope scope)
@@ -348,9 +356,13 @@ namespace FadeBasic.Ast.Visitors
                     case ArrayIndexReference arrayRef:
                         if (!scope.TryGetSymbol(arrayRef.variableName, out _) && arrayRef.variableName != "_")
                         {
-                            if (scope.functionTable.TryGetValue(arrayRef.variableName, out _))
+                            if (scope.functionTable.TryGetValue(arrayRef.variableName, out var function))
                             {
                                 // ah, this is a function!
+                                if (arrayRef.rankExpressions.Count != function.parameters.Count)
+                                {
+                                    arrayRef.Errors.Add(new ParseError(arrayRef.startToken, ErrorCodes.FunctionParameterCardinalityMismatch));
+                                }
                                 break;
                             }
                             child.Errors.Add(new ParseError(child.StartToken, ErrorCodes.InvalidReference, $"unknown symbol, {arrayRef.variableName}"));

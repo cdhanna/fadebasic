@@ -88,11 +88,7 @@ public static class Program
                         // .WithHandler<DiagnosticsHandler>()
                         .OnStarted((languageServer, token) =>
                         {
-                            var foo = languageServer.Services.GetService<Foo>();
-                            foo.SayFoo();
-
                             languageServer.Workspace.SendNotification("Derp");
-
                             return Task.CompletedTask;
                         });
                 }
@@ -108,8 +104,6 @@ public static class Program
 
     static void ConfigureServices(IServiceCollection services)
     {
-        // Console.WriteLine("configuring services");
-        services.AddSingleton<Foo>();
         services.AddSingleton<DocumentService>();
         services.AddSingleton<CompilerService>();
         services.AddSingleton<ProjectService>();

@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using FadeBasic;
 using System.Linq;
 using OmniSharp.Extensions.LanguageServer.Protocol;
 using OmniSharp.Extensions.LanguageServer.Protocol.Models;
@@ -57,8 +58,8 @@ public class DocumentService
         var filePath = rootUri.GetFileSystemPath();
         
         // find all .basic files and .basicProject.yaml files
-        var basicFiles = Directory.GetFiles(filePath, "*.basic", SearchOption.AllDirectories);
-        var projectFiles = Directory.GetFiles(filePath, "*.basicProject.yaml", SearchOption.AllDirectories);
+        var basicFiles = Directory.GetFiles(filePath, $"*{FadeBasicConstants.FadeBasicScriptExt}", SearchOption.AllDirectories);
+        var projectFiles = Directory.GetFiles(filePath, $"*{FadeBasicConstants.FadeBasicProjectExt}", SearchOption.AllDirectories);
 
         foreach (var projectFile in projectFiles)
         {

@@ -9,6 +9,7 @@ using OmniSharp.Extensions.LanguageServer.Protocol;
 using OmniSharp.Extensions.LanguageServer.Protocol.Client.Capabilities;
 using OmniSharp.Extensions.LanguageServer.Protocol.Document;
 using OmniSharp.Extensions.LanguageServer.Protocol.Models;
+using Range = OmniSharp.Extensions.LanguageServer.Protocol.Models.Range;
 
 namespace LSP.Handlers;
 
@@ -31,11 +32,11 @@ public class SemanticTokenHandler : SemanticTokensHandlerBase
     {
         return new SemanticTokensRegistrationOptions
         {
-            DocumentSelector = TextDocumentSelector.ForLanguage("basicScript"),
+            DocumentSelector = TextDocumentSelector.ForLanguage(FadeBasicConstants.FadeBasicLanguage),
             Legend = new SemanticTokensLegend
             {
                 TokenModifiers = capability.TokenModifiers,
-                TokenTypes = capability.TokenTypes
+                TokenTypes = capability.TokenTypes,
             },
             Full = new SemanticTokensCapabilityRequestFull
             {
@@ -48,35 +49,30 @@ public class SemanticTokenHandler : SemanticTokensHandlerBase
     protected override async Task Tokenize(SemanticTokensBuilder builder, ITextDocumentIdentifierParams identifier,
         CancellationToken cancellationToken)
     {
-        // builder.
-        
-        // var content = await File.ReadAllTextAsync(DocumentUri.GetFileSystemPath(identifier.TextDocument), cancellationToken);
-        // if (!_docs.TryGetSourceDocument(identifier.TextDocument.Uri, out var content))
-        // {
-        //     throw new Exception("No content available");
-        // }
         try
         {
             if (!_compiler.TryGetLexerResults(identifier.TextDocument.Uri, out var results))
             {
+                _logger.LogError("failed to lex input for some reason");
                 return;
             }
 
             var tokens = results.tokens;
-            
             foreach (var token in tokens)
             {
                 if (token.raw == null) continue;
+
                 builder.Push(token.lineNumber, token.charNumber, token.raw.Length, ConvertSymbol(token.type),
                     new SemanticTokenModifier[] { });
             }
-            
-
-            builder.Commit();
         }
         catch (Exception ex)
         {
             _logger.LogError("TOKEN ERR " + ex.Message);
+        }
+        finally
+        {
+            builder.Commit();
         }
     }
 

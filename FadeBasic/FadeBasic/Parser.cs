@@ -68,7 +68,8 @@ namespace FadeBasic
         public SymbolTable globalVariables = new SymbolTable();
         public Stack<SymbolTable> localVariables = new Stack<SymbolTable>();
 
-        public Dictionary<string, Symbol> functionTable = new Dictionary<string, Symbol>();
+        public Dictionary<string, Symbol> functionSymbolTable = new Dictionary<string, Symbol>();
+        public Dictionary<string, FunctionStatement> functionTable = new Dictionary<string, FunctionStatement>();
         // public Stack<List<Symbol>> localVariables = new Stack<List<Symbol>>();
 
         public Scope()
@@ -89,26 +90,30 @@ namespace FadeBasic
             return typeScope;
             // typeScope.AddDeclaration();
         }
+
+        public void DeclareFunction(FunctionStatement function)
+        {
+            if (functionSymbolTable.TryGetValue(function.name, out var existing))
+            {
+                function.Errors.Add(new ParseError(function.nameToken, ErrorCodes.FunctionAlreadyDeclared)); 
+            }
+            else
+            {
+                functionSymbolTable.Add(function.name, new Symbol
+                {
+                    text = function.name, 
+                    typeInfo = TypeInfo.Void, // TODO: it would be cool if we could get the exitfunction and endfunction return values...
+                    source = function
+                });
+                functionTable.Add(function.name, function);
+            }
+        }
         
         public void BeginFunction(FunctionStatement function)
         {
             var parameters = function.parameters;
             var table = new SymbolTable();
             localVariables.Push(table);
-
-            if (functionTable.TryGetValue(function.name, out var existing))
-            {
-                function.Errors.Add(new ParseError(function.nameToken, ErrorCodes.FunctionAlreadyDeclared)); 
-            }
-            else
-            {
-                functionTable.Add(function.name, new Symbol
-                {
-                    text = function.name, 
-                    typeInfo = TypeInfo.Void, // TODO: it would be cool if we could get the exitfunction and endfunction return values...
-                    source = function
-                });
-            }
 
             foreach (var parameter in parameters)
             {
@@ -664,6 +669,7 @@ namespace FadeBasic
                                 var nextToken = _stream.Peek;
                                 switch (nextToken.type)
                                 {
+                                    case LexemType.EndStatement:
                                     case LexemType.EOF:
 
                                         error = new ParseError(next,
@@ -676,7 +682,7 @@ namespace FadeBasic
                                         looking = false; 
                                         break;
                                         
-                                    case LexemType.EndStatement:
+                                    // case LexemType.EndStatement:
                                     case LexemType.ArgSplitter:
                                         _stream.Advance();
                                         break;
@@ -685,8 +691,18 @@ namespace FadeBasic
                                         looking = false;
                                         break;
                                     default:
-                                        var member = ParseWikiExpression();
-                                        rankExpressions.Add(member);
+                                        if (TryParseExpression(out var expr))
+                                        {
+                                            rankExpressions.Add(expr);
+                                        }
+                                        else
+                                        {
+                                            // an error happened, because we did not find a close paren
+                                            looking = false;
+                                            error = new ParseError(next,
+                                                ErrorCodes.VariableIndexMissingCloseParen);
+                                        }
+                                        
                                         break; 
                                 }
                             }
@@ -1392,12 +1408,17 @@ namespace FadeBasic
 
                             break;
                         default:
-                            if (!TryParseExpression(out var arg))
+                            if (TryParseExpression(out var arg))
                             {
-                                arg = new LiteralIntExpression(_stream.CreatePatchToken(LexemType.LiteralInt, "0")[0]);
+                                commandArgs.Add(arg);
+                                argMap.Add(0);
+                                //arg = new LiteralIntExpression(_stream.CreatePatchToken(LexemType.LiteralInt, "0")[0]);
                             }
-                            commandArgs.Add(arg);
-                            argMap.Add(0);
+                            else
+                            {
+                                isDone = true;
+                                break;
+                            }
                             break;
                     }
 
@@ -1477,6 +1498,11 @@ namespace FadeBasic
 
             // parse the name
             var nameToken = _stream.Peek;
+            if (nameToken.type == LexemType.CommandWord)
+            {
+                nameToken = _stream.CreatePatchToken(LexemType.VariableGeneral, "_")[0];
+                errors.Add(new ParseError(functionToken, ErrorCodes.FunctionCannotUseCommandName));
+            }
             if (nameToken.type != LexemType.VariableGeneral)
             {
                 nameToken = _stream.CreatePatchToken(LexemType.VariableGeneral, "_")[0];
