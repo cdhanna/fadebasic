@@ -40,8 +40,17 @@ public static class RunLaunchableCommand
 
             if (!noGenerate)
             {
-                if (!LaunchableGenerator.TryGenerateLaunchable(projectContext))
+                if (!LaunchableGenerator.TryGenerateLaunchable(projectContext, out var errors))
                 {
+                    if (errors?.Count > 0)
+                    {
+                        foreach (var error in errors)
+                        {
+                            Log.Error(error.Display);
+                        }
+
+                        return;
+                    }
                     Log.Error("Unable to write file");
                     return;
                 }

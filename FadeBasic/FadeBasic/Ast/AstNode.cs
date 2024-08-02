@@ -8,6 +8,8 @@ namespace FadeBasic.Ast
         Token StartToken { get; }
         Token EndToken { get; }
         TypeInfo ParsedType { get; }
+
+        Symbol DeclaredFromSymbol { get; }
     }
 
     public struct TypeInfo
@@ -38,7 +40,8 @@ namespace FadeBasic.Ast
         public Token EndToken => endToken;
 
         public List<ParseError> Errors { get; set; } = new List<ParseError>();
-
+        public Symbol DeclaredFromSymbol { get; set; }
+        
         public TypeInfo ParsedType { get; set; } = TypeInfo.Void;
         
         protected AstNode()
@@ -68,6 +71,26 @@ namespace FadeBasic.Ast
         public abstract IEnumerable<IAstVisitable> IterateChildNodes();
 
 
+
+        public IAstVisitable FindFirst(Func<IAstVisitable, bool> predicate)
+        {
+            if (predicate(this))
+            {
+                return this;
+            }
+            var nodes = IterateChildNodes();
+            foreach (var node in nodes)
+            {
+                if (node == null) continue;
+                var found = node.FindFirst(predicate);
+                if (found != null)
+                {
+                    return found;
+                }
+            }
+
+            return null;
+        }
         
         public void Visit(Action<IAstVisitable> onVisit, Action<IAstVisitable> onExit=null)
         {
@@ -88,6 +111,7 @@ namespace FadeBasic.Ast
         IEnumerable<IAstVisitable> IterateChildNodes();
 
         public void Visit(Action<IAstVisitable> onVisit, Action<IAstVisitable> onExit=null);
+        public IAstVisitable FindFirst(Func<IAstVisitable, bool> predicate);
         // {
         //     onVisit(this);
         //     var nodes = IterateChildNodes();

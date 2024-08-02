@@ -8,10 +8,23 @@ namespace FadeBasic
     public partial class FadeBasicCommands
     {
         
-        [FadeBasicCommand("print")]
-        public static void Print(object x)
+[FadeBasicCommand("print")]
+public static void Print(object x)
+{
+    Console.WriteLine(x);
+}
+
+[FadeBasicCommand("rnd")]
+public static int Rnd(int max = 10)
+{
+    var r = new Random();
+    return r.Next(max);
+}
+        
+        [FadeBasicCommand("input")]
+        public static void Input(ref string result)
         {
-            Console.WriteLine(x);
+            result = Console.ReadLine();
         }
              
         [FadeBasicCommand("double")]

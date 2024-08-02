@@ -15,34 +15,25 @@ public static class CodeUtil
         return compiler.Program.ToArray();
     }
 
-    public static string CombineSource(this ProjectContext context)
+    public static CodeUnit Parse(this SourceMap sourceMap, CommandCollection commandCollection)
     {
-        var srcBuilder = new StringBuilder();
-        foreach (var path in context.absoluteSourceFiles)
+        var lexer = new Lexer();
+        var unit = new CodeUnit
         {
-            var src = File.ReadAllText(path);
-            srcBuilder.Append(src);
-            // TODO: how to map errors back to file?
+            sourceMap = sourceMap
+        };
+
+        var source = sourceMap.fullSource;
+        unit.lexerResults = lexer.TokenizeWithErrors(source, commandCollection);
+
+        sourceMap.ProvideTokens(unit.lexerResults);
+        if (unit.lexerResults.tokenErrors.Count == 0)
+        {
+            var parser = new Parser(unit.lexerResults.stream, commandCollection);
+            unit.program = parser.ParseProgram();
         }
 
-        var fullSrc = srcBuilder.ToString();
-        return fullSrc;
+        return unit;
     }
     
-    public static ProgramNode Parse(this string source, CommandCollection commandCollection)
-    {
-
-        var lexer = new Lexer();
-        var lexerResults = lexer.TokenizeWithErrors(source, commandCollection);
-        if (lexerResults.tokenErrors.Count > 0)
-        {
-            throw new Exception("unable to lex");
-        }
-
-        var stream = lexerResults.stream;
-        var parser = new Parser(stream, commandCollection);
-        var program = parser.ParseProgram();
-
-        return program;
-    }
 }

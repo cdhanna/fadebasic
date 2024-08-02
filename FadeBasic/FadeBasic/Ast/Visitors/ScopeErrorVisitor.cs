@@ -8,7 +8,7 @@ namespace FadeBasic.Ast.Visitors
 
         public static void AddScopeRelatedErrors(this ProgramNode program)
         {
-            var scope = new Scope();
+            var scope = program.scope = new Scope();
             foreach (var label in program.labels)
             {
                 scope.AddLabel(label.node);
@@ -331,6 +331,7 @@ namespace FadeBasic.Ast.Visitors
                 throw new NotImplementedException();
             }
 
+            indexRef.DeclaredFromSymbol = arraySymbol;
             var rankMatch = arraySymbol.typeInfo.rank == indexRef.rankExpressions.Count;
             if (!rankMatch)
             {
@@ -347,92 +348,53 @@ namespace FadeBasic.Ast.Visitors
                     case CommandExpression commandExpr: // commandExprs have the ability to declare variables!
                         scope.AddCommand(commandExpr);
                         break;
+                    case GotoStatement gotoSt:
+                        if (!scope.TryGetLabel(gotoSt.label, out var labelSymbol) && gotoSt.label != "_")
+                        {
+                            child.Errors.Add(new ParseError(child.StartToken, ErrorCodes.UnknownLabel, gotoSt.label));
+                        }
+
+                        gotoSt.DeclaredFromSymbol = labelSymbol;
+                        break;
                     case GoSubStatement goSub:
-                        if (!scope.TryGetLabel(goSub.label) && goSub.label != "_")
+                        if (!scope.TryGetLabel(goSub.label, out labelSymbol) && goSub.label != "_")
                         {
                             child.Errors.Add(new ParseError(child.StartToken, ErrorCodes.UnknownLabel, goSub.label));
                         }
+
+                        goSub.DeclaredFromSymbol = labelSymbol;
                         break;
                     case ArrayIndexReference arrayRef:
-                        if (!scope.TryGetSymbol(arrayRef.variableName, out _) && arrayRef.variableName != "_")
+                        if (!scope.TryGetSymbol(arrayRef.variableName, out var arraySymbol) && arrayRef.variableName != "_")
                         {
                             if (scope.functionTable.TryGetValue(arrayRef.variableName, out var function))
                             {
                                 // ah, this is a function!
+                                arrayRef.startToken.flags |= TokenFlags.FunctionCall;
                                 if (arrayRef.rankExpressions.Count != function.parameters.Count)
                                 {
                                     arrayRef.Errors.Add(new ParseError(arrayRef.startToken, ErrorCodes.FunctionParameterCardinalityMismatch));
                                 }
+                                arrayRef.DeclaredFromSymbol = scope.functionSymbolTable[arrayRef.variableName];
+
                                 break;
                             }
                             child.Errors.Add(new ParseError(child.StartToken, ErrorCodes.InvalidReference, $"unknown symbol, {arrayRef.variableName}"));
                         }
+
+                        arrayRef.DeclaredFromSymbol = arraySymbol;
                         break;
                     case VariableRefNode variable:
-                        if (!scope.TryGetSymbol(variable.variableName, out _) && variable.variableName != "_")
+                        if (!scope.TryGetSymbol(variable.variableName, out var symbol) && variable.variableName != "_")
                         {
                             child.Errors.Add(new ParseError(child.StartToken, ErrorCodes.InvalidReference, $"unknown symbol, {variable.variableName}"));
                         }
+
+                        variable.DeclaredFromSymbol = symbol;
                         break;
                 }
             });
         }
         
-        // public static void AddScopeRelatedErrors2(this ProgramNode program)
-        // {
-        //     var scope = new Scope();
-        //
-        //     foreach (var type in program.typeDefinitions)
-        //     {
-        //         scope.AddType(type);
-        //     }
-        //     
-        //     
-        //     program.Visit(child =>
-        //     {
-        //         var p2 = program;
-        //
-        //         switch (child)
-        //         {
-        //             case DeclarationStatement declarationStatement:
-        //                 scope.AddDeclaration(declarationStatement);
-        //                 break;
-        //             case AssignmentStatement assignment:
-        //                 scope.AddAssignment(assignment);
-        //                 break;
-        //             case ForStatement forStatement when forStatement.variableNode is VariableRefNode forVariable:
-        //                 scope.AddVariable(forVariable);
-        //                 break;
-        //             case FunctionStatement functionStatement:
-        //                 scope.BeginFunction(functionStatement.parameters);
-        //                 break;
-        //             case TypeDefinitionMember typeDefinition:
-        //
-        //                 break;
-        //             case StructFieldReference structReference:
-        //                 break;
-        //             // case FunctionReturnStatement _:
-        //             //     scope.EndFunction();
-        //             //     break;
-        //             case VariableRefNode refNode:
-        //                 var p = program;
-        //                 if (!scope.TryGetVariable(refNode.variableName))
-        //                 {
-        //                     refNode.Errors.Add(new ParseError(refNode.startToken, ErrorCodes.InvalidReference, $"unknown variable=[{refNode.variableName}]"));
-        //                 }
-        //                 break;
-        //         }
-        //     }, child =>
-        //     {
-        //         switch (child)
-        //         {
-        //             case FunctionStatement functionStatement:
-        //                 scope.EndFunction();
-        //                 break;
-        //             case TypeDefinitionMember typeDefinition:
-        //                 break;
-        //         }
-        //     });
-        // }
     }
 }

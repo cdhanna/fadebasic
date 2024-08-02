@@ -2,6 +2,7 @@ using System.Text;
 using ApplicationSupport.Code;
 using FadeBasic;
 using FadeBasic.ApplicationSupport.Project;
+using FadeBasic.Ast;
 using FadeBasic.Launch;
 using Serilog;
 
@@ -46,9 +47,9 @@ public class {TAG_CLASSNAME} : {nameof(ILaunchable)}
 }}
 ";
 
-    public static bool TryGenerateLaunchable(ProjectContext projectContext)
+    public static bool TryGenerateLaunchable(ProjectContext projectContext, out List<ParseError> errors)
     {
-        
+        errors = new List<ParseError>();
         var metadata = ProjectBuilder.LoadCommandMetadata(projectContext);
         Log.Debug($"loaded project metadata-count=[{metadata.Commands.Count}]");
 
@@ -62,10 +63,15 @@ public class {TAG_CLASSNAME} : {nameof(ILaunchable)}
         var absLaunchDirectory = Path.GetDirectoryName(projectContext.absoluteLaunchCsProjPath);
             
         // need to generate the byte-code!
-        var source = projectContext.CombineSource();
-        Log.Debug("program: " + source);
-
-        var program = source.Parse(metadata);
+        var sourceMap = projectContext.CreateSourceMap();
+        var unit = sourceMap.Parse(metadata);
+        var program = unit.program; // TODO: source map back errors.
+        errors = program.GetAllErrors();
+        if (errors.Count > 0)
+        {
+            return false;
+        }
+        
         var byteCode = program.Compile(metadata);
         Log.Debug("bytecode: " + string.Join(", ", byteCode));
 

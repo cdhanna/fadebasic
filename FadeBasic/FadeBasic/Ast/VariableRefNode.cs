@@ -74,6 +74,7 @@ namespace FadeBasic.Ast
     {
         public string variableName;
 
+
         public VariableRefNode(Token token) : base(token)
         {
             variableName = token.caseInsensitiveRaw;

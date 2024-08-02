@@ -18,12 +18,14 @@ public class SemanticTokenHandler : SemanticTokensHandlerBase
     private readonly ILogger<SemanticTokenHandler> _logger;
     private readonly DocumentService _docs;
     private CompilerService _compiler;
+    private readonly ProjectService _projects;
 
     public SemanticTokenHandler(
         ILogger<SemanticTokenHandler> logger, 
-        DocumentService docs, CompilerService compiler)
+        DocumentService docs, CompilerService compiler, ProjectService projects)
     {
         _compiler = compiler;
+        _projects = projects;
         _logger = logger;
         _docs = docs;
     }
@@ -51,20 +53,38 @@ public class SemanticTokenHandler : SemanticTokensHandlerBase
     {
         try
         {
-            if (!_compiler.TryGetLexerResults(identifier.TextDocument.Uri, out var results))
+            if (!_compiler.TryGetProjectsFromSource(identifier.TextDocument.Uri, out var units))
             {
-                _logger.LogError("failed to lex input for some reason");
+                _logger.LogError($"source document=[{identifier.TextDocument.Uri}] did not map to any compiled unit");
                 return;
             }
 
-            var tokens = results.tokens;
-            foreach (var token in tokens)
+            var unit = units[0]; // TODO: how should a project be tokenized if it belongs to more than 1 project? 
+            
+            var emptyMods = Array.Empty<SemanticTokenModifier>();
+
+            foreach (var token in unit.lexerResults.combinedTokens)
             {
                 if (token.raw == null) continue;
+                
+                
+                // if the token is not part of this file; we can skip it.
+                // TODO: it would be better if this was cached...
+                var location = unit.sourceMap.GetOriginalLocation(token.lineNumber, token.charNumber);
+                if (location.fileName != identifier.TextDocument.Uri.GetFileSystemPath())
+                {
+                    continue;
+                }
 
-                builder.Push(token.lineNumber, token.charNumber, token.raw.Length, ConvertSymbol(token.type),
-                    new SemanticTokenModifier[] { });
+                var tokenType = ConvertSymbol(token.type);
+                if (token.flags.HasFlag(TokenFlags.FunctionCall))
+                {
+                    tokenType = SemanticTokenType.Method;
+                    
+                }
+                builder.Push(location.startLine, location.startChar, token.raw.Length, tokenType, emptyMods);
             }
+
         }
         catch (Exception ex)
         {

@@ -82,6 +82,9 @@ public static class Program
                         
                         .WithHandler<TextDocumentSyncHandler>()
                         .WithHandler<ProjectTextDocumentSyncHandler>()
+                        .WithHandler<FormattingHandler>()
+                        .WithHandler<GotoDefinitionHandler>()
+                        .WithHandler<FindReferencesHandler>()
                         // .WithHandler<FoldingRangeHandler>()
                         // .WithHandler<DocumentSymbolHandler>()
                         .WithHandler<SemanticTokenHandler>()

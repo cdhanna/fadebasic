@@ -17,8 +17,6 @@ namespace FadeBasic.Launch
             {
                 hostMethods = HostMethodTable.FromCommandCollection(instance.CommandCollection)
             };
-            //bytecode: 1, 0, 1, 0, 0, 0, 9, 0, 7, 0, 1, 10, 0, 1, 0, 1, 0, 0, 0, 14
-
             vm.Execute2(0); // 0 means run until suspend. 
         }
     }

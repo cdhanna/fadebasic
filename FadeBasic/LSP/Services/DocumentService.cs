@@ -53,6 +53,18 @@ public class DocumentService
         return _uriToSource.TryGetValue(uri, out content);
     }
 
+    public string[] GetSourceLinesOrReadLines(string file)
+    {
+        var uri = DocumentUri.File(file);
+        if (!TryGetSourceDocument(uri, out var content))
+        {
+            content = File.ReadAllText(file);
+            SetSourceDocument(uri, content);
+        }
+
+        return content.Split(Environment.NewLine);
+    }
+
     public void Populate(DocumentUri rootUri)
     {
         var filePath = rootUri.GetFileSystemPath();

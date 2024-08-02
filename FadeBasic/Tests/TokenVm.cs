@@ -23,6 +23,71 @@ public partial class TokenVm
     }
     
     
+    [Test]
+    public void ActualProgram_QuickSort_1()
+    {
+        var src = @"
+global size as integer
+size = 100
+maxValue = 100
+DIM arr(size) as integer ` make an array
+
+for x = 0 to size - 1
+    arr(x) = rnd(maxValue) ` fill it up with random junk
+next
+
+print ""unsorted""
+show() ` and print it out
+
+quickSort(0, size - 1) `sort it
+
+print ""sorted""
+show() ` and print it out again
+
+end `end the program before the functions, otherwise ""kaboom""
+
+function partition(low, high)
+    pivot = arr(high)
+    i = low - 1
+    for j = low to high-1
+        if (arr(j) < pivot)
+            i = i + 1
+            temp = arr(i)
+            arr(i) = arr(j)
+            arr(j) = temp
+        endif
+    next
+    `swap(arr[i+1],arr[high]);
+    temp = arr(i + 1)
+    arr(i + 1) = arr(high)
+    arr(high) = temp
+
+endfunction i + 1
+
+
+function quickSort(low, high)
+    if (low < high)
+        pi = partition(low, high)
+        quickSort(low, pi - 1)
+        quickSort(pi + 1, high)
+    endif
+endfunction
+
+function show()
+    for x = 0 to size - 1
+    print arr(x)
+    next
+endfunction
+
+";
+        Setup(src, out var compiler, out var prog);
+
+        var vm = new VirtualMachine(prog);
+        vm.hostMethods = compiler.methodTable;
+
+        vm.Execute2(0); // just don't explode.
+    }
+
     
     [Test]
     public void TestDeclare_Registers()

@@ -107,6 +107,7 @@ namespace FadeBasic
     {
         public List<Token> tokens;
         public List<Token> comments;
+        public List<Token> combinedTokens; // tokens and comments.
         public TokenStream stream;
         public List<LexerError> tokenErrors;
 
@@ -258,6 +259,19 @@ namespace FadeBasic
         {
             var tokens = new List<Token>();
             var comments = new List<Token>();
+            var combined = new List<Token>();
+
+            void AddToken(Token t)
+            {
+                tokens.Add(t);
+                combined.Add(t);
+            }
+
+            void AddComment(Token t)
+            {
+                comments.Add(t);
+                combined.Add(t);
+            }
             if (commands == default)
             {
                 commands = new CommandCollection();
@@ -316,38 +330,49 @@ namespace FadeBasic
                 if (string.IsNullOrEmpty(line)) continue;
                 
                     
-                if (remBlockToken == null && line.ToLowerInvariant().StartsWith("remstart"))
+                // if (remBlockToken == null && line.ToLowerInvariant().StartsWith("remstart"))
+                // {
+                //     remBlockToken = new Token
+                //     {
+                //         lexem = new Lexem(LexemType.KeywordRemStart, null),
+                //         charNumber = 0,
+                //         lineNumber = lineNumber,
+                //     };
+                //     
+                //     remBlockSb.Clear();
+                //     remBlockSb.AppendLine(line.Substring("remstart".Length));
+                //     continue;
+                //
+                // } else if (remBlockToken != null && (line.ToLowerInvariant().StartsWith("remend") || lineNumber == lines.Length - 1))
+                // {
+                //     remBlockToken.caseInsensitiveRaw = remBlockSb.ToString();
+                //     // tokens.Add(remBlockToken);
+                //     // tokens.Add(new Token
+                //     // {
+                //     //     lexem = new Lexem(LexemType.KeywordRemEnd, null),
+                //     //     charNumber = 0,
+                //     //     lineNumber = lineNumber,
+                //     //     caseInsensitiveRaw = line
+                //     // });
+                //     comments.Add(remBlockToken);
+                //
+                //     remBlockToken = null;
+                //     continue;
+                // } else if (remBlockToken != null)
+                // {
+                //     remBlockSb.AppendLine(line);
+                //     continue;
+                // }
+
+                if (remBlockToken != null)
                 {
                     remBlockToken = new Token
                     {
-                        lexem = new Lexem(LexemType.KeywordRemStart, null),
                         charNumber = 0,
                         lineNumber = lineNumber,
-                    };
-                    
-                    remBlockSb.Clear();
-                    remBlockSb.AppendLine(line.Substring("remstart".Length));
-                    continue;
-                
-                } else if (remBlockToken != null && (line.ToLowerInvariant().StartsWith("remend") || lineNumber == lines.Length - 1))
-                {
-                    remBlockToken.caseInsensitiveRaw = remBlockSb.ToString();
-                    // tokens.Add(remBlockToken);
-                    // tokens.Add(new Token
-                    // {
-                    //     lexem = new Lexem(LexemType.KeywordRemEnd, null),
-                    //     charNumber = 0,
-                    //     lineNumber = lineNumber,
-                    //     caseInsensitiveRaw = line
-                    // });
-                    comments.Add(remBlockToken);
+                        lexem = new Lexem(LexemType.KeywordRem, null),
 
-                    remBlockToken = null;
-                    continue;
-                } else if (remBlockToken != null)
-                {
-                    remBlockSb.AppendLine(line);
-                    continue;
+                    };
                 }
 
                 for (var charNumber = 0; charNumber < line.Length; charNumber = charNumber)
@@ -355,6 +380,36 @@ namespace FadeBasic
                     var foundMatch = false;
                     var sub = line.Substring(charNumber);
                     var subStr = sub.ToLowerInvariant();
+
+                    
+                    if (remBlockToken == null && subStr.StartsWith("remstart"))
+                    {
+                        // we are remmin'
+                        remBlockToken = new Token
+                        {
+                            lexem = new Lexem(LexemType.KeywordRem, null),
+                            charNumber = charNumber,
+                            lineNumber = lineNumber,
+                        };
+                        continue;
+                    } else if (remBlockToken != null && subStr.StartsWith("remend"))
+                    {
+                        // we are done remmin' for now.
+                        remBlockToken.raw = line.Substring(remBlockToken.charNumber,
+                            (charNumber - remBlockToken.charNumber) + "remend".Length);
+                        remBlockToken.caseInsensitiveRaw = remBlockToken.raw.ToLowerInvariant();
+                        
+                        AddComment(remBlockToken);
+                        remBlockToken = null;
+                        charNumber += "remend".Length;
+                        continue;
+
+                    } else if (remBlockToken != null)
+                    {
+                        // we are still remmin'
+                        charNumber++;
+                        continue;
+                    }
 
                     Token bestToken = null;
                     MatchCollection bestMatches = null;
@@ -397,7 +452,7 @@ namespace FadeBasic
                         switch (bestToken.type)
                         {
                             case LexemType.KeywordRem:
-                                comments.Add(bestToken);
+                                AddComment(bestToken);
                                 break;
                             case LexemType.WhiteSpace:
                                 // we ignore white space in token generation
@@ -405,7 +460,11 @@ namespace FadeBasic
                                 break;
                             case LexemType.ArgSplitter:
                                 requestEoS = false;
-                                tokens.Add(bestToken);
+                                AddToken(bestToken);
+                                // tokens.Add(bestToken);
+                                
+                                
+                                
                                 break;
                             case LexemType.Constant:
                                 // replace all instances of string...
@@ -432,7 +491,7 @@ namespace FadeBasic
                                 if (requestEoS)
                                 {
                                     requestEoS = false;
-                                    tokens.Add(new Token
+                                    AddToken(new Token
                                     {
                                         charNumber = requestEoSCharNumber,
                                         lexem = eolLexem,
@@ -441,7 +500,7 @@ namespace FadeBasic
                                     });
                                 }
 
-                                tokens.Add(bestToken);
+                                AddToken(bestToken);
                                 break;
                         }
 
@@ -463,6 +522,15 @@ namespace FadeBasic
                     }
                 }
 
+
+                if (remBlockToken != null)
+                {
+                    // commit
+                    remBlockToken.raw = line.Substring(remBlockToken.charNumber);
+                    remBlockToken.caseInsensitiveRaw = remBlockToken.raw.ToLowerInvariant();
+                    AddComment(remBlockToken);
+                }
+                
                 var previousTokenWasNotEoS = tokens.Count > 0 ? tokens[tokens.Count - 1].type != LexemType.EndStatement : false;
                 var previousTokenWasNotArgSplitter = tokens.Count > 0 ? tokens[tokens.Count - 1].type != LexemType.ArgSplitter : true;
                 
@@ -486,7 +554,7 @@ namespace FadeBasic
             if (requestEoS)
             {
                 requestEoS = false;
-                tokens.Add(new Token
+                AddToken(new Token
                 {
                     charNumber = requestEoSCharNumber, 
                     lexem = eolLexem,
@@ -499,6 +567,7 @@ namespace FadeBasic
             {
                 tokens = tokens,
                 comments = comments,
+                combinedTokens = combined,
                 stream = new TokenStream(tokens, errors),
                 tokenErrors = errors
             };
@@ -536,6 +605,22 @@ namespace FadeBasic
         }
     }
 
+    [Flags]
+    public enum TokenFlags
+    {
+        None   = 0,
+        
+        /// <summary>
+        /// This flag indicates that the given token is an invocation to a function.
+        /// This is helpful because function calls are represented as an array-index node in the AST
+        /// </summary>
+        FunctionCall  = 1 << 0,
+        
+        // Second = 1 << 1,
+        // Third  = 1 << 2,
+        // Fourth = 1 << 3
+    }
+    
     [Serializable]
     [DebuggerDisplay("{raw} ({type}:{lineNumber}:{charNumber})")]
     public class Token
@@ -546,7 +631,7 @@ namespace FadeBasic
         public string caseInsensitiveRaw;
         public LexemType type => lexem.type;
         public string Location => $"{lineNumber}:{charNumber}";
-
+        public TokenFlags flags = TokenFlags.None;
         public Lexem lexem;
 
 

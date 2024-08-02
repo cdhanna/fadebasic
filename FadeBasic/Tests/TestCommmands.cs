@@ -11,6 +11,13 @@ namespace Tests
     {
         public static readonly CommandCollection CommandsForTesting = new CommandCollection(new TestCommands());
 
+        [FadeBasicCommand("rnd")]
+        public static int Random(int max=10)
+        {
+            var r = new Random();
+            return r.Next(max);
+        }
+        
         [FadeBasicCommand("Jerk")]
         public static void Dbjerkl(int dbl)
         {

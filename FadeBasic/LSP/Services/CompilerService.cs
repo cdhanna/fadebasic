@@ -3,9 +3,12 @@ using System;
 using System.Collections.Generic;
 using System.Collections.Immutable;
 using System.Diagnostics;
+using System.IO;
 using System.Linq;
 using System.Threading.Tasks;
+using ApplicationSupport.Code;
 using FadeBasic;
+using FadeBasic.ApplicationSupport.Project;
 using FadeBasic.Ast;
 using Microsoft.Extensions.Logging;
 using OmniSharp.Extensions.LanguageServer;
@@ -27,7 +30,9 @@ public class CompilerService
     private readonly ILanguageServerFacade _facade;
 
     private Dictionary<DocumentUri, LexerResults> _docToLexResults = new Dictionary<DocumentUri, LexerResults>();
-
+    private Dictionary<DocumentUri, ProgramNode> _docToAst = new Dictionary<DocumentUri, ProgramNode>();
+    private Dictionary<DocumentUri, CodeUnit> _projectToUnit = new Dictionary<DocumentUri, CodeUnit>();
+    
     public CompilerService(ILogger<CompilerService> logger, 
         DocumentService docs, 
         ProjectService projects,
@@ -37,6 +42,21 @@ public class CompilerService
         _facade = facade;
         _docs = docs;
         _logger = logger;
+    }
+
+    public bool TryGetParserResults(DocumentUri srcUri, out ProgramNode program)
+    {
+        if (_docToAst.TryGetValue(srcUri, out program))
+        {
+            return true;
+        }
+        Update(srcUri);
+        if (_docToAst.TryGetValue(srcUri, out program))
+        {
+            return true;
+        }
+
+        return false;
     }
 
     public bool TryGetLexerResults(DocumentUri srcUri, out LexerResults lexerResults)
@@ -54,6 +74,43 @@ public class CompilerService
 
         return false;
     }
+
+    public bool TryGetProjectUnit(DocumentUri projectUri, out CodeUnit unit)
+    {
+        if (_projectToUnit.TryGetValue(projectUri, out unit))
+        {
+            return true;
+        }
+
+        // TODO: we should be able to compile the project...
+        return false;
+    }
+
+
+    public bool TryGetProjectsFromSource(DocumentUri sourceUri, out List<CodeUnit> units)
+    {
+        units = null;
+        if (!TryGetProjectContexts(sourceUri, out var projectUris))
+        {
+            // do nothing. This src is not listed in a valid project.
+            _logger.LogWarning("unknown source file edit does not belong to any project");
+            return false;
+        }
+
+        units = new List<CodeUnit>(projectUris.Count);
+        foreach (var projectUri in projectUris)
+        {
+            if (!TryGetProjectUnit(projectUri, out var unit))
+            {
+                _logger.LogError("no compiled unit... must compile");
+                continue;
+            }
+            units.Add(unit);
+        }
+
+        return true;
+    }
+    
     
     public void Update(DocumentUri srcUri)
     {
@@ -71,7 +128,8 @@ public class CompilerService
         }
         
         // Diagnostics are sent a document at a time, this example is for demonstration purposes only
-        var diagnostics = ImmutableArray<Diagnostic>.Empty.ToBuilder();
+        // var diagnostics = ImmutableArray<Diagnostic>.Empty.ToBuilder();
+        var fileToDiags = new Dictionary<string, List<Diagnostic>>();
 
         // resolve the project...
         try
@@ -83,66 +141,72 @@ public class CompilerService
                     _logger.LogWarning("project uri not found");
                     continue;
                 }
+
+                var context = project.Item1;
+                var commands = project.Item2;
+
+                var sourceMap = context.CreateSourceMap(_docs.GetSourceLinesOrReadLines);
                 
-                var tokenizer = new Lexer();
-                var tokenData = tokenizer.TokenizeWithErrors(fullText, project.Item2);
-                _docToLexResults[srcUri] = tokenData; // TODO: what if there is more than one project?
-                //
-                var parser = new Parser(new TokenStream(tokenData.tokens.ToList()), project.Item2);
+                var unit = sourceMap.Parse(commands);
+                _projectToUnit[projectUri] = unit;
+                _docToLexResults[srcUri] = unit.lexerResults;
+                _docToAst[srcUri] = unit.program;
+                // TODO: technically, this code unit is valid for the entire project at this point...
+                
+                var program = unit.program;
 
-                foreach (var lexError in tokenData.tokenErrors)
+                foreach (var src in context.absoluteSourceFiles)
                 {
-                    _logger.LogInformation("lexer error: " + lexError.Display);
-                    // TODO: this should not parse.
+                    fileToDiags[src] = new List<Diagnostic>();
                 }
-
-                var sw = new Stopwatch();
-                sw.Start();
-                var done = false;
-                var _ = Task.Run(async () =>
-                {
-                    await Task.Delay(1000); // wait a second. // TODO: take this out at some point, or don't just hard it code it to a second.
-                    if (!done)
-                    {
-                        _logger.LogError("Compiler took too long! Likely a bug has happened!");
-                    }
-                    else
-                    {
-                        _logger.LogInformation("compiler took " + sw.ElapsedMilliseconds);
-                    }
-                });
-                var program = parser.ParseProgram();
-                done = true;
-                sw.Stop();
+                
                 foreach (var err in program.GetAllErrors())
                 {
-                    diagnostics.Add(new Diagnostic()
+
+                    var location = sourceMap.GetOriginalRange(err.location);
+                    if (!fileToDiags.TryGetValue(location.fileName, out var diags))
+                    {
+                        throw new InvalidOperationException("all files must already have empty diags");
+                        // diags = fileToDiags[location.fileName] = new List<Diagnostic>();
+                    }
+                    
+                    diags.Add(new Diagnostic()
                     {
                         Code = err.errorCode.ToString(),
                         Severity = DiagnosticSeverity.Error,
                         Message = err.Display,
                         Range = new Range(
-                            startLine: err.location.start.lineNumber,
-                            startCharacter: err.location.start.charNumber,
-                            endLine: err.location.end.lineNumber,
-                            endCharacter: err.location.end.charNumber),
+                            startLine: location.startLine,
+                            startCharacter: location.startChar,
+                            endLine: location.endLine,
+                            endCharacter: location.endChar),
                         Source = FadeBasicConstants.FadeBasicLanguage,
                         Tags = new Container<DiagnosticTag>()
                     });
                 }
             }
 
-            _facade.TextDocument.PublishDiagnostics(new PublishDiagnosticsParams()
+            foreach (var kvp in fileToDiags)
             {
-                Diagnostics = new Container<Diagnostic>(diagnostics.ToArray()),
-                Uri = srcUri,
-                // Version = request.TextDocument.Version
-            });
+                var container = new Container<Diagnostic>(kvp.Value);
+                var uri = DocumentUri.File(kvp.Key);
+                _facade.TextDocument.PublishDiagnostics(new PublishDiagnosticsParams
+                {
+                    Diagnostics = container,
+                    Uri = uri
+                });
+            }
+            // _facade.TextDocument.PublishDiagnostics(new PublishDiagnosticsParams()
+            // {
+            //     Diagnostics = new Container<Diagnostic>(diagnostics.ToArray()),
+            //     Uri = srcUri,
+            //     // Version = request.TextDocument.Version
+            // });
         }
         catch (Exception ex)
         {
-            _logger.LogInformation("uh oh! " + ex?.Message);
-            // _logger.LogError(ex.GetType().Name + " -- " + ex.Message + " \n " + ex.StackTrace);
+            // _logger.LogInformation("uh oh! " + ex?.Message);
+            _logger.LogError(ex.GetType().Name + " -- " + ex.Message + " \n " + ex.StackTrace);
         }
     }
 

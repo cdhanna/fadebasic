@@ -29,8 +29,17 @@ public static class CompileToLaunchableCommand
             Log.Debug($"found project=[{projPath}]");
             var projectContext = ProjectLoader.LoadProjectFromFile(projPath);
 
-            if (!LaunchableGenerator.TryGenerateLaunchable(projectContext))
+            if (!LaunchableGenerator.TryGenerateLaunchable(projectContext, out var errors))
             {
+                if (errors?.Count > 0)
+                {
+                    foreach (var error in errors)
+                    {
+                        Log.Error(error.Display);
+                    }
+
+                    return;
+                }
                 Log.Error("Unable to write file");
                 return;
             }

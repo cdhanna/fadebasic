@@ -1470,6 +1470,28 @@ x(2) = 1
 
     
     [Test]
+    public void ParseError_Assignment_Array_Idk()
+    {
+        // this doesn't work in LSP for some reason?
+        var input = @"
+
+DIM arr(10)
+function rags(n)
+    p = arr(n)
+    arr(p) = 4
+endfunction
+end
+
+";
+        var parser = MakeParser(input);
+        var prog = parser.ParseProgram();
+
+        var errors = prog.GetAllErrors();
+        prog.AssertNoParseErrors();
+        // Assert.That(errors[0].Display, Is.EqualTo($"[1:6] - {ErrorCodes.ExpressionMissing}"));
+    }
+    
+    [Test]
     public void ParseError_Assignment_Array_CardinalityError_MissingExpr()
     {
         var input = @"

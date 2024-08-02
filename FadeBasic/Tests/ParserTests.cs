@@ -894,9 +894,8 @@ REMEND
 x = 1
 ";
         var lex = _lexer.TokenizeWithErrors(input, _commands);
-        Assert.That(lex.comments.Count, Is.EqualTo(1));
+        Assert.That(lex.comments.Count, Is.EqualTo(4));
 
-        Assert.That(lex.comments[0].caseInsensitiveRaw.StartsWith("REMSTART"));
         
         var parser = MakeParser(input);
         var prog = parser.ParseProgram();
@@ -905,8 +904,37 @@ x = 1
         var code = prog.ToString();
         Console.WriteLine(code);
         Assert.That(code, Is.EqualTo("((= (ref x),(1)))"));
+        Assert.That(lex.comments[0].raw.Equals("REMSTART hello"));
+        Assert.That(lex.comments[1].raw.Equals("blah blah"));
+        Assert.That(lex.comments[2].raw.Equals("nothing"));
+        Assert.That(lex.comments[3].raw.Equals("REMEND"));
+
     }
     
+    
+    [Test]
+    public void RemStart_Midline()
+    {
+        var input = @"
+x = 1 REMSTART hello
+y = 2 REMEND z = 1
+";
+        var lex = _lexer.TokenizeWithErrors(input, _commands);
+        Assert.That(lex.comments.Count, Is.EqualTo(2));
+
+        
+        var parser = MakeParser(input);
+        var prog = parser.ParseProgram();
+        
+        Assert.That(prog.statements.Count, Is.EqualTo(2));
+        var code = prog.ToString();
+        Console.WriteLine(code);
+        Assert.That(code, Is.EqualTo("((= (ref x),(1)),(= (ref z),(1)))"));
+        Assert.That(lex.comments[0].raw.Equals("REMSTART hello"));
+        Assert.That(lex.comments[1].raw.Equals("y = 2 REMEND"));
+
+    }
+
     
     [Test]
     public void RemStart_WithNoEnd()
@@ -918,7 +946,7 @@ nothing
 x = 1
 ";
         var lex = _lexer.TokenizeWithErrors(input, _commands);
-        Assert.That(lex.comments.Count, Is.EqualTo(1));
+        Assert.That(lex.comments.Count, Is.EqualTo(4));
 
         var parser = MakeParser(input);
         var prog = parser.ParseProgram();
@@ -938,6 +966,7 @@ x = 1
         
         var lex = _lexer.TokenizeWithErrors(input, _commands);
         Assert.That(lex.comments.Count, Is.EqualTo(1));
+        Assert.That(lex.comments[0].raw, Is.EqualTo($"{commentPhrase} hello x = 1 this is a \" line"));
 
         
         var parser = MakeParser(input);

@@ -63,7 +63,8 @@ namespace FadeBasic
     public class Scope
     {
 
-        public HashSet<string> labels = new HashSet<string>();
+        // public HashSet<string> labels = new HashSet<string>();
+        public Dictionary<string, Symbol> labelTable = new Dictionary<string, Symbol>();
         public Dictionary<string, SymbolTable> typeNameToTypeMembers = new Dictionary<string, SymbolTable>();
         public SymbolTable globalVariables = new SymbolTable();
         public Stack<SymbolTable> localVariables = new Stack<SymbolTable>();
@@ -142,7 +143,20 @@ namespace FadeBasic
 
         public void AddLabel(LabelDeclarationNode labelDecl)
         {
-            labels.Add(labelDecl.label);
+            
+            if (labelTable.ContainsKey(labelDecl.label))
+            {
+                labelDecl.Errors.Add(new ParseError(labelDecl, ErrorCodes.SymbolAlreadyDeclared));
+            }
+            else
+            {
+                labelTable[labelDecl.label] = new Symbol
+                {
+                    text = labelDecl.label,
+                    source = labelDecl,
+                    typeInfo = TypeInfo.Void
+                };
+            }
         }
 
         public void AddAssignment(AssignmentStatement assignment)
@@ -351,9 +365,9 @@ namespace FadeBasic
             }
         }
 
-        public bool TryGetLabel(string label)
+        public bool TryGetLabel(string label, out Symbol symbol)
         {
-            return labels.Contains(label);
+            return labelTable.TryGetValue(label, out symbol);
         }
 
         public void AddCommand(CommandExpression commandExpr) =>
