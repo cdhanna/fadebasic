@@ -1,0 +1,76 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+    <PropertyGroup>
+        <AssemblyName>FadeBasic.Build</AssemblyName>
+        <TargetFramework>net8.0</TargetFramework>
+        <LangVersion>8.0</LangVersion>
+        <RootNamespace>FadeBasic</RootNamespace>
+
+        <PackageId>FadeBasic.Build</PackageId>
+        <Title>FadeBasic C# Build Tasks</Title>
+        <Description>Fade's actually dotnet embeddable Basic. </Description>
+        <Authors>Chris Hanna</Authors>
+        <ProjectUrl>https://fadebasic.com</ProjectUrl>
+
+        <!-- This target will run when MSBuild is collecting the files to be packaged, and we'll implement it below. This property controls the dependency list for this packaging process, so by adding our custom property we hook ourselves into the process in a supported way. -->
+        <TargetsForTfmSpecificBuildOutput>
+            $(TargetsForTfmSpecificBuildOutput);CopyProjectReferencesToPackage
+        </TargetsForTfmSpecificBuildOutput>
+        <!-- This property tells MSBuild where the root folder of the package's build assets should be. Because we are not a library package, we should not pack to 'lib'. Instead, we choose 'tasks' by convention. -->
+        <BuildOutputTargetFolder>tasks</BuildOutputTargetFolder>
+        <!-- NuGet does validation that libraries in a package are exposed as dependencies, but we _explicitly_ do not want that behavior for MSBuild tasks. They are isolated by design. Therefore we ignore this specific warning. -->
+        <NoWarn>NU5100</NoWarn>
+        <!-- Suppress NuGet warning NU5128. -->
+        <SuppressDependenciesWhenPacking>true</SuppressDependenciesWhenPacking>
+        <GenerateDependencyFile>true</GenerateDependencyFile>
+        <DebugType>embedded</DebugType>
+        <IsPackable>true</IsPackable>
+    </PropertyGroup>
+
+    <ItemGroup>
+        <None Update="FadeBasic.Build.props" Pack="True" PackagePath="build/$(AssemblyName).props" />
+        <None Update="FadeBasic.Build.targets" Pack="True" PackagePath="build/$(AssemblyName).targets" />
+    </ItemGroup>
+    
+    <ItemGroup>
+      <PackageReference Include="Microsoft.Build.Utilities.Core" 
+                        Version="17.10.4" 
+                        PrivateAssets="all" 
+                        ExcludeAssets="Runtime"/>
+    </ItemGroup>
+
+    <ItemGroup>
+      <ProjectReference Include="..\ApplicationSupport\ApplicationSupport.csproj" PrivateAssets="all" />
+      <ProjectReference Include="..\FadeBasic\FadeBasic.csproj" PrivateAssets="all"/>
+        
+<!--        <PackageReference Include="FadeBasic.Lang.ApplicationSupport" Version="0.0.2.16" PrivateAssets="all"/>-->
+<!--        <PackageReference Include="FadeBasic.Lang.Core" Version="0.0.2.16" PrivateAssets="all"/>-->
+    </ItemGroup>
+
+    <Target
+            Name="CopyProjectReferencesToPackage"
+            DependsOnTargets="ResolveReferences">
+        <Message Importance="high" Text="hello spaget"/>
+        <ItemGroup>
+            <!-- The TargetPath is the path inside the package that the source file will be placed. This is already precomputed in the ReferenceCopyLocalPaths items' DestinationSubPath, so reuse it here. -->
+            <BuildOutputInPackage
+                    Include="@(ReferenceCopyLocalPaths)"
+                    TargetPath="%(ReferenceCopyLocalPaths.DestinationSubPath)" />
+        </ItemGroup>
+    </Target>
+    
+    <!-- This target adds the generated deps.json file to our package output -->
+    <Target
+            Name="AddBuildDependencyFileToBuiltProjectOutputGroupOutput"
+            BeforeTargets="BuiltProjectOutputGroup"
+            Condition=" '$(GenerateDependencyFile)' == 'true'">
+
+        <ItemGroup>
+            <BuiltProjectOutputGroupOutput
+                    Include="$(ProjectDepsFilePath)"
+                    TargetPath="$(ProjectDepsFileName)"
+                    FinalOutputPath="$(ProjectDepsFilePath)" />
+        </ItemGroup>
+    </Target>
+
+</Project>

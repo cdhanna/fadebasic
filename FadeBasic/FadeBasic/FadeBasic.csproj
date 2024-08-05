@@ -1,11 +1,23 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
     <PropertyGroup>
-        <AssemblyName>FadeBasic.Core</AssemblyName>
+        <AssemblyName>FadeBasic.Lang.Core</AssemblyName>
         <TargetFrameworks>netstandard2.0;netstandard2.1</TargetFrameworks>
         <LangVersion>8.0</LangVersion>
         <RootNamespace>FadeBasic</RootNamespace>
+        
+        
+        <PackageId>FadeBasic.Lang.Core</PackageId>
+        <Title>FadeBasic Language Core</Title>
+        <Description>Fade's actually dotnet embeddable Basic. </Description>
+        <Authors>Chris Hanna</Authors>
+        <ProjectUrl>https://fadebasic.com</ProjectUrl>
+        
+        <!-- <RepositoryUrl>TODO: fill in github </RepositoryUrl>-->
+        <!-- I am not ready to open-source this yet, but when I do, I intend to use Unlicense -->
+        <!-- <PackageLicenseExpression>Unlicense</PackageLicenseExpression>-->
     </PropertyGroup>
+    
 
     <ItemGroup Label="Net Standard 2.0 Dependencies"  Condition="'$(TargetFramework)' == 'netstandard2.0'">
         <PackageReference Include="System.Memory" Version="4.5.5"/>

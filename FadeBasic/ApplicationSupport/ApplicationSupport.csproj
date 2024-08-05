@@ -4,6 +4,18 @@
         <TargetFramework>net8.0</TargetFramework>
         <ImplicitUsings>enable</ImplicitUsings>
         <Nullable>enable</Nullable>
+
+        <AssemblyName>FadeBasic.Lang.ApplicationSupport</AssemblyName>
+        <PackageId>FadeBasic.Lang.ApplicationSupport</PackageId>
+        <Title>FadeBasic Language Application Support</Title>
+        <Description>Fade's actually dotnet embeddable Basic. </Description>
+        <Authors>Chris Hanna</Authors>
+        <ProjectUrl>https://fadebasic.com</ProjectUrl>
+
+        <!-- <RepositoryUrl>TODO: fill in github </RepositoryUrl>-->
+        <!-- I am not ready to open-source this yet, but when I do, I intend to use Unlicense -->
+        <!-- <PackageLicenseExpression>Unlicense</PackageLicenseExpression>-->
+        
     </PropertyGroup>
 
     <ItemGroup>

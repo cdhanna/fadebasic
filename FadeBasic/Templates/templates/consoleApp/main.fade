@@ -1,0 +1,5 @@
+remstart 
+    ConsoleApp main entry point
+remend
+
+print "hello world"

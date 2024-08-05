@@ -5,7 +5,7 @@ namespace FadeBasic.ApplicationSupport.Project;
 public static class ProjectSourceMethods
 {
 
-    public static SourceMap CreateSourceMap(this ProjectContext project, Func<string, string[]> reader=null)
+    public static SourceMap CreateSourceMap(List<string> sourceFilePaths, Func<string, string[]> reader = null)
     {
         if (reader == null)
         {
@@ -15,9 +15,9 @@ public static class ProjectSourceMethods
         var sb = new StringBuilder();
         var totalLines = 0;
         var fileToLineRange = new List<(string, Range)>();
-        for (var i = 0; i < project.absoluteSourceFiles.Count; i++)
+        for (var i = 0; i < sourceFilePaths.Count; i++)
         {
-            var file = project.absoluteSourceFiles[i];
+            var file = sourceFilePaths[i];
             var lines = reader(file);
             var startLine = totalLines;
             var endLine = totalLines + lines.Length;
@@ -31,6 +31,10 @@ public static class ProjectSourceMethods
         }
 
         return new SourceMap(sb.ToString(), fileToLineRange);
+    }
+    public static SourceMap CreateSourceMap(this ProjectContext project, Func<string, string[]> reader=null)
+    {
+        return CreateSourceMap(project.absoluteSourceFiles, reader);
     }
     
     // public static SourceMap CreateSourceMap(this ProjectContext project)

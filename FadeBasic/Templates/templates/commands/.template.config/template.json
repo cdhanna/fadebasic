@@ -1,0 +1,26 @@
+{
+  "$schema": "http://json.schemastore.org/template",
+  "author": "Chris Hanna",
+  "classifications": [],
+  "name": "Fade Basic Command Plugin",
+  "shortName": "fadebasic-commands",
+  "sourceName": "CommandProject",
+  "identity": "fadebasic.commands",
+  "tags": {
+    "type": "project"
+  },
+  "description": "Create a C# project to be used as a command provider for Fade Basic",
+
+  "postActions": [
+    {
+      "description": "Restore NuGet packages required by this project.",
+      "manualInstructions": [
+        {
+          "text": "Run 'dotnet restore'"
+        }
+      ],
+      "actionId": "210D431B-A78B-4D2F-B762-4ED3E3EA9025",
+      "continueOnError": true
+    }
+  ]
+}

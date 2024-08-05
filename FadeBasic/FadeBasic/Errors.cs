@@ -58,7 +58,8 @@ namespace FadeBasic
         public ErrorCode errorCode;
         public string message;
 
-        public string Display => $"{location} - {errorCode}{(string.IsNullOrEmpty(message) ? "": $" | {message}")}";
+        public string Display => $"{location} - {CombinedMessage}";
+        public string CombinedMessage => $"{errorCode}{(string.IsNullOrEmpty(message) ? "": $" | {message}")}";
         public ParseError()
         {
             

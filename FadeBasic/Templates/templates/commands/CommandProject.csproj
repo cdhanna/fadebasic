@@ -1,0 +1,13 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+    <PropertyGroup>
+        <TargetFramework>netstandard2.0</TargetFramework>
+        <EmitCompilerGeneratedFiles>true</EmitCompilerGeneratedFiles>
+    </PropertyGroup>
+
+    <ItemGroup>
+        <PackageReference Include="FadeBasic.Lang.Core"/>
+        <PackageReference Include="FadeBasic.Lang.CommandSourceGenerator" />
+    </ItemGroup>
+
+</Project>

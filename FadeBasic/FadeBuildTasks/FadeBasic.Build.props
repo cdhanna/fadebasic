@@ -1,0 +1,23 @@
+<Project>
+
+    <PropertyGroup>
+
+        <_FadeBasic_TaskFolder>$(MSBuildThisFileDirectory)..\tasks\net8.0</_FadeBasic_TaskFolder>
+        <!--Reference to the assembly which contains the MSBuild Task-->
+        <FadeBasicCustomTasksAssembly>$(_FadeBasic_TaskFolder)\$(MSBuildThisFileName).dll</FadeBasicCustomTasksAssembly>
+        
+    </PropertyGroup>
+
+    
+    <ItemDefinitionGroup>
+
+        <FadeCommand>
+            <!-- fade-commands shouldn't appear in the IDE. They only exist as metadata. -->
+            <Visible>false</Visible>
+        </FadeCommand>
+
+    </ItemDefinitionGroup>
+    
+    <UsingTask TaskName="$(MSBuildThisFileName).FadeProjectTask" AssemblyFile="$(FadeBasicCustomTasksAssembly)"/>
+    
+</Project>

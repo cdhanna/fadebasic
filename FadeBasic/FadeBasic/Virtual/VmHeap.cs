@@ -6,7 +6,6 @@ namespace FadeBasic.Virtual
 {
     public struct VmHeap
     {
-        
         public byte[] memory;
         private int _cursor;
 
@@ -117,7 +116,14 @@ namespace FadeBasic.Virtual
             // reserve from the cursor to size offset...
             ptr = _cursor;
             _allocations[ptr] = size;
-            _cursor += size;
+            if (size == 0)
+            {
+                _cursor += 1; // increase the cursor by 1, so that this spot is held as "empty"
+            }
+            else
+            {
+                _cursor += size;
+            }
         }
 
         public void GetAllocationSize(int ptr, out int size)

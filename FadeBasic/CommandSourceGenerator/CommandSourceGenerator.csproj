@@ -3,15 +3,22 @@
     <PropertyGroup>
         <TargetFramework>netstandard2.0</TargetFramework>
         <EnforceExtendedAnalyzerRules>true</EnforceExtendedAnalyzerRules>
-<!--        <DevelopmentDependency>true</DevelopmentDependency>-->
-<!--        <IncludeBuildOutput>false</IncludeBuildOutput>-->
         
         <LangVersion>8.0</LangVersion>
+        <AssemblyName>FadeBasic.Lang.CommandSourceGenerator</AssemblyName>
+        <PackageId>FadeBasic.Lang.CommandSourceGenerator</PackageId>
+        <Title>FadeBasic Language Command Source Generator</Title>
+        <Description>Fade's actually dotnet embeddable Basic. </Description>
+        <Authors>Chris Hanna</Authors>
+        <ProjectUrl>https://fadebasic.com</ProjectUrl>
+
+        <!-- <RepositoryUrl>TODO: fill in github </RepositoryUrl>-->
+        <!-- I am not ready to open-source this yet, but when I do, I intend to use Unlicense -->
+        <!-- <PackageLicenseExpression>Unlicense</PackageLicenseExpression>-->
     </PropertyGroup>
 
     
-    <ItemGroup><!--      <ProjectReference Include="..\FadeBasic\FadeBasic.csproj" />-->
-    
+    <ItemGroup>
       <ProjectReference Include="..\FadeBasic\FadeBasic.csproj" />
     </ItemGroup>
 
@@ -26,6 +33,7 @@
 <!--    </Target>-->
     
     <ItemGroup>
+        <None Update="CommandSourceGenerator.props" Pack="True" PackagePath="build/$(AssemblyName).props" />
         <None Include="$(OutputPath)\$(AssemblyName).dll" Pack="true" PackagePath="analyzers/dotnet/cs" Visible="false" />
     </ItemGroup>
     

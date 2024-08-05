@@ -28,6 +28,11 @@ using {nameof(FadeBasic)}.{nameof(FadeBasic.Virtual)};
 
 public class {TAG_CLASSNAME} : {nameof(ILaunchable)}
 {{
+    public static void Main(string[] args)
+    {{
+        Launcher.Run<{TAG_CLASSNAME}>();
+    }}
+
     // this byteCode represents a fully compiled program
     public byte[] Bytecode => {TEMPLATE_BYTECODE_VAR};
 
@@ -46,6 +51,24 @@ public class {TAG_CLASSNAME} : {nameof(ILaunchable)}
     #endregion
 }}
 ";
+
+    public static void GenerateLaunchable(string className, string filePath, CodeUnit unit, CommandCollection collection, List<string> commandClasses)
+    {
+        var byteCode = unit.program.Compile(collection);
+        // Log.Debug("bytecode: " + string.Join(", ", byteCode));
+
+        
+        var src = ClassTemplate;
+
+        var byteCodeStr = LaunchUtil.Pack64(byteCode);
+        string byteCodeReplacement = "\"" + byteCodeStr + "\"";
+        var commandArray = GetCommandTable(commandClasses);
+        src = src.Replace(TAG_COMMAND_ARRAY, commandArray);
+        src = src.Replace(TAG_ENCODED_BYTECODE, byteCodeReplacement);
+        src = src.Replace(TAG_CLASSNAME, className);
+
+        File.WriteAllText(filePath, src);
+    }
 
     public static bool TryGenerateLaunchable(ProjectContext projectContext, out List<ParseError> errors)
     {
@@ -87,10 +110,21 @@ public class {TAG_CLASSNAME} : {nameof(ILaunchable)}
         src = src.Replace(TAG_ENCODED_BYTECODE, byteCodeReplacement);
         src = src.Replace(TAG_CLASSNAME, className);
 
+        var fileDir = Path.GetDirectoryName(filePath);
+        Directory.CreateDirectory(fileDir);
         File.WriteAllText(filePath, src);
         return true;
     }
 
+    static string GetCommandTable(List<string> commandClasses)
+    {
+        var instantiates = new List<string>();
+        foreach (var className in commandClasses)
+        {
+            instantiates.Add($"new {className}()");
+        }
+        return string.Join(", ", instantiates);
+    }
     static string GetCommandTable(ProjectContext context)
     {
         // IMethod collection = new CommandCollection()

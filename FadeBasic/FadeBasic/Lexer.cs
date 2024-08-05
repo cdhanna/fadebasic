@@ -130,6 +130,7 @@ namespace FadeBasic
     public class Lexer
     {
 
+        public int helloFromRebuild;
         // TODOs
         /*
          * 3. comments REM REMSTART REMEND, `

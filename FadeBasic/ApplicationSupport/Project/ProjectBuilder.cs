@@ -63,12 +63,17 @@ namespace FadeBasic.ApplicationSupport.Project
         // {
         //     
         // }
-        
+
         public static CommandCollection LoadCommandMetadata(ProjectContext context)
+        {
+            return LoadCommandMetadata(context.projectLibraries);
+        }
+        
+        public static CommandCollection LoadCommandMetadata(List<ProjectCommandSource> libraries)
         {
             var metaDatas = new List<CommandMetadata>();
             
-            foreach (var projectLib in context.projectLibraries)
+            foreach (var projectLib in libraries)
             {
                 var loadContext = new AssemblyLoadContext("metadata", isCollectible: true);
 

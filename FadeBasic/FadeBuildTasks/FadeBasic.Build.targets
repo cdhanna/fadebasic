@@ -1,0 +1,40 @@
+<Project>
+
+    <PropertyGroup>
+
+        <FadeGeneratedLaunchType Condition="'$(FadeGeneratedLaunchType)'==''">GeneratedFade</FadeGeneratedLaunchType>
+
+        <FadeGeneratedFolder Condition="'$(FadeGeneratedFolder)'==''">Launch</FadeGeneratedFolder>
+
+        <!--        MSBuildProjectDirectory-->
+        <FadeGeneratedLaunchFile Condition="'$(FadeGeneratedLaunchFile)'==''">$(MSBuildProjectDirectory)/$(FadeGeneratedFolder)/$(FadeGeneratedLaunchType).g.cs</FadeGeneratedLaunchFile>
+    </PropertyGroup>
+
+    <Target Name="GenerateFadeBasic" BeforeTargets="CoreCompile" Inputs="@(FadeSource);@(Commands);@(ReferencePath)" Outputs="$(FadeGeneratedLaunchFile)">
+        <FadeProjectTask 
+                GeneratedClassName="$(FadeGeneratedLaunchType)" 
+                SourceFiles="@(FadeSource)"
+                Commands="@(FadeCommand)"
+                References="@(ReferencePath)"
+                GenerateFileLocation="$(FadeGeneratedLaunchFile)"
+        >
+            <Output TaskParameter="GeneratedFile" PropertyName="FadeGeneratedClassFileName" />
+        </FadeProjectTask>
+        <PropertyGroup>
+            <GeneratedFadeExists Condition="%(Compile.FullPath) == $(FadeGeneratedClassFileName)">1</GeneratedFadeExists>
+        </PropertyGroup>
+        <ItemGroup Condition="$(GeneratedFadeExists)!='1'">
+            <Compile Include="$(FadeGeneratedClassFileName)" />
+        </ItemGroup>
+        <ItemGroup>
+<!--            instead of hardcoding the file, let the auto-linker find it.-->
+<!--            <Compile Remove="$(FadeGeneratedClassFileName)" />-->
+<!--            <Compile Include="$(FadeGeneratedClassFileName)" />-->
+        </ItemGroup>
+    </Target>
+
+    <Target Name="ForceReGenerateOnRebuild" AfterTargets="CoreClean">
+        <Delete Files="$(FadeGeneratedLaunchFile)" />
+    </Target>
+    
+</Project>

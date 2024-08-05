@@ -111,6 +111,41 @@ endfunction
 
     
     [Test]
+    public void String_Init_StartEmpty()
+    {
+        var src = @"
+buffer$=""""
+toast$=""a""
+x=len(buffer$)
+";
+        Setup(src, out var compiler, out var prog);
+        
+        var vm = new VirtualMachine(prog);
+        vm.hostMethods = compiler.methodTable;
+
+        vm.Execute2();
+        
+        Assert.That(vm.dataRegisters[0], Is.EqualTo(0)); // the ptr to the string in memory
+        Assert.That(vm.typeRegisters[0], Is.EqualTo(TypeCodes.STRING));
+        
+        Assert.That(vm.dataRegisters[1], Is.EqualTo(1)); // the ptr to the string in memory
+        Assert.That(vm.typeRegisters[1], Is.EqualTo(TypeCodes.STRING));
+        
+        Assert.That(vm.typeRegisters[2], Is.EqualTo(TypeCodes.INT));
+        Assert.That(vm.dataRegisters[2], Is.EqualTo(0)); // zero length string
+
+        
+        vm.heap.Read((int)vm.dataRegisters[0], "".Length * 4, out var memory);
+        var str = VmConverter.ToString(memory);
+        Assert.That(str, Is.EqualTo(""));
+        
+        vm.heap.Read((int)vm.dataRegisters[1], "a".Length * 4, out memory);
+        str = VmConverter.ToString(memory);
+        Assert.That(str, Is.EqualTo("a"));
+        
+    }
+    
+    [Test]
     public void String_Concat()
     {
         var src = @"
