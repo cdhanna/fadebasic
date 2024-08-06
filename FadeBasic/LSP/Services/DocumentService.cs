@@ -71,7 +71,7 @@ public class DocumentService
         
         // find all .basic files and .basicProject.yaml files
         var basicFiles = Directory.GetFiles(filePath, $"*{FadeBasicConstants.FadeBasicScriptExt}", SearchOption.AllDirectories);
-        var projectFiles = Directory.GetFiles(filePath, $"*{FadeBasicConstants.FadeBasicProjectExt}", SearchOption.AllDirectories);
+        var projectFiles = Directory.GetFiles(filePath, $"*{FadeBasicConstants.CSharpProjectExt}", SearchOption.AllDirectories);
 
         foreach (var projectFile in projectFiles)
         {

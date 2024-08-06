@@ -15,7 +15,7 @@ public static class PathUtil
         else if(Directory.Exists(inputPath))
         {
             // is Folder 
-            var subFiles = Directory.GetFiles(inputPath, $"*{FadeBasicConstants.FadeBasicProjectExt}", SearchOption.TopDirectoryOnly);
+            var subFiles = Directory.GetFiles(inputPath, $"*{FadeBasicConstants.CSharpProjectExt}", SearchOption.TopDirectoryOnly);
             if (subFiles.Length == 1)
             {
                 path = Path.GetFullPath(subFiles[0]);

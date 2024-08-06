@@ -1,9 +1,12 @@
+using System.Reflection.Metadata;
 using System.Text.Json;
 using Microsoft.Build.Evaluation;
+using Microsoft.Build.Evaluation.Context;
+using Microsoft.Build.FileSystem;
+using Microsoft.Build.Framework;
 using Microsoft.Build.Locator;
-using YamlDotNet.RepresentationModel;
-using YamlDotNet.Serialization;
-using YamlDotNet.Serialization.NamingConventions;
+using Microsoft.Build.Logging;
+using NuGet.Frameworks;
 
 namespace FadeBasic.ApplicationSupport.Project;
 
@@ -11,79 +14,107 @@ public static class ProjectLoader
 {
     public static void Initialize()
     {
-        MSBuildLocator.RegisterDefaults();
+        // var x = typeof(NuGetFramework);
+        var instance = MSBuildLocator.RegisterDefaults();
     }
     
-    public static ProjectContext LoadProjectFromFile(string projectPath)
+    public static ProjectContext LoadCsProject(string csProjPath)
     {
-        var yaml = File.ReadAllText(projectPath);
-        return LoadProject(yaml, Path.GetDirectoryName(projectPath));
-    }
-    
-    public static ProjectContext LoadProject(string yaml, string projectDir)
-    {
-        var buildEngine = new ProjectCollection();
-        var deserializer = new DeserializerBuilder()
-            .WithNamingConvention(CamelCaseNamingConvention.Instance)
-            .Build();
+        var projectCollection = new ProjectCollection();
+        var context = new ProjectContext();
         
-        var model = deserializer.Deserialize<ProjectModel>(yaml);
-
-        projectDir = Path.GetFullPath(projectDir);
-
-        var projectLibraries = new List<ProjectCommandSource>();
-        foreach (var reference in model.projectReferences)
+        var csProj = projectCollection.LoadProject(csProjPath);
+        var outDir = csProj.GetPropertyValue("OutDir");
+        var sourceItems = csProj.GetItems("FadeSource");
+        foreach (var sourceItem in sourceItems)
         {
-            var absProjectPath = Path.Combine(projectDir, reference.csProjPath.Trim());
-            var msProject = buildEngine.LoadProject(absProjectPath);
-            var outDir = msProject.GetProperty("OutDir");
-            var asmName = msProject.GetProperty("AssemblyName");
-            var root = Path.GetDirectoryName(absProjectPath);
-            var absDllPath = Path.Combine(root, outDir.EvaluatedValue.Replace("\\", "/"), asmName.EvaluatedValue.Replace("\\", "/") + ".dll");
-            var dllExists = Path.Exists(absDllPath);
-            projectLibraries.Add(new ProjectCommandSource
+            var sourcePath = sourceItem.GetMetadataValue("FullPath");
+            context.absoluteSourceFiles.Add(sourcePath);
+        }
+
+        // var references = csProj.GetItems("ReferencePath");
+        // var refMap = new Dictionary<string, string>();
+        // foreach (var reference in references)
+        // {
+        //     var assembly = reference.GetMetadataValue("FileName");
+        //     var dllPath = reference.GetMetadataValue("FullPath");
+        //     refMap[assembly] = dllPath;
+        // }
+
+
+        
+        // var instance = csProj.CreateProjectInstance();
+        // instance.Build(new ILogger[]{new MsbuildLog()});
+        // var items = instance.GetItems("ReferencePath");
+        //
+        //
+        
+        var commands = csProj.GetItems("FadeCommand");
+        var libMap = new Dictionary<string, List<string>>(); // dllPath to list of class names
+        foreach (var command in commands)
+        {
+            var fullClassName = command.GetMetadataValue("FullName");
+            var referenceName = command.GetMetadataValue("Identity");
+
+            var csProjDir = Path.GetDirectoryName(csProjPath);
+            var expectedDllPath = Path.Join(csProjDir, outDir, referenceName + ".dll");
+            expectedDllPath = expectedDllPath.Replace("\\", "/");
+            if (!File.Exists(expectedDllPath))
             {
-                commandClasses = reference.classNames,
-                absoluteProjectPath = absProjectPath,
-                absoluteOutputDllPath = absDllPath,
-                hasBuiltDll = dllExists
-            });
-        }
-
-        var sourceFiles = new List<string>();
-        foreach (var source in model.sourceFiles)
-        {
-            var absSource = Path.GetFullPath(source);
-            sourceFiles.Add(absSource);
-        }
-
-        var absLaunchProject = Path.Combine(projectDir,model.launchProject);
+                continue;
+            }///Users/chrishanna/Documents/SillyConsumerTest/Demo/bin/Debug/net8.0
+             // 
+            
+            // if (!refMap.TryGetValue(referenceName, out var dllPath))
+            // {
+            //     throw new InvalidOperationException($"No dll found for {referenceName}");
+            // }
         
-        var ctx = new ProjectContext
+            if (!libMap.TryGetValue(expectedDllPath, out var commandClasses))
+            {
+                commandClasses = libMap[expectedDllPath] = new List<string>();
+            }
+            commandClasses.Add(fullClassName);
+        }
+
+        foreach (var kvp in libMap)
         {
-            name = model.name,
-            absoluteContextDir = projectDir,
-            absoluteLaunchCsProjPath = absLaunchProject,
-            targetFramework = model.targetFramework,
-            absoluteSourceFiles = sourceFiles,
-            projectLibraries = projectLibraries
-        };
-        return ctx;
+            var source = new ProjectCommandSource
+            {
+                absoluteOutputDllPath = kvp.Key,
+                commandClasses = kvp.Value
+            };
+            context.projectLibraries.Add(source);
+        }
+
+
+        return context;
     }
-
-
-    public class ProjectModel
+    
+    public class MsbuildLog : ILogger
     {
-        public string name;
-        public string targetFramework;
-        public string launchProject;
-        public List<string> sourceFiles = new List<string>();
-        public List<ProjectCsharpReference> projectReferences = new List<ProjectCsharpReference>();
-    }
+        public void Initialize(IEventSource eventSource)
+        {
+            eventSource.MessageRaised += (sender, args) =>
+            {
+                Console.WriteLine("MESSAGE: " + args.Message);
+            };
+            eventSource.ErrorRaised += (sender, args) =>
+            {
+                Console.WriteLine("ERR: " + args.Message);
+            };
+            eventSource.AnyEventRaised += (sender, args) =>
+            {
+                Console.WriteLine("ANY: " + args.Message);
+            };
+        }
 
-    public class ProjectCsharpReference
-    {
-        public string csProjPath;
-        public List<string> classNames = new List<string>();
+        public void Shutdown()
+        {
+        }
+
+        public LoggerVerbosity Verbosity { get; set; }
+        public string? Parameters { get; set; }
     }
+    
 }

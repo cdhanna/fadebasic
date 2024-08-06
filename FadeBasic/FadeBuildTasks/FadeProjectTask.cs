@@ -38,10 +38,6 @@ namespace FadeBasic.Build
         
         public override bool Execute()
         {
-            
-            Log.LogMessage(MessageImportance.High, $"!!hello from test fade gcn=[{GeneratedClassName}] local=[{GenerateFileLocation}]");
-            // use whatever version of fade is being referenced... 
-
             if (SourceFiles == null)
             {
                 Log.LogError("If FadeBasic.Build is included, then SourceFiles must be specified.");
@@ -52,7 +48,7 @@ namespace FadeBasic.Build
 
             var dllTable = PrepareAssemblyToDllMap(References);
 
-            Log.LogMessage(MessageImportance.High,$"[COMMANDS] there are {Commands.Length} commands...");
+            Log.LogMessage(MessageImportance.Low,$"[FADE] there are {Commands.Length} commands...");
             for (var i = 0; i < Commands.Length; i++)
             {
                 var command = Commands[i];
@@ -66,13 +62,6 @@ namespace FadeBasic.Build
                     var className = command.GetMetadata("FullName");
                     lib.Add(className);
                 }
-                
-                
-                // Log.LogMessage(MessageImportance.High,$" - metadata-count{command.MetadataCount}");
-                // foreach (var name in command.MetadataNames)
-                // {
-                //     Log.LogMessage(MessageImportance.High,$" -- {name} -> {command.GetMetadata(name.ToString())}");
-                // }
             }
             
             var libraries = new List<ProjectCommandSource>();
@@ -86,55 +75,32 @@ namespace FadeBasic.Build
                 };
                 allClassNames.AddRange(kvp.Value);
                 libraries.Add(source);
-                Log.LogMessage(MessageImportance.High,$" IDENTIFIED SOURCE: {string.Join(",", source.commandClasses)} dll=[{source.absoluteOutputDllPath}]" );
+                Log.LogMessage(MessageImportance.Low,$"[FADE] IDENTIFIED SOURCE: {string.Join(",", source.commandClasses)} dll=[{source.absoluteOutputDllPath}]" );
             }
 
             var commandCollection = ProjectBuilder.LoadCommandMetadata(libraries);
           
-            // Log.LogMessage(MessageImportance.High,$"[REFERENCES] there are {References.Length} references...");
-            // for (var i = 0; i < References.Length; i++)
-            // {
-            //     
-            //     var command = References[i];
-            //     // var assemblyName = command.GetMetadata("AssemblyName");
-            //     // if (!assemblyName.StartsWith("Fade")) continue;
-            //     
-            //     
-            //     // nugetPackageId - NuGetPackageId
-            //     // NuGetSourceType -> Package
-            //     // NuGetPackageId -> FadeBasic.Lib.Testing
-            //     // Filename -> FadeBasic.Lib.Testing
-            //     
-            //     Log.LogMessage(MessageImportance.High,$" - metadata-count{command.MetadataCount}");
-            //     foreach (var name in command.MetadataNames)
-            //     {
-            //         Log.LogMessage(MessageImportance.High,$" -- {name} -> {command.GetMetadata(name.ToString())}");
-            //     }
-            // }
             
-            Log.LogMessage(MessageImportance.High, $"there are {SourceFiles.Length} source files");
+            Log.LogMessage(MessageImportance.Low, $"[FADE] there are {SourceFiles.Length} source files");
 
             var sourcePaths = new List<string>(SourceFiles.Length);
             foreach (var item in SourceFiles)
             {
                 var settingFile = item.GetMetadata("FullPath");
                 sourcePaths.Add(settingFile);
-                Log.LogMessage(MessageImportance.High, $"file: {settingFile} meta=[{item.MetadataCount}]");
+                Log.LogMessage(MessageImportance.Low, $"[FADE] file: {settingFile} meta=[{item.MetadataCount}]");
             }
 
             var map = ProjectSourceMethods.CreateSourceMap(sourcePaths);
             
             // to generate the command collection, we need to load up the metadata for those dlls...
             // that means we need to be able to resolve PackageReference and ProjectReference to their actual dll paths
-            
-            
             var unit = map.Parse(commandCollection);
-
             var errors = unit.program.GetAllErrors();
             foreach (var error in errors)
             {
                 var local = map.GetOriginalRange(error.location);
-                Log.LogError(subcategory: null,
+                Log.LogError(subcategory: "fade",
                     errorCode: "FADE:" + error.errorCode.code,
                     helpKeyword: null,
                     file: local.fileName,
@@ -146,11 +112,6 @@ namespace FadeBasic.Build
             }
 
             if (errors.Count > 0) return false;
-
-            // var compiler = new Compiler(new CommandCollection());
-            // compiler.Compile(unit.program);
-            
-            // Log.LogMessage(MessageImportance.High, $"compiled program into {compiler.Program.Count} bytes");
 
             LaunchableGenerator.GenerateLaunchable(GeneratedClassName,GenerateFileLocation,unit, commandCollection, allClassNames);
             GeneratedFile = GenerateFileLocation;

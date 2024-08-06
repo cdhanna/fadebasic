@@ -48,8 +48,8 @@ public class ProjectService
 
         try
         {
-            var dir = Path.GetDirectoryName(projectUri.GetFileSystemPath());
-            var ctx = ProjectLoader.LoadProject(projectText, dir);
+            var filePath = projectUri.GetFileSystemPath();
+            var ctx = ProjectLoader.LoadCsProject(filePath);
             var commands = ProjectBuilder.LoadCommandMetadata(ctx);
 
             _uriToProject[projectUri] = (ctx, commands);        

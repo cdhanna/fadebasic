@@ -39,7 +39,7 @@ public class ProjectTextDocumentSyncHandler: TextDocumentSyncHandlerBase
     
     public override TextDocumentAttributes GetTextDocumentAttributes(DocumentUri uri)
     {
-        return new TextDocumentAttributes(uri, "yaml");
+        return new TextDocumentAttributes(uri, "xml");
     }
 
 
@@ -95,7 +95,7 @@ public class ProjectTextDocumentSyncHandler: TextDocumentSyncHandlerBase
         _logger.LogInformation("registered");
 
         return new TextDocumentSyncRegistrationOptions() {
-            DocumentSelector = TextDocumentSelector.ForPattern($"**/*{FadeBasic.FadeBasicConstants.FadeBasicProjectExt}"),
+            DocumentSelector = TextDocumentSelector.ForPattern($"**/*{FadeBasic.FadeBasicConstants.CSharpProjectExt}"),
             Change = TextDocumentSyncKind.Full,
             Save = new SaveOptions() { IncludeText = true }
         };

@@ -7,7 +7,6 @@ using System.CommandLine.Parsing;
 using System.Text.Json.Serialization;
 using FadeBasic;
 using FadeBasic.ApplicationSupport.Project;
-using FadeBasic.Commands;
 using Newtonsoft.Json;
 using Serilog;
 using Serilog.Core;
@@ -74,8 +73,8 @@ builder.AddMiddleware(context =>
 
 {
     // register commands
-    CompileToLaunchableCommand.Bind(root);
-    RunLaunchableCommand.Bind(root);
+    // CompileToLaunchableCommand.Bind(root);
+    // RunLaunchableCommand.Bind(root);
 }
 
 var app = builder

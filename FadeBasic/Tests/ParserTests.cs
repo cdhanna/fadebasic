@@ -1357,6 +1357,24 @@ x = a.b + len(a.c)
         Assert.That(code, Is.EqualTo("((= (ref x),(2.1)))"));
     }
     
+    
+    [Test]
+    public void DeclAssign_Integer()
+    {
+        var input = "x AS INTEGER = 3";
+        var parser = MakeParser(input);
+        var prog = parser.ParseProgram();
+        
+        Assert.That(prog.statements.Count, Is.EqualTo(2));
+        Assert.That(prog.statements[0], Is.AssignableTo<DeclarationStatement>());
+
+        var decl = prog.statements[0] as DeclarationStatement;
+        Assert.That(decl.type.variableType, Is.EqualTo(VariableType.Integer));
+        var code = prog.ToString();
+        Assert.That(code, Is.EqualTo("((decl local,x,(integer)),(= (ref x),(3)))"));
+    }
+
+    
     [Test]
     public void Decl_Integer()
     {
@@ -1372,6 +1390,7 @@ x = a.b + len(a.c)
         var code = prog.ToString();
         Assert.That(code, Is.EqualTo("((decl local,x,(integer)))"));
     }
+    
     
     
     

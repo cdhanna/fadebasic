@@ -10,7 +10,7 @@ public class LoadTests
     public void Load()
     {
         ProjectLoader.Initialize();
-        var project = ProjectLoader.LoadProjectFromFile("ApplicationSupport/Fixtures/simpleParse.yaml");
+        var project = ProjectLoader.LoadCsProject("/Users/chrishanna/Documents/SillyConsumerTest/Demo/Demo.csproj");
 
         var sw = new Stopwatch();
         sw.Start();
