@@ -20,22 +20,16 @@
 
     <ItemGroup>
       <ProjectReference Include="..\FadeBasic\FadeBasic.csproj" />
-        <Reference Include="Nuget.Frameworks">
-            <HintPath>/usr/local/share/dotnet/sdk/8.0.300/Nuget.Frameworks.dll</HintPath>
-        </Reference>
     </ItemGroup>
 
     <ItemGroup>
         <!-- For parsing project files... -->
 
         <!-- For analyzing cs project files and finding build artifacts -->
-        <PackageReference Include="Microsoft.Build" Version="17.10.4" ExcludeAssets="runtime"/>
+        <PackageReference Include="Microsoft.Build" Version="17.10.4" ExcludeAssets="runtime" />
         <PackageReference Include="Microsoft.Build.Locator" Version="1.7.8" />
         <PackageReference Include="Microsoft.Build.Utilities.Core" Version="17.10.4" ExcludeAssets="runtime"/>
 
-        <PackageReference Include="Serilog" Version="3.1.1" />
-        <PackageReference Include="Serilog.Extensions.Logging" Version="8.0.0" />
-        <PackageReference Include="Serilog.Sinks.Console" Version="2.0.0" />
     </ItemGroup>
 
 </Project>

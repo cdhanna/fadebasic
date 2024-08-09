@@ -15,7 +15,7 @@ public static class CodeUtil
         return compiler.Program.ToArray();
     }
 
-    public static CodeUnit Parse(this SourceMap sourceMap, CommandCollection commandCollection)
+    public static CodeUnit Parse(this SourceMap sourceMap, CommandCollection commandCollection, ParseOptions options=null)
     {
         var lexer = new Lexer();
         var unit = new CodeUnit
@@ -30,7 +30,7 @@ public static class CodeUtil
         if (unit.lexerResults.tokenErrors.Count == 0)
         {
             var parser = new Parser(unit.lexerResults.stream, commandCollection);
-            unit.program = parser.ParseProgram();
+            unit.program = parser.ParseProgram(options);
         }
 
         return unit;

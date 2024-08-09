@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 
 namespace FadeBasic.Ast.Visitors
 {
@@ -25,7 +26,9 @@ namespace FadeBasic.Ast.Visitors
                 scope.DeclareFunction(function);
             }
 
-            CheckTypeInfo2(scope);
+            // CheckTypeInfo2(scope);
+            CheckTypesForUnknownReferences(scope);
+            CheckTypesForRecursiveReferences(scope);
             CheckStatements(program.statements, scope);
             
             
@@ -37,97 +40,109 @@ namespace FadeBasic.Ast.Visitors
             }
         }
 
-        static void CheckTypeInfo2(Scope scope)
+        static void CheckTypesForUnknownReferences(Scope scope)
         {
-            var toExplore = new Queue<Symbol>();
-            var seenTypes = new HashSet<string>();
             foreach (var namedType in scope.typeNameToTypeMembers)
             {
-                seenTypes.Clear();
-                toExplore.Clear();
-                foreach (var namedField in namedType.Value)
+                var typeName = namedType.Key;
+                var members = namedType.Value;
+
+                foreach (var member in members)
                 {
-                    toExplore.Enqueue(namedField.Value);
+                    var memberName = member.Key;
+                    var memberSymbol = member.Value;
+                    
+                    if (memberSymbol.typeInfo.type != VariableType.Struct)
+                        continue; // not a struct reference...
+                    
+                    if (!scope.typeNameToTypeMembers.TryGetValue(memberSymbol.typeInfo.structName, out var referencedType))
+                    {
+                        memberSymbol.source.Errors.Add(new ParseError(memberSymbol.source, ErrorCodes.StructFieldReferencesUnknownStruct));
+                        continue;
+                    }
+                }
+            }
+        }
+        
+        static void CheckTypesForRecursiveReferences(Scope scope)
+        {
+            var graph = new Dictionary<string, HashSet<string>>();
+            // create a type dependency graph...
+            {
+                foreach (var namedType in scope.typeNameToTypeMembers)
+                {
+                    var typeName = namedType.Key;
+                    var members = namedType.Value;
+
+                    graph[typeName] = new HashSet<string>();
+
+                    foreach (var member in members)
+                    {
+                        var memberSymbol = member.Value;
+
+                        if (memberSymbol.typeInfo.type != VariableType.Struct)
+                            continue; // not a struct reference...
+
+                        if (!scope.typeNameToTypeMembers.ContainsKey(memberSymbol.typeInfo.structName))
+                            continue; // not a valid struct reference...
+                        graph[typeName].Add(memberSymbol.typeInfo.structName);
+                    }
+                }
+            }
+            
+            var processed = new HashSet<string>();
+            // now that we have a graph, check each node
+            foreach (var kvp in graph)
+            {
+                Process(kvp.Key);
+            }
+
+            void Process(string node)
+            {
+                if (processed.Contains(node))
+                {
+                    // return; // already done!
+                }
+                
+                var seen = new HashSet<string>();
+               
+                var toExplore = new Queue<string>();
+                //toExplore.Enqueue(node);
+                
+                foreach (var next in graph[node])
+                {
+                    toExplore.Enqueue(next);
                 }
 
                 while (toExplore.Count > 0)
                 {
                     var curr = toExplore.Dequeue();
-                    var fieldType = curr.typeInfo.type;
-                    var structName = curr.typeInfo.structName;
-
-                    if (fieldType != VariableType.Struct)
-                        continue;
-
-                    if (seenTypes.Contains(structName))
+                    if (seen.Contains(curr))
                     {
-                        curr.source.Errors.Add(new ParseError(curr.source, ErrorCodes.StructFieldsRecursive));
-                        continue; // recursive error needs to stop processing this chain
-                    }
+                        // ASYNC REF FOUND!
+                        var source = scope.typeNameToDecl[curr];
+                        source.Errors.Add(new ParseError(source.name, ErrorCodes.StructFieldsRecursive));
 
-                    seenTypes.Add(structName);
-                    
-                    
-                    if (!scope.typeNameToTypeMembers.TryGetValue(structName, out var referencedType))
-                    {
-                        curr.source.Errors.Add(new ParseError(curr.source, ErrorCodes.StructFieldReferencesUnknownStruct));
                         continue;
                     }
+
+                    seen.Add(curr);
+                    processed.Add(curr);
                     
-                    foreach (var namedField in referencedType)
+                    foreach (var next in graph[curr])
                     {
-                        toExplore.Enqueue(namedField.Value);
+                        toExplore.Enqueue(next);
                     }
                 }
             }
-            
-            
         }
-        
-        static void CheckTypeInfo(Scope scope)
-        {
-            
-            // check that all types have valid type references...
-            foreach (var kvp in scope.typeNameToTypeMembers)
-            {
-                var typeTable = kvp.Value;
-                foreach (var namedField in typeTable)
-                {
-                    var fieldType = namedField.Value;
-                    if (fieldType.typeInfo.type == VariableType.Struct)
-                    {
-                        var structName = fieldType.typeInfo.structName;
-                        if (!scope.typeNameToTypeMembers.ContainsKey(structName))
-                        {
-                            fieldType.source.Errors.Add(new ParseError(fieldType.source, ErrorCodes.StructFieldReferencesUnknownStruct));
-                        } else if (structName == kvp.Key)
-                        {
-                            fieldType.source.Errors.Add(new ParseError(fieldType.source, ErrorCodes.StructFieldsRecursive));
-                        }
-                    }
-                }
-            }
-
-        }
-
-        // static void CheckExpressions(this List<IExpressionNode> expressions, Scope scope)
-        // {
-        //     foreach (var expr in expressions)
-        //     {
-        //         switch (expr)
-        //         {
-        //             case CommandExpression commandExpression:
-        //                 // this can define a variable...
-        //                 commandExpression.
-        //                 break;
-        //         }
-        //     }
-        // }
         
         static void CheckStatements(this List<IStatementNode> statements, Scope scope)
         {
-            foreach (var statement in statements)
+            // foreach (var statement in statements)
+            for (var i = 0 ; i < statements.Count; i ++)
             {
+                var statement = statements[i];
                 switch (statement)
                 {
                     case CommandStatement commandStatement:
@@ -135,7 +150,10 @@ namespace FadeBasic.Ast.Visitors
                         // commandStatement.args.CheckExpressions(scope);
                         
                         // check that all parameters make sense...
-                        commandStatement.EnsureVariablesAreDefined(scope);
+                        foreach (var arg in commandStatement.args)
+                        {
+                            arg.EnsureVariablesAreDefined(scope);
+                        }
                         break;
                     case FunctionReturnStatement returnStatement:
                         returnStatement.returnExpression.EnsureVariablesAreDefined(scope);
@@ -147,6 +165,10 @@ namespace FadeBasic.Ast.Visitors
                         scope.EndFunction();
                         break;
                     case DeclarationStatement decl:
+                        if (decl.initializerExpression != null)
+                        {
+                            decl.initializerExpression.EnsureVariablesAreDefined(scope);
+                        }
                         scope.AddDeclaration(decl);
                         break;
                     case AssignmentStatement assignment:
@@ -155,8 +177,11 @@ namespace FadeBasic.Ast.Visitors
                         assignment.expression.EnsureVariablesAreDefined(scope);
 
                         // and THEN register LHS of the assignemnt (otherwise you can get self-referential stuff)
-                        scope.AddAssignment(assignment);
-                        
+                        scope.AddAssignment(assignment, out var implicitDecl);
+                        if (implicitDecl != null)
+                        {
+                            statements.Insert(i, implicitDecl);
+                        }
                         switch (assignment.variable)
                         {
                             case StructFieldReference fieldRef:
@@ -206,14 +231,14 @@ namespace FadeBasic.Ast.Visitors
                         repeatStatement.condition.EnsureVariablesAreDefined(scope);
                         break;
                     case GoSubStatement goSub:
-                        goSub.EnsureVariablesAreDefined(scope);
+                        EnsureLabel(scope, goSub.label, goSub);
                         break;
                     case GotoStatement goTo:
-                        goTo.EnsureVariablesAreDefined(scope);
+                        EnsureLabel(scope, goTo.label, goTo);
                         break;
                     
                     case ExpressionStatement exprStatement:
-                        exprStatement.EnsureVariablesAreDefined(scope);
+                        exprStatement.expression.EnsureVariablesAreDefined(scope);
                         break;
                     
                     case NoOpStatement _:
@@ -231,7 +256,15 @@ namespace FadeBasic.Ast.Visitors
         }
         
         // static void TryGetSymbolTable(this StructFieldReference)
+        static void EnsureLabel(Scope scope, string label, AstNode node)
+        {
+            if (!scope.TryGetLabel(label, out var labelSymbol) && label != "_")
+            {
+                node.Errors.Add(new ParseError(node.StartToken, ErrorCodes.UnknownLabel, label));
+            }
 
+            node.DeclaredFromSymbol = labelSymbol;
+        }
         static void EnsureStructRefRight(StructFieldReference fieldRef, Symbol symbol, Scope scope)
         {
 
@@ -258,10 +291,16 @@ namespace FadeBasic.Ast.Visitors
                 case VariableRefNode variableRight:
                     if (!typeTable.ContainsKey(variableRight.variableName))
                     {
-                        variableRight.Errors.Add(new ParseError(variableRight, ErrorCodes.StructFieldDoesNotExist));
                         // terminal position...
                     }
 
+                    if (!typeTable.TryGetValue(variableRight.variableName, out var variableSymbol))
+                    {
+                        variableRight.Errors.Add(new ParseError(variableRight, ErrorCodes.StructFieldDoesNotExist));
+                        break;
+                    }
+
+                    variableRight.ApplyTypeFromSymbol(variableSymbol);
                     break;
                 case StructFieldReference nestedRef:
                     var subScope = Scope.CreateStructScope(scope, typeTable);
@@ -312,7 +351,7 @@ namespace FadeBasic.Ast.Visitors
                     {
                         // accessing an undefined variable...
                         variableRefNode.Errors.Add(new ParseError(variableRefNode, ErrorCodes.InvalidReference, "unknown symbol, " + variableRefNode.variableName));
-                        return; // no hook into the symbol table, the rest of this expression is unknown...
+                        break; // no hook into the symbol table, the rest of this expression is unknown...
                     }
                     EnsureStructRefRight(fieldRef, symbol, scope);
                     
@@ -321,7 +360,10 @@ namespace FadeBasic.Ast.Visitors
                 default:
                     throw new NotImplementedException("How do you do this? asdf");
             }
-            
+
+            // the entire value of the structure is the right-hand-side.
+            fieldRef.ParsedType = fieldRef.right.ParsedType;
+
         }
 
         static void EnsureArrayReferenceIsValid(this ArrayIndexReference indexRef, Scope scope)
@@ -338,8 +380,64 @@ namespace FadeBasic.Ast.Visitors
                 indexRef.Errors.Add(new ParseError(indexRef, ErrorCodes.ArrayCardinalityMismatch));
             }
         }
+
+
+        static void EnsureVariablesAreDefined(this IExpressionNode expr, Scope scope)
+        {
+            switch (expr)
+            {
+                case BinaryOperandExpression binaryOpExpr:
+                    binaryOpExpr.lhs.EnsureVariablesAreDefined(scope);
+                    binaryOpExpr.rhs.EnsureVariablesAreDefined(scope);
+                    break;
+                case UnaryOperationExpression unaryOpExpr:
+                    unaryOpExpr.rhs.EnsureVariablesAreDefined(scope);
+                    break;
+                case StructFieldReference structRef:
+                    structRef.EnsureStructField(scope);
+                    break;
+                case CommandExpression commandExpr: // commandExprs have the ability to declare variables!
+                    scope.AddCommand(commandExpr);
+                    break;
+                case ArrayIndexReference arrayRef:
+                    if (!scope.TryGetSymbol(arrayRef.variableName, out var arraySymbol) && arrayRef.variableName != "_")
+                    {
+                        if (scope.functionTable.TryGetValue(arrayRef.variableName, out var function))
+                        {
+                            // ah, this is a function!
+                            arrayRef.startToken.flags |= TokenFlags.FunctionCall;
+                            if (arrayRef.rankExpressions.Count != function.parameters.Count)
+                            {
+                                arrayRef.Errors.Add(new ParseError(arrayRef.startToken, ErrorCodes.FunctionParameterCardinalityMismatch));
+                            }
+                            arrayRef.DeclaredFromSymbol = scope.functionSymbolTable[arrayRef.variableName];
+
+                            break;
+                        }
+                        expr.Errors.Add(new ParseError(expr.StartToken, ErrorCodes.InvalidReference, $"unknown symbol, {arrayRef.variableName}"));
+                    }
+
+                    arrayRef.DeclaredFromSymbol = arraySymbol;
+                    arrayRef.ApplyTypeFromSymbol(arraySymbol);
+                    // arrayRef.ParsedType = arraySymbol.typeInfo; // TODO: this doesn't work if the program isn't complete. partial errors and whatnot
+                    break;
+                case VariableRefNode variable:
+                    if (!scope.TryGetSymbol(variable.variableName, out var symbol) && variable.variableName != "_")
+                    {
+                        expr.Errors.Add(new ParseError(expr.StartToken, ErrorCodes.InvalidReference, $"unknown symbol, {variable.variableName}"));
+                    }
+
+                    variable.DeclaredFromSymbol = symbol;
+                    variable.ApplyTypeFromSymbol(symbol);
+
+                    // variable.ParsedType = symbol.typeInfo;
+                    break;
+                default:
+                    break;
+            }
+        }
         
-        static void EnsureVariablesAreDefined(this IAstVisitable visitable, Scope scope)
+        static void EnsureVariablesAreDefinedOld(this IExpressionNode visitable, Scope scope)
         {
             visitable.Visit(child =>
             {
@@ -347,22 +445,6 @@ namespace FadeBasic.Ast.Visitors
                 {
                     case CommandExpression commandExpr: // commandExprs have the ability to declare variables!
                         scope.AddCommand(commandExpr);
-                        break;
-                    case GotoStatement gotoSt:
-                        if (!scope.TryGetLabel(gotoSt.label, out var labelSymbol) && gotoSt.label != "_")
-                        {
-                            child.Errors.Add(new ParseError(child.StartToken, ErrorCodes.UnknownLabel, gotoSt.label));
-                        }
-
-                        gotoSt.DeclaredFromSymbol = labelSymbol;
-                        break;
-                    case GoSubStatement goSub:
-                        if (!scope.TryGetLabel(goSub.label, out labelSymbol) && goSub.label != "_")
-                        {
-                            child.Errors.Add(new ParseError(child.StartToken, ErrorCodes.UnknownLabel, goSub.label));
-                        }
-
-                        goSub.DeclaredFromSymbol = labelSymbol;
                         break;
                     case ArrayIndexReference arrayRef:
                         if (!scope.TryGetSymbol(arrayRef.variableName, out var arraySymbol) && arrayRef.variableName != "_")

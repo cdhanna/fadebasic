@@ -1,4 +1,5 @@
 using System.Reflection.Metadata;
+using System.Runtime.Loader;
 using System.Text.Json;
 using Microsoft.Build.Evaluation;
 using Microsoft.Build.Evaluation.Context;
@@ -6,7 +7,6 @@ using Microsoft.Build.FileSystem;
 using Microsoft.Build.Framework;
 using Microsoft.Build.Locator;
 using Microsoft.Build.Logging;
-using NuGet.Frameworks;
 
 namespace FadeBasic.ApplicationSupport.Project;
 
@@ -16,6 +16,31 @@ public static class ProjectLoader
     {
         // var x = typeof(NuGetFramework);
         var instance = MSBuildLocator.RegisterDefaults();
+        // var vsi = MSBuildLocator.QueryVisualStudioInstances().First();
+        // var alc = new AssemblyLoadContext("MSBuild");
+        // AssemblyLoadContext.Default.Resolving += (assemblyLoadContext, assemblyName) =>
+        // {
+        //     try
+        //     {
+        //         string path = Path.Combine(vsi.MSBuildPath, assemblyName.Name + ".dll");
+        //         if (path.Contains("Nuget"))
+        //         {
+        //             
+        //         }
+        //         if (File.Exists(path))
+        //         {
+        //             return alc.LoadFromAssemblyPath(path);
+        //         }
+        //
+        //         return null;
+        //     }
+        //     catch (Exception ex)
+        //     {
+        //         Console.WriteLine(ex.Message);
+        //         throw;
+        //     }
+        // };
+        // MSBuildLocator.RegisterInstance(vsi);
     }
     
     public static ProjectContext LoadCsProject(string csProjPath)
@@ -24,6 +49,8 @@ public static class ProjectLoader
         var context = new ProjectContext();
         
         var csProj = projectCollection.LoadProject(csProjPath);
+       
+        // csProj.Build(new List<ILogger>() { new MsbuildLog() });
         var outDir = csProj.GetPropertyValue("OutDir");
         var sourceItems = csProj.GetItems("FadeSource");
         foreach (var sourceItem in sourceItems)

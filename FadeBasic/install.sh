@@ -32,6 +32,7 @@ sudo dotnet build build.sln $BUILD_ARGS
 PACK_ARGS="--output $OUTPUT_FOLDER /p:Version=$SEM_VER --include-symbols --include-source"
 sudo dotnet pack ./FadeBasic $PACK_ARGS
 sudo dotnet pack ./FadeBasicCommands $PACK_ARGS
+sudo dotnet pack ./FadeBasic.Lib.Standard $PACK_ARGS
 sudo dotnet pack ./ApplicationSupport $PACK_ARGS
 sudo dotnet pack ./CommandSourceGenerator $PACK_ARGS
 sudo dotnet pack ./Templates $PACK_ARGS

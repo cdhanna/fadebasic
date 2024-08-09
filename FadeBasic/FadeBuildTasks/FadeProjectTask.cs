@@ -14,6 +14,9 @@ namespace FadeBasic.Build
     //https://learn.microsoft.com/en-us/visualstudio/msbuild/tutorial-custom-task-code-generation?view=vs-2022
     public class FadeProjectTask : Task
     {
+        public bool GenerateEntryPoint { get; set; } = true;
+        public bool IgnoreSafetyChecks { get; set; } = false;
+        
         [Required] public ITaskItem[] SourceFiles { get; set; }
         [Required] public ITaskItem[] Commands { get; set; }
         [Required] public ITaskItem[] References { get; set; }
@@ -95,7 +98,11 @@ namespace FadeBasic.Build
             
             // to generate the command collection, we need to load up the metadata for those dlls...
             // that means we need to be able to resolve PackageReference and ProjectReference to their actual dll paths
-            var unit = map.Parse(commandCollection);
+            var unit = map.Parse(commandCollection, new ParseOptions
+            {
+                ignoreChecks = IgnoreSafetyChecks
+            });
+            
             var errors = unit.program.GetAllErrors();
             foreach (var error in errors)
             {
@@ -113,7 +120,7 @@ namespace FadeBasic.Build
 
             if (errors.Count > 0) return false;
 
-            LaunchableGenerator.GenerateLaunchable(GeneratedClassName,GenerateFileLocation,unit, commandCollection, allClassNames);
+            LaunchableGenerator.GenerateLaunchable(GeneratedClassName,GenerateFileLocation,unit, commandCollection, allClassNames, includeMain: GenerateEntryPoint);
             GeneratedFile = GenerateFileLocation;
             return true;
         }

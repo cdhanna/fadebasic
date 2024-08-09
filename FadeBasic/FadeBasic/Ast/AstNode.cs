@@ -43,6 +43,12 @@ namespace FadeBasic.Ast
         public Symbol DeclaredFromSymbol { get; set; }
         
         public TypeInfo ParsedType { get; set; } = TypeInfo.Void;
+
+        public void ApplyTypeFromSymbol(Symbol symbol)
+        {
+            if (symbol == null) return;
+            ParsedType = symbol.typeInfo;
+        }
         
         protected AstNode()
         {

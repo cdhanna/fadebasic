@@ -2132,6 +2132,24 @@ x = (4-5) - (2 - 1)
         Assert.That(output, Is.EqualTo(1.2f));
         Assert.That(vm.typeRegisters[0], Is.EqualTo(TypeCodes.REAL));
     }
+    
+    
+    [Test]
+    public void Declare_Implicit()
+    {
+        var src = @"global x# = 3";
+        Setup(src, out _, out var prog);
+        
+        var vm = new VirtualMachine(prog);
+        vm.Execute2();
+
+        var outputRegisterValue = vm.dataRegisters[0];
+        var outputRegisterBytes = BitConverter.GetBytes(outputRegisterValue);
+        float output = BitConverter.ToSingle(outputRegisterBytes, 0);
+        
+        Assert.That(output, Is.EqualTo(3));
+        Assert.That(vm.typeRegisters[0], Is.EqualTo(TypeCodes.REAL));
+    }
 
     [Test]
     public void Math_Ints_Add()
@@ -2255,7 +2273,30 @@ x# = z#
         Assert.That(vm.typeRegisters[0], Is.EqualTo(TypeCodes.REAL));
     }
     
-    
+
+    [Test]
+    public void Type_ImplicitAssign()
+    {
+        var src = @"
+TYPE egg
+    x
+ENDTYPE
+a as egg
+b = a
+b.x = 1
+";
+        Setup(src, out var compiler, out var prog);
+        var vm = new VirtualMachine(prog);
+        vm.hostMethods = compiler.methodTable;
+        vm.Execute2();
+        
+        Assert.That(vm.heap.Cursor, Is.EqualTo(8)); // size of the only field in egg, int, 4. (times 2, because there are 2 copies)
+        Assert.That(vm.typeRegisters[0], Is.EqualTo(TypeCodes.STRUCT));
+        Assert.That(vm.typeRegisters[1], Is.EqualTo(TypeCodes.STRUCT));
+    }
+
+        
+        
     [Test]
     public void Type_Instantiate()
     {
@@ -2407,6 +2448,81 @@ albert as chicken
         
         // Assert.That(vm.typeRegisters[1], Is.EqualTo(TypeCodes.INT));
         // Assert.That(vm.dataRegisters[1], Is.EqualTo(55));
+    }
+
+    
+    
+    [Test]
+    public void Type_Instantiate_Nested_Assign2()
+    {
+        var src = @"
+TYPE vector
+    x as integer
+    y as integer
+ENDTYPE
+
+TYPE object
+    pos as vector
+    vel as vector
+ENDTYPE
+
+player as object
+player.vel.x = 1
+player.pos.x = 2
+player.pos.x = player.pos.x + player.vel.x
+
+x = player.pos.x
+";
+        Setup(src, out var compiler, out var prog);
+        _exprAst.AssertNoParseErrors();
+        var vm = new VirtualMachine(prog);
+        vm.hostMethods = compiler.methodTable;
+        vm.Execute2();
+        
+        
+        Assert.That(vm.heap.Cursor, Is.EqualTo(16));
+        Assert.That(vm.typeRegisters[0], Is.EqualTo(TypeCodes.STRUCT));
+        
+        Assert.That(vm.typeRegisters[1], Is.EqualTo(TypeCodes.INT));
+        Assert.That(vm.dataRegisters[1], Is.EqualTo(3));
+    }
+
+    
+    [Test]
+    public void Type_Instantiate_Nested_Assign_FloatConversion()
+    {
+        // the vector types are defined as floats, and when they get math'd, it should convert fine into an int
+        var src = @"
+TYPE vector
+    x as float
+    y as float
+ENDTYPE
+
+TYPE object
+    pos as vector
+    vel as vector
+ENDTYPE
+
+player as object
+player.vel.x = 1 `here, its taking an INTEGER and jamming it into a float, but the bytes are getting confused, and its being treated as integer bytes within the float variable.
+player.pos.x = 2
+player.pos.x = player.pos.x + player.vel.x
+
+` there is an implicit conversion here from float (on the rhs), to int (on the lhs)
+x = player.pos.x
+";
+        Setup(src, out var compiler, out var prog);
+        _exprAst.AssertNoParseErrors();
+        var vm = new VirtualMachine(prog);
+        vm.hostMethods = compiler.methodTable;
+        vm.Execute2();
+        
+        
+        Assert.That(vm.heap.Cursor, Is.EqualTo(16));
+        Assert.That(vm.typeRegisters[0], Is.EqualTo(TypeCodes.STRUCT));
+        
+        Assert.That(vm.typeRegisters[1], Is.EqualTo(TypeCodes.INT));
+        Assert.That(vm.dataRegisters[1], Is.EqualTo(3));
     }
 
     

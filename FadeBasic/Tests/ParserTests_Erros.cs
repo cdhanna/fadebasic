@@ -288,10 +288,11 @@ x = y.
         var parser = MakeParser(input);
         var prog = parser.ParseProgram();
 
+        prog.AssertParseErrors(2);
         // TODO: this test is breaking because the progressive parser is injecting a "_" variable name silently, but that isn't referencable.
         var errors = prog.GetAllErrors();
-        Assert.That(errors.Count, Is.EqualTo(1));
-        Assert.That(errors[0].Display, Is.EqualTo($"[2:5] - {ErrorCodes.VariableReferenceMissing}"));
+        Assert.That(errors[0].Display, Is.EqualTo($"[2:4] - {ErrorCodes.ExpressionIsNotAStruct}"));
+        Assert.That(errors[1].Display, Is.EqualTo($"[2:5] - {ErrorCodes.VariableReferenceMissing}"));
     }
 
     
@@ -552,17 +553,17 @@ endfunction";
     
     
     [Test]
-    public void ParseError_Scoped()
+    public void ParseError_Scoped_Works()
     {
         var input = @"
 local x";
         var parser = MakeParser(input);
         var prog = parser.ParseProgram();
 
-        var errors = prog.GetAllErrors();
-        Assert.That(errors.Count, Is.EqualTo(2));
-        Assert.That(errors[0].Display, Is.EqualTo($"[1:7] - {ErrorCodes.ScopedDeclarationExpectedAs}"));
-        Assert.That(errors[1].Display, Is.EqualTo($"[1:6] - {ErrorCodes.DeclarationMissingTypeRef}"));
+        // var errors = prog.GetAllErrors();
+        prog.AssertNoParseErrors();
+        // Assert.That(errors[0].Display, Is.EqualTo($"[1:7] - {ErrorCodes.ScopedDeclarationExpectedAs}"));
+        // Assert.That(errors[1].Display, Is.EqualTo($"[1:6] - {ErrorCodes.DeclarationMissingTypeRef}"));
 
     }
     
@@ -732,6 +733,56 @@ endtype
     
     
     [Test]
+    public void ParseError_TypeDef_AssignmentImplicit__NoErrors()
+    {
+        var input = @"
+TYPE egg
+    x
+ENDTYPE
+a as egg
+b = a
+b.x = 1
+";
+        var parser = MakeParser(input);
+        var prog = parser.ParseProgram();
+        prog.AssertNoParseErrors();
+    }
+    [Test]
+    public void ParseError_TypeDef__AssignmentImplicit_Array_NoErrors()
+    {
+        var input = @"
+TYPE egg
+    x
+ENDTYPE
+DIM eggs(3) AS egg
+e = eggs(1)
+n = e.x
+";
+        var parser = MakeParser(input);
+        var prog = parser.ParseProgram();
+        prog.AssertNoParseErrors();
+    }
+
+    [Test]
+    public void ParseError_TypeDef_AssignmentImplicit_StructRef_NoErrors()
+    {
+        var input = @"
+TYPE egg
+    x as chicken
+ENDTYPE
+TYPE chicken
+    y 
+ENDTYPE
+test as egg
+y = test.x
+z = y.y
+";
+        var parser = MakeParser(input);
+        var prog = parser.ParseProgram();
+        prog.AssertNoParseErrors();
+    }
+    
+    [Test]
     public void ParseError_TypeDef_BadFieldAssignment()
     {
         var input = @"
@@ -801,9 +852,28 @@ ENDTYPE
 
         var errors = prog.GetAllErrors();
         Assert.That(errors.Count, Is.EqualTo(1));
-        Assert.That(errors[0].Display, Is.EqualTo($"[2:4,2:9] - {ErrorCodes.StructFieldsRecursive}"));
+        Assert.That(errors[0].Display, Is.EqualTo($"[1:5] - {ErrorCodes.StructFieldsRecursive}"));
     }
     
+    
+    [Test]
+    public void ParseError_TypeDef_Recursive_None_ButMultipleReferences()
+    {
+        var input = @"
+TYPE vector
+    x as float
+    y as float
+ENDTYPE
+TYPE object 
+    pos as vector
+    vel as vector
+ENDTYPE
+";
+        var parser = MakeParser(input);
+        var prog = parser.ParseProgram();
+        prog.AssertNoParseErrors();
+    }
+
     
     [Test]
     public void ParseError_TypeDef_RecursiveChain2()
@@ -821,8 +891,30 @@ ENDTYPE
 
         var errors = prog.GetAllErrors();
         prog.AssertParseErrors(2);
-        Assert.That(errors[0].Display, Is.EqualTo($"[2:4,2:9] - {ErrorCodes.StructFieldsRecursive}"));
-        Assert.That(errors[1].Display, Is.EqualTo($"[5:4,5:9] - {ErrorCodes.StructFieldsRecursive}"));
+        Assert.That(errors[0].Display, Is.EqualTo($"[1:5] - {ErrorCodes.StructFieldsRecursive}"));
+        Assert.That(errors[1].Display, Is.EqualTo($"[4:5] - {ErrorCodes.StructFieldsRecursive}"));
+    }
+    
+    
+    [Test]
+    public void ParseError_TypeDef_RecursiveChain2_Casing()
+    {
+        var input = @"
+TYPE chicken
+    y as egg
+ENDTYPE
+TYPE egg 
+    x as CHICKEN
+ENDTYPE
+";
+        var parser = MakeParser(input);
+        var prog = parser.ParseProgram();
+
+        var errors = prog.GetAllErrors();
+        prog.AssertParseErrors(2);
+        
+        Assert.That(errors[0].Display, Is.EqualTo($"[1:5] - {ErrorCodes.StructFieldsRecursive}"));
+        Assert.That(errors[1].Display, Is.EqualTo($"[4:5] - {ErrorCodes.StructFieldsRecursive}"));
     }
     
     [Test]
@@ -880,7 +972,6 @@ fish.y = 1
         Assert.That(errors[0].Display, Is.EqualTo($"[2:0] - {ErrorCodes.ExpressionIsNotAStruct}"));
     }
     
-    
     [Test]
     public void ParseError_TypeDef_UnknownVariableRoot()
     {
@@ -899,6 +990,59 @@ notfish.y = 1
         Assert.That(errors[0].Display, Is.EqualTo($"[5:0] - {ErrorCodes.InvalidReference} | unknown symbol, notfish"));
     }
     
+    [Test]
+    public void ParseError_TypeDef_ReferenceOnRight_Works()
+    {
+        var input = @"
+TYPE vector
+    x as float
+    y as float
+ENDTYPE
+
+TYPE object
+    pos as vector
+    vel as vector
+ENDTYPE
+
+player as object
+player.vel.x = 1
+player.pos.x = 2
+player.pos.x = player.pos.x + player.vel.x
+
+x = player.pos.x
+";;
+        var parser = MakeParser(input);
+        var prog = parser.ParseProgram();
+        prog.AssertNoParseErrors();
+    }
+    
+    
+    [Test]
+    public void ParseError_TypeDef_ReferenceOnRight_InvalidTypeo()
+    {
+        var input = @"
+TYPE vector
+    x as float
+    y as float
+ENDTYPE
+
+TYPE object
+    pos as vector
+    vel as vector
+ENDTYPE
+
+player as object
+player.vel.x = 1
+player.pos.x = 2
+player.pos.x = player.posd.x + player.vel.x
+
+x = player.pos.x
+";;
+        var parser = MakeParser(input);
+        var prog = parser.ParseProgram();
+        prog.AssertParseErrors(1);
+    }
+
     
     [Test]
     public void ParseError_TypeDef_BadFieldAssignment_NoVariable()

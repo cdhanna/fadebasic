@@ -18,11 +18,41 @@ namespace FadeBasic.Ast
         public DeclarationScopeType scopeType;
         public IExpressionNode[] ranks;
 
+        public IExpressionNode initializerExpression;
+
         public DeclarationStatement()
         {
             
         }
 
+        public static DeclarationStatement FromAssignment(VariableRefNode variableRef, AssignmentStatement assignmentStatement, Symbol symbol)
+        {
+            ITypeReferenceNode typeNode;
+            if (symbol.typeInfo.type == VariableType.Struct)
+            {
+                typeNode = new StructTypeReferenceNode(new VariableRefNode(new Token
+                {
+                    caseInsensitiveRaw = symbol.typeInfo.structName.ToLowerInvariant(),
+                    raw = symbol.typeInfo.structName,
+                    lineNumber = assignmentStatement.expression.StartToken.lineNumber,
+                    charNumber = assignmentStatement.expression.StartToken.charNumber
+                }));
+            }
+            else
+            {
+                typeNode = new TypeReferenceNode(symbol.typeInfo.type, assignmentStatement.expression.StartToken);
+            }
+            return new DeclarationStatement
+            {
+                variable = variableRef.variableName,
+                type = typeNode,
+                startToken = assignmentStatement.StartToken,
+                endToken = assignmentStatement.endToken,
+                scopeType = DeclarationScopeType.Local,
+                DeclaredFromSymbol = symbol
+            };
+        }
+        
         public DeclarationStatement(Token startToken, VariableRefNode variableNode, IExpressionNode[] ranks)
         {
             this.variable = variableNode.variableName;
@@ -84,9 +114,10 @@ namespace FadeBasic.Ast
 
         protected override string GetString()
         {
+            var initStr = initializerExpression==null ? "" : ","+initializerExpression.ToString();
             if (ranks == null || ranks.Length == 0)
             {
-                return $"decl {scopeType.ToString().ToLowerInvariant()},{variable},{type}";
+                return $"decl {scopeType.ToString().ToLowerInvariant()},{variable},{type}{initStr}";
             }
 
             return $"dim {scopeType.ToString().ToLowerInvariant()},{variable},{type},({string.Join(",", ranks.Select(x => x.ToString()))})";

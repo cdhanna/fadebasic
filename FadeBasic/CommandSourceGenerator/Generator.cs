@@ -129,11 +129,18 @@ using Microsoft.CodeAnalysis.CSharp.Syntax;
 
         string ToMetaSource(string name, string namespaceStr, List<CommandDescriptor> descriptors)
         {
+            // var classTrivia = descriptors
+            // var trivia = descriptors[0].methodSyntax.GetLeadingTrivia().FirstOrDefault(t => t.IsKind(SyntaxKind.MultiLineDocumentationCommentTrivia));
+            // var xml = trivia.GetStructure();
+            // string.Join("\n", trivia.ToFullString())
             // TODO: write a class that has the json const str.
             var json = GetInfosModel(descriptors);
 
-//             
-            var escaped = json.Replace("\"", "\"\"");
+/*
+ */
+            var escaped = json.Replace("\"", "\"\"")
+                // .Replace("\n", "\\\n")
+                ;
             return $@"// generate file
 using System;
 namespace {namespaceStr}
@@ -226,19 +233,51 @@ namespace {namespaceStr}
         //     return sb.ToString();
         // }
 
+        
         static string GetInfosModel(List<CommandDescriptor> descriptors)
         {
+            var classes = descriptors.Select(x => x.classSyntax).Distinct();
+            var commentTrivias = classes.SelectMany(x =>
+                x.GetLeadingTrivia().Where(t => t.IsKind(SyntaxKind.SingleLineDocumentationCommentTrivia)));
+            var commentStrs = commentTrivias.Select(x => x.ToString());
             
             var json = $@"{{
+ ""classDocStrings"": [{string.Join(",", commentStrs.Select(x => "\"" + EscapeDocString(x) + "\"")) }],
  ""commands"": [{string.Join(",", descriptors.Select(GetInfoJson))}]
 }}";
             return json;
         }
 
+        static string EscapeDocString(string jsonString)
+        {
+            return jsonString.Replace("///", "")
+                .Replace("\n", "\\n")
+                .Replace("\"", "\\\"");
+        }
+
         static string GetInfoJson(CommandDescriptor descriptor, int index)
         {
+            var triviaList = descriptor.methodSyntax.GetLeadingTrivia();
+            var triviaTypes = triviaList.Select(x => x.Kind());
+            var commentStr = "";
+
+            try
+            {
+                var comments = triviaList.Where(x => x.IsKind(SyntaxKind.SingleLineDocumentationCommentTrivia))
+                    .ToList();
+                if (comments.Count > 0)
+                {
+                    commentStr = EscapeDocString(comments[0].ToString());
+                }
+            }
+            catch (Exception ex)
+            {
+                commentStr = "error: " + ex.Message;
+            }
+
             return $@"
 {{
+    ""docString"": ""{commentStr}"",
     ""methodIndex"": {index},
     ""{nameof(descriptor.MethodName)}"": ""{descriptor.MethodName}"",
     ""{nameof(descriptor.ReturnType)}"": ""{descriptor.ReturnType}"",

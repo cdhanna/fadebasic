@@ -17,11 +17,10 @@ namespace FadeBasic
         public static void Test()
         {
             var commands = new FadeBasicCommands();
-            
+            var md = FadeBasicCommandsMetaData.COMMANDS_JSON;
             // var n = new AnaExample.AnaAnaAna();
             // FadeBasicCommandsMetaData.COMMANDS_JSON;
-            var x = 132;
-
+            var x = 134;
             // var collection = new CommandCollection(commands);
             // commands.Commands[0].executor(null);
             // commands.Count

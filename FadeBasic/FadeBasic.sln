@@ -28,6 +28,8 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "CommandProject", "Templates
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "FadeBuildTasks", "FadeBuildTasks\FadeBuildTasks.csproj", "{153E0633-0E2E-4303-A0FE-D17A197BD8AE}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "FadeBasic.Lib.Standard", "FadeBasic.Lib.Standard\FadeBasic.Lib.Standard.csproj", "{6FBE2407-3749-439D-94E6-92144CFC4714}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -87,6 +89,10 @@ Global
 		{153E0633-0E2E-4303-A0FE-D17A197BD8AE}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{153E0633-0E2E-4303-A0FE-D17A197BD8AE}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{153E0633-0E2E-4303-A0FE-D17A197BD8AE}.Release|Any CPU.Build.0 = Release|Any CPU
+		{6FBE2407-3749-439D-94E6-92144CFC4714}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{6FBE2407-3749-439D-94E6-92144CFC4714}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{6FBE2407-3749-439D-94E6-92144CFC4714}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{6FBE2407-3749-439D-94E6-92144CFC4714}.Release|Any CPU.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(NestedProjects) = preSolution
 		{BFF3475D-F580-4C2C-B025-B80BAD2EB915} = {7A2CFDCE-7E00-4B3A-82DE-E5CE48A4F13D}

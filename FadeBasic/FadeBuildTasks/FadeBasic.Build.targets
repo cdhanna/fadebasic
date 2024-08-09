@@ -1,7 +1,9 @@
 <Project>
 
     <PropertyGroup>
-
+        <FadeGenerateMain Condition="'$(FadeGenerateMain)'==''">True</FadeGenerateMain>
+        <FadeIgnoreChecks Condition="'$(FadeIgnoreChecks)'==''">False</FadeIgnoreChecks>
+        
         <FadeGeneratedLaunchType Condition="'$(FadeGeneratedLaunchType)'==''">GeneratedFade</FadeGeneratedLaunchType>
 
         <FadeGeneratedFolder Condition="'$(FadeGeneratedFolder)'==''">Launch</FadeGeneratedFolder>
@@ -15,6 +17,8 @@
                 GeneratedClassName="$(FadeGeneratedLaunchType)" 
                 SourceFiles="@(FadeSource)"
                 Commands="@(FadeCommand)"
+                GenerateEntryPoint="$(FadeGenerateMain)"
+                IgnoreSafetyChecks="$(FadeIgnoreChecks)"
                 References="@(ReferencePath)"
                 GenerateFileLocation="$(FadeGeneratedLaunchFile)"
         >

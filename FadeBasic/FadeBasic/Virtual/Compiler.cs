@@ -395,7 +395,10 @@ namespace FadeBasic.Virtual
                 // and now compile up the assignment
                 // var a = new AssignmentStatement();
                 // Compile(a);
+                _buffer.Add(OpCodes.BREAKPOINT);
+
                 _buffer.Add(OpCodes.CAST);
+
                 var tc = VmUtil.GetTypeCode(arg.type.variableType);
                 _buffer.Add(tc);
                 CompileAssignmentLeftHandSide(arg.variable);
@@ -1209,6 +1212,18 @@ namespace FadeBasic.Virtual
             // later in this compiler, when we find the variable assignment, we'll know where to find it.
 
             // but we do not actually need to emit any code at this point.
+
+            if (declaration.initializerExpression != null)
+            {
+                // ah, there is an implicit assignment!
+                // we can fake this by creating a fake-assignment node
+                var fakeAssignment = new AssignmentStatement
+                {
+                    expression = declaration.initializerExpression,
+                    variable = new VariableRefNode(declaration.startToken, declaration.variable)
+                };
+                Compile(fakeAssignment);
+            }
         }
 
         public void PushAddress(ArrayIndexReference arrayRefNode)
@@ -1433,12 +1448,17 @@ namespace FadeBasic.Virtual
                                 
                             }
                             
-                            _buffer.Add(OpCodes.DISCARD); // we don't actually want the type code to live on the heap
-                            
+                       
                             // load up the compiled type info 
                             var type = _types[compiledVar.structType];
-                            ComputeStructOffsets(type, fieldReferenceNode.right, out var offset, out var length, out _);
+                            ComputeStructOffsets(type, fieldReferenceNode.right, out var offset, out var length, out rightTypeCode);
 
+                            // always cast the expression to the correct type code; slightly wasteful, could be better.
+                            _buffer.Add(OpCodes.CAST);
+                            _buffer.Add(rightTypeCode);
+                            
+                            _buffer.Add(OpCodes.DISCARD); // we don't actually want the type code to live on the heap
+                            
                             // push the length of the write segment
                             AddPushInt(_buffer, length);
                             
@@ -1731,7 +1751,6 @@ namespace FadeBasic.Virtual
                         PushLoad(_buffer, compiledVar.registerAddress, compiledVar.isGlobal);
                         CastToInt();
                         
-                        _buffer.Add(OpCodes.BREAKPOINT);
                         // read, it'll find the ptr, size, and then place the data onto the stack
                         _buffer.Add(OpCodes.READ);
                     

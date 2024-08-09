@@ -1,4 +1,6 @@
 using System.Diagnostics;
+using System.Text.Json;
+using FadeBasic;
 using FadeBasic.ApplicationSupport.Project;
 using Microsoft.Build.Locator;
 
@@ -6,6 +8,18 @@ namespace Tests.ApplicationSupport;
 
 public class LoadTests
 {
+    [Test]
+    public void LoadMetadata()
+    {
+        var str = FadeBasicCommandsMetaData.COMMANDS_JSON;
+        var metadata = JsonSerializer.Deserialize<CommandMetadata>(str, new JsonSerializerOptions
+        {
+            IncludeFields = true,
+            PropertyNameCaseInsensitive = true,
+        });
+        Assert.NotNull(metadata);
+    }
+    
     [Test]
     public void Load()
     {

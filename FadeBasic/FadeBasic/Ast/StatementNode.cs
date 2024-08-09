@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Reflection;
@@ -9,7 +10,7 @@ namespace FadeBasic.Ast
     public interface IStatementNode : IAstNode, IAstVisitable
     {
     }
-
+    
     public class NoOpStatement : AstNode, IStatementNode
     {
         protected override string GetString()

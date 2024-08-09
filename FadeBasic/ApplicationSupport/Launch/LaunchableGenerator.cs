@@ -4,7 +4,6 @@ using FadeBasic;
 using FadeBasic.ApplicationSupport.Project;
 using FadeBasic.Ast;
 using FadeBasic.Launch;
-using Serilog;
 
 namespace ApplicationSupport.Launch;
 

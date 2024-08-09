@@ -5,21 +5,51 @@ using FadeBasic.Virtual;
 
 namespace FadeBasic
 {
+    /// <summary>
+    /// More Docs!
+    /// </summary>
+    public partial class FadeBasicCommands
+    {
+        [FadeBasicCommand("secondary" + " tuna")]
+        public static void Secondary()
+        {
+            
+        }
+    }
+    
+    
+    /// <summary>
+    /// Docs
+    /// </summary>
     public partial class FadeBasicCommands
     {
         
-[FadeBasicCommand("print")]
-public static void Print(object x)
-{
-    Console.WriteLine(x);
-}
+    /// <summary>
+    /// hello world
+    ///
+    /// bv
+    /// <para>
+    /// Goofs
+    /// </para>
+    /// </summary>
+    /// <param name="x">args</param>
+    [FadeBasicCommand("print")]
+    public static void Print(object x)
+    {
+        Console.WriteLine(x);
+    }
 
-[FadeBasicCommand("rnd")]
-public static int Rnd(int max = 10)
-{
-    var r = new Random();
-    return r.Next(max);
-}
+    /// <summary>
+    /// tuna 
+    /// </summary>
+    /// <param name="max"></param>
+    /// <returns></returns>
+    [FadeBasicCommand("rnd")]
+    public static int Rnd(int max = 10)
+    {
+        var r = new Random();
+        return r.Next(max);
+    }
         
         [FadeBasicCommand("input")]
         public static void Input(ref string result)

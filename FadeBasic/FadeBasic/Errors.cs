@@ -136,7 +136,7 @@ namespace FadeBasic
         // 200 series represents post-parse issues
         public static readonly ErrorCode InvalidReference = "[0200] Invalid reference";
         public static readonly ErrorCode UnknownLabel = "[0201] Unknown label";
-        public static readonly ErrorCode ExpressionIsNotAStruct = "[0202] Expression is not a type-type, and cannot be indexed";
+        public static readonly ErrorCode ExpressionIsNotAStruct = "[0202] Expression is not a type, and cannot be indexed";
         public static readonly ErrorCode UnknownStructRef = "[0203] Expression references an unknown Type";
         public static readonly ErrorCode StructFieldDoesNotExist = "[0204] Member is not declared in Type";
         public static readonly ErrorCode StructFieldReferencesUnknownStruct = "[0205] Member is not a declared Type";

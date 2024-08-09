@@ -66,6 +66,7 @@ namespace FadeBasic
         // public HashSet<string> labels = new HashSet<string>();
         public Dictionary<string, Symbol> labelTable = new Dictionary<string, Symbol>();
         public Dictionary<string, SymbolTable> typeNameToTypeMembers = new Dictionary<string, SymbolTable>();
+        public Dictionary<string, TypeDefinitionStatement> typeNameToDecl = new Dictionary<string, TypeDefinitionStatement>();
         public SymbolTable globalVariables = new SymbolTable();
         public Stack<SymbolTable> localVariables = new Stack<SymbolTable>();
 
@@ -159,9 +160,9 @@ namespace FadeBasic
             }
         }
 
-        public void AddAssignment(AssignmentStatement assignment)
+        public void AddAssignment(AssignmentStatement assignment, out DeclarationStatement implicitDecl)
         {
-
+            implicitDecl = null;
             /*
              * if there isn't a declr yet, then the compiler will implicitly create one based off the implied type.
              * So in this step, we just need to record that the RHS symbol exists in the variableRef case.
@@ -182,12 +183,23 @@ namespace FadeBasic
                     else // no symbol exists, so this is a defacto local variable
                     {
                         var locals = GetVariables(DeclarationScopeType.Local);
-                        locals.Add(variableRef.variableName, new Symbol
+                        var symbol = new Symbol
                         {
                             text = variableRef.variableName,
-                            typeInfo = TypeInfo.FromVariableType(variableRef.DefaultTypeByName),
+                            typeInfo = assignment.expression.ParsedType,
+                            // typeInfo = TypeInfo.FromVariableType(variableRef.DefaultTypeByName),
                             source = variableRef
-                        });
+                        };
+                        locals.Add(variableRef.variableName, symbol);
+                        
+                        // TODO: what if its an array?
+
+                        if (symbol.typeInfo.type == VariableType.Struct)
+                        {
+                            implicitDecl = DeclarationStatement.FromAssignment(variableRef, assignment, symbol);
+                        }
+                        // implicitDecl = new DeclarationStatement(assignment.startToken, variableRef,
+                            // new TypeReferenceNode(symbol.typeInfo.type, assignment.expression.StartToken));
                     }
                     break;
                 case ArrayIndexReference indexRef: // a(1,2) = 1
@@ -234,6 +246,7 @@ namespace FadeBasic
         
         public void AddDeclaration(DeclarationStatement declStatement)
         {
+            
             var table = GetVariables(declStatement.scopeType);
             if (table.ContainsKey(declStatement.variable))
             {
@@ -335,6 +348,7 @@ namespace FadeBasic
         public void AddType(TypeDefinitionStatement type)
         {
             var members = typeNameToTypeMembers[type.name.variableName] = new SymbolTable();
+            typeNameToDecl[type.name.variableName] = type;
             foreach (var member in type.declarations)
             {
                 var symbol = new Symbol
@@ -402,6 +416,16 @@ namespace FadeBasic
         }
     }
 
+    public class ParseOptions
+    {
+        public bool ignoreChecks = false;
+
+        public static readonly ParseOptions Default = new ParseOptions
+        {
+            ignoreChecks = false
+        };
+    }
+    
     public class Parser
     {
         private readonly TokenStream _stream;
@@ -416,8 +440,10 @@ namespace FadeBasic
 
         public List<LexerError> GetLexingErrors() => _stream.Errors;
 
-        public ProgramNode ParseProgram()
+        public ProgramNode ParseProgram(ParseOptions options = null)
         {
+            if (options == null) options = ParseOptions.Default;
+            
             var program = new ProgramNode(_stream.Current);
 
             while (!_stream.IsEof)
@@ -449,7 +475,10 @@ namespace FadeBasic
             program.endToken = _stream.Current;
             
             // program.AddTypeInfo();
-            program.AddScopeRelatedErrors();
+            if (!options.ignoreChecks)
+            {
+                program.AddScopeRelatedErrors();
+            }
             
             return program;
         }
@@ -462,26 +491,66 @@ namespace FadeBasic
             var next = _stream.Advance();
             switch (next.type)
             {
+                case LexemType.VariableReal:
+                case LexemType.VariableString:
                 case LexemType.VariableGeneral:
+                    var variableRefNode = new VariableRefNode(next);
                     // we know we have something that looks like "local x", so the next token MUST be "as", and then there MUST be a type.
                     var asToken = _stream.Peek;
                     ParseError error = null;
-                    if (asToken.type != LexemType.KeywordAs)
+                    ITypeReferenceNode typeReference;
+                    IExpressionNode initializer = null;
+
+                    switch (asToken.type)
                     {
-                        error = new ParseError(asToken, ErrorCodes.ScopedDeclarationExpectedAs);
-                    }
-                    else
-                    {
-                        _stream.Advance(); // skip As token
+                        case LexemType.KeywordAs:
+                            _stream.Advance(); // skip 'as'
+                            typeReference = ParseTypeReference();
+
+                            break;
+                        case LexemType.OpEqual:
+                            // type reference is implied from variable, now.
+                            typeReference = new TypeReferenceNode(variableRefNode.DefaultTypeByName, next);
+                            _stream.Advance(); // discard equal sign
+                            initializer = ParseWikiExpression();
+                            break;
+                        case LexemType.EndStatement:
+                            // eh, this is fine...
+                            typeReference = new TypeReferenceNode(variableRefNode.DefaultTypeByName, next);
+                            break;
+                        default:
+                            typeReference = new TypeReferenceNode(VariableType.Integer, next);
+                            error = new ParseError(asToken, ErrorCodes.ScopedDeclarationExpectedAs);
+                            break;
                     }
                     
-                    var typeReference = ParseTypeReference();
+                    // if (asToken.type != LexemType.KeywordAs)
+                    // {
+                    //     error = new ParseError(asToken, ErrorCodes.ScopedDeclarationExpectedAs);
+                    // }
+                    // else
+                    // {
+                    //     _stream.Advance(); // skip As token
+                    // }
+                    
+                    // var typeReference = ParseTypeReference();
                     if (error != null)
                     {
                         typeReference.Errors.Insert(0, error);
                     }
                     var declStatement = new DeclarationStatement(scopeToken, new VariableRefNode(next), typeReference);
-                    
+                    if (_stream.Peek.lexem.type == LexemType.OpEqual)
+                    {
+                        if (initializer != null)
+                        {
+                            throw new Exception("cannot have multiple initializers");
+                        }
+                        // an initializer expression has been found!
+                        _stream.Advance(); // discard equal sign
+                        initializer = ParseWikiExpression();
+                    }
+
+                    declStatement.initializerExpression = initializer;
                     return declStatement;
                 case LexemType.KeywordDeclareArray:
                     var decl = ParseDimStatement(next);
@@ -1066,6 +1135,16 @@ namespace FadeBasic
                                     scopeType = scopeType,
                                     variable = token.caseInsensitiveRaw
                                 };
+
+                                var maybeEqual = _stream.Peek;
+                                if (maybeEqual.lexem.type == LexemType.OpEqual)
+                                {
+                                    // ah, there is an assignment happening here too!
+                                    _stream.Advance(); // discard the equal sign.
+                                    decl.initializerExpression = ParseWikiExpression();
+                                    
+                                }
+                                
                                 return decl;
                             default:
                                 

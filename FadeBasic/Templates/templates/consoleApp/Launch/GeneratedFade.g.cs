@@ -7,10 +7,12 @@ using FadeBasic.Virtual;
 
 public class GeneratedFade : ILaunchable
 {
+    
     public static void Main(string[] args)
     {
         Launcher.Run<GeneratedFade>();
     }
+
 
     // this byteCode represents a fully compiled program
     public byte[] Bytecode => _byteCode;
@@ -20,12 +22,12 @@ public class GeneratedFade : ILaunchable
 
     #region method table
     private static readonly CommandCollection _collection = new CommandCollection(
-        new FadeBasic.FadeBasicCommands()
+        new FadeBasic.Lib.Standard.ConsoleCommands(), new FadeBasic.Lib.Standard.StandardCommands()
     );
     #endregion
 
     #region bytecode
     protected byte[] _byteCode = LaunchUtil.Unpack64(encodedByteCode);
-    protected const string encodedByteCode = "EgBoAAAAEgBlAAAAEgBsAAAAEgBsAAAAEgBvAAAAEgAgAAAAEgB3AAAAEgBvAAAAEgByAAAAEgBsAAAAEgBkAAAAAQAsAAAAEQoTCQkBAAAAAAAO";
+    protected const string encodedByteCode = "EgBoAAAAEgBlAAAAEgBsAAAAEgBsAAAAEgBvAAAAEgAgAAAAEgB3AAAAEgBvAAAAEgByAAAAEgBsAAAAEgBkAAAAAQAsAAAAEQoTCQkBAAEAAAABAAEAAAAO";
     #endregion
 }
