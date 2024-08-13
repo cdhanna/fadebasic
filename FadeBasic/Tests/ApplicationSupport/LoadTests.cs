@@ -21,6 +21,20 @@ public class LoadTests
     }
     
     [Test]
+    public void LoadDocs()
+    {
+        var str = FadeBasicCommandsMetaData.COMMANDS_JSON;
+        var metadata = JsonSerializer.Deserialize<CommandMetadata>(str, new JsonSerializerOptions
+        {
+            IncludeFields = true,
+            PropertyNameCaseInsensitive = true,
+        });
+
+        var docs = ProjectDocMethods.LoadDocs(new List<CommandMetadata> { metadata });
+        
+    }
+    
+    [Test]
     public void Load()
     {
         ProjectLoader.Initialize();

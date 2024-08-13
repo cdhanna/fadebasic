@@ -475,10 +475,8 @@ namespace FadeBasic
             program.endToken = _stream.Current;
             
             // program.AddTypeInfo();
-            if (!options.ignoreChecks)
-            {
-                program.AddScopeRelatedErrors();
-            }
+            program.AddScopeRelatedErrors(options);
+            
             
             return program;
         }

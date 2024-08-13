@@ -7,8 +7,10 @@ namespace FadeBasic.Ast.Visitors
     public static partial class ErrorVisitors
     {
 
-        public static void AddScopeRelatedErrors(this ProgramNode program)
+        public static void AddScopeRelatedErrors(this ProgramNode program, ParseOptions options)
         {
+            if (options?.ignoreChecks ?? false) throw new NotSupportedException("take this out- it shouldnt be valid to ignore saftey checks");
+            
             var scope = program.scope = new Scope();
             foreach (var label in program.labels)
             {
@@ -28,10 +30,17 @@ namespace FadeBasic.Ast.Visitors
 
             // CheckTypeInfo2(scope);
             CheckTypesForUnknownReferences(scope);
-            CheckTypesForRecursiveReferences(scope);
+            CheckTypesForRecursiveReferences(scope, out var typeRefCounter);
+            program.typeDefinitions?.Sort((a, b) =>
+            {
+                var aVal = typeRefCounter[a.name.variableName];
+                var bVal = typeRefCounter[b.name.variableName];
+                if (aVal == bVal) return 0;
+                return aVal > bVal ? -1 : 1;
+            });
+            
+            
             CheckStatements(program.statements, scope);
-            
-            
             foreach (var function in program.functions)
             {
                 scope.BeginFunction(function);
@@ -64,15 +73,18 @@ namespace FadeBasic.Ast.Visitors
             }
         }
         
-        static void CheckTypesForRecursiveReferences(Scope scope)
+        static void CheckTypesForRecursiveReferences(Scope scope, out Dictionary<string, int> referenceCounter)
         {
             var graph = new Dictionary<string, HashSet<string>>();
+            referenceCounter = new Dictionary<string, int>(); // 
+
             // create a type dependency graph...
             {
                 foreach (var namedType in scope.typeNameToTypeMembers)
                 {
                     var typeName = namedType.Key;
                     var members = namedType.Value;
+                    referenceCounter[typeName] = 1;
 
                     graph[typeName] = new HashSet<string>();
 
@@ -94,13 +106,16 @@ namespace FadeBasic.Ast.Visitors
             // now that we have a graph, check each node
             foreach (var kvp in graph)
             {
-                Process(kvp.Key);
+                Process(kvp.Key, referenceCounter);
             }
+            
+            // re-sort the types
 
-            void Process(string node)
+            void Process(string node, Dictionary<string, int> refCounter)
             {
                 if (processed.Contains(node))
                 {
+                    // leave uncommented; if we return, then we only get the error from one side of the type collision.
                     // return; // already done!
                 }
                 
@@ -117,6 +132,9 @@ namespace FadeBasic.Ast.Visitors
                 while (toExplore.Count > 0)
                 {
                     var curr = toExplore.Dequeue();
+
+                    refCounter[curr] += 1;
+                    
                     if (seen.Contains(curr))
                     {
                         // ASYNC REF FOUND!

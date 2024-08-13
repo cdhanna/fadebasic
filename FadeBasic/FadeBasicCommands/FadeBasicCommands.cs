@@ -10,7 +10,7 @@ namespace FadeBasic
     /// </summary>
     public partial class FadeBasicCommands
     {
-        [FadeBasicCommand("secondary" + " tuna")]
+        [FadeBasicCommand( "tuna")]
         public static void Secondary()
         {
             

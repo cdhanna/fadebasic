@@ -971,6 +971,84 @@ namespace FadeBasic.Virtual
                     _buffer.Add(OpCodes.CAST);
                     _buffer.Add(TypeCodes.PTR_HEAP);
                     break;
+                
+                case StructFieldReference fieldRef:
+
+                    switch (fieldRef.left)
+                    {
+                        case VariableRefNode leftVariable:
+
+                            if (!scope.TryGetVariable(leftVariable.variableName, out var typeCompiledVar))
+                            {
+                                FakeDeclare(leftVariable, out typeCompiledVar);
+                            }
+
+                            if (!_types.TryGetValue(typeCompiledVar.structType, out var type))
+                            {
+                                throw new Exception("Unknown type reference " + type);
+                            }
+
+                            ComputeStructOffsets(type, fieldRef.right, out var readOffset, out var readLength,
+                                out var readTypeCode);
+
+                            // push the type-code of the element
+                            _buffer.Add(OpCodes.BPUSH);
+                            _buffer.Add(readTypeCode);
+
+                            // push the offset
+                            {
+                                // first, load up the base address 
+                                PushLoad(_buffer, typeCompiledVar.registerAddress, typeCompiledVar.isGlobal);
+                                
+                                // then insert the offset
+                                AddPushInt(_buffer, readOffset); // SIZE, <Data>
+
+                                // and add them up
+                                _buffer.Add(OpCodes.ADD);
+                            }
+                            
+                            // convert the address to a ptr
+                            _buffer.Add(OpCodes.CAST);
+                            _buffer.Add(TypeCodes.PTR_HEAP);
+                            break;
+                        case ArrayIndexReference leftArray:
+
+                            // we need to find the address to the array, then add on the offset
+                            if (!scope.TryGetArray(leftArray.variableName, out compiledArrayVar))
+                            {
+                                throw new Exception(
+                                    "Compiler: cannot access array since it not declared (left-struct)" +
+                                    leftArray.variableName);
+                            }
+                            
+                            ComputeStructOffsets(compiledArrayVar.structType, fieldRef.right, out readOffset, out readLength,
+                                out readTypeCode);
+
+                            _buffer.Add(OpCodes.BPUSH);
+                            _buffer.Add(compiledArrayVar.typeCode);
+                            
+
+                            // push the offset
+                            {
+                                // first, load up the base address of the array
+                                PushAddress(leftArray);
+                                
+                                // then insert the offset
+                                AddPushInt(_buffer, readOffset); // SIZE, <Data>
+
+                                // and add them up
+                                _buffer.Add(OpCodes.ADD);
+                            }
+
+                            _buffer.Add(OpCodes.CAST);
+                            _buffer.Add(TypeCodes.PTR_HEAP);
+                            break;
+                        default:
+                            throw new NotImplementedException("structref left- cannot use the address of this expression " + expression);
+                            break;
+                    }
+                    
+                    break;
                 default:
                     throw new NotImplementedException("cannot use the address of this expression " + expression);
             }
@@ -1783,7 +1861,43 @@ namespace FadeBasic.Virtual
                     // TODO: At this point, we could decide _which_ add/mul method to call given the type.
                     // if both lhs and rhs are ints, then we could emit an IADD, and don't need to emit the type codes ahead of time.
                     
+                    
+                    // if the op is a short-circuitable operation, then we may not jump over parts of the compilation pass. 
+                    /*
+                     * a OR b ---- b only executes if !a
+                     * a AND b --- b only executes if a
+                     *
+                     */
+                    
                     Compile(op.lhs);
+                    int jumpIndex = -1;
+                    
+                    switch (op.operationType)
+                    {
+                        case OperationType.Or:
+                            // we need to jump based on the value, but also need the value to return 
+                            _buffer.Add(OpCodes.DUPE);
+                        
+                            // then, put a fake value in for the end of the rhs success jump... We'll fix it later.
+                            jumpIndex = _buffer.Count;
+                            AddPushInt(_buffer, int.MaxValue);
+                    
+                            // then, do the jump-gt-zero (because an or is happy if the value on the left is truthy)
+                            _buffer.Add(OpCodes.JUMP_GT_ZERO);
+                            break;
+                        case OperationType.And:
+                            // we need to jump based on the value, but also need the value to return 
+                            _buffer.Add(OpCodes.DUPE);
+
+                            // then, put a fake value in for the end of the rhs success jump... We'll fix it later.
+                            jumpIndex = _buffer.Count;
+                            AddPushInt(_buffer, int.MaxValue);
+                            
+                            // then, jump if the value is 0, because if the lhs is false, then there is no point in checking the rhs; the whole AND expression will be false
+                            _buffer.Add(OpCodes.JUMP_ZERO);
+                            break;
+                    }
+                    
                     Compile(op.rhs);
 
                     switch (op.operationType)
@@ -1839,6 +1953,19 @@ namespace FadeBasic.Virtual
                             break;
                         default:
                             throw new NotImplementedException("unknown compiled op code: " + op.operationType);
+                    }
+                    
+                    var endJumpValue = _buffer.Count;
+                    if (jumpIndex > 0)
+                    {
+                        // ignore the type code for the jump...
+                        _buffer.Add(OpCodes.NOOP); 
+                        var successJumpBytes = BitConverter.GetBytes(endJumpValue);
+                        for (var i = 0; i < successJumpBytes.Length; i++)
+                        {
+                            // offset by 2, because of the opcode, and the type code
+                            _buffer[jumpIndex + 2 + i] = successJumpBytes[i];
+                        }
                     }
                     
                     break;

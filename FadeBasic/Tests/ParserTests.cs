@@ -772,8 +772,8 @@ endtype";
         var code = prog.ToString();
         Console.WriteLine(code);
         Assert.That(code, Is.EqualTo(@"(
-(type chicken ((ref x) as (typeRef egg))),
-(type egg ((ref y$) as (string)))
+(type egg ((ref y$) as (string))),
+(type chicken ((ref x) as (typeRef egg)))
 )".ReplaceLineEndings("")));
     }
 
@@ -1434,6 +1434,7 @@ x = a.b + len(a.c)
         var parser = MakeParser(input);
         var prog = parser.ParseProgram();
         
+        prog.AssertNoParseErrors();
         Assert.That(prog.statements.Count, Is.EqualTo(1));
         Assert.That(prog.statements[0], Is.AssignableTo<DeclarationStatement>());
 
@@ -1442,4 +1443,29 @@ x = a.b + len(a.c)
         var code = prog.ToString();
         Assert.That(code, Is.EqualTo("((decl global,x,(integer)))"));
     }
+    
+    [Test]
+    public void Decl_IntegerGlobal_2()
+    {
+        var input = @"
+for x = 0 to 3
+    global y as integer = x
+next
+";
+        var parser = MakeParser(input);
+        var prog = parser.ParseProgram();
+        prog.AssertNoParseErrors();
+    }
+    
+    [Test]
+    public void Decl_IntegerGlobal_3()
+    {
+        var input = @"
+    global y as integer = 1
+";
+        var parser = MakeParser(input);
+        var prog = parser.ParseProgram();
+        prog.AssertNoParseErrors();
+    }
+
 }

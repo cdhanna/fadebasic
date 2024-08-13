@@ -2,6 +2,7 @@ namespace FadeBasic.ApplicationSupport.Project;
 
 public class CommandMetadata
 {
+    public string className;
     public List<string> classDocStrings = new List<string>();
     public List<ProjectCommandMetadata> commands = new List<ProjectCommandMetadata>();
 }

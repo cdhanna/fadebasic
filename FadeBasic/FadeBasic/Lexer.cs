@@ -199,7 +199,7 @@ namespace FadeBasic
             new Lexem(LexemType.KeywordUntil, new Regex("^until")),
             // new Lexem(LexemType.Colon, new Regex("^:")),
 
-            new Lexem(LexemType.KeywordScope, new Regex("^(local)|(global)")),
+            new Lexem(LexemType.KeywordScope, new Regex("^(local|global)")),
             
             new Lexem(LexemType.KeywordIf, new Regex("^if")),
             new Lexem(LexemType.KeywordEndIf, new Regex("^endif")),

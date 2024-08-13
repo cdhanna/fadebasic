@@ -1582,6 +1582,27 @@ x as
 
     
     [Test]
+    public void ParseError_VariableDec_Double_Branch()
+    {
+        var input = @"
+y = 3
+if y > 2
+    x as integer
+else
+    x as float
+endif
+";
+        var parser = MakeParser(input);
+        var prog = parser.ParseProgram();
+
+        var errors = prog.GetAllErrors();
+        prog.AssertParseErrors(1);
+        Assert.That(errors[0].Display, Is.EqualTo($"[5:4] - {ErrorCodes.SymbolAlreadyDeclared}"));
+    }
+
+
+    
+    [Test]
     public void ParseError_VariableDec_Double()
     {
         var input = @"
@@ -1609,7 +1630,6 @@ x(2) = 1
 
         var errors = prog.GetAllErrors();
         prog.AssertNoParseErrors();
-        // Assert.That(errors[0].Display, Is.EqualTo($"[1:6] - {ErrorCodes.ExpressionMissing}"));
     }
 
     

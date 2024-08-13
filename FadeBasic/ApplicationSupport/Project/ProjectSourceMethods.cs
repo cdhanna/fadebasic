@@ -4,7 +4,6 @@ namespace FadeBasic.ApplicationSupport.Project;
 
 public static class ProjectSourceMethods
 {
-
     public static SourceMap CreateSourceMap(List<string> sourceFilePaths, Func<string, string[]> reader = null)
     {
         if (reader == null)
@@ -36,27 +35,4 @@ public static class ProjectSourceMethods
     {
         return CreateSourceMap(project.absoluteSourceFiles, reader);
     }
-    
-    // public static SourceMap CreateSourceMap(this ProjectContext project)
-    // {
-    //     // need the abliity to convert back from final source into FILE(uri), and line/char
-    //     var sb = new StringBuilder();
-    //     var fileToRange = new Dictionary<string, Range>();
-    //     var rollingIndex = 0;
-    //     for (var i = 0; i < project.absoluteSourceFiles.Count; i++)
-    //     {
-    //         var file = project.absoluteSourceFiles[i];
-    //         var content = File.ReadAllText(file);
-    //
-    //         var startIndex = rollingIndex;
-    //         sb.Append(content);
-    //         rollingIndex = sb.Length;
-    //         var endIndex = rollingIndex;
-    //         fileToRange[file] = new Range(startIndex, endIndex);
-    //         sb.AppendLine(); // blank line
-    //     }
-    //
-    //     var fullSource = sb.ToString();
-    //     return new SourceMap(fullSource, fileToRange);
-    // }
 }

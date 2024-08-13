@@ -2151,6 +2151,171 @@ x = (4-5) - (2 - 1)
         Assert.That(vm.typeRegisters[0], Is.EqualTo(TypeCodes.REAL));
     }
 
+    
+    [Test]
+    public void IfStatement_ShortCircuit_Or_BothPathsRun()
+    {
+        var src = @$"
+dim x(3)
+y = 0
+if 0 OR 1 > 0
+    y = 12
+endif
+";
+        Setup(src, out _, out var prog);
+
+        _exprAst.AssertNoParseErrors();
+        var vm = new VirtualMachine(prog);
+        vm.Execute2();
+
+        // register 2, because the first 3 are used for the array
+        Assert.That(vm.typeRegisters[3], Is.EqualTo(TypeCodes.INT));
+        Assert.That(vm.dataRegisters[3], Is.EqualTo(12)); // register 0 is x, 
+    }
+
+    
+    [Test]
+    public void IfStatement_ShortCircuit_Or_PreventsExecutions()
+    {
+        var src = @$"
+dim x(3)
+y = 0
+if 3 > 0 OR x(-1)
+    y = 12
+endif
+";
+        Setup(src, out _, out var prog);
+
+        _exprAst.AssertNoParseErrors();
+        var vm = new VirtualMachine(prog);
+        vm.Execute2();
+
+        // register 2, because the first 3 are used for the array
+        Assert.That(vm.typeRegisters[3], Is.EqualTo(TypeCodes.INT));
+        Assert.That(vm.dataRegisters[3], Is.EqualTo(12)); // register 0 is x, 
+    }
+
+    
+    [Test]
+    public void IfStatement_ShortCircuit_Chain()
+    {
+        var src = @$"
+dim x(3)
+y = 0
+if 0 OR (0 AND (x-1)) OR 1 OR x(-1)
+    y = 12
+endif
+";
+        Setup(src, out _, out var prog);
+
+        _exprAst.AssertNoParseErrors();
+        var vm = new VirtualMachine(prog);
+        vm.Execute2();
+
+        // register 2, because the first 3 are used for the array
+        Assert.That(vm.typeRegisters[3], Is.EqualTo(TypeCodes.INT));
+        Assert.That(vm.dataRegisters[3], Is.EqualTo(12)); // register 0 is x, 
+    }
+
+    
+    [Test]
+    public void IfStatement_ShortCircuit_And_PreventsExecutions()
+    {
+        var src = @$"
+dim x(3)
+y = 12
+if 0 AND x(-1)
+    y = 0
+endif
+";
+        Setup(src, out _, out var prog);
+
+        _exprAst.AssertNoParseErrors();
+        var vm = new VirtualMachine(prog);
+        vm.Execute2();
+
+        // register 2, because the first 3 are used for the array
+        Assert.That(vm.typeRegisters[3], Is.EqualTo(TypeCodes.INT));
+        Assert.That(vm.dataRegisters[3], Is.EqualTo(12)); // register 0 is x, 
+    }
+
+    
+    [Test]
+    public void IfStatement_ShortCircuit_And_BothPathsRun()
+    {
+        var src = @$"
+dim x(3)
+y = 0
+if 1 AND 2
+    y = 12
+endif
+";
+        Setup(src, out _, out var prog);
+
+        _exprAst.AssertNoParseErrors();
+        var vm = new VirtualMachine(prog);
+        vm.Execute2();
+
+        // register 2, because the first 3 are used for the array
+        Assert.That(vm.typeRegisters[3], Is.EqualTo(TypeCodes.INT));
+        Assert.That(vm.dataRegisters[3], Is.EqualTo(12)); // register 0 is x, 
+    }
+
+    
+    [TestCase("x#", "3", null, 3)]
+    [TestCase("x#", "3.2", null, 3.2f)]
+    [TestCase("x as float", "3.2", null, 3.2f)]
+    [TestCase("x#", "\"toast\"", "invalid conversion", 0)]
+    public void TypeConversion_Float_Simple(string leftSide, string rightSide, string error, float value)
+    {
+        var src = @$"
+{leftSide} = {rightSide}
+";
+        Setup(src, out _, out var prog);
+
+        if (error != null)
+        {
+            _exprAst.AssertParseErrors(1);
+            return;
+        }
+        
+        _exprAst.AssertNoParseErrors();
+        var vm = new VirtualMachine(prog);
+        vm.Execute2();
+
+        var outputRegisterValue = vm.dataRegisters[0];
+        var outputRegisterBytes = BitConverter.GetBytes(outputRegisterValue);
+        float output = BitConverter.ToSingle(outputRegisterBytes, 0);
+        
+        Assert.That(output, Is.EqualTo(value));
+        Assert.That(vm.typeRegisters[0], Is.EqualTo(TypeCodes.REAL));
+    }
+    
+    
+    [Test]
+    public void Declare_InLoop()
+    {
+        var src = @"
+for x = 0 to 3
+    global y as integer = x
+next
+";
+        Setup(src, out _, out var prog);
+        
+        var vm = new VirtualMachine(prog);
+        vm.Execute2();
+
+        Assert.That(vm.dataRegisters[0], Is.EqualTo(4)); // register 0 is x, 
+        Assert.That(vm.typeRegisters[0], Is.EqualTo(TypeCodes.INT));
+        
+        Assert.That(vm.dataRegisters[1], Is.EqualTo(3)); // register 1 is y, 
+        Assert.That(vm.typeRegisters[1], Is.EqualTo(TypeCodes.INT));
+        
+        Assert.That(vm.dataRegisters[2], Is.EqualTo(0)); // register 2 should have nothing in it
+        Assert.That(vm.typeRegisters[2], Is.EqualTo(0));
+    }
+    
+    
     [Test]
     public void Math_Ints_Add()
     {
@@ -2451,6 +2616,33 @@ albert as chicken
     }
 
     
+    [Test]
+    public void Type_Instantiate_Nested_DeclareOrderDoesNotMatter()
+    {
+        var src = @"
+type chicken
+e as egg
+n 
+endtype
+
+type egg 
+color
+endtype
+
+albert as chicken
+";
+        Setup(src, out var compiler, out var prog);
+        var vm = new VirtualMachine(prog);
+        vm.hostMethods = compiler.methodTable;
+        vm.Execute2();
+        
+        
+        Assert.That(vm.heap.Cursor, Is.EqualTo(8));
+        Assert.That(vm.typeRegisters[0], Is.EqualTo(TypeCodes.STRUCT));
+        
+        // it shouldn't matter the order we define the types, because we are parse-sure they don't have loops.
+    }
+
     
     [Test]
     public void Type_Instantiate_Nested_Assign2()
@@ -2837,6 +3029,199 @@ any input ""darn"", y
         Assert.That(vm.typeRegisters[0], Is.EqualTo(TypeCodes.INT));
         Assert.That(vm.dataRegisters[0], Is.EqualTo(28));
     }
+    
+    
+    [Test]
+    public void CallHost_RefType_ArrayStruct()
+    {
+        var src = @"
+type toast
+    x
+endtype
+dim bread(2) as toast
+bread(1).x = 3
+refDbl bread(1).x";
+        Setup(src, out var compiler, out var prog);
+        _exprAst.AssertNoParseErrors();
+        var vm = new VirtualMachine(prog);
+        vm.hostMethods = compiler.methodTable;
+        vm.Execute2();
+        Assert.That(vm.heap.Cursor, Is.EqualTo(8)); // size of the only field in toast, int, 4.
+        // Assert.That(vm.typeRegisters[0], Is.EqualTo(TypeCodes.PTR_HEAP));
+        
+        vm.heap.Read((int)vm.dataRegisters[0] + 4, 4, out var memory);
+        var data = BitConverter.ToInt32(memory);
+        Assert.That(data, Is.EqualTo(6));
+    }
+    
+    [Test]
+    public void CallHost_RefType_FromStruct()
+    {
+        var src = @"
+type toast
+    x
+endtype
+bread as toast
+bread.x = 3
+refDbl bread.x";
+        Setup(src, out var compiler, out var prog);
+        _exprAst.AssertNoParseErrors();
+        var vm = new VirtualMachine(prog);
+        vm.hostMethods = compiler.methodTable;
+        vm.Execute2();
+        Assert.That(vm.heap.Cursor, Is.EqualTo(4)); // size of the only field in toast, int, 4.
+        Assert.That(vm.typeRegisters[0], Is.EqualTo(TypeCodes.STRUCT));
+        
+        vm.heap.Read((int)vm.dataRegisters[0], 4, out var memory);
+        var data = BitConverter.ToInt32(memory);
+        Assert.That(data, Is.EqualTo(6));
+    }
+    
+    
+    [Test]
+    public void CallHost_RefType_ArrayStruct_SecondValue()
+    {
+        var src = @"
+type toast
+    x
+    y
+endtype
+dim bread(2) as toast
+bread(1).y = 3
+refDbl bread(1).y";
+        Setup(src, out var compiler, out var prog);
+        _exprAst.AssertNoParseErrors();
+        var vm = new VirtualMachine(prog);
+        vm.hostMethods = compiler.methodTable;
+        vm.Execute2();
+        Assert.That(vm.heap.Cursor, Is.EqualTo(16)); // size of the only field in toast, int, 4.
+        // Assert.That(vm.typeRegisters[0], Is.EqualTo(TypeCodes.PTR_HEAP));
+        
+        vm.heap.Read((int)vm.dataRegisters[0] + 12, 4, out var memory);
+        var data = BitConverter.ToInt32(memory);
+        Assert.That(data, Is.EqualTo(6));
+    }
+
+    
+    [Test]
+    public void CallHost_RefType_ArrayStruct_Nested()
+    {
+        var src = @"
+type jam
+    z
+    w
+endtype
+type toast
+    x
+    y as jam
+endtype
+dim bread(2) as toast
+bread(1).y.w = 3
+refDbl bread(1).y.w";
+        Setup(src, out var compiler, out var prog);
+        _exprAst.AssertNoParseErrors();
+        var vm = new VirtualMachine(prog);
+        vm.hostMethods = compiler.methodTable;
+        vm.Execute2();
+        Assert.That(vm.heap.Cursor, Is.EqualTo(24)); // size of the only field in toast, int, 4.
+        // Assert.That(vm.typeRegisters[0], Is.EqualTo(TypeCodes.PTR_HEAP));
+        
+        vm.heap.Read((int)vm.dataRegisters[0] + 20, 4, out var memory);
+        var data = BitConverter.ToInt32(memory);
+        Assert.That(data, Is.EqualTo(6));
+    }
+
+
+    [Test]
+    public void CallHost_RefType_FromStruct_SecondVariable()
+    {
+        var src = @"
+type toast
+    x
+    y
+endtype
+bread as toast
+bread.y = 3
+refDbl bread.y";
+        Setup(src, out var compiler, out var prog);
+        _exprAst.AssertNoParseErrors();
+        var vm = new VirtualMachine(prog);
+        vm.hostMethods = compiler.methodTable;
+        vm.Execute2();
+        Assert.That(vm.heap.Cursor, Is.EqualTo(8)); // there are two ints, each are 4
+        Assert.That(vm.typeRegisters[0], Is.EqualTo(TypeCodes.STRUCT));
+        
+        vm.heap.Read((int)vm.dataRegisters[0] + 4, 4, out var memory);
+        var data = BitConverter.ToInt32(memory);
+        Assert.That(data, Is.EqualTo(6));
+    }
+    
+    
+    [Test]
+    public void CallHost_RefType_FromStruct_Nested()
+    {
+        var src = @"
+type jam
+    z
+    w
+endtype
+type toast
+    x
+    y as jam
+endtype
+
+bread as toast
+bread.y.w = 3
+refDbl bread.y.w";
+        
+        Setup(src, out var compiler, out var prog);
+        _exprAst.AssertNoParseErrors();
+        var vm = new VirtualMachine(prog);
+        vm.hostMethods = compiler.methodTable;
+        vm.Execute2();
+        Assert.That(vm.heap.Cursor, Is.EqualTo(12)); // there are three ints, each are 4
+        Assert.That(vm.typeRegisters[0], Is.EqualTo(TypeCodes.STRUCT));
+        
+        vm.heap.Read((int)vm.dataRegisters[0] + 8, 4, out var memory);
+        var data = BitConverter.ToInt32(memory);
+        Assert.That(data, Is.EqualTo(6));
+    }
+    
+    
+    [Test]
+    public void CallHost_RefType_FromStruct_Nested_InvalidCast()
+    {
+        var src = @"
+type jam
+    z
+    w
+endtype
+type toast
+    x
+    y as jam
+endtype
+
+bread as toast
+bread.y.z = 3
+refDbl bread.y";
+        
+        Setup(src, out var compiler, out var prog);
+        _exprAst.AssertNoParseErrors();
+        var vm = new VirtualMachine(prog);
+        vm.hostMethods = compiler.methodTable;
+        vm.Execute2();
+        Assert.That(vm.heap.Cursor, Is.EqualTo(12)); // there are three ints, each are 4
+        Assert.That(vm.typeRegisters[0], Is.EqualTo(TypeCodes.STRUCT));
+        
+        vm.heap.Read((int)vm.dataRegisters[0] + 4, 4, out var memory);
+        var data = BitConverter.ToInt32(memory);
+        Assert.That(data, Is.EqualTo(6));
+        Assert.Fail(@"
+This test shouldn't be allowed to compile. 'bread.y' is not a valid numeric value, but
+it can be passed to the ref parameter because it happens to map to the first parameter.
+");
+    }
+
     
     [Test]
     public void CallHost_RefType_AsRaw()

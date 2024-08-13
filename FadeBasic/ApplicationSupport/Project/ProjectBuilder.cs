@@ -104,6 +104,7 @@ namespace FadeBasic.ApplicationSupport.Project
                         IncludeFields = true,
                         PropertyNameCaseInsensitive = true,
                     });
+                    metadata.className = commandSubset;
 
                     metaDatas.Add(metadata);
                 }

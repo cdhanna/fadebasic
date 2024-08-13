@@ -9,7 +9,6 @@ namespace FadeBasic.Ast
     {
 
     }
-
     public class DeReference : AstNode, IVariableNode
     {
         public readonly IVariableNode ptrExpression;
@@ -68,6 +67,7 @@ namespace FadeBasic.Ast
             foreach (var rankExpr in rankExpressions) yield return rankExpr;
 
         }
+
     }
 
     public class VariableRefNode : AstNode, IVariableNode, IAstVisitable
@@ -111,5 +111,6 @@ namespace FadeBasic.Ast
         {
             yield break; // no children.
         }
+
     }
 }
