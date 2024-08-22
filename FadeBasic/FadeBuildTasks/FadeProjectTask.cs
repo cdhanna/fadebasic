@@ -102,23 +102,46 @@ namespace FadeBasic.Build
             {
                 ignoreChecks = IgnoreSafetyChecks
             });
-            
-            var errors = unit.program.GetAllErrors();
-            foreach (var error in errors)
+            var lexErrors = unit.lexerResults.tokenErrors;
+            if (lexErrors.Count > 0)
             {
-                var local = map.GetOriginalRange(error.location);
-                Log.LogError(subcategory: "fade",
-                    errorCode: "FADE:" + error.errorCode.code,
-                    helpKeyword: null,
-                    file: local.fileName,
-                    lineNumber: error.location.start.lineNumber,
-                    columnNumber: error.location.start.charNumber,
-                    endLineNumber: error.location.end.lineNumber,
-                    endColumnNumber: error.location.end.charNumber,
-                    message: error.CombinedMessage);
+                foreach (var error in lexErrors)
+                {
+                    var local = map.GetOriginalLocation(error.lineNumber, error.charNumber);
+                    Log.LogError(subcategory: "fade",
+                        errorCode: "FADE:" + error.error.code,
+                        helpKeyword: null,
+                        file: local.fileName,
+                        lineNumber: local.startLine,
+                        columnNumber: local.startChar,
+                        endLineNumber: local.startLine,
+                        endColumnNumber: local.startChar + error.text.Length,
+                        message: error.Display);
+                }
+                if ( lexErrors.Count > 0) return false;
+
+            }
+            else
+            {
+
+                var errors = unit.program?.GetAllErrors();
+                foreach (var error in errors)
+                {
+                    var local = map.GetOriginalRange(error.location);
+                    Log.LogError(subcategory: "fade",
+                        errorCode: "FADE:" + error.errorCode.code,
+                        helpKeyword: null,
+                        file: local.fileName,
+                        lineNumber: error.location.start.lineNumber,
+                        columnNumber: error.location.start.charNumber,
+                        endLineNumber: error.location.end.lineNumber,
+                        endColumnNumber: error.location.end.charNumber,
+                        message: error.CombinedMessage);
+                }
+                if (errors.Count > 0) return false;
+
             }
 
-            if (errors.Count > 0) return false;
 
             LaunchableGenerator.GenerateLaunchable(GeneratedClassName,GenerateFileLocation,unit, commandCollection, allClassNames, includeMain: GenerateEntryPoint);
             GeneratedFile = GenerateFileLocation;

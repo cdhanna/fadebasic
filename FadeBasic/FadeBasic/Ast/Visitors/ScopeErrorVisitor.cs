@@ -434,6 +434,13 @@ namespace FadeBasic.Ast.Visitors
                         }
                         expr.Errors.Add(new ParseError(expr.StartToken, ErrorCodes.InvalidReference, $"unknown symbol, {arrayRef.variableName}"));
                     }
+                    else
+                    {
+                        if (!arraySymbol.typeInfo.IsArray)
+                        {
+                            expr.Errors.Add(new ParseError(expr.StartToken, ErrorCodes.CannotIndexIntoNonArray));
+                        }
+                    }
 
                     arrayRef.DeclaredFromSymbol = arraySymbol;
                     arrayRef.ApplyTypeFromSymbol(arraySymbol);

@@ -4,9 +4,9 @@
     <OutputType>Exe</OutputType>
   </PropertyGroup>
   <ItemGroup>
-    <PackageReference Include="FadeBasic.Build" Version="0.3.13.4" />
-    <PackageReference Include="FadeBasic.Lang.Core" Version="0.3.13.4" />
-    <PackageReference Include="FadeBasic.Lib.Standard" Version="0.3.13.4" />
+    <PackageReference Include="FadeBasic.Build" Version="0.3.13.11" />
+    <PackageReference Include="FadeBasic.Lang.Core" Version="0.3.13.11" />
+    <PackageReference Include="FadeBasic.Lib.Standard" Version="0.3.13.11" />
     <FadeCommand Include="FadeBasic.Lib.Standard" FullName="FadeBasic.Lib.Standard.ConsoleCommands" />
     <FadeCommand Include="FadeBasic.Lib.Standard" FullName="FadeBasic.Lib.Standard.StandardCommands" />
     <FadeSource Include="main.fade" />

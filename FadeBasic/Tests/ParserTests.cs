@@ -6,6 +6,16 @@ namespace Tests;
 
 public static class ParserTestUtil
 {
+    public static void AssertNoLexErrors(this LexerResults lex)
+    {
+        Assert.That(lex.tokenErrors.Count, Is.EqualTo(0), $"token errors: {string.Join(",", lex.tokenErrors.Select(x =>x.Display))}");
+
+    }
+    public static void AssertLexErrorCount(this LexerResults lex, int count)
+    {
+        Assert.That(lex.tokenErrors.Count, Is.EqualTo(count), $"token errors: {string.Join(",", lex.tokenErrors.Select(x =>x.Display))}");
+
+    }
     public static void AssertNoParseErrors(this ProgramNode prog)
     {
         prog.AssertParseErrors(0);
@@ -20,6 +30,7 @@ public partial class ParserTests
 {
     private Lexer _lexer;
     private CommandCollection _commands;
+    private LexerResults? _lexerResults;
 
     [SetUp]
     public void Setup()
@@ -30,8 +41,8 @@ public partial class ParserTests
 
     TokenStream Tokenize(string input)
     {
-        var output = _lexer.TokenizeWithErrors(input, _commands);
-        return output.stream;
+        _lexerResults = _lexer.TokenizeWithErrors(input, _commands);
+        return _lexerResults.stream;
         // new TokenStream(_lexer.Tokenize(input, _commands));
     } 
 
@@ -66,7 +77,69 @@ public partial class ParserTests
         Assert.That(code, Is.EqualTo("((= (ref x$),(\"hello\")))"));
     }
 
+    [Test]
+    public void String_Assign_WithBackslashQuote()
+    {
+        var input = "x$=\"\\\"\"";
+        var parser = MakeParser(input);
+        _lexerResults.AssertNoLexErrors();
+        var prog = parser.ParseProgram();
+        prog.AssertNoParseErrors();
+        var code = prog.ToString();
+        Assert.That(code, Is.EqualTo("((= (ref x$),(\"\"\")))"));
+    }
+    
+    
+    [Test]
+    public void String_Assign_WithBackslash_Error_NeedDoubleSlash()
+    {
+        var input = "x$=\"\\\"";
+        var parser = MakeParser(input);
+        _lexerResults.AssertLexErrorCount(1);
+        var prog = parser.ParseProgram();
+        prog.AssertNoParseErrors();
+        var code = prog.ToString();
+        Assert.That(code, Is.EqualTo("((= (ref x$),(\"\")))"));
+    }
 
+
+    [Test]
+    public void String_Assign_WithBackslash()
+    {
+        var input = "x$=\"\\\\\"";
+        var parser = MakeParser(input);
+        _lexerResults.AssertNoLexErrors();
+        var prog = parser.ParseProgram();
+        prog.AssertNoParseErrors();
+        var code = prog.ToString();
+        Assert.That(code, Is.EqualTo("((= (ref x$),(\"\\\")))"));
+    }
+    
+    [Test]
+    public void String_Assign_QuotedWord()
+    {
+        var input = "x$=\"hello \\\"cruel\\\" world\"";
+        var parser = MakeParser(input);
+        _lexerResults.AssertNoLexErrors();
+        var prog = parser.ParseProgram();
+        prog.AssertNoParseErrors();
+        var code = prog.ToString();
+        Assert.That(code, Is.EqualTo("((= (ref x$),(\"hello \"cruel\" world\")))"));
+    }
+    
+    [Test]
+    public void String_Assign_WithBackslash_Error_LastChar()
+    {
+        var input = "x$=\"\\\\";
+        var parser = MakeParser(input);
+        _lexerResults.AssertLexErrorCount(1);
+        var prog = parser.ParseProgram();
+        prog.AssertNoParseErrors();
+        var code = prog.ToString();
+        Assert.That(code, Is.EqualTo("((= (ref x$),(\"\\)))"));
+    }
+
+    
     [Test]
     public void String_Assign2()
     {

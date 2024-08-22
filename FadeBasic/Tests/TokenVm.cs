@@ -277,6 +277,24 @@ y$ = ""world"" + x$
     }
 
     
+    // [Test]
+    // public void String_Declare_Backslash()
+    // {
+    //     var src = "x as string: x = \"hel\\lo\" ";
+    //     Setup(src, out _, out var prog);
+    //     
+    //     var vm = new VirtualMachine(prog);
+    //     vm.Execute2();
+    //     
+    //     Assert.That(vm.dataRegisters[0], Is.EqualTo(0)); // the ptr to the string in memory
+    //     Assert.That(vm.typeRegisters[0], Is.EqualTo(TypeCodes.STRING));
+    //     
+    //     vm.heap.Read(0, "hel\\lo".Length * 4, out var memory);
+    //     var str = VmConverter.ToString(memory);
+    //     
+    //     Assert.That(str, Is.EqualTo("hel\\lo"));
+    // }
+    
     [Test]
     public void String_Declare_HugeHeap()
     {
@@ -3467,6 +3485,18 @@ y$ = x$(1)
     public void CallHost_StringArg()
     {
         var src = "x = len(\"hello\")";
+        Setup(src, out var compiler, out var prog);
+        var vm = new VirtualMachine(prog);
+        vm.hostMethods = compiler.methodTable;
+        vm.Execute2();
+        Assert.That(vm.typeRegisters[0], Is.EqualTo(TypeCodes.INT));
+        Assert.That(vm.dataRegisters[0], Is.EqualTo("hello".Length));
+    }
+    
+    [Test]
+    public void CallHost_StringArg_Backslash()
+    {
+        var src = "x = len(\"hel\\lo\")";
         Setup(src, out var compiler, out var prog);
         var vm = new VirtualMachine(prog);
         vm.hostMethods = compiler.methodTable;

@@ -152,6 +152,7 @@ namespace FadeBasic
             }
         }
 
+        private static Lexem LexemString = new Lexem(LexemType.LiteralString, new Regex("^\""));
         public static List<Lexem> Lexems = new List<Lexem>
         {
             new Lexem(LexemType.Constant, new Regex("^\\s*#constant\\s+([a-zA-Z][a-zA-Z0-9_]*)\\s+(.*)\\s*$")),
@@ -242,8 +243,13 @@ namespace FadeBasic
 
             new Lexem(-2, LexemType.LiteralReal, new Regex("^((\\d+\\.(\\d*))|(\\.\\d+))")),
             new Lexem(LexemType.LiteralInt, new Regex("^\\d+")),
+            
+            // special parsing will be needed for strings...
+            LexemString,
+            
             // new Lexem(LexemType.LiteralString, new Regex("^\"(.*?)\"")),
-            new Lexem(LexemType.LiteralString, new Regex(@"^(?<!\\)"".*?(?<!\\)""")),
+            // new Lexem(LexemType.LiteralString, new Regex(@"^(?<!\\)"".*?(?<!\\)""")),
+            // new Lexem(LexemType.LiteralString, new Regex(@"^@?""(?:\""\""|[^""])*""")),
             
             new Lexem(-2, LexemType.VariableString, new Regex("^([a-zA-Z][a-zA-Z0-9_]*)\\$")),
             new Lexem(-2, LexemType.VariableReal, new Regex("^([a-zA-Z][a-zA-Z0-9_]*)#")),
@@ -330,41 +336,6 @@ namespace FadeBasic
                 var line = lines[lineNumber];
                 if (string.IsNullOrEmpty(line)) continue;
                 
-                    
-                // if (remBlockToken == null && line.ToLowerInvariant().StartsWith("remstart"))
-                // {
-                //     remBlockToken = new Token
-                //     {
-                //         lexem = new Lexem(LexemType.KeywordRemStart, null),
-                //         charNumber = 0,
-                //         lineNumber = lineNumber,
-                //     };
-                //     
-                //     remBlockSb.Clear();
-                //     remBlockSb.AppendLine(line.Substring("remstart".Length));
-                //     continue;
-                //
-                // } else if (remBlockToken != null && (line.ToLowerInvariant().StartsWith("remend") || lineNumber == lines.Length - 1))
-                // {
-                //     remBlockToken.caseInsensitiveRaw = remBlockSb.ToString();
-                //     // tokens.Add(remBlockToken);
-                //     // tokens.Add(new Token
-                //     // {
-                //     //     lexem = new Lexem(LexemType.KeywordRemEnd, null),
-                //     //     charNumber = 0,
-                //     //     lineNumber = lineNumber,
-                //     //     caseInsensitiveRaw = line
-                //     // });
-                //     comments.Add(remBlockToken);
-                //
-                //     remBlockToken = null;
-                //     continue;
-                // } else if (remBlockToken != null)
-                // {
-                //     remBlockSb.AppendLine(line);
-                //     continue;
-                // }
-
                 if (remBlockToken != null)
                 {
                     remBlockToken = new Token
@@ -393,7 +364,8 @@ namespace FadeBasic
                             lineNumber = lineNumber,
                         };
                         continue;
-                    } else if (remBlockToken != null && subStr.StartsWith("remend"))
+                    } 
+                    if (remBlockToken != null && subStr.StartsWith("remend"))
                     {
                         // we are done remmin' for now.
                         remBlockToken.raw = line.Substring(remBlockToken.charNumber,
@@ -405,7 +377,8 @@ namespace FadeBasic
                         charNumber += "remend".Length;
                         continue;
 
-                    } else if (remBlockToken != null)
+                    } 
+                    if (remBlockToken != null)
                     {
                         // we are still remmin'
                         charNumber++;
@@ -416,7 +389,84 @@ namespace FadeBasic
                     MatchCollection bestMatches = null;
 
                     var hadRemCandidate = false;
-                    for (var lexemId = 0; lexemId < lexems.Count; lexemId++)
+                    var isStringParse = subStr.Length > 0 && subStr[0] == '"';
+
+                    if (isStringParse)
+                    {
+                        /*
+                         * time to parse a string!
+                         * - strings are one line
+                         * - strings must end with a quote
+                         * - strings can have backslashes, and those REQUIRE a second character to exist, which will be escaped.
+                         */
+                        var matchedEnd = false;
+                        int strIndex = 0;
+                        var charOffset = 0;
+                        var strBuffer = new StringBuilder();
+                        strBuffer.Append('"');
+
+                        for (strIndex = charNumber + 1;
+                             strIndex < line.Length; 
+                             strIndex++) 
+                        {
+                            var strChar = line[strIndex];
+                            switch (strChar)
+                            {
+                                case '"':
+                                    // exit the loop, the string's bounds are found.
+                                    strIndex++;
+                                    strBuffer.Append('"');
+                                    matchedEnd = true;
+                                    break;
+                                case '\\':
+                                    // there must be a second character 
+                                    if (strIndex == line.Length - 1)
+                                    {
+                                        // this is the last character in the line, but it cannot be.
+                                        //throw new InvalidOperationException(); // TODO: replace with lexer error
+                                    }
+
+                                    // move forwards
+                                    strIndex++;
+                                    charOffset++;
+
+                                    strBuffer.Append(line[strIndex]);
+
+                                    break;
+                                default:
+                                    strBuffer.Append(strChar);
+                                    break;
+                            }
+
+                            if (matchedEnd) break;
+                        }
+
+                        if (!matchedEnd)
+                        {
+                            errors.Add(new LexerError
+                            {
+                                charNumber = charNumber,
+                                lineNumber = lineNumber,
+                                error = ErrorCodes.LexerStringNeedsEnd,
+                                text = line.Substring(charNumber)
+                            });
+                        }
+
+                        var insensitiveRaw = line.Substring(charNumber, strIndex - charNumber);
+                        var stringLiteralSubStr = strBuffer.ToString();
+                        bestToken = new Token
+                        {
+                            caseInsensitiveRaw = insensitiveRaw.ToLowerInvariant(),
+                            raw = stringLiteralSubStr,
+                            lexem = LexemString,
+                            lineNumber = lineNumber,
+                            charNumber = charNumber
+                        };
+                        foundMatch = true;
+                        charNumber += charOffset;
+                    }
+                    
+                    for (var lexemId = 0; lexemId < lexems.Count && !isStringParse; lexemId++)
                     {
                         var lexem = lexems[lexemId];
                         var matches = lexem.regex.Matches(subStr);
@@ -434,7 +484,7 @@ namespace FadeBasic
                                 charNumber = charNumber
                             };
                            
-                            if (bestToken == null || token.raw.Length > bestToken.raw.Length)
+                            if (bestToken == null || token.Length > bestToken.Length)
                             {
                                 bestToken = token;
                                 bestMatches = matches;
@@ -481,7 +531,7 @@ namespace FadeBasic
                             case LexemType.VariableGeneral
                                 when constantTable.TryGetValue(bestToken.raw, out var replacement):
                                 var prefix = line.Substring(0, charNumber);
-                                var suffix = line.Substring(charNumber + bestToken.raw.Length);
+                                var suffix = line.Substring(charNumber + bestToken.Length);
 
                                 var replacementLine = prefix + replacement + suffix;
                                 line = replacementLine;
@@ -506,7 +556,7 @@ namespace FadeBasic
                         }
 
 
-                        charNumber += bestToken.caseInsensitiveRaw.Length;
+                        charNumber += bestToken.Length;
                     }
 
                     if (!foundMatch)
@@ -630,6 +680,7 @@ namespace FadeBasic
         public int charNumber;
         public string raw;
         public string caseInsensitiveRaw;
+        public int Length => caseInsensitiveRaw.Length;
         public LexemType type => lexem.type;
         public string Location => $"{lineNumber}:{charNumber}";
         public TokenFlags flags = TokenFlags.None;

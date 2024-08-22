@@ -1619,6 +1619,37 @@ x as integer
 
     
     [Test]
+    public void ParseError_Index_NotArray_AssignRhs()
+    {
+        var input = @"
+x = 3
+y = x(1)
+";
+        var parser = MakeParser(input);
+        var prog = parser.ParseProgram();
+
+        var errors = prog.GetAllErrors();
+        prog.AssertParseErrors(1);
+        Assert.That(errors[0].Display, Is.EqualTo($"[2:4] - {ErrorCodes.CannotIndexIntoNonArray}"));
+
+    }
+    [Test]
+    public void ParseError_Index_NotArray_AssignLhs()
+    {
+        var input = @"
+x = 3
+x(1) = 1
+";
+        var parser = MakeParser(input);
+        var prog = parser.ParseProgram();
+
+        var errors = prog.GetAllErrors();
+        prog.AssertParseErrors(1);
+        Assert.That(errors[0].Display, Is.EqualTo($"[2:4] - {ErrorCodes.CannotIndexIntoNonArray}"));
+
+    }
+    
+    [Test]
     public void ParseError_Assignment_Array()
     {
         var input = @"

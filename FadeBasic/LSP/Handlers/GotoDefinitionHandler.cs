@@ -126,7 +126,7 @@ public class GotoDefinitionHandler : DefinitionHandlerBase
             {
                 Uri = DocumentUri.File(definition.fileName),
                 Range = new Range(definition.startLine, definition.startChar, definition.startLine,
-                    definition.startChar + origin.raw.Length)
+                    definition.startChar + origin.Length)
             });
 
     }

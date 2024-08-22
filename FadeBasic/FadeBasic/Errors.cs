@@ -88,6 +88,7 @@ namespace FadeBasic
     {
         // 000 series represents lexer issues
         public static readonly ErrorCode LexerUnmatchedText = "[0001] Unknown text";
+        public static readonly ErrorCode LexerStringNeedsEnd = "[0002] String must have closing quote";
         
         // 100 series represents parse issues
         public static readonly ErrorCode ExpressionMissingAfterOpenParen = "[0100] No expression after open paren";

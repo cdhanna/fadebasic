@@ -305,7 +305,8 @@ namespace FadeBasic.Ast
 
         public LiteralStringExpression(Token token) : base(token)
         {
-            value = token.raw.Substring(1, token.caseInsensitiveRaw.Length - 2); // account for quotes
+            
+            value = token.raw.Substring(1, token.raw.Length - 2); // account for quotes
         }
 
 

@@ -61,8 +61,8 @@ public class DocumentSymbolHandler : IDocumentSymbolHandler
             {
                 Detail = token.raw,
                 Kind = Convert(token.type),
-                SelectionRange = new Range(token.lineNumber, token.charNumber, token.lineNumber, token.charNumber + token.raw.Length),
-                Range = new Range(token.lineNumber, token.charNumber, token.lineNumber, token.charNumber + token.raw.Length),
+                SelectionRange = new Range(token.lineNumber, token.charNumber, token.lineNumber, token.charNumber + token.Length),
+                Range = new Range(token.lineNumber, token.charNumber, token.lineNumber, token.charNumber + token.Length),
                 Name = token.raw
             };
             

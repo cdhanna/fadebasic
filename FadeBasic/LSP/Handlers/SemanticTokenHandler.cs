@@ -82,7 +82,7 @@ public class SemanticTokenHandler : SemanticTokensHandlerBase
                     tokenType = SemanticTokenType.Method;
                     
                 }
-                builder.Push(location.startLine, location.startChar, token.raw.Length, tokenType, emptyMods);
+                builder.Push(location.startLine, location.startChar, token.Length, tokenType, emptyMods);
             }
 
         }
