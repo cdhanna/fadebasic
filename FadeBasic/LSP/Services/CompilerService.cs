@@ -159,30 +159,56 @@ public class CompilerService
                 {
                     fileToDiags[src] = new List<Diagnostic>();
                 }
-                
-                foreach (var err in program.GetAllErrors())
-                {
 
-                    var location = sourceMap.GetOriginalRange(err.location);
+                foreach (var err in unit.lexerResults.tokenErrors)
+                {
+                    var location = sourceMap.GetOriginalLocation(err.lineNumber, err.charNumber);
                     if (!fileToDiags.TryGetValue(location.fileName, out var diags))
                     {
                         throw new InvalidOperationException("all files must already have empty diags");
                         // diags = fileToDiags[location.fileName] = new List<Diagnostic>();
                     }
-                    
                     diags.Add(new Diagnostic()
                     {
-                        Code = err.errorCode.ToString(),
+                        Code = err.error.ToString(),
                         Severity = DiagnosticSeverity.Error,
                         Message = err.Display,
                         Range = new Range(
                             startLine: location.startLine,
                             startCharacter: location.startChar,
-                            endLine: location.endLine,
-                            endCharacter: location.endChar),
+                            endLine: location.startLine,
+                            endCharacter: location.startChar + err.text.Length),
                         Source = FadeBasicConstants.FadeBasicLanguage,
                         Tags = new Container<DiagnosticTag>()
                     });
+                }
+
+                if (unit.lexerResults.tokenErrors.Count == 0)
+                {
+                    foreach (var err in program.GetAllErrors())
+                    {
+
+                        var location = sourceMap.GetOriginalRange(err.location);
+                        if (!fileToDiags.TryGetValue(location.fileName, out var diags))
+                        {
+                            throw new InvalidOperationException("all files must already have empty diags");
+                            // diags = fileToDiags[location.fileName] = new List<Diagnostic>();
+                        }
+
+                        diags.Add(new Diagnostic()
+                        {
+                            Code = err.errorCode.ToString(),
+                            Severity = DiagnosticSeverity.Error,
+                            Message = err.Display,
+                            Range = new Range(
+                                startLine: location.startLine,
+                                startCharacter: location.startChar,
+                                endLine: location.endLine,
+                                endCharacter: location.endChar),
+                            Source = FadeBasicConstants.FadeBasicLanguage,
+                            Tags = new Container<DiagnosticTag>()
+                        });
+                    }
                 }
             }
 

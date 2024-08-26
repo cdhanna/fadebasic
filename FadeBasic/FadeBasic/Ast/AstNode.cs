@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using FadeBasic.Virtual;
 
 namespace FadeBasic.Ast
 {
@@ -25,9 +26,26 @@ namespace FadeBasic.Ast
             structName = structName,
             rank = rank
         };
+
+        public static bool TryGetFromTypeCode(int typeCode, out TypeInfo typeInfo)
+        {
+            typeInfo = default;
+            if (!VmUtil.TryGetVariableType(typeCode, out var type))
+            {
+                return false;
+            }
+            typeInfo = new TypeInfo
+            {
+                type = type
+            };
+            return true;
+        }
+        
         
         public static readonly TypeInfo Void = new TypeInfo { type = VariableType.Void };
         public static readonly TypeInfo Int = new TypeInfo { type = VariableType.Integer };
+        public static readonly TypeInfo String = new TypeInfo { type = VariableType.String };
+        public static readonly TypeInfo Real = new TypeInfo { type = VariableType.Float };
 
     } 
     

@@ -262,6 +262,205 @@ add(1, ""toast"")
         // Assert.That(errors[0].Display, Is.EqualTo($"[1:0] - {ErrorCodes.GotoMissingLabel}"));
     }
     
+    
+    [Test]
+    public void ParseError_TypeCheck_IntToFloat()
+    {
+        var input = @"
+x = 1.2
+";
+        var parser = MakeParser(input);
+        var prog = parser.ParseProgram();
+        prog.AssertNoParseErrors();
+        // Assert.That(errors[0].Display, Is.EqualTo($"[1:0] - {ErrorCodes.GotoMissingLabel}"));
+    }
+    
+    [Test]
+    public void ParseError_TypeCheck_Function_Return()
+    {
+        var input = @"
+`foo returns int, so cannot assign to string
+x$ = foo(3)
+
+function foo(a)
+endfunction a*2
+";
+        var parser = MakeParser(input);
+        var prog = parser.ParseProgram();
+        prog.AssertParseErrors(1);
+        // Assert.That(errors[0].Display, Is.EqualTo($"[1:0] - {ErrorCodes.GotoMissingLabel}"));
+    }
+    
+    
+    [TestCase("", "1", "a$", "cannot convert int to string")]
+    [TestCase("", "1", "a as string", "cannot convert int to string")]
+    [TestCase("", "\"a\"", "a as string", null)]
+    [TestCase("type egg\nx\nendtype\na as egg", "a", "a as egg", null)]
+    [TestCase("type egg\nx\nendtype\na as egg", "a", "b", "cannot convert egg to int")]
+    [TestCase("type egg\nx\nendtype\nc = 3", "c", "b as egg", "cannot convert int to egg")]
+    public void ParseError_TypeCheck_Function_Parameter(string setup, string callSite, string sig, string error)
+    {
+        var input = @$"
+{setup}
+foo({callSite})
+function foo({sig})
+
+endfunction
+";
+        var parser = MakeParser(input);
+        var prog = parser.ParseProgram();
+        if (string.IsNullOrEmpty(error))
+        {
+            prog.AssertNoParseErrors();
+        }
+        else
+        {
+            prog.AssertParseErrors(1);
+            var errors = prog.GetAllErrors();
+            Assert.That(errors[0].Display.Substring("[1:0]".Length),
+                Is.EqualTo($" - {ErrorCodes.InvalidCast} | {error}"));
+        }
+    }
+    
+    
+    [TestCase(null, null, "a = 1 + \"no\"",  "")]
+    [TestCase("type egg\nx\nendtype", "b as egg", "a = 1 + b",  "")]
+    public void ParseError_TypeCheck_BinaryOps(string a, string b, string op, string error)
+    {
+        var input = @$"
+{a}
+{b}
+{op}
+";
+        var parser = MakeParser(input);
+        var prog = parser.ParseProgram();
+        if (error == null)
+        {
+            prog.AssertNoParseErrors();
+        }
+        else
+        {
+            prog.AssertParseErrors(1);
+            var errors = prog.GetAllErrors();
+            Assert.That(errors[0].CombinedMessage,
+                Is.EqualTo($"{ErrorCodes.InvalidCast}{(error.Length > 0 ? ($" | {error}") : "")}"));
+        }
+    }
+
+    [TestCase(null, "x", @"""toast""",  "cannot convert string to int")]
+    [TestCase(null, "x#", @"""toast""", "cannot convert string to float")]
+    [TestCase(null, "x$", @"""toast""", null)]
+    [TestCase(null, "x", "3*2", null)]
+    [TestCase(null, "x", "3", null)]
+    [TestCase(null, "x", "3.2", null)]
+    [TestCase(null, "x#", "3.2", null)]
+    [TestCase(null, "x#", "3", null)]
+    [TestCase(null, "x$", "3", "cannot convert int to string")]
+    [TestCase(null, "x$", "3.2", "cannot convert float to string")]
+    public void ParseError_TypeCheck_SimpleAssigns(string setup, string leftSide, string rightSide, string error)
+    {
+        var input = @$"
+{setup}
+{leftSide} = {rightSide}
+";
+        var parser = MakeParser(input);
+        var prog = parser.ParseProgram();
+        if (string.IsNullOrEmpty(error))
+        {
+            prog.AssertNoParseErrors();
+        }
+        else
+        {
+            prog.AssertParseErrors(1);
+            var errors = prog.GetAllErrors();
+            Assert.That(errors[0].Display.Substring("[1:0]".Length),
+                Is.EqualTo($" - {ErrorCodes.InvalidCast} | {error}"));
+        }
+    }
+    
+    
+    [TestCase("y = x",  null)] // this one is interesting, because by it COULD just as easily be an error; but its a conceit in the language to make it easier to type things out.
+    [TestCase("y$ = x",  "cannot convert egg to string")]
+    [TestCase("y# = x",  "cannot convert egg to float")]
+    [TestCase("y as egg = x",  null)]
+    [TestCase("y = x.z",  null)]
+    [TestCase("y# = x.z",  null)]
+    [TestCase("type egg2\n z\nendtype\ny as egg2\ny=x",  "cannot convert egg to egg2")]
+    [TestCase("type egg2\n z\nendtype\ny as egg2 = x",  "cannot convert egg to egg2")]
+    // [TestCase(null, "x as integer", @"x = ""toast""",  "cannot convert string to int")]
+    // [TestCase(null, "x as float", @"x = ""toast""",  "cannot convert string to float")]
+    // [TestCase(null, "x$ as string", @"x$ = 1",  "cannot convert int to string")]
+    public void ParseError_TypeCheck_IntToType(string assign, string error)
+    {
+        var input = @$"
+type egg
+    z
+endtype
+x as egg
+{assign}
+";
+        var parser = MakeParser(input);
+        var prog = parser.ParseProgram();
+        if (string.IsNullOrEmpty(error))
+        {
+            prog.AssertNoParseErrors();
+        }
+        else
+        {
+            prog.AssertParseErrors(1);
+            var errors = prog.GetAllErrors();
+            Assert.That(errors[0].CombinedMessage,
+                Is.EqualTo($"{ErrorCodes.InvalidCast} | {error}"));
+        }
+    }
+    
+    [TestCase(null, "x as string", @"x = ""toast""",  null)]
+    [TestCase(null, "x as integer", @"x = ""toast""",  "cannot convert string to int")]
+    [TestCase(null, "x as float", @"x = ""toast""",  "cannot convert string to float")]
+    [TestCase(null, "x$ as string", @"x$ = 1",  "cannot convert int to string")]
+    public void ParseError_TypeCheck_DeclareAndAssign(string setup, string decl, string assign, string error)
+    {
+        var input = @$"{setup}
+{decl}
+{assign}
+";
+        var parser = MakeParser(input);
+        var prog = parser.ParseProgram();
+        if (string.IsNullOrEmpty(error))
+        {
+            prog.AssertNoParseErrors();
+        }
+        else
+        {
+            prog.AssertParseErrors(1);
+            var errors = prog.GetAllErrors();
+            Assert.That(errors[0].Display.Substring("[1:0]".Length),
+                Is.EqualTo($" - {ErrorCodes.InvalidCast} | {error}"));
+        }
+    }
+    
+    [TestCase(null, "x", "y$", @"""toast""",  "cannot convert string to int")]
+    public void ParseError_TypeCheck_SimpleAssignVariable(string setup, string leftSide, string variable, string rightSide, string error)
+    {
+        var input = @$"{setup}
+{variable} = {rightSide}
+{leftSide} = {variable}
+";
+        var parser = MakeParser(input);
+        var prog = parser.ParseProgram();
+        if (string.IsNullOrEmpty(error))
+        {
+            prog.AssertNoParseErrors();
+        }
+        else
+        {
+            prog.AssertParseErrors(1);
+            var errors = prog.GetAllErrors();
+            Assert.That(errors[0].Display.Substring("[1:0]".Length),
+                Is.EqualTo($" - {ErrorCodes.InvalidCast} | {error}"));
+        }
+    }
+
     [Test]
     public void ParseError_VariableReference_ArrayIndexWithoutClosingParen()
     {
@@ -489,15 +688,14 @@ a = x";
     public void ParseError_Function_CanUseGlobal()
     {
         var input = @"
-global y as int
+global y as integer
 function toast(x)
 x = y
 endfunction";
         var parser = MakeParser(input);
         var prog = parser.ParseProgram();
 
-        var errors = prog.GetAllErrors();
-        Assert.That(errors.Count, Is.EqualTo(0));
+        prog.AssertNoParseErrors();
     }
     
     [Test]
@@ -838,6 +1036,20 @@ ENDTYPE
         Assert.That(errors[0].Display, Is.EqualTo($"[2:4,2:9] - {ErrorCodes.StructFieldReferencesUnknownStruct}"));
     }
     
+    
+    [Test]
+    public void ParseError_TypeDef_DeclareToSomethingThatDoesNotExist()
+    {
+        var input = @"
+GLOBAL x AS tunafish
+";
+        var parser = MakeParser(input);
+        var prog = parser.ParseProgram();
+        prog.AssertParseErrors(1);
+        var errors = prog.GetAllErrors();
+        Assert.That(errors.Count, Is.EqualTo(1));
+        Assert.That(errors[0].Display, Is.EqualTo($"[1:12] - {ErrorCodes.UnknownType}"));
+    }
     
     [Test]
     public void ParseError_TypeDef_RecursiveSelf()
@@ -1523,7 +1735,7 @@ x = 1 + 3
     public void ParseError_VariableDecl_RedeclAssign()
     {
         var input = @"
-x as int
+x as integer
 x as word
 ";
         var parser = MakeParser(input);
@@ -1645,7 +1857,7 @@ x(1) = 1
 
         var errors = prog.GetAllErrors();
         prog.AssertParseErrors(1);
-        Assert.That(errors[0].Display, Is.EqualTo($"[2:4] - {ErrorCodes.CannotIndexIntoNonArray}"));
+        Assert.That(errors[0].Display, Is.EqualTo($"[2:0,2:3] - {ErrorCodes.CannotIndexIntoNonArray}"));
 
     }
     

@@ -127,7 +127,7 @@ namespace FadeBasic.Ast
         {
             yield return type;
             if (ranks != null) foreach (var rank in ranks) yield return rank;
-
+            if (initializerExpression != null) yield return initializerExpression;
         }
     }
 }

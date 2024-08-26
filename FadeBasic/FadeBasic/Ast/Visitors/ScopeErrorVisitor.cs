@@ -45,9 +45,15 @@ namespace FadeBasic.Ast.Visitors
             {
                 scope.BeginFunction(function);
                 CheckStatements(function.statements, scope);
+                
+                // throw away the type, just call this to make sure the type is validated. 
+                var _ = GetFunctionTypeInfo(function, scope);
+                
                 scope.EndFunction();
+                
             }
         }
+
 
         static void CheckTypesForUnknownReferences(Scope scope)
         {
@@ -155,6 +161,29 @@ namespace FadeBasic.Ast.Visitors
             }
         }
         
+        
+        static TypeInfo GetFunctionTypeInfo(FunctionStatement function, Scope scope)
+        {
+            // at this moment, we need the TypeInfo for the given function.
+            //  either it exists (because we've already called this function)
+            //  or we need to generate it, which may cause a cascade of calls and
+            //  generate the type info for whole method swaths.
+
+            foreach (var statement in function.statements)
+            {
+                switch (statement)
+                {
+                    case FunctionReturnStatement exit:
+                        exit.returnExpression.EnsureVariablesAreDefined(scope);
+                        break;
+                }
+            }
+            
+            // TODO: this isn't right.
+            return TypeInfo.Int;
+            
+        }
+        
         static void CheckStatements(this List<IStatementNode> statements, Scope scope)
         {
             // foreach (var statement in statements)
@@ -168,9 +197,21 @@ namespace FadeBasic.Ast.Visitors
                         // commandStatement.args.CheckExpressions(scope);
                         
                         // check that all parameters make sense...
-                        foreach (var arg in commandStatement.args)
+                        for (var argIndex = 0; argIndex < commandStatement.args.Count; argIndex++)
                         {
+                            var arg = commandStatement.args[argIndex];
+                            var descriptor = commandStatement.command.args[commandStatement.argMap[argIndex]];
+                            
+                            
                             arg.EnsureVariablesAreDefined(scope);
+
+                            if (TypeInfo.TryGetFromTypeCode(descriptor.typeCode, out var guessType))
+                            {
+                                scope.EnforceTypeAssignment(arg, arg.ParsedType, guessType, false, out _);
+                            }
+                            
+                            // get type info for 
+                            
                         }
                         break;
                     case FunctionReturnStatement returnStatement:
@@ -183,11 +224,19 @@ namespace FadeBasic.Ast.Visitors
                         scope.EndFunction();
                         break;
                     case DeclarationStatement decl:
+
                         if (decl.initializerExpression != null)
                         {
                             decl.initializerExpression.EnsureVariablesAreDefined(scope);
                         }
                         scope.AddDeclaration(decl);
+
+                        if (decl.initializerExpression != null)
+                        {
+                            scope.EnforceTypeAssignment(decl.initializerExpression,
+                                decl.initializerExpression.ParsedType, decl.ParsedType, false, out _);
+                        }
+
                         break;
                     case AssignmentStatement assignment:
                         
@@ -392,6 +441,11 @@ namespace FadeBasic.Ast.Visitors
             }
 
             indexRef.DeclaredFromSymbol = arraySymbol;
+            if (!arraySymbol.typeInfo.IsArray)
+            {
+                indexRef.Errors.Add(new ParseError(indexRef, ErrorCodes.CannotIndexIntoNonArray));
+                return;
+            }
             var rankMatch = arraySymbol.typeInfo.rank == indexRef.rankExpressions.Count;
             if (!rankMatch)
             {
@@ -400,13 +454,16 @@ namespace FadeBasic.Ast.Visitors
         }
 
 
-        static void EnsureVariablesAreDefined(this IExpressionNode expr, Scope scope)
+        public static void EnsureVariablesAreDefined(this IExpressionNode expr, Scope scope)
         {
             switch (expr)
             {
                 case BinaryOperandExpression binaryOpExpr:
                     binaryOpExpr.lhs.EnsureVariablesAreDefined(scope);
                     binaryOpExpr.rhs.EnsureVariablesAreDefined(scope);
+                    scope.EnforceOperatorTypes(binaryOpExpr);
+                    // TODO: create tests that show
+                    // binaryOpExpr.ParsedType = binaryOpExpr.lhs.ParsedType;
                     break;
                 case UnaryOperationExpression unaryOpExpr:
                     unaryOpExpr.rhs.EnsureVariablesAreDefined(scope);
@@ -430,6 +487,35 @@ namespace FadeBasic.Ast.Visitors
                             }
                             arrayRef.DeclaredFromSymbol = scope.functionSymbolTable[arrayRef.variableName];
 
+                            // check that types match
+                            for (var argIndex = 0;
+                                 argIndex < arrayRef.rankExpressions.Count && argIndex < function.parameters.Count;
+                                 argIndex++)
+                            {
+                                var argExr = arrayRef.rankExpressions[argIndex];
+                                argExr.EnsureVariablesAreDefined(scope);
+                                
+                                var parameter = function.parameters[argIndex];
+                                if (parameter.ParsedType.type == VariableType.Void)
+                                {
+                                    switch (parameter.type)
+                                    {
+                                        case TypeReferenceNode typeNode:
+                                            parameter.ParsedType = TypeInfo.FromVariableType(typeNode.variableType);
+                                            break;
+                                        case StructTypeReferenceNode structNode:
+                                            parameter.ParsedType = TypeInfo.FromVariableType(structNode.variableType, structName: structNode.variableNode.variableName);
+                                            break;
+                                        default:
+                                            throw new NotImplementedException();
+                                    }
+                                }
+
+                                // var _ = GetFunctionTypeInfo(function, scope);
+                                scope.EnforceTypeAssignment(argExr, argExr.ParsedType, parameter.ParsedType, false,
+                                    out _);
+                            }
+                            
                             break;
                         }
                         expr.Errors.Add(new ParseError(expr.StartToken, ErrorCodes.InvalidReference, $"unknown symbol, {arrayRef.variableName}"));
@@ -457,50 +543,18 @@ namespace FadeBasic.Ast.Visitors
 
                     // variable.ParsedType = symbol.typeInfo;
                     break;
+                case LiteralStringExpression literalString:
+                    literalString.ParsedType = TypeInfo.String;
+                    break;
+                case LiteralIntExpression literalInt:
+                    literalInt.ParsedType = TypeInfo.Int;
+                    break;
+                case LiteralRealExpression literalReal:
+                    literalReal.ParsedType = TypeInfo.Real;
+                    break;
                 default:
                     break;
             }
-        }
-        
-        static void EnsureVariablesAreDefinedOld(this IExpressionNode visitable, Scope scope)
-        {
-            visitable.Visit(child =>
-            {
-                switch (child)
-                {
-                    case CommandExpression commandExpr: // commandExprs have the ability to declare variables!
-                        scope.AddCommand(commandExpr);
-                        break;
-                    case ArrayIndexReference arrayRef:
-                        if (!scope.TryGetSymbol(arrayRef.variableName, out var arraySymbol) && arrayRef.variableName != "_")
-                        {
-                            if (scope.functionTable.TryGetValue(arrayRef.variableName, out var function))
-                            {
-                                // ah, this is a function!
-                                arrayRef.startToken.flags |= TokenFlags.FunctionCall;
-                                if (arrayRef.rankExpressions.Count != function.parameters.Count)
-                                {
-                                    arrayRef.Errors.Add(new ParseError(arrayRef.startToken, ErrorCodes.FunctionParameterCardinalityMismatch));
-                                }
-                                arrayRef.DeclaredFromSymbol = scope.functionSymbolTable[arrayRef.variableName];
-
-                                break;
-                            }
-                            child.Errors.Add(new ParseError(child.StartToken, ErrorCodes.InvalidReference, $"unknown symbol, {arrayRef.variableName}"));
-                        }
-
-                        arrayRef.DeclaredFromSymbol = arraySymbol;
-                        break;
-                    case VariableRefNode variable:
-                        if (!scope.TryGetSymbol(variable.variableName, out var symbol) && variable.variableName != "_")
-                        {
-                            child.Errors.Add(new ParseError(child.StartToken, ErrorCodes.InvalidReference, $"unknown symbol, {variable.variableName}"));
-                        }
-
-                        variable.DeclaredFromSymbol = symbol;
-                        break;
-                }
-            });
         }
         
     }

@@ -8,6 +8,36 @@ namespace FadeBasic.Virtual
 {
     public static class VmUtil
     {
+        public static bool TryGetVariableType(int typeCode, out VariableType type)
+        {
+            type = VariableType.Void;
+            switch (typeCode)
+            {
+                case TypeCodes.INT:
+                    type = VariableType.Integer;
+                    return true;
+                case TypeCodes.STRING:
+                    type = VariableType.String;
+                    return true;
+                case TypeCodes.STRUCT:
+                    type = VariableType.Struct;
+                    return true;
+                case TypeCodes.REAL:
+                    type = VariableType.Float;
+                    return true;
+                case TypeCodes.WORD:
+                    type = VariableType.Word;
+                    return true;
+                case TypeCodes.BYTE:
+                    type = VariableType.Byte;
+                    return true;
+                case TypeCodes.ANY:
+                    return false;
+                default:
+                    throw new NotImplementedException("Unknown type code");
+            }
+        }
+        
         public static byte GetTypeCode(VariableType vt)
         {
             switch (vt)

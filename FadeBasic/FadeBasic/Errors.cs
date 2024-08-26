@@ -50,6 +50,39 @@ namespace FadeBasic
             correctiveTokens.AddRange(moreCorrectiveTokens);
         }
     }
+
+    public static class ParseErrorExtensions
+    {
+        private static Dictionary<VariableType, string> variableToDisplayMap = new Dictionary<VariableType, string>
+        {
+            [VariableType.Boolean] = "bool",
+            [VariableType.String] = "string",
+            [VariableType.Integer] = "int",
+            [VariableType.DoubleInteger] = "long",
+            [VariableType.Float] = "float",
+            [VariableType.DoubleFloat] = "double",
+            [VariableType.Struct] = "type",
+        };
+        public static void AddTypeError(this List<ParseError> errors, IAstNode node, TypeInfo from, TypeInfo toType)
+        {
+            string Convert(TypeInfo t)
+            {
+                if (t.type == VariableType.Struct)
+                {
+                    return t.structName;
+                }
+                else
+                {
+                    return variableToDisplayMap[t.type];
+                }
+            }
+
+            var fromDisplay = Convert(from);
+            var toDisplay = Convert(toType);
+            
+            errors.Add(new ParseError(node, ErrorCodes.InvalidCast, $"cannot convert {fromDisplay} to {toDisplay}"));
+        }
+    }
     
     [DebuggerDisplay("{Display}")]
     public class ParseError
@@ -145,9 +178,11 @@ namespace FadeBasic
         public static readonly ErrorCode CannotIndexIntoNonArray = "[0207] Cannot index into non array variable";
         public static readonly ErrorCode ArrayCardinalityMismatch = "[0208] Incorrect number of index expressions";
         public static readonly ErrorCode FunctionAlreadyDeclared = "[0209] Functions do not support overloads";
+        public static readonly ErrorCode UnknownType = "[0210] Type is not defined";
         
         // 300 series represents type issues
         public static readonly ErrorCode SymbolAlreadyDeclared = "[0300] Symbol already declared";
+        public static readonly ErrorCode InvalidCast = "[0301] Expression cannot be cast to given type";
     }
 
     public struct ErrorCode

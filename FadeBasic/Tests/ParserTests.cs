@@ -373,6 +373,37 @@ x = x - 1
     
     
     [Test]
+    public void Assign_MultipleOnOneLine()
+    {
+        var input = @"
+x=3,y=2
+";
+        var parser = MakeParser(input);
+        var prog = parser.ParseProgram();
+        prog.AssertNoParseErrors();
+        Assert.That(prog.statements.Count, Is.EqualTo(2));
+        var code = prog.ToString();
+        Assert.That(code, Is.EqualTo("(" +
+                                     "(= (ref x),(3))," +
+                                     "(= (ref y),(2))" +
+                                     ")".ReplaceLineEndings("")));
+    }
+
+    
+    [Test]
+    public void Declare_Multiple_CannotIncludeOtherStatements()
+    {
+        var input = @"
+global x as integer, x = 1
+";
+        var parser = MakeParser(input);
+        var prog = parser.ParseProgram();
+        prog.AssertParseErrors(1);
+    }
+
+    
+    
+    [Test]
     public void AnasUnfunTest()
     {
         var input = @"
@@ -1461,6 +1492,15 @@ x = a.b + len(a.c)
         Assert.That(decl.type.variableType, Is.EqualTo(VariableType.Integer));
         var code = prog.ToString();
         Assert.That(code, Is.EqualTo("((decl local,x,(integer),(3)))"));
+    }
+    
+    [Test]
+    public void ParseError_DeclAssign_Integer_Recursive()
+    {
+        var input = "x AS INTEGER = x";
+        var parser = MakeParser(input);
+        var prog = parser.ParseProgram();
+        prog.AssertParseErrors(1);
     }
 
     

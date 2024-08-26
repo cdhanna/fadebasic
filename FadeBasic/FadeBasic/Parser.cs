@@ -79,6 +79,7 @@ namespace FadeBasic
             localVariables.Push(new SymbolTable());
         }
 
+        
         public static Scope CreateStructScope(Scope scope, SymbolTable typeSymbols)
         {
             var typeScope = new Scope();
@@ -110,6 +111,7 @@ namespace FadeBasic
                 functionTable.Add(function.name, function);
             }
         }
+        
         
         public void BeginFunction(FunctionStatement function)
         {
@@ -160,6 +162,103 @@ namespace FadeBasic
             }
         }
 
+
+        public void EnforceOperatorTypes(BinaryOperandExpression expr)
+        {
+            // need to set the parsedType for the expr, and validate that the two types are okay to add...
+
+            var lht = expr.lhs.ParsedType;
+            var rht = expr.rhs.ParsedType;
+
+            if (lht.type == rht.type && lht.structName == rht.structName)
+            {
+                // all is well!
+                expr.ParsedType = lht;
+                return;
+            }
+            
+            // uh oh, stuff is different :( 
+            if (lht.type == VariableType.String || rht.type == VariableType.String)
+            {
+                expr.Errors.Add(new ParseError(expr, ErrorCodes.InvalidCast));
+                expr.ParsedType = lht;
+            } else if (lht.type == VariableType.Struct || rht.type == VariableType.Struct)
+            {
+                expr.Errors.Add(new ParseError(expr, ErrorCodes.InvalidCast));
+                expr.ParsedType = lht;
+            } 
+            
+            // float math always wins
+            else if (lht.type == VariableType.Float)
+            {
+                expr.ParsedType = lht;
+            } else if (rht.type == VariableType.Float)
+            {
+                expr.ParsedType = rht;
+            }
+            else
+            {
+                // TODO: fill in other cast operations... 
+                expr.ParsedType = lht;
+            }
+        }
+        
+        public void EnforceTypeAssignment(IAstNode node, TypeInfo rightSide, TypeInfo leftSide, bool softLeft, out TypeInfo foundType)
+        {
+            foundType = rightSide;
+
+
+            if (rightSide.type == VariableType.Struct)
+            {
+                if (softLeft && leftSide.type == VariableType.Integer)
+                {
+                    // eh this is fine.
+                    foundType = rightSide;
+                    return;
+                }
+                if (leftSide.type != VariableType.Struct || leftSide.structName != rightSide.structName)
+                {
+                    foundType = leftSide;
+                    node.Errors.AddTypeError(node, rightSide, foundType);
+                    return;
+                }
+            } else if (leftSide.type == VariableType.Struct)
+            {
+                if (rightSide.type != VariableType.Struct || leftSide.structName != rightSide.structName)
+                {
+                    node.Errors.AddTypeError(node, rightSide, leftSide);
+                    return;
+                }
+            }
+            
+            
+            switch (rightSide.type)
+            {
+                case VariableType.String:
+                    if (leftSide.type != VariableType.String)
+                    {
+                        // error! 
+                        foundType = leftSide;
+                        node.Errors.AddTypeError(node, rightSide, foundType);
+                    }
+                    break;
+                case VariableType.Float:
+                    if (leftSide.type == VariableType.String)
+                    {
+                        foundType = leftSide;
+                        node.Errors.AddTypeError(node, rightSide, foundType);
+                    }
+                    break;
+                case VariableType.Integer:
+                    if (leftSide.type == VariableType.String)
+                    {
+                        foundType = leftSide;
+                        node.Errors.AddTypeError(node, rightSide, foundType);
+                    }
+                    break;
+            }
+        }
+
         public void AddAssignment(AssignmentStatement assignment, out DeclarationStatement implicitDecl)
         {
             implicitDecl = null;
@@ -178,16 +277,36 @@ namespace FadeBasic
                     // declr is optional...
                     if (TryGetSymbol(variableRef.variableName, out var existingSymbol))
                     {
-                        // TODO: we could check for type consistency here?
+                        EnforceTypeAssignment(variableRef, assignment.expression.ParsedType, existingSymbol.typeInfo, false, out _);
                     }
                     else // no symbol exists, so this is a defacto local variable
                     {
+                        var defaultTypeInfo = new TypeInfo
+                        {
+                            type = variableRef.DefaultTypeByName,
+                        };
+                        var rightType = assignment.expression.ParsedType;
+
+                        // TypeInfo foundType = rightType;
+                        // // there are certain rules for type convergence. 
+                        // //  if the right-side is a string, then the left must be a string.
+                        // if (rightType.type == VariableType.String)
+                        // {
+                        //     if (defaultTypeInfo.type != VariableType.String)
+                        //     {
+                        //         // error! 
+                        //         foundType = defaultTypeInfo;
+                        //         variableRef.Errors.AddTypeError(variableRef, rightType, foundType);
+                        //     }
+                        // }
+                        EnforceTypeAssignment(variableRef, rightType, defaultTypeInfo, true, out var foundType);
+                        
+                        
                         var locals = GetVariables(DeclarationScopeType.Local);
                         var symbol = new Symbol
                         {
                             text = variableRef.variableName,
-                            typeInfo = assignment.expression.ParsedType,
-                            // typeInfo = TypeInfo.FromVariableType(variableRef.DefaultTypeByName),
+                            typeInfo = foundType,
                             source = variableRef
                         };
                         locals.Add(variableRef.variableName, symbol);
@@ -214,35 +333,47 @@ namespace FadeBasic
                     // it isn't possible to assign to a struct field without declaring it first- 
                     //  which means no new scopes need to be added.
                     // but on the other hand, we do need to validate that the variable exists!
-
-                    // switch (structRef.left)
-                    // {
-                    //     case VariableRefNode leftVariable:
-                    //         if (!TryGetSymbol(leftVariable.variableName, out var leftSymbol))
-                    //         {
-                    //             
-                    //         }
-                    //         break;
-                    //     default:
-                    //         throw new NotImplementedException("I don't know how to handle this yet. jjsa");
-                    // }
                     break;
             }
             
-            // if (assignment.variable is VariableRefNode variableRef)
-            // {
-            //     // an assignment defaults to a local decl.
-            //
-            //     // variableRef.DefaultTypeByName
-            //     var symbol = new Symbol
-            //     {
-            //         text = variableRef.variableName,
-            //         // typeInfo = 
-            //     };
-            //     
-            //     localVariables.Peek().Add(variableRef.variableName);
-            // }
         }
+
+        // public void GetParsedType(ITypeReferenceNode typeNode, string variableName)
+        // {
+        //     
+        //     switch (typeNode)
+        //     {
+        //         case TypeReferenceNode typeReference:
+        //             var symbol = new Symbol
+        //             {
+        //                 text = declStatement.variable,
+        //                 typeInfo = TypeInfo.FromVariableType(typeReference.variableType,
+        //                     rank: declStatement.ranks?.Length ?? 0,
+        //                     structName: null),
+        //                 source = declStatement
+        //             };
+        //             table.Add(declStatement.variable, symbol);
+        //             declStatement.ParsedType = typeReference.ParsedType = symbol.typeInfo;
+        //
+        //             break;
+        //         case StructTypeReferenceNode structTypeReference:
+        //             if (!TryGetType(structTypeReference.variableNode.variableName, out _))
+        //             {
+        //                 structTypeReference.Errors.Add(new ParseError(structTypeReference, ErrorCodes.UnknownType));
+        //             }
+        //             symbol = new Symbol
+        //             {
+        //                 text = declStatement.variable,
+        //                 typeInfo = TypeInfo.FromVariableType(structTypeReference.variableType,
+        //                     rank: declStatement.ranks?.Length ?? 0,
+        //                     structName: structTypeReference.variableNode.variableName),
+        //                 source = declStatement
+        //             };
+        //             table.Add(declStatement.variable, symbol);
+        //             declStatement.ParsedType = structTypeReference.ParsedType = symbol.typeInfo;
+        //             break;
+        //     }
+        // }
         
         public void AddDeclaration(DeclarationStatement declStatement)
         {
@@ -260,24 +391,33 @@ namespace FadeBasic
             switch (declStatement.type)
             {
                 case TypeReferenceNode typeReference:
-                    table.Add(declStatement.variable, new Symbol
+                    var symbol = new Symbol
                     {
                         text = declStatement.variable,
-                        typeInfo = TypeInfo.FromVariableType(typeReference.variableType, 
-                            rank: declStatement.ranks?.Length ?? 0, 
+                        typeInfo = TypeInfo.FromVariableType(typeReference.variableType,
+                            rank: declStatement.ranks?.Length ?? 0,
                             structName: null),
                         source = declStatement
-                    });
+                    };
+                    table.Add(declStatement.variable, symbol);
+                    declStatement.ParsedType = typeReference.ParsedType = symbol.typeInfo;
+
                     break;
                 case StructTypeReferenceNode structTypeReference:
-                    table.Add(declStatement.variable, new Symbol
+                    if (!TryGetType(structTypeReference.variableNode.variableName, out _))
+                    {
+                        structTypeReference.Errors.Add(new ParseError(structTypeReference, ErrorCodes.UnknownType));
+                    }
+                    symbol = new Symbol
                     {
                         text = declStatement.variable,
-                        typeInfo = TypeInfo.FromVariableType(structTypeReference.variableType, 
-                            rank: declStatement.ranks?.Length ?? 0, 
+                        typeInfo = TypeInfo.FromVariableType(structTypeReference.variableType,
+                            rank: declStatement.ranks?.Length ?? 0,
                             structName: structTypeReference.variableNode.variableName),
                         source = declStatement
-                    });
+                    };
+                    table.Add(declStatement.variable, symbol);
+                    declStatement.ParsedType = structTypeReference.ParsedType = symbol.typeInfo;
                     break;
             }
             
@@ -1032,7 +1172,6 @@ namespace FadeBasic
         {
             IStatementNode Inner()
             {
-                
                 var token = _stream.Advance();
                 IStatementNode subStatement = null;
                 switch (token.type)
@@ -1091,8 +1230,6 @@ namespace FadeBasic
                         return ParseStatementThatStartsWithScope(token);
                     case LexemType.KeywordDeclareArray:
                         return ParseDimStatement(token);
-                    // case LexemType.Label:
-                    //     return new LabelDeclarationNode(token);
                     case LexemType.VariableReal:
                     case LexemType.VariableString:
                     case LexemType.VariableGeneral:
@@ -1198,7 +1335,9 @@ namespace FadeBasic
             }
 
             var result = Inner();
-   
+
+            
+            
             switch (_stream.Peek.type)
             {
                 case LexemType.EndStatement when consumeEndOfStatement:
@@ -2467,7 +2606,7 @@ namespace FadeBasic
                     lookAhead = _stream.Peek;
                 }
 
-                lhs = new BinaryOperandExpression(start: null, end: null, op: op, lhs: lhs, rhs: rhs);
+                lhs = new BinaryOperandExpression(start: lhs.StartToken, end: rhs.EndToken, op: op, lhs: lhs, rhs: rhs);
             }
             
             return lhs;

@@ -22,16 +22,5 @@ namespace FadeBasic.Ast.Visitors
             // }
         }
 
-        static TypeInfo GetTypeInfo(this IExpressionNode expr)
-        {
-            switch (expr)
-            {
-                case LiteralIntExpression literalInt:
-                    return literalInt.ParsedType = TypeInfo.Int;
-                // case 
-                default:
-                    throw new NotImplementedException("no type info for " + expr);
-            }
-        }
     }
 }
