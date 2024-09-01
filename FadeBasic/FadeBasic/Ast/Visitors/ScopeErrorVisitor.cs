@@ -43,15 +43,19 @@ namespace FadeBasic.Ast.Visitors
             CheckStatements(program.statements, scope);
             foreach (var function in program.functions)
             {
+                if (scope.functionReturnTypeTable.ContainsKey(function.name)) continue; // already parsed. 
+                
                 scope.BeginFunction(function);
                 CheckStatements(function.statements, scope);
                 
                 // throw away the type, just call this to make sure the type is validated. 
-                var _ = GetFunctionTypeInfo(function, scope);
+                scope.GetFunctionTypeInfo(function);
                 
                 scope.EndFunction();
                 
             }
+
+            scope.DoDelayedTypeChecks();
         }
 
 
@@ -162,28 +166,6 @@ namespace FadeBasic.Ast.Visitors
         }
         
         
-        static TypeInfo GetFunctionTypeInfo(FunctionStatement function, Scope scope)
-        {
-            // at this moment, we need the TypeInfo for the given function.
-            //  either it exists (because we've already called this function)
-            //  or we need to generate it, which may cause a cascade of calls and
-            //  generate the type info for whole method swaths.
-
-            foreach (var statement in function.statements)
-            {
-                switch (statement)
-                {
-                    case FunctionReturnStatement exit:
-                        exit.returnExpression.EnsureVariablesAreDefined(scope);
-                        break;
-                }
-            }
-            
-            // TODO: this isn't right.
-            return TypeInfo.Int;
-            
-        }
-        
         static void CheckStatements(this List<IStatementNode> statements, Scope scope)
         {
             // foreach (var statement in statements)
@@ -214,15 +196,15 @@ namespace FadeBasic.Ast.Visitors
                             
                         }
                         break;
-                    case FunctionReturnStatement returnStatement:
-                        returnStatement.returnExpression.EnsureVariablesAreDefined(scope);
+                    // case FunctionReturnStatement returnStatement:
+                        // returnStatement.returnExpression.EnsureVariablesAreDefined(scope);
                         // scope.EndFunction();
-                        break;
-                    case FunctionStatement functionStatement:
-                        scope.BeginFunction(functionStatement);
-                        CheckStatements(functionStatement.statements, scope);
-                        scope.EndFunction();
-                        break;
+                        // break;
+                    // case FunctionStatement functionStatement:
+                        // scope.BeginFunction(functionStatement);
+                        // CheckStatements(functionStatement.statements, scope);
+                        // scope.EndFunction();
+                        // break;
                     case DeclarationStatement decl:
 
                         if (decl.initializerExpression != null)
@@ -313,7 +295,8 @@ namespace FadeBasic.Ast.Visitors
                     case ExitLoopStatement _:
                     case LabelDeclarationNode _:
                     case EndProgramStatement _:
-                        
+                    case FunctionStatement _:
+                    case FunctionReturnStatement _:
                         break;
                     default:
                         throw new NotImplementedException($"cannot check statement for scope errors - {statement.GetType().Name} {statement}");
@@ -462,8 +445,6 @@ namespace FadeBasic.Ast.Visitors
                     binaryOpExpr.lhs.EnsureVariablesAreDefined(scope);
                     binaryOpExpr.rhs.EnsureVariablesAreDefined(scope);
                     scope.EnforceOperatorTypes(binaryOpExpr);
-                    // TODO: create tests that show
-                    // binaryOpExpr.ParsedType = binaryOpExpr.lhs.ParsedType;
                     break;
                 case UnaryOperationExpression unaryOpExpr:
                     unaryOpExpr.rhs.EnsureVariablesAreDefined(scope);
@@ -479,6 +460,35 @@ namespace FadeBasic.Ast.Visitors
                     {
                         if (scope.functionTable.TryGetValue(arrayRef.variableName, out var function))
                         {
+                            TypeInfo functionType = default;
+                            if (!scope.functionReturnTypeTable.TryGetValue(function.name, out var functionTypes))
+                            {
+                                
+                                /*
+                                 * this is a recursive call, and we need history checking.
+                                 *  if this execution has seen the given method,
+                                 *  then checking its statements WILL result in an infinite loop.
+                                 *
+                                 * if this call is from the "main" scope,
+                                 * or if this call is from a "function" scope
+                                 */
+
+                                if (scope.functionCheck.Contains(function.name))
+                                {
+                                    // we've already seen this function
+                                }
+                                
+                                scope.BeginFunction(function);
+                                function.statements.CheckStatements(scope);
+                                functionType = scope.GetFunctionTypeInfo(function);
+                                scope.EndFunction();
+                            
+                            }
+                            else
+                            {
+                                functionType = functionTypes[0];
+                            }
+                            
                             // ah, this is a function!
                             arrayRef.startToken.flags |= TokenFlags.FunctionCall;
                             if (arrayRef.rankExpressions.Count != function.parameters.Count)
@@ -487,6 +497,8 @@ namespace FadeBasic.Ast.Visitors
                             }
                             arrayRef.DeclaredFromSymbol = scope.functionSymbolTable[arrayRef.variableName];
 
+                            arrayRef.ParsedType = functionType;
+                            
                             // check that types match
                             for (var argIndex = 0;
                                  argIndex < arrayRef.rankExpressions.Count && argIndex < function.parameters.Count;
@@ -511,10 +523,14 @@ namespace FadeBasic.Ast.Visitors
                                     }
                                 }
 
+                             
                                 // var _ = GetFunctionTypeInfo(function, scope);
-                                scope.EnforceTypeAssignment(argExr, argExr.ParsedType, parameter.ParsedType, false,
-                                    out _);
+                                scope.AddDelayedTypeCheck(argExr, argExr, parameter);
+                                // scope.EnforceTypeAssignment(argExr, argExr.ParsedType, parameter.ParsedType, false,
+                                    // out _);
                             }
+                            
+                            
                             
                             break;
                         }

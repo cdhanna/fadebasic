@@ -275,8 +275,146 @@ x = 1.2
         // Assert.That(errors[0].Display, Is.EqualTo($"[1:0] - {ErrorCodes.GotoMissingLabel}"));
     }
     
+    
     [Test]
-    public void ParseError_TypeCheck_Function_Return()
+    public void ParseError_TypeCheck_Function_ReturnTypeAmbig()
+    {
+        var input = @"
+`foo returns int, so cannot assign to string
+x = foo()
+
+function foo()
+if 1 > 3
+    exitfunction 3
+endif
+endfunction ""toast""
+";
+        var parser = MakeParser(input);
+        var prog = parser.ParseProgram();
+        prog.AssertParseErrors(1);
+        var errors = prog.GetAllErrors();
+        Assert.That(errors[0].Display, Is.EqualTo($"[8:12] - {ErrorCodes.AmbiguousFunctionReturnType}"));
+    }
+    
+    
+    [Test]
+    public void ParseError_TypeCheck_Function_ReturnTypeNotAmbig()
+    {
+        var input = @"
+`foo returns int, so cannot assign to string
+x = foo()
+
+function foo()
+if 1 > 3
+    exitfunction 3
+endif
+endfunction 8 + 1
+";
+        var parser = MakeParser(input);
+        var prog = parser.ParseProgram();
+        prog.AssertNoParseErrors();
+        // var errors = prog.GetAllErrors();
+        // Assert.That(errors[0].Display, Is.EqualTo($"[8:12] - {ErrorCodes.AmbiguousFunctionReturnType}"));
+    }
+    
+    
+    [Test]
+    public void ParseError_TypeCheck_Function_ReturnDoesNotMatch_Chain()
+    {
+        var input = @"
+`foo returns int, so cannot assign to string
+x$ = bar()
+
+function foo()
+endfunction 3
+function bar()
+endfunction foo()
+
+";
+        var parser = MakeParser(input);
+        var prog = parser.ParseProgram();
+        prog.AssertParseErrors(1);
+        var errors = prog.GetAllErrors();
+        Assert.That(errors[0].Display, Is.EqualTo($"[2:0] - {ErrorCodes.InvalidCast} | cannot convert int to string"));
+    }
+    
+    
+    [Test]
+    public void ParseError_TypeCheck_Function_Recursive2()
+    {
+        var input = @"
+x$ = bar(""test"")
+
+function foo(c$) ` foo returns a string
+    a$ = bar(c$ + ""a"") `the processing of this statement causes a loop
+endfunction a$
+
+function bar(b$) ` bar returns an int
+    a$ = foo(b$)
+
+    if 1 > 2 `fake magic
+        exitfunction b$
+    endif
+endfunction a$
+
+";
+        var parser = MakeParser(input);
+        var prog = parser.ParseProgram();
+        prog.AssertNoParseErrors();
+    }
+
+    
+    [Test]
+    public void ParseError_TypeCheck_Function_Recursive()
+    {
+        var input = @"
+`foo returns int, so cannot assign to string
+x$ = foo()
+
+function foo()
+    if 3 > 2
+        exitfunction bar() + 2
+    endif
+endfunction 3
+function bar()
+endfunction foo()
+
+";
+        var parser = MakeParser(input);
+        var prog = parser.ParseProgram();
+        prog.AssertParseErrors(1);
+        var errors = prog.GetAllErrors();
+        Assert.That(errors[0].Display, Is.EqualTo($"[2:0] - {ErrorCodes.InvalidCast} | cannot convert int to string"));
+    }
+    
+    
+    [Test]
+    public void ParseError_TypeCheck_Function_Recursive_Works()
+    {
+        var input = @"
+`foo returns int, so cannot assign to string
+x = foo()
+
+function foo()
+    if 3 > 2
+        exitfunction bar()
+    endif
+endfunction bar()
+
+function bar()
+    if 1 > 2
+        exitfunction 3
+    endif
+endfunction foo()
+
+";
+        var parser = MakeParser(input);
+        var prog = parser.ParseProgram();
+        prog.AssertNoParseErrors();
+    }
+    
+    [Test]
+    public void ParseError_TypeCheck_Function_ReturnTypeDoesNotMatch()
     {
         var input = @"
 `foo returns int, so cannot assign to string
@@ -288,7 +426,43 @@ endfunction a*2
         var parser = MakeParser(input);
         var prog = parser.ParseProgram();
         prog.AssertParseErrors(1);
-        // Assert.That(errors[0].Display, Is.EqualTo($"[1:0] - {ErrorCodes.GotoMissingLabel}"));
+        var errors = prog.GetAllErrors();
+        Assert.That(errors[0].Display, Is.EqualTo($"[2:0] - {ErrorCodes.InvalidCast} | cannot convert int to string"));
+    }
+    
+    
+    [Test]
+    public void ParseError_TypeCheck_Function_ReturnTypeDoesNotMatch_Void()
+    {
+        var input = @"
+`foo returns int, so cannot assign to string
+x = foo()
+
+function foo()
+endfunction
+";
+        var parser = MakeParser(input);
+        var prog = parser.ParseProgram();
+        prog.AssertParseErrors(1);
+        var errors = prog.GetAllErrors();
+        Assert.That(errors[0].Display, Is.EqualTo($"[2:0] - {ErrorCodes.InvalidCast} | cannot convert void to int"));
+    }
+
+    
+    [Test]
+    public void ParseError_TypeCheck_Function_ReturnTypeDoesMatch()
+    {
+        var input = @"
+x$ = foo(""world"")
+
+function foo(a$)
+endfunction a$ + ""hello""
+";
+        var parser = MakeParser(input);
+        var prog = parser.ParseProgram();
+        prog.AssertNoParseErrors();
+        // var errors = prog.GetAllErrors();
+        // Assert.That(errors[0].Display, Is.EqualTo($"[2:0] - {ErrorCodes.InvalidCast} | cannot convert int to string"));
     }
     
     
@@ -547,7 +721,7 @@ endfunction
         var input = @"
 x = test(1)
 function test(a)
-endfunction
+endfunction a
 ";
         var parser = MakeParser(input);
         var prog = parser.ParseProgram();
@@ -730,7 +904,7 @@ endfunction";
         var prog = parser.ParseProgram();
 
         var errors = prog.GetAllErrors();
-        Assert.That(errors.Count, Is.EqualTo(1));
+        prog.AssertParseErrors(1);
         Assert.That(errors[0].Display, Is.EqualTo($"[2:4] - {ErrorCodes.InvalidReference} | unknown symbol, y"));
     }
     

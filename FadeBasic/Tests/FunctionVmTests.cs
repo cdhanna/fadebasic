@@ -18,12 +18,12 @@ EndFunction
 
 ";
         Setup(src, out _, out var prog);
-        
-        var vm = new VirtualMachine(prog);
-        vm.Execute().MoveNext();
-        
-        Assert.That(vm.dataRegisters[1], Is.EqualTo(0));
-        Assert.That(vm.typeRegisters[1], Is.EqualTo(TypeCodes.INT));
+        _exprAst.AssertParseErrors(1);
+        // var vm = new VirtualMachine(prog);
+        // vm.Execute().MoveNext();
+        //
+        // Assert.That(vm.dataRegisters[1], Is.EqualTo(0));
+        // Assert.That(vm.typeRegisters[1], Is.EqualTo(TypeCodes.INT));
     }
 
     

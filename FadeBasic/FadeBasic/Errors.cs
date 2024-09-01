@@ -62,6 +62,7 @@ namespace FadeBasic
             [VariableType.Float] = "float",
             [VariableType.DoubleFloat] = "double",
             [VariableType.Struct] = "type",
+            [VariableType.Void] = "void",
         };
         public static void AddTypeError(this List<ParseError> errors, IAstNode node, TypeInfo from, TypeInfo toType)
         {
@@ -183,6 +184,7 @@ namespace FadeBasic
         // 300 series represents type issues
         public static readonly ErrorCode SymbolAlreadyDeclared = "[0300] Symbol already declared";
         public static readonly ErrorCode InvalidCast = "[0301] Expression cannot be cast to given type";
+        public static readonly ErrorCode AmbiguousFunctionReturnType = "[0302] Function has ambiguous return type";
     }
 
     public struct ErrorCode

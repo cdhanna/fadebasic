@@ -15,6 +15,7 @@ namespace FadeBasic.Ast
 
     public struct TypeInfo
     {
+        public bool unset;
         public VariableType type;
         public string structName;
         public int rank; // when positive, its an array.
@@ -42,6 +43,7 @@ namespace FadeBasic.Ast
         }
         
         
+        public static readonly TypeInfo Unset = new TypeInfo { type = VariableType.Void, unset = true};
         public static readonly TypeInfo Void = new TypeInfo { type = VariableType.Void };
         public static readonly TypeInfo Int = new TypeInfo { type = VariableType.Integer };
         public static readonly TypeInfo String = new TypeInfo { type = VariableType.String };
@@ -60,7 +62,7 @@ namespace FadeBasic.Ast
         public List<ParseError> Errors { get; set; } = new List<ParseError>();
         public Symbol DeclaredFromSymbol { get; set; }
         
-        public TypeInfo ParsedType { get; set; } = TypeInfo.Void;
+        public TypeInfo ParsedType { get; set; } = TypeInfo.Unset;
 
         public void ApplyTypeFromSymbol(Symbol symbol)
         {

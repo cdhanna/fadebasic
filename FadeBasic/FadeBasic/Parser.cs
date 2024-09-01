@@ -72,8 +72,10 @@ namespace FadeBasic
 
         public Dictionary<string, Symbol> functionSymbolTable = new Dictionary<string, Symbol>();
         public Dictionary<string, FunctionStatement> functionTable = new Dictionary<string, FunctionStatement>();
-        // public Stack<List<Symbol>> localVariables = new Stack<List<Symbol>>();
-
+        public Dictionary<string, List<TypeInfo>> functionReturnTypeTable = new Dictionary<string, List<TypeInfo>>();
+        
+        List<DelayedTypeCheck> delayedTypeChecks = new List<DelayedTypeCheck>();
+        
         public Scope()
         {
             localVariables.Push(new SymbolTable());
@@ -111,10 +113,15 @@ namespace FadeBasic
                 functionTable.Add(function.name, function);
             }
         }
-        
-        
-        public void BeginFunction(FunctionStatement function)
+
+        // private HashSet<FunctionStatement> _begunFunctions = new HashSet<FunctionStatement>();
+        public bool BeginFunction(FunctionStatement function)
         {
+            // if (_begunFunctions.Contains(function))
+            // {
+            //     return false;
+            // }
+            // _begunFunctions.Add(function);
             var parameters = function.parameters;
             var table = new SymbolTable();
             localVariables.Push(table);
@@ -137,6 +144,8 @@ namespace FadeBasic
                 }
                 table.Add(parameter.variable.variableName, symbol);
             }
+
+            return true;
         }
 
         public void EndFunction()
@@ -207,6 +216,12 @@ namespace FadeBasic
         {
             foundType = rightSide;
 
+            if (!rightSide.unset && rightSide.type == VariableType.Void)
+            {
+                foundType = leftSide;
+                node.Errors.AddTypeError(node, rightSide, leftSide);
+                return;
+            }
 
             if (rightSide.type == VariableType.Struct)
             {
@@ -256,6 +271,83 @@ namespace FadeBasic
                         node.Errors.AddTypeError(node, rightSide, foundType);
                     }
                     break;
+            }
+        }
+
+        private HashSet<FunctionReturnStatement> processingReturns = new HashSet<FunctionReturnStatement>();
+
+        public HashSet<string> functionCheck = new HashSet<string>();
+        
+        public TypeInfo GetFunctionTypeInfo(FunctionStatement function)
+        {
+            
+            // if (functionCheck.Contains(function.name))
+            // {
+            //     throw new Exception("recursion unhandled in function type checking");
+            // }
+            //
+            // functionCheck.Add(function.name);
+            
+            // at this moment, we need the TypeInfo for the given function.
+            //  either it exists (because we've already called this function)
+            //  or we need to generate it, which may cause a cascade of calls and
+            //  generate the type info for whole method swaths.
+
+            // first, identify all return statements
+            var returnStatements = new List<FunctionReturnStatement>();
+            function.Visit(child =>
+            {
+                if (child is FunctionReturnStatement exit)
+                {
+                    returnStatements.Add(exit);
+                }
+            });
+            
+            // then, each return statement needs to be checked.
+            //  it is possible that any return statement could
+            //  result in a recursive call to this same method.
+
+            foreach (var exit in returnStatements)
+            {
+                if (processingReturns.Contains(exit))
+                {
+                    // we have already started looking at this return type
+                }
+                else
+                {
+                    processingReturns.Add(exit);
+                    exit.returnExpression.EnsureVariablesAreDefined(this);
+                    SetFunctionType(function, exit.returnExpression);
+                }
+            }
+
+            // remove ourselves from the list of "active" function checks?
+            // functionCheck.Remove(function.name);
+           
+            
+            
+            // foreach (var statement in function.statements)
+            // {
+            //     switch (statement)
+            //     {
+            //         case FunctionReturnStatement exit:
+            //             exit.returnExpression.EnsureVariablesAreDefined(this);
+            //             SetFunctionType(function, exit.returnExpression);
+            //             break;
+            //     }
+            // }
+
+            if (functionReturnTypeTable.TryGetValue(function.name, out var types))
+            {
+                return types[0];
+            }
+            else
+            {
+                functionReturnTypeTable[function.name] = new List<TypeInfo>
+                {
+                    TypeInfo.Void
+                };
+                return TypeInfo.Void;
             }
         }
 
@@ -553,6 +645,59 @@ namespace FadeBasic
                         break;
                 }
             }
+        }
+
+        public void SetFunctionType(FunctionStatement function, IExpressionNode returnExpr)
+        {
+            var returnExpressionParsedType = returnExpr.ParsedType;
+            if (!functionReturnTypeTable.TryGetValue(function.name, out var types))
+            {
+                functionReturnTypeTable[function.name] = new List<TypeInfo>
+                {
+                    returnExpressionParsedType
+                };
+                return;
+            }
+
+            // TODO: functions cannot return arrays.
+            
+            for (var i = 0; i < types.Count; i++)
+            {
+                var existingType = types[i];
+                if (existingType.type == returnExpressionParsedType.type &&
+                    existingType.structName == returnExpressionParsedType.structName)
+                {
+                    // found the type! nothing to do :) 
+                    return;
+                }
+            }
+            
+            // we didn't find the type; that means its another error :( 
+            types.Add(returnExpressionParsedType);
+            returnExpr.Errors.Add(new ParseError(returnExpr, ErrorCodes.AmbiguousFunctionReturnType));
+        }
+
+        public void DoDelayedTypeChecks()
+        {
+            foreach (var check in delayedTypeChecks)
+            {
+                EnforceTypeAssignment(check.source, check.right.ParsedType, check.left.ParsedType, false, out _);
+            }
+        }
+        
+        public void AddDelayedTypeCheck(IAstNode source, IAstNode right, IAstNode left)
+        {
+            delayedTypeChecks.Add(new DelayedTypeCheck
+            {
+                source = source,
+                left = left,
+                right = right
+            });
+        }
+
+        class DelayedTypeCheck
+        {
+            public IAstNode source, right, left;
         }
     }
 
