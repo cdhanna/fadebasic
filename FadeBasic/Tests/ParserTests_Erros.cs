@@ -218,6 +218,21 @@ endfunction a + b
 
         prog.AssertNoParseErrors();
     }
+    
+    [Test]
+    public void ParseError_Function_VoidEarlyReturn_ShouldWork()
+    {
+        // this used to hang forever... figure out why!
+        var input = @"
+function randoThing(a, b)
+    exitfunction
+endfunction
+";
+        var parser = MakeParser(input);
+        var prog = parser.ParseProgram();
+
+        prog.AssertNoParseErrors();
+    }
 
     [Test]
     public void ParseError_Command_TooManyParameters()
@@ -340,16 +355,17 @@ endfunction foo()
     
     
     [Test]
-    public void ParseError_TypeCheck_Function_Recursive2()
+    public void ParseError_TypeCheck_Function_Recursive2_Works()
     {
         var input = @"
 x$ = bar(""test"")
+y$ = foo(""toast"")
 
 function foo(c$) ` foo returns a string
     a$ = bar(c$ + ""a"") `the processing of this statement causes a loop
 endfunction a$
 
-function bar(b$) ` bar returns an int
+function bar(b$) ` bar returns a string
     a$ = foo(b$)
 
     if 1 > 2 `fake magic
@@ -361,6 +377,46 @@ endfunction a$
         var parser = MakeParser(input);
         var prog = parser.ParseProgram();
         prog.AssertNoParseErrors();
+    }
+
+    
+    [Test]
+    public void ParseError_TypeCheck_Function_Recursive_Infinite()
+    {
+        var input = @"
+
+FUNCTION death()
+ENDFUNCTION spiral()
+
+FUNCTION spiral()
+ENDFUNCTION death()
+
+";
+        var parser = MakeParser(input);
+        var prog = parser.ParseProgram();
+        prog.AssertParseErrors(2);
+        var errors = prog.GetAllErrors();
+
+        Assert.That(errors[0].Display, Is.EqualTo($"[2:0] - {ErrorCodes.UnknowableFunctionReturnType}"));
+        Assert.That(errors[1].Display, Is.EqualTo($"[5:0] - {ErrorCodes.UnknowableFunctionReturnType}"));
+
+    }
+    
+    [Test]
+    public void ParseError_TypeCheck_Function_VoidAndNonVoidReturns()
+    {
+        var input = @"
+function foo(n)
+    exitfunction 2
+endfunction
+";
+        var parser = MakeParser(input);
+        var prog = parser.ParseProgram();
+        prog.AssertParseErrors(1);
+        var errors = prog.GetAllErrors();
+
+        Assert.That(errors[0].Display, Is.EqualTo($"[2:17] - {ErrorCodes.AmbiguousFunctionReturnType}"));
+
     }
 
     

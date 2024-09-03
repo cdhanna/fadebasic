@@ -1,8 +1,14 @@
+using System.Text;
 using System.Xml;
 using System.Xml.Linq;
 using System.Xml.Serialization;
 
 namespace FadeBasic.ApplicationSupport.Project;
+
+public class XmlDocMethod
+{
+    public string summary;
+}
 
 public static class ProjectDocMethods
 {
@@ -11,6 +17,94 @@ public static class ProjectDocMethods
     //     var commands = ProjectBuilder.LoadCommandMetadata(context);
     //     return LoadDocs(commands);
     // } 
+
+
+    public static XmlDocMethod ParseMethodDocs(string xml)
+    {
+        var res = new XmlDocMethod();
+        var doc = XDocument.Parse(xml, LoadOptions.None);
+        var nodes = doc.Nodes().ToList();
+        foreach (var node in nodes)
+        {
+            switch (node)
+            { 
+                case XElement element when element.Name == "summary":
+                    res.summary = ParseHtmlBlock(element);
+                    break;
+            }
+        }
+        return res;
+    }
+
+    public static string ParseHtmlBlock(XElement summary)
+    {
+        var sb = new StringBuilder();
+        ParseHtmlBlock(summary, sb);
+        return sb.ToString();
+    }
+    public static void ParseHtmlBlock(XElement summary, StringBuilder htmlBuilder=null, bool replaceNewlines=true)
+    {
+        var nodes = summary.Nodes();
+        foreach (var node in nodes)
+        {
+            switch (node)
+            {
+                case XText text:
+                    var content = text.Value.TrimEnd('\n').TrimStart('\n');
+                    if (replaceNewlines)
+                    {
+                        content = content.Replace(Environment.NewLine, "");
+                    }
+                    htmlBuilder.Append(content);
+                    break;
+                case XElement element when element.Name == "para":
+                    htmlBuilder.Append("<p>");
+                    ParseHtmlBlock(element, htmlBuilder);
+                    htmlBuilder.Append("</p>");
+                    break;
+                case XElement element when element.Name == "b":
+                    htmlBuilder.Append("<b>");
+                    ParseHtmlBlock(element, htmlBuilder);
+                    htmlBuilder.Append("</b>");
+                    break;
+                case XElement element when element.Name == "i":
+                    htmlBuilder.Append("<i>");
+                    ParseHtmlBlock(element, htmlBuilder);
+                    htmlBuilder.Append("</i>");
+                    break;
+                case XElement element when element.Name == "c":
+                    htmlBuilder.Append("<code>");
+                    ParseHtmlBlock(element, htmlBuilder);
+                    htmlBuilder.Append("</code>");
+                    break;
+                case XElement element when element.Name == "code":
+                    htmlBuilder.Append("<pre>");
+                    ParseHtmlBlock(element, htmlBuilder, replaceNewlines: false);
+                    htmlBuilder.Append("</pre>");
+                    break;
+                case XElement element when element.Name == "list":
+                    var listType = element.Attribute("type")?.Value.ToLowerInvariant() ?? "bullet";
+                    var listOpenTag = listType == "bullet" ? "<ul>" : "<ol>";
+                    var listCloseTag = listType == "bullet" ? "</ul>" : "</ol>";
+
+                    var itemNodes = element.Nodes()
+                        .Where(x => x is XElement itemElement && itemElement.Name == "item")
+                        .Cast<XElement>()
+                        .ToList();
+                    htmlBuilder.Append(listOpenTag);
+                    foreach (var itemNode in itemNodes)
+                    {
+                        htmlBuilder.Append("<li>");
+                        ParseHtmlBlock(itemNode, htmlBuilder);
+                        htmlBuilder.Append("</li>");
+                    }
+                    htmlBuilder.Append(listCloseTag);
+                    break;
+                default:
+                    break;
+            }
+        }
+    }
     
     public static ProjectDocs LoadDocs(this List<CommandMetadata> metadatas)
     {

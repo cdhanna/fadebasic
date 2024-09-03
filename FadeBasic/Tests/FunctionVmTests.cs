@@ -163,6 +163,45 @@ EndFunction a$
 
     
     [Test]
+    public void Function_Return_Struct()
+    {
+        var src = @"
+TYPE egg
+    x
+ENDTYPE
+
+e1 as egg
+e1.x = 1
+
+e2 = Test(e1)
+e2.x = e2.x * 2
+
+END
+Function Test(e as egg)
+e.x = e.x + 1
+e.x = e.x + 1
+EndFunction e
+";
+        Setup(src, out _, out var prog);
+        
+        var vm = new VirtualMachine(prog);
+        vm.Execute2();
+        
+        Assert.That(vm.heap.Cursor, Is.EqualTo(4 * 3)); // size of the only field in egg, int, 4. And there are 3 copies; one in global scope, one passed to the function, and one returned from the function
+        Assert.That(vm.typeRegisters[0], Is.EqualTo(TypeCodes.STRUCT));
+        
+        vm.heap.Read((int)vm.dataRegisters[0], 4, out var memory);
+        var data = BitConverter.ToInt32(memory);
+        Assert.That(data, Is.EqualTo(1));
+        
+        Assert.That(vm.typeRegisters[1], Is.EqualTo(TypeCodes.STRUCT));
+        vm.heap.Read((int)vm.dataRegisters[1], 4, out memory);
+        data = BitConverter.ToInt32(memory);
+        Assert.That(data, Is.EqualTo(6));
+    }
+
+    
+    [Test]
     public void Type_Array_Math()
     {
         var src = @"

@@ -356,8 +356,11 @@ namespace FadeBasic.Virtual
         private void Compile(FunctionReturnStatement returnStatement)
         {
             // put the return value onto the stack
-            Compile(returnStatement.returnExpression);
-            
+            if (returnStatement.returnExpression != null)
+            {
+                Compile(returnStatement.returnExpression);
+            }
+
             // pop a scope
             _buffer.Add(OpCodes.POP_SCOPE);
             

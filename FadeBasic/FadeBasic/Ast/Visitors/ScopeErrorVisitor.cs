@@ -38,21 +38,35 @@ namespace FadeBasic.Ast.Visitors
                 if (aVal == bVal) return 0;
                 return aVal > bVal ? -1 : 1;
             });
+
+            var globalCtx = new EnsureTypeContext();
             
-            
-            CheckStatements(program.statements, scope);
+            CheckStatements(program.statements, scope, globalCtx);
             foreach (var function in program.functions)
             {
                 if (scope.functionReturnTypeTable.ContainsKey(function.name)) continue; // already parsed. 
                 
                 scope.BeginFunction(function);
-                CheckStatements(function.statements, scope);
+                // var ctx = globalCtx.WithFunction(function);
+                var ctx = globalCtx;
+                CheckStatements(function.statements, scope, ctx);
                 
                 // throw away the type, just call this to make sure the type is validated. 
-                scope.GetFunctionTypeInfo(function);
+                var functionType = scope.GetFunctionTypeInfo(function, ctx);
+                // if (functionType.unset)
+                // {
+                //     function.Errors.Add(new ParseError(function.startToken, ErrorCodes.UnknowableFunctionReturnType));
+                // }
                 
                 scope.EndFunction();
                 
+            }
+
+            foreach (var function in program.functions)
+            {
+                if (scope.functionReturnTypeTable.ContainsKey(function.name)) continue; // already parsed.
+                function.Errors.Add(new ParseError(function.startToken, ErrorCodes.UnknowableFunctionReturnType));
+
             }
 
             scope.DoDelayedTypeChecks();
@@ -166,7 +180,7 @@ namespace FadeBasic.Ast.Visitors
         }
         
         
-        static void CheckStatements(this List<IStatementNode> statements, Scope scope)
+        static void CheckStatements(this List<IStatementNode> statements, Scope scope, EnsureTypeContext ctx)
         {
             // foreach (var statement in statements)
             for (var i = 0 ; i < statements.Count; i ++)
@@ -185,7 +199,7 @@ namespace FadeBasic.Ast.Visitors
                             var descriptor = commandStatement.command.args[commandStatement.argMap[argIndex]];
                             
                             
-                            arg.EnsureVariablesAreDefined(scope);
+                            arg.EnsureVariablesAreDefined(scope, ctx);
 
                             if (TypeInfo.TryGetFromTypeCode(descriptor.typeCode, out var guessType))
                             {
@@ -209,7 +223,7 @@ namespace FadeBasic.Ast.Visitors
 
                         if (decl.initializerExpression != null)
                         {
-                            decl.initializerExpression.EnsureVariablesAreDefined(scope);
+                            decl.initializerExpression.EnsureVariablesAreDefined(scope, ctx);
                         }
                         scope.AddDeclaration(decl);
 
@@ -223,7 +237,7 @@ namespace FadeBasic.Ast.Visitors
                     case AssignmentStatement assignment:
                         
                         // check that the RHS of the assignment is valid.
-                        assignment.expression.EnsureVariablesAreDefined(scope);
+                        assignment.expression.EnsureVariablesAreDefined(scope, ctx);
 
                         // and THEN register LHS of the assignemnt (otherwise you can get self-referential stuff)
                         scope.AddAssignment(assignment, out var implicitDecl);
@@ -234,7 +248,7 @@ namespace FadeBasic.Ast.Visitors
                         switch (assignment.variable)
                         {
                             case StructFieldReference fieldRef:
-                                fieldRef.EnsureStructField(scope);
+                                fieldRef.EnsureStructField(scope, ctx);
                                 break;
                             case ArrayIndexReference indexRef:
                                 indexRef.EnsureArrayReferenceIsValid(scope);
@@ -245,12 +259,12 @@ namespace FadeBasic.Ast.Visitors
                         
                         break;
                     case SwitchStatement switchStatement:
-                        switchStatement.expression.EnsureVariablesAreDefined(scope);
+                        switchStatement.expression.EnsureVariablesAreDefined(scope, ctx);
                         foreach (var caseGroup in switchStatement.cases )
-                            CheckStatements(caseGroup.statements, scope);
+                            CheckStatements(caseGroup.statements, scope, ctx);
                         if (switchStatement.defaultCase != null)
                         {
-                            CheckStatements(switchStatement.defaultCase.statements, scope);
+                            CheckStatements(switchStatement.defaultCase.statements, scope, ctx);
                         }
                         break;
                     case ForStatement forStatement:
@@ -258,26 +272,26 @@ namespace FadeBasic.Ast.Visitors
                         {
                             scope.TryAddVariable(forVariable);
                         }
-                        forStatement.endValueExpression?.EnsureVariablesAreDefined(scope);
-                        forStatement.stepValueExpression?.EnsureVariablesAreDefined(scope);
-                        forStatement.startValueExpression?.EnsureVariablesAreDefined(scope);
-                        forStatement.statements.CheckStatements(scope);
+                        forStatement.endValueExpression?.EnsureVariablesAreDefined(scope, ctx);
+                        forStatement.stepValueExpression?.EnsureVariablesAreDefined(scope, ctx);
+                        forStatement.startValueExpression?.EnsureVariablesAreDefined(scope, ctx);
+                        forStatement.statements.CheckStatements(scope, ctx);
                         break;
                     case IfStatement ifStatement:
-                        ifStatement.condition.EnsureVariablesAreDefined(scope);
-                        ifStatement.positiveStatements?.CheckStatements(scope);
-                        ifStatement.negativeStatements?.CheckStatements(scope);
+                        ifStatement.condition.EnsureVariablesAreDefined(scope, ctx);
+                        ifStatement.positiveStatements?.CheckStatements(scope, ctx);
+                        ifStatement.negativeStatements?.CheckStatements(scope, ctx);
                         break;
                     case DoLoopStatement doStatement:
-                        doStatement.statements?.CheckStatements(scope);
+                        doStatement.statements?.CheckStatements(scope, ctx);
                         break;
                     case WhileStatement whileStatement:
-                        whileStatement.condition.EnsureVariablesAreDefined(scope);
-                        whileStatement.statements.CheckStatements(scope);
+                        whileStatement.condition.EnsureVariablesAreDefined(scope, ctx);
+                        whileStatement.statements.CheckStatements(scope, ctx);
                         break;
                     case RepeatUntilStatement repeatStatement:
-                        repeatStatement.statements.CheckStatements(scope);
-                        repeatStatement.condition.EnsureVariablesAreDefined(scope);
+                        repeatStatement.statements.CheckStatements(scope, ctx);
+                        repeatStatement.condition.EnsureVariablesAreDefined(scope, ctx);
                         break;
                     case GoSubStatement goSub:
                         EnsureLabel(scope, goSub.label, goSub);
@@ -287,7 +301,7 @@ namespace FadeBasic.Ast.Visitors
                         break;
                     
                     case ExpressionStatement exprStatement:
-                        exprStatement.expression.EnsureVariablesAreDefined(scope);
+                        exprStatement.expression.EnsureVariablesAreDefined(scope, ctx);
                         break;
                     
                     case NoOpStatement _:
@@ -315,7 +329,7 @@ namespace FadeBasic.Ast.Visitors
 
             node.DeclaredFromSymbol = labelSymbol;
         }
-        static void EnsureStructRefRight(StructFieldReference fieldRef, Symbol symbol, Scope scope)
+        static void EnsureStructRefRight(StructFieldReference fieldRef, Symbol symbol, Scope scope, EnsureTypeContext ctx)
         {
 
             // now that we have a symbol for the left side...
@@ -354,7 +368,7 @@ namespace FadeBasic.Ast.Visitors
                     break;
                 case StructFieldReference nestedRef:
                     var subScope = Scope.CreateStructScope(scope, typeTable);
-                    EnsureStructField(nestedRef, subScope);
+                    EnsureStructField(nestedRef, subScope, ctx);
                     break;
                 default:
                     throw new NotImplementedException(
@@ -363,7 +377,7 @@ namespace FadeBasic.Ast.Visitors
 
         }
 
-        static void EnsureStructField(this StructFieldReference fieldRef, Scope scope)
+        static void EnsureStructField(this StructFieldReference fieldRef, Scope scope, EnsureTypeContext ctx)
         {
             // the left most thing needs to exist in the scope, 
             switch (fieldRef.left)
@@ -387,12 +401,12 @@ namespace FadeBasic.Ast.Visitors
 
                     foreach (var rankExpr in indexRef.rankExpressions)
                     {
-                        rankExpr.EnsureVariablesAreDefined(scope);
+                        rankExpr.EnsureVariablesAreDefined(scope, ctx);
                     }
 
                     
                     // need to validate the rhs too
-                    EnsureStructRefRight(fieldRef, arraySymbol, scope);
+                    EnsureStructRefRight(fieldRef, arraySymbol, scope, ctx);
 
                     break;
                 case VariableRefNode variableRefNode:
@@ -403,7 +417,7 @@ namespace FadeBasic.Ast.Visitors
                         variableRefNode.Errors.Add(new ParseError(variableRefNode, ErrorCodes.InvalidReference, "unknown symbol, " + variableRefNode.variableName));
                         break; // no hook into the symbol table, the rest of this expression is unknown...
                     }
-                    EnsureStructRefRight(fieldRef, symbol, scope);
+                    EnsureStructRefRight(fieldRef, symbol, scope, ctx);
                     
                     // we need to know what the left side _is_ in order to create a scope for the right side.
                     break;
@@ -437,20 +451,20 @@ namespace FadeBasic.Ast.Visitors
         }
 
 
-        public static void EnsureVariablesAreDefined(this IExpressionNode expr, Scope scope)
+        public static void EnsureVariablesAreDefined(this IExpressionNode expr, Scope scope, EnsureTypeContext ctx)
         {
             switch (expr)
             {
                 case BinaryOperandExpression binaryOpExpr:
-                    binaryOpExpr.lhs.EnsureVariablesAreDefined(scope);
-                    binaryOpExpr.rhs.EnsureVariablesAreDefined(scope);
+                    binaryOpExpr.lhs.EnsureVariablesAreDefined(scope, ctx);
+                    binaryOpExpr.rhs.EnsureVariablesAreDefined(scope, ctx);
                     scope.EnforceOperatorTypes(binaryOpExpr);
                     break;
                 case UnaryOperationExpression unaryOpExpr:
-                    unaryOpExpr.rhs.EnsureVariablesAreDefined(scope);
+                    unaryOpExpr.rhs.EnsureVariablesAreDefined(scope, ctx);
                     break;
                 case StructFieldReference structRef:
-                    structRef.EnsureStructField(scope);
+                    structRef.EnsureStructField(scope, ctx);
                     break;
                 case CommandExpression commandExpr: // commandExprs have the ability to declare variables!
                     scope.AddCommand(commandExpr);
@@ -461,77 +475,93 @@ namespace FadeBasic.Ast.Visitors
                         if (scope.functionTable.TryGetValue(arrayRef.variableName, out var function))
                         {
                             TypeInfo functionType = default;
-                            if (!scope.functionReturnTypeTable.TryGetValue(function.name, out var functionTypes))
-                            {
-                                
-                                /*
-                                 * this is a recursive call, and we need history checking.
-                                 *  if this execution has seen the given method,
-                                 *  then checking its statements WILL result in an infinite loop.
-                                 *
-                                 * if this call is from the "main" scope,
-                                 * or if this call is from a "function" scope
-                                 */
 
-                                if (scope.functionCheck.Contains(function.name))
-                                {
-                                    // we've already seen this function
-                                }
-                                
-                                scope.BeginFunction(function);
-                                function.statements.CheckStatements(scope);
-                                functionType = scope.GetFunctionTypeInfo(function);
-                                scope.EndFunction();
-                            
+                            if (ctx.functionHistory.Contains(function.name))
+                            {
+                                // we've already seen this before.
+                                //  make no modifications, but report in the ctx that a recursive loop has been detected.
+                                ctx.ReportLoop(function.name);
                             }
                             else
                             {
-                                functionType = functionTypes[0];
-                            }
-                            
-                            // ah, this is a function!
-                            arrayRef.startToken.flags |= TokenFlags.FunctionCall;
-                            if (arrayRef.rankExpressions.Count != function.parameters.Count)
-                            {
-                                arrayRef.Errors.Add(new ParseError(arrayRef.startToken, ErrorCodes.FunctionParameterCardinalityMismatch));
-                            }
-                            arrayRef.DeclaredFromSymbol = scope.functionSymbolTable[arrayRef.variableName];
 
-                            arrayRef.ParsedType = functionType;
-                            
-                            // check that types match
-                            for (var argIndex = 0;
-                                 argIndex < arrayRef.rankExpressions.Count && argIndex < function.parameters.Count;
-                                 argIndex++)
-                            {
-                                var argExr = arrayRef.rankExpressions[argIndex];
-                                argExr.EnsureVariablesAreDefined(scope);
-                                
-                                var parameter = function.parameters[argIndex];
-                                if (parameter.ParsedType.type == VariableType.Void)
+                                if (!scope.functionReturnTypeTable.TryGetValue(function.name, out var functionTypes))
                                 {
-                                    switch (parameter.type)
+
+                                    /*
+                                     * this is a recursive call, and we need history checking.
+                                     *  if this execution has seen the given method,
+                                     *  then checking its statements WILL result in an infinite loop.
+                                     *
+                                     * if this call is from the "main" scope,
+                                     * or if this call is from a "function" scope
+                                     */
+
+                                    if (scope.functionCheck.Contains(function.name))
                                     {
-                                        case TypeReferenceNode typeNode:
-                                            parameter.ParsedType = TypeInfo.FromVariableType(typeNode.variableType);
-                                            break;
-                                        case StructTypeReferenceNode structNode:
-                                            parameter.ParsedType = TypeInfo.FromVariableType(structNode.variableType, structName: structNode.variableNode.variableName);
-                                            break;
-                                        default:
-                                            throw new NotImplementedException();
+                                        // we've already seen this function
                                     }
+
+                                    scope.BeginFunction(function);
+                                    var subCtx = ctx.WithFunction(function);
+                                    function.statements.CheckStatements(scope, subCtx);
+                                    functionType = scope.GetFunctionTypeInfo(function, subCtx);
+                                    scope.EndFunction();
+
+                                }
+                                else
+                                {
+                                    functionType = functionTypes[0];
                                 }
 
-                             
-                                // var _ = GetFunctionTypeInfo(function, scope);
-                                scope.AddDelayedTypeCheck(argExr, argExr, parameter);
-                                // scope.EnforceTypeAssignment(argExr, argExr.ParsedType, parameter.ParsedType, false,
+                                arrayRef.ParsedType = functionType;
+                                arrayRef.DeclaredFromSymbol = arraySymbol;
+                            
+
+
+                                // ah, this is a function!
+                                arrayRef.startToken.flags |= TokenFlags.FunctionCall;
+                                if (arrayRef.rankExpressions.Count != function.parameters.Count)
+                                {
+                                    arrayRef.Errors.Add(new ParseError(arrayRef.startToken,
+                                        ErrorCodes.FunctionParameterCardinalityMismatch));
+                                }
+
+                                // check that types match
+                                for (var argIndex = 0;
+                                     argIndex < arrayRef.rankExpressions.Count && argIndex < function.parameters.Count;
+                                     argIndex++)
+                                {
+                                    var argExr = arrayRef.rankExpressions[argIndex];
+                                    argExr.EnsureVariablesAreDefined(scope, ctx);
+
+                                    var parameter = function.parameters[argIndex];
+                                    if (parameter.ParsedType.type == VariableType.Void)
+                                    {
+                                        switch (parameter.type)
+                                        {
+                                            case TypeReferenceNode typeNode:
+                                                parameter.ParsedType = TypeInfo.FromVariableType(typeNode.variableType);
+                                                break;
+                                            case StructTypeReferenceNode structNode:
+                                                parameter.ParsedType =
+                                                    TypeInfo.FromVariableType(structNode.variableType,
+                                                        structName: structNode.variableNode.variableName);
+                                                break;
+                                            default:
+                                                throw new NotImplementedException();
+                                        }
+                                    }
+
+
+                                    // var _ = GetFunctionTypeInfo(function, scope);
+                                    scope.AddDelayedTypeCheck(argExr, argExr, parameter);
+                                    // scope.EnforceTypeAssignment(argExr, argExr.ParsedType, parameter.ParsedType, false,
                                     // out _);
+                                }
                             }
-                            
-                            
-                            
+
+
                             break;
                         }
                         expr.Errors.Add(new ParseError(expr.StartToken, ErrorCodes.InvalidReference, $"unknown symbol, {arrayRef.variableName}"));
@@ -573,5 +603,26 @@ namespace FadeBasic.Ast.Visitors
             }
         }
         
+    }
+
+    public class EnsureTypeContext
+    {
+        public HashSet<string> functionHistory = new HashSet<string>();
+        public bool HasLoop { get; private set; }
+
+        public EnsureTypeContext WithFunction(FunctionStatement function)
+        {
+            var names = new HashSet<string>(functionHistory);
+            names.Add(function.name);
+            return new EnsureTypeContext
+            {
+                functionHistory = names
+            };
+        }
+
+        public void ReportLoop(string functionName)
+        {
+            HasLoop = true;
+        }
     }
 }

@@ -278,15 +278,8 @@ namespace FadeBasic
 
         public HashSet<string> functionCheck = new HashSet<string>();
         
-        public TypeInfo GetFunctionTypeInfo(FunctionStatement function)
+        public TypeInfo GetFunctionTypeInfo(FunctionStatement function, EnsureTypeContext ctx)
         {
-            
-            // if (functionCheck.Contains(function.name))
-            // {
-            //     throw new Exception("recursion unhandled in function type checking");
-            // }
-            //
-            // functionCheck.Add(function.name);
             
             // at this moment, we need the TypeInfo for the given function.
             //  either it exists (because we've already called this function)
@@ -302,40 +295,52 @@ namespace FadeBasic
                     returnStatements.Add(exit);
                 }
             });
+            if (function.hasNoReturnExpression)
+            {
+                // this implies there is an implicit VOID return type
+                SetFunctionType(function, TypeInfo.Void, function);
+            }
             
             // then, each return statement needs to be checked.
             //  it is possible that any return statement could
             //  result in a recursive call to this same method.
 
+            if (returnStatements.Count == 0)
+            {
+                functionReturnTypeTable[function.name] = new List<TypeInfo>
+                {
+                    TypeInfo.Void
+                };
+                return TypeInfo.Void;
+            }
             foreach (var exit in returnStatements)
             {
-                if (processingReturns.Contains(exit))
+                // if (processingReturns.Contains(exit))
                 {
                     // we have already started looking at this return type
                 }
-                else
+                // else
                 {
-                    processingReturns.Add(exit);
-                    exit.returnExpression.EnsureVariablesAreDefined(this);
-                    SetFunctionType(function, exit.returnExpression);
+                    // processingReturns.Add(exit);
+
+                    // make a ctx _per_ return expression, so each expression thread get its own
+                    //  ability to create its own loops
+                    var subCtx = ctx.WithFunction(function);
+                    if (exit.returnExpression == null)
+                    {
+                        SetFunctionType(function, TypeInfo.Void, function, exit.startToken);
+                    }
+                    else
+                    {
+                        exit.returnExpression.EnsureVariablesAreDefined(this, subCtx);
+
+                        if (!subCtx.HasLoop && !exit.returnExpression.ParsedType.unset)
+                        {
+                            SetFunctionType(function, exit.returnExpression);
+                        }
+                    }
                 }
             }
-
-            // remove ourselves from the list of "active" function checks?
-            // functionCheck.Remove(function.name);
-           
-            
-            
-            // foreach (var statement in function.statements)
-            // {
-            //     switch (statement)
-            //     {
-            //         case FunctionReturnStatement exit:
-            //             exit.returnExpression.EnsureVariablesAreDefined(this);
-            //             SetFunctionType(function, exit.returnExpression);
-            //             break;
-            //     }
-            // }
 
             if (functionReturnTypeTable.TryGetValue(function.name, out var types))
             {
@@ -343,11 +348,8 @@ namespace FadeBasic
             }
             else
             {
-                functionReturnTypeTable[function.name] = new List<TypeInfo>
-                {
-                    TypeInfo.Void
-                };
-                return TypeInfo.Void;
+                // :( 
+                return TypeInfo.Unset;
             }
         }
 
@@ -650,11 +652,15 @@ namespace FadeBasic
         public void SetFunctionType(FunctionStatement function, IExpressionNode returnExpr)
         {
             var returnExpressionParsedType = returnExpr.ParsedType;
+            SetFunctionType(function, returnExpressionParsedType, returnExpr);
+        }
+        public void SetFunctionType(FunctionStatement function, TypeInfo type, IAstNode srcNode, Token token=null)
+        {
             if (!functionReturnTypeTable.TryGetValue(function.name, out var types))
             {
                 functionReturnTypeTable[function.name] = new List<TypeInfo>
                 {
-                    returnExpressionParsedType
+                    type
                 };
                 return;
             }
@@ -664,8 +670,8 @@ namespace FadeBasic
             for (var i = 0; i < types.Count; i++)
             {
                 var existingType = types[i];
-                if (existingType.type == returnExpressionParsedType.type &&
-                    existingType.structName == returnExpressionParsedType.structName)
+                if (existingType.type == type.type &&
+                    existingType.structName == type.structName)
                 {
                     // found the type! nothing to do :) 
                     return;
@@ -673,8 +679,11 @@ namespace FadeBasic
             }
             
             // we didn't find the type; that means its another error :( 
-            types.Add(returnExpressionParsedType);
-            returnExpr.Errors.Add(new ParseError(returnExpr, ErrorCodes.AmbiguousFunctionReturnType));
+            types.Add(type);
+            var error = token == null
+                ? new ParseError(srcNode, ErrorCodes.AmbiguousFunctionReturnType)
+                : new ParseError(token, ErrorCodes.AmbiguousFunctionReturnType);
+            srcNode.Errors.Add(error);
         }
 
         public void DoDelayedTypeChecks()
@@ -1863,8 +1872,13 @@ namespace FadeBasic
 
         private FunctionReturnStatement ParseExitFunction(Token endToken)
         {
-            var expression = ParseWikiExpression();
-            return new FunctionReturnStatement(endToken, expression);
+            IExpressionNode returnExpression = null;
+            if (TryParseExpression(out returnExpression))
+            {
+                
+            }
+            // var expression = ParseWikiExpression();
+            return new FunctionReturnStatement(endToken, returnExpression);
         }
         
         private FunctionStatement ParseFunction(Token functionToken)
@@ -1947,6 +1961,7 @@ namespace FadeBasic
             // now we need to parse all the statements
             var statements = new List<IStatementNode>();
             looking = true;
+            bool hasNoReturnExpression = false;
             while (looking)
             {
                 var nextToken = _stream.Peek;
@@ -1968,6 +1983,10 @@ namespace FadeBasic
                         if (TryParseExpression(out var returnExpr))
                         {
                             statements.Add(new FunctionReturnStatement(nextToken, returnExpr));
+                        }
+                        else
+                        {
+                            hasNoReturnExpression = true;
                         }
                         
                         looking = false;
@@ -1993,7 +2012,8 @@ namespace FadeBasic
                 parameters = parameters,
                 name = nameToken.caseInsensitiveRaw,
                 startToken = functionToken,
-                endToken = _stream.Current
+                endToken = _stream.Current,
+                hasNoReturnExpression = hasNoReturnExpression
             };
         }
 

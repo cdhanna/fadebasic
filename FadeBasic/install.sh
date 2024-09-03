@@ -2,7 +2,7 @@
 
 # accept input parameters...
 VERSION=${1:-0.0.2} #0.0.2 is the development hack version
-BUILD_NUMBER=${2:-3} 
+BUILD_NUMBER=${2:-1} 
 PACKAGE_SOURCE=${3:-LocalFade} # in prod, should be https://nuget.org
 PACKAGE_SOURCE_API_KEY=${4}
 

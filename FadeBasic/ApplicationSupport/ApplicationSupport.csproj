@@ -3,7 +3,7 @@
     <PropertyGroup>
         <TargetFramework>net8.0</TargetFramework>
         <ImplicitUsings>enable</ImplicitUsings>
-        <Nullable>enable</Nullable>
+        <Nullable>disable</Nullable>
 
         <AssemblyName>FadeBasic.Lang.ApplicationSupport</AssemblyName>
         <PackageId>FadeBasic.Lang.ApplicationSupport</PackageId>

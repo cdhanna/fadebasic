@@ -3224,20 +3224,22 @@ bread.y.z = 3
 refDbl bread.y";
         
         Setup(src, out var compiler, out var prog);
-        _exprAst.AssertNoParseErrors();
-        var vm = new VirtualMachine(prog);
-        vm.hostMethods = compiler.methodTable;
-        vm.Execute2();
-        Assert.That(vm.heap.Cursor, Is.EqualTo(12)); // there are three ints, each are 4
-        Assert.That(vm.typeRegisters[0], Is.EqualTo(TypeCodes.STRUCT));
-        
-        vm.heap.Read((int)vm.dataRegisters[0] + 4, 4, out var memory);
-        var data = BitConverter.ToInt32(memory);
-        Assert.That(data, Is.EqualTo(6));
-        Assert.Fail(@"
-This test shouldn't be allowed to compile. 'bread.y' is not a valid numeric value, but
-it can be passed to the ref parameter because it happens to map to the first parameter.
-");
+        _exprAst.AssertParseErrors(1);
+        var errs = _exprAst.GetAllErrors();
+        Assert.That(errs[0].errorCode, Is.EqualTo(ErrorCodes.InvalidCast));
+//         var vm = new VirtualMachine(prog);
+//         vm.hostMethods = compiler.methodTable;
+//         vm.Execute2();
+//         Assert.That(vm.heap.Cursor, Is.EqualTo(12)); // there are three ints, each are 4
+//         Assert.That(vm.typeRegisters[0], Is.EqualTo(TypeCodes.STRUCT));
+//         
+//         vm.heap.Read((int)vm.dataRegisters[0] + 4, 4, out var memory);
+//         var data = BitConverter.ToInt32(memory);
+//         Assert.That(data, Is.EqualTo(6));
+//         Assert.Fail(@"
+// This test shouldn't be allowed to compile. 'bread.y' is not a valid numeric value, but
+// it can be passed to the ref parameter because it happens to map to the first parameter.
+// ");
     }
 
     

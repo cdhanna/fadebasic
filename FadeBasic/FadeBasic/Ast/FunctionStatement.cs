@@ -37,16 +37,20 @@ namespace FadeBasic.Ast
         {
             this.startToken = startToken;
             this.returnExpression = expressionNode;
-            endToken = expressionNode.EndToken;
+            endToken = expressionNode?.EndToken ?? startToken;
         }
         protected override string GetString()
         {
+            if (returnExpression == null) return "retfunc void";
             return $"retfunc {returnExpression}";
         }
 
         public override IEnumerable<IAstVisitable> IterateChildNodes()
         {
-            yield return returnExpression;
+            if (returnExpression != null)
+            {
+                yield return returnExpression;
+            }
         }
     }
     
@@ -56,6 +60,7 @@ namespace FadeBasic.Ast
         public Token nameToken;
         public List<ParameterNode> parameters = new List<ParameterNode>();
         public List<IStatementNode> statements = new List<IStatementNode>();
+        public bool hasNoReturnExpression;
 
         public FunctionStatement()
         {

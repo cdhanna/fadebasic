@@ -185,6 +185,7 @@ namespace FadeBasic
         public static readonly ErrorCode SymbolAlreadyDeclared = "[0300] Symbol already declared";
         public static readonly ErrorCode InvalidCast = "[0301] Expression cannot be cast to given type";
         public static readonly ErrorCode AmbiguousFunctionReturnType = "[0302] Function has ambiguous return type";
+        public static readonly ErrorCode UnknowableFunctionReturnType = "[0303] Function has no inferable return type";
     }
 
     public struct ErrorCode

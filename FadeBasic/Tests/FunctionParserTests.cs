@@ -87,7 +87,7 @@ ENDFUNCTION
 FUNCTION hello()
     x = 1
 EXITFUNCTION 3
-ENDFUNCTION
+ENDFUNCTION 0
 ";
         var parser = MakeParser(input);
         var prog = parser.ParseProgram();
@@ -97,7 +97,7 @@ ENDFUNCTION
         var code = prog.ToString();
         Console.WriteLine(code);
         Assert.That(code, Is.EqualTo(@"(
-(func hello (),((= (ref x),(1)),(retfunc (3))))
+(func hello (),((= (ref x),(1)),(retfunc (3)),(retfunc (0))))
 )".ReplaceLineEndings("")));
     }
 
