@@ -55,6 +55,12 @@ namespace FadeBasic.ApplicationSupport.Project
             }
         }
     }
+
+    public class ProjectCommandInfo
+    {
+        public CommandCollection collection;
+        public ProjectDocs docs;
+    }
     
     public class ProjectBuilder
     {
@@ -64,12 +70,12 @@ namespace FadeBasic.ApplicationSupport.Project
         //     
         // }
 
-        public static CommandCollection LoadCommandMetadata(ProjectContext context)
+        public static ProjectCommandInfo LoadCommandMetadata(ProjectContext context)
         {
             return LoadCommandMetadata(context.projectLibraries);
         }
         
-        public static CommandCollection LoadCommandMetadata(List<ProjectCommandSource> libraries)
+        public static ProjectCommandInfo LoadCommandMetadata(List<ProjectCommandSource> libraries)
         {
             var metaDatas = new List<CommandMetadata>();
             
@@ -108,6 +114,8 @@ namespace FadeBasic.ApplicationSupport.Project
 
                     metaDatas.Add(metadata);
                 }
+
+                
                 
                 loadContext.Unload();
                 
@@ -116,9 +124,13 @@ namespace FadeBasic.ApplicationSupport.Project
                 // var userAssembly = loadContext.LoadFromAssemblyPath(fullPath);
             }
 
-
+            var docs = ProjectDocMethods.LoadDocs<MarkdownDocParser>(metaDatas);
             var sources = metaDatas.Select(x => (IMethodSource)new VirtualCommandProvider(x)).ToArray();
-            return new CommandCollection(sources);
+            return new ProjectCommandInfo
+            {
+                collection = new CommandCollection(sources),
+                docs = docs
+            };
         }
         
     }

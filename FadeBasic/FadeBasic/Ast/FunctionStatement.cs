@@ -4,6 +4,12 @@ using System.Linq;
 
 namespace FadeBasic.Ast
 {
+
+    public interface IHasTriviaNode : IAstNode
+    {
+        public string Trivia { get; set; }
+    }
+    
     public class ParameterNode : AstNode, IAstVisitable
     {
         public VariableRefNode variable;
@@ -54,7 +60,7 @@ namespace FadeBasic.Ast
         }
     }
     
-    public class FunctionStatement : AstNode, IStatementNode
+    public class FunctionStatement : AstNode, IStatementNode, IHasTriviaNode
     {
         public string name;
         public Token nameToken;
@@ -78,5 +84,7 @@ namespace FadeBasic.Ast
             foreach (var statement in statements) yield return statement;
 
         }
+
+        public string Trivia { get; set; }
     }
 }

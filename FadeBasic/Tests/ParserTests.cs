@@ -1,5 +1,6 @@
 using FadeBasic;
 using FadeBasic.Ast;
+using FadeBasic.Ast.Visitors;
 using FadeBasic.Virtual;
 
 namespace Tests;
@@ -65,6 +66,160 @@ public partial class ParserTests
         Assert.That(code, Is.EqualTo("((call print (12)))"));
     }
     
+    
+    
+    [Test]
+    public void Trivia_Variable_Declare()
+    {
+        var input = @"
+`this is trivia
+global a = 3
+";
+        var parser = MakeParser(input);
+        var prog = parser.ParseProgram();
+        prog.AddTrivia(_lexerResults);
+        prog.AssertNoParseErrors();
+        
+        Assert.That(((DeclarationStatement)prog.statements[0]).Trivia, Is.EqualTo("this is trivia"));
+    }
+
+    [Test]
+    public void Trivia_Variable_Declare_Implicit()
+    {
+        var input = @"
+`this is trivia
+a = 3
+";
+        var parser = MakeParser(input);
+        var prog = parser.ParseProgram();
+        prog.AddTrivia(_lexerResults);
+        prog.AssertNoParseErrors();
+        Assert.That(((AssignmentStatement)prog.statements[0]).Trivia, Is.EqualTo("this is trivia"));
+    }
+
+    
+    [Test]
+    public void Function_Docs_Trivia()
+    {
+        var input = @"
+a = 3
+` this is trivia
+FUNCTION soap()
+
+ENDFUNCTION
+";
+        var parser = MakeParser(input);
+        var prog = parser.ParseProgram();
+        prog.AddTrivia(_lexerResults);
+        prog.AssertNoParseErrors();
+        
+        Assert.That(prog.functions[0].Trivia, Is.EqualTo("this is trivia"));
+    }
+    
+    [Test]
+    public void Function_Docs_Trivia_MultiLine()
+    {
+        var input = @"
+a = 3
+` this is trivia
+`  so is this
+FUNCTION soap()
+
+ENDFUNCTION
+";
+        var parser = MakeParser(input);
+        var prog = parser.ParseProgram();
+        prog.AddTrivia(_lexerResults);
+        prog.AssertNoParseErrors();
+        
+        Assert.That(prog.functions[0].Trivia, Is.EqualTo("this is trivia\nso is this"));
+    }
+    
+    
+    [Test]
+    public void Function_Docs_Trivia_MultiLine_Blank()
+    {
+        var input = @"
+a = 3
+` this is trivia
+
+`  so is this
+FUNCTION soap()
+
+ENDFUNCTION
+";
+        var parser = MakeParser(input);
+        var prog = parser.ParseProgram();
+        prog.AddTrivia(_lexerResults);
+        prog.AssertNoParseErrors();
+        
+        Assert.That(prog.functions[0].Trivia, Is.EqualTo("this is trivia\nso is this"));
+    }
+    
+    
+    [Test]
+    public void Function_Docs_Trivia_MultiLine_BlankComment()
+    {
+        var input = @"
+a = 3
+` this is trivia
+`
+`  so is this
+FUNCTION soap()
+
+ENDFUNCTION
+";
+        var parser = MakeParser(input);
+        var prog = parser.ParseProgram();
+        prog.AddTrivia(_lexerResults);
+        prog.AssertNoParseErrors();
+        
+        Assert.That(prog.functions[0].Trivia, Is.EqualTo("this is trivia\n\nso is this"));
+    }
+    
+    
+    [Test]
+    public void Function_Docs_Trivia_RemStart()
+    {
+        var input = @"
+a = 3
+REMSTART this is trivia
+
+so is this
+REMEND
+FUNCTION soap()
+
+ENDFUNCTION
+";
+        var parser = MakeParser(input);
+        var prog = parser.ParseProgram();
+        prog.AddTrivia(_lexerResults);
+        prog.AssertNoParseErrors();
+        
+        Assert.That(prog.functions[0].Trivia, Is.EqualTo("this is trivia\n\nso is this"));
+    }
+    
+    
+    [Test]
+    public void Function_Docs_Trivia_RemStart_WithRemEnd()
+    {
+        var input = @"
+a = 3
+REMSTART this is trivia
+
+so is this
+tuna REMEND
+FUNCTION soap()
+
+ENDFUNCTION
+";
+        var parser = MakeParser(input);
+        var prog = parser.ParseProgram();
+        prog.AddTrivia(_lexerResults);
+        prog.AssertNoParseErrors();
+        
+        Assert.That(prog.functions[0].Trivia, Is.EqualTo("this is trivia\n\nso is this\ntuna"));
+    }
     
     [Test]
     public void String_Assign()
@@ -401,6 +556,92 @@ global x as integer, x = 1
         prog.AssertParseErrors(1);
     }
 
+    
+    
+    [Test]
+    public void DeclareFromSymbol_Function()
+    {
+        var input = @"
+igloo(3)
+function igloo(n)
+endfunction n * 2
+";
+        var parser = MakeParser(input);
+        var prog = parser.ParseProgram();
+        prog.AssertNoParseErrors();
+
+        var expr = prog.statements[0] as ExpressionStatement;
+        var check = expr.expression.DeclaredFromSymbol;
+        
+        Assert.That(check.source, Is.Not.Null);
+        Assert.That(check.source, Is.EqualTo(prog.functions[0]));
+    }
+    
+    
+    [Test]
+    public void DeclareFromSymbol_Variable()
+    {
+        var input = @"
+x = 3
+y = x
+";
+        var parser = MakeParser(input);
+        var prog = parser.ParseProgram();
+        prog.AssertNoParseErrors();
+
+        var expr = prog.statements[1] as AssignmentStatement;
+        var check = expr.expression.DeclaredFromSymbol;
+        
+        Assert.That(check.source, Is.Not.Null);
+    }
+    
+    
+    [Test]
+    public void DeclareFromSymbol_Variable_InForLoop()
+    {
+        var input = @"
+do
+    if 3 > 2
+        x = 3
+        for n = 1 to 3
+            if x = 1
+                x = 3
+            endif
+        next
+    endif
+loop
+";
+        var parser = MakeParser(input);
+        var prog = parser.ParseProgram();
+        prog.AssertNoParseErrors();
+
+        var expr = prog.statements[0] as DoLoopStatement;
+        var outter = expr.statements[0] as IfStatement;
+        var forLoop = outter.positiveStatements[1] as ForStatement;
+        var inner = forLoop.statements[0] as IfStatement;
+        var assign = inner.positiveStatements[0] as AssignmentStatement;
+        var check = assign.variable.DeclaredFromSymbol;
+        
+        Assert.That(check, Is.Not.Null);
+    }
+    
+    
+    [Test]
+    public void DeclareFromSymbol_Variable_Lhs()
+    {
+        var input = @"
+x = 3
+x = 1
+";
+        var parser = MakeParser(input);
+        var prog = parser.ParseProgram();
+        prog.AssertNoParseErrors();
+
+        var expr = prog.statements[1] as AssignmentStatement;
+        var check = expr.variable.DeclaredFromSymbol;
+        
+        Assert.That(check, Is.Not.Null);
+    }
     
     
     [Test]
@@ -1050,7 +1291,7 @@ nothing
 x = 1
 ";
         var lex = _lexer.TokenizeWithErrors(input, _commands);
-        Assert.That(lex.comments.Count, Is.EqualTo(4));
+        Assert.That(lex.comments.Count, Is.EqualTo(6));
 
         var parser = MakeParser(input);
         var prog = parser.ParseProgram();

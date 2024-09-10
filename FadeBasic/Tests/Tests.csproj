@@ -29,6 +29,8 @@
 
     <ItemGroup>
 
+      <ProjectReference Include="..\FadeBasic.Lib.Standard\FadeBasic.Lib.Standard.csproj" />
+
       <ProjectReference Include="..\FadeBasicCommands\FadeBasicCommands.csproj" />
       <ProjectReference Include="..\FadeBasic\FadeBasic.csproj" />
         

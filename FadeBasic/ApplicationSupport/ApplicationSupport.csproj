@@ -21,6 +21,12 @@
     <ItemGroup>
       <ProjectReference Include="..\FadeBasic\FadeBasic.csproj" />
     </ItemGroup>
+    
+    <ItemGroup>
+        <EmbeddedResource Include="DocSite\index.html" LogicalName="docs/index.html"/>
+        <EmbeddedResource Include="DocSite\styles.css" LogicalName="docs/styles.css"/>
+        <EmbeddedResource Include="DocSite\F-trans.png" LogicalName="docs/f.png"/>
+    </ItemGroup>
 
     <ItemGroup>
         <!-- For parsing project files... -->

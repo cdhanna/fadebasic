@@ -8,6 +8,46 @@ namespace FadeBasic.Virtual
 {
     public static class VmUtil
     {
+        public static bool TryGetVariableTypeDisplay(int typeCode, out string type)
+        {
+            type = "void";
+            switch (typeCode)
+            {
+                case TypeCodes.INT:
+                    type = VariableType.Integer.ToString();
+                    return true;
+                case TypeCodes.STRING:
+                    type = VariableType.String.ToString();
+                    return true;
+                case TypeCodes.STRUCT:
+                    type = VariableType.Struct.ToString();
+                    return true;
+                case TypeCodes.REAL:
+                    type = VariableType.Float.ToString();
+                    return true;
+                case TypeCodes.WORD:
+                    type = VariableType.Word.ToString();
+                    return true;
+                case TypeCodes.DWORD:
+                    type = VariableType.DWord.ToString();
+                    return true;
+                case TypeCodes.DFLOAT:
+                    type = VariableType.DoubleFloat.ToString();
+                    return true;
+                case TypeCodes.BYTE:
+                    type = VariableType.Byte.ToString();
+                    return true;
+                case TypeCodes.VM:
+                    type = "vm";
+                    return true;
+                case TypeCodes.ANY:
+                    type = "any";
+                    return true;
+                default:
+                    throw new NotImplementedException("Unknown type code");
+            }
+        }
+        
         public static bool TryGetVariableType(int typeCode, out VariableType type)
         {
             type = VariableType.Void;
@@ -323,7 +363,6 @@ namespace FadeBasic.Virtual
                 throw new Exception("vm exception: expected an int");
             }
             ReadSpan(ref stack, TypeCodes.INT, out var span);
-            // Read(stack, TypeCodes.INT, out var aBytes);
             result = BitConverter.ToInt32(span.ToArray(), 0);
         }
 
@@ -497,7 +536,7 @@ namespace FadeBasic.Virtual
                 case TypeCodes.REAL:
                     float aReal = BitConverter.ToSingle(a, 0);
                     float bReal = BitConverter.ToSingle(b, 0);
-                    float sumReal = (bReal > aReal ? 1 : 0);
+                    float sumReal = (aReal > bReal ? 1 : 0);
                     c = BitConverter.GetBytes(sumReal);
                     break;
                 default:
@@ -532,7 +571,7 @@ namespace FadeBasic.Virtual
                 case TypeCodes.REAL:
                     float aReal = BitConverter.ToSingle(a, 0);
                     float bReal = BitConverter.ToSingle(b, 0);
-                    float sumReal = (bReal >= aReal ? 1 : 0);
+                    float sumReal = (aReal >= bReal ? 1 : 0);
                     c = BitConverter.GetBytes(sumReal);
                     break;
                 default:

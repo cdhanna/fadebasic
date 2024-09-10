@@ -9,13 +9,17 @@ public partial class TokenVm
 {
     private ProgramNode? _exprAst;
 
-    void Setup(string src, out Compiler compiler, out List<byte> progam)
+    void Setup(string src, out Compiler compiler, out List<byte> progam, int? expectedParseErrors=null)
     {
         var collection = TestCommands.CommandsForTesting;
         var lexer = new Lexer();
         var tokens = lexer.Tokenize(src, collection);
         var parser = new Parser(new TokenStream(tokens), collection);
         _exprAst = parser.ParseProgram();
+        if (expectedParseErrors.HasValue)
+        {
+            _exprAst.AssertParseErrors(expectedParseErrors.Value);
+        }
         
         compiler = new Compiler(collection);
         compiler.Compile(_exprAst);
@@ -2347,6 +2351,18 @@ next
     }
     
     [Test]
+    public void Math_IntFloats_And()
+    {
+        var src = @"x = 1.0 AND 2.0";
+        Setup(src, out _, out var prog);
+        
+        var vm = new VirtualMachine(prog);
+        vm.Execute2();
+        Assert.That(vm.dataRegisters[0], Is.EqualTo(1));
+        Assert.That(vm.typeRegisters[0], Is.EqualTo(TypeCodes.INT));
+    }
+    
+    [Test]
     public void Math_Ints_Divide()
     {
         var src = @"x = 50 / 5";
@@ -2425,6 +2441,46 @@ x# = z#
         Assert.That(vm.typeRegisters[0], Is.EqualTo(TypeCodes.REAL));
     }
 
+    
+    [Test]
+    public void Math_FloatInt_GreaterThan()
+    {
+        var src = @"
+x# = 3.2
+width = 109
+n = x# > width
+";
+        Setup(src, out _, out var prog);
+        
+        var vm = new VirtualMachine(prog);
+        vm.Execute2();
+        
+        Assert.That(vm.typeRegisters[2], Is.EqualTo(TypeCodes.INT));
+        Assert.That(vm.dataRegisters[2], Is.EqualTo(0));
+    }
+    
+    
+    [Test]
+    public void Math_FloatInt_Multiply()
+    {
+        var src = @"
+x# = 3.0
+width = 3
+n# = x# * width
+";
+        Setup(src, out _, out var prog);
+        
+        var vm = new VirtualMachine(prog);
+        vm.Execute2();
+        
+        Assert.That(vm.typeRegisters[2], Is.EqualTo(TypeCodes.REAL));
+        var outputRegisterValue = vm.dataRegisters[2];
+        var outputRegisterBytes = BitConverter.GetBytes(outputRegisterValue);
+        float output = BitConverter.ToSingle(outputRegisterBytes, 0);
+        Assert.That(output, Is.EqualTo(9.0f));
+        
+        // Assert.That(vm.dataRegisters[2], Is.EqualTo(0));
+    }
     
     [Test]
     public void TestDeclareAndAssignToExpressionToOverflow()
@@ -3018,6 +3074,18 @@ y = x(2).derp * x(1).color
     }
     
     [Test]
+    public void CallHost_Cast()
+    {
+        var src = "x = add(3.2, 1.1)";
+        Setup(src, out var compiler, out var prog, expectedParseErrors: 0);
+        var vm = new VirtualMachine(prog);
+        vm.hostMethods = compiler.methodTable;
+        vm.Execute2();
+        Assert.That(vm.typeRegisters[0], Is.EqualTo(TypeCodes.INT));
+        Assert.That(vm.dataRegisters[0], Is.EqualTo(4));
+    }
+    
+    [Test]
     public void CallHost_ObjectInput()
     {
         var src = @$"
@@ -3262,7 +3330,7 @@ refDbl bread.y";
         var src = @"
 x = file end(10)=10
 ";
-        Setup(src, out var compiler, out var prog);
+        Setup(src, out var compiler, out var prog, expectedParseErrors: 0);
         var vm = new VirtualMachine(prog);
         vm.hostMethods = compiler.methodTable;
         vm.Execute2();

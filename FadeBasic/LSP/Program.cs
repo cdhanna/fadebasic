@@ -9,6 +9,7 @@ using LSP.Services;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Nerdbank.Streams;
+using OmniSharp.Extensions.LanguageServer.Protocol.Models;
 using OmniSharp.Extensions.LanguageServer.Server;
 using Serilog;
 
@@ -85,6 +86,7 @@ public static class Program
                         .WithHandler<FormattingHandler>()
                         .WithHandler<GotoDefinitionHandler>()
                         .WithHandler<FindReferencesHandler>()
+                        .WithHandler<HoverHandler>()
                         // .WithHandler<FoldingRangeHandler>()
                         // .WithHandler<DocumentSymbolHandler>()
                         .WithHandler<SemanticTokenHandler>()

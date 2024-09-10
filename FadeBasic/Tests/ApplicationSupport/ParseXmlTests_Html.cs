@@ -2,8 +2,9 @@ using FadeBasic.ApplicationSupport.Project;
 
 namespace Tests.ApplicationSupport;
 
-public class ParseXmlTests
+public class ParseXmlTests_Html
 {
+    // TODO: vscode needs markdown, so there should be a markdown converter as well. Consider strategy pattern.
     [Test]
     public void ParseSummary()
     {
@@ -11,10 +12,22 @@ public class ParseXmlTests
 hello world
 </summary>
 ";
-        var data = ProjectDocMethods.ParseMethodDocs(xml);
+        var data = ProjectDocMethods.ParseMethodDocsHtml(xml);
         Assert.That(data.summary, Is.EqualTo("hello world"));
     }
     
+    [Test]
+    public void ParseSummaryNewLineTossedOut()
+    {
+        var xml = @"<summary>
+hello 
+world
+</summary>
+";
+        var data = ProjectDocMethods.ParseMethodDocsHtml(xml);
+        Assert.That(data.summary, Is.EqualTo("hello world"));
+    }
+
     
     [Test]
     public void ParseSummary_WithPara()
@@ -26,7 +39,7 @@ hello world
 </para>
 </summary>
 ";
-        var data = ProjectDocMethods.ParseMethodDocs(xml);
+        var data = ProjectDocMethods.ParseMethodDocsHtml(xml);
         Assert.That(data.summary, Is.EqualTo("<p>a</p><p>b 2</p>"));
     }
     
@@ -38,7 +51,7 @@ hello world
 hello <b>world</b>
 </summary>
 ";
-        var data = ProjectDocMethods.ParseMethodDocs(xml);
+        var data = ProjectDocMethods.ParseMethodDocsHtml(xml);
         Assert.That(data.summary, Is.EqualTo("hello <b>world</b>"));
     }
     [Test]
@@ -48,7 +61,7 @@ hello <b>world</b>
 hello <i>world</i>
 </summary>
 ";
-        var data = ProjectDocMethods.ParseMethodDocs(xml);
+        var data = ProjectDocMethods.ParseMethodDocsHtml(xml);
         Assert.That(data.summary, Is.EqualTo("hello <i>world</i>"));
     }
     
@@ -61,7 +74,7 @@ hello <c>world</c>
 ";
         // <code> is a single line in html
         // https://www.w3schools.com/tags/tag_code.asp
-        var data = ProjectDocMethods.ParseMethodDocs(xml);
+        var data = ProjectDocMethods.ParseMethodDocsHtml(xml);
         Assert.That(data.summary, Is.EqualTo("hello <code>world</code>"));
     }
     
@@ -75,7 +88,7 @@ multi
 </code>
 </summary>
 ";
-        var data = ProjectDocMethods.ParseMethodDocs(xml);
+        var data = ProjectDocMethods.ParseMethodDocsHtml(xml);
         Assert.That(data.summary, Is.EqualTo("hello <pre>world\nmulti</pre>"));
     }
     
@@ -90,7 +103,7 @@ hello
 </list>
 </summary>
 ";
-        var data = ProjectDocMethods.ParseMethodDocs(xml);
+        var data = ProjectDocMethods.ParseMethodDocsHtml(xml);
         Assert.That(data.summary, Is.EqualTo("hello <ul><li> toast </li><li> bread </li></ul>"));
     }
     
@@ -105,7 +118,7 @@ hello
 </list>
 </summary>
 ";
-        var data = ProjectDocMethods.ParseMethodDocs(xml);
+        var data = ProjectDocMethods.ParseMethodDocsHtml(xml);
         Assert.That(data.summary, Is.EqualTo("hello <ul><li> toast </li><li> bread </li></ul>"));
     }
     
@@ -120,7 +133,7 @@ hello
 </list>
 </summary>
 ";
-        var data = ProjectDocMethods.ParseMethodDocs(xml);
+        var data = ProjectDocMethods.ParseMethodDocsHtml(xml);
         Assert.That(data.summary, Is.EqualTo("hello <ol><li> toast </li><li> bread </li></ol>"));
     }
     
@@ -136,7 +149,7 @@ hello
 </list>
 </summary>
 ";
-        var data = ProjectDocMethods.ParseMethodDocs(xml);
+        var data = ProjectDocMethods.ParseMethodDocsHtml(xml);
         Assert.That(data.summary, Is.EqualTo("hello <ol><li> toast <p> second <b> bold </b></p></li><li> bread </li></ol>"));
     }
 }

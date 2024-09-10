@@ -26,8 +26,9 @@ namespace FadeBasic
         
     /// <summary>
     /// hello world
-    ///
+    /// <b>
     /// bv
+    /// </b>
     /// <para>
     /// Goofs
     /// </para>

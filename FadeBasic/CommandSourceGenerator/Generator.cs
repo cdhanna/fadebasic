@@ -1,13 +1,14 @@
-﻿    using System;
+﻿using System;
 using System.Collections.Generic;
-    using System.Linq;
-    using System.Text;
+using System.Linq;
+using System.Text;
+using System.Text.RegularExpressions;
 using FadeBasic.Virtual;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp;
 using Microsoft.CodeAnalysis.CSharp.Syntax;
 
-    namespace FadeBasic.SourceGenerators
+namespace FadeBasic.SourceGenerators
 {
     [Generator]
     public class CommandSourceGenerator : IIncrementalGenerator
@@ -134,7 +135,7 @@ using Microsoft.CodeAnalysis.CSharp.Syntax;
             // var xml = trivia.GetStructure();
             // string.Join("\n", trivia.ToFullString())
             // TODO: write a class that has the json const str.
-            var json = GetInfosModel(descriptors);
+            var json = GetInfosModel(name, descriptors);
 
 /*
  */
@@ -234,7 +235,7 @@ namespace {namespaceStr}
         // }
 
         
-        static string GetInfosModel(List<CommandDescriptor> descriptors)
+        static string GetInfosModel(string name, List<CommandDescriptor> descriptors)
         {
             var classes = descriptors.Select(x => x.classSyntax).Distinct();
             var commentTrivias = classes.SelectMany(x =>
@@ -243,6 +244,7 @@ namespace {namespaceStr}
             
             var json = $@"{{
  ""classDocStrings"": [{string.Join(",", commentStrs.Select(x => "\"" + EscapeDocString(x) + "\"")) }],
+ ""className"": ""{name}"",
  ""commands"": [{string.Join(",", descriptors.Select(GetInfoJson))}]
 }}";
             return json;
@@ -250,7 +252,9 @@ namespace {namespaceStr}
 
         static string EscapeDocString(string jsonString)
         {
-            return jsonString.Replace("///", "")
+            // jsonString = RegexUtil.ReplaceDocSlashes(jsonString);
+            jsonString = Regex.Replace(jsonString, "\\n\\s*///\\s*", "\n///").Replace("///", "");
+            return jsonString
                 .Replace("\n", "\\n")
                 .Replace("\"", "\\\"");
         }

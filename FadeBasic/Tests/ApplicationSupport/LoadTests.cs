@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.Text.Json;
+using System.Text.RegularExpressions;
 using FadeBasic;
 using FadeBasic.ApplicationSupport.Project;
 using Microsoft.Build.Locator;
@@ -8,6 +9,29 @@ namespace Tests.ApplicationSupport;
 
 public class LoadTests
 {
+    [Test]
+    public void RegexTest()
+    {
+        var input = @"
+    /// test the thing 
+    /// <summary>
+    ///     goof okay
+    /// </summary>
+    /// 33 test
+    ///
+        ///abc
+";
+        var res = RegexUtil.ReplaceDocSlashes(input);
+        Assert.That(res, Is.EqualTo(@"
+test the thing 
+<summary>
+goof okay
+</summary>
+33 test
+abc
+"));
+    }
+    
     [Test]
     public void LoadMetadata()
     {
@@ -30,7 +54,7 @@ public class LoadTests
             PropertyNameCaseInsensitive = true,
         });
 
-        var docs = ProjectDocMethods.LoadDocs(new List<CommandMetadata> { metadata });
+        var docs = ProjectDocMethods.LoadDocs<MarkdownDocParser>(new List<CommandMetadata> { metadata });
         
     }
     

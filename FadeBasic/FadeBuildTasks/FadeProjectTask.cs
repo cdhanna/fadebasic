@@ -98,7 +98,7 @@ namespace FadeBasic.Build
             
             // to generate the command collection, we need to load up the metadata for those dlls...
             // that means we need to be able to resolve PackageReference and ProjectReference to their actual dll paths
-            var unit = map.Parse(commandCollection, new ParseOptions
+            var unit = map.Parse(commandCollection.collection, new ParseOptions
             {
                 ignoreChecks = IgnoreSafetyChecks
             });
@@ -143,7 +143,7 @@ namespace FadeBasic.Build
             }
 
 
-            LaunchableGenerator.GenerateLaunchable(GeneratedClassName,GenerateFileLocation,unit, commandCollection, allClassNames, includeMain: GenerateEntryPoint);
+            LaunchableGenerator.GenerateLaunchable(GeneratedClassName,GenerateFileLocation,unit, commandCollection.collection, allClassNames, includeMain: GenerateEntryPoint);
             GeneratedFile = GenerateFileLocation;
             return true;
         }

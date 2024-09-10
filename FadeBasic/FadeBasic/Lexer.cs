@@ -334,7 +334,20 @@ namespace FadeBasic
             {
                 
                 var line = lines[lineNumber];
-                if (string.IsNullOrEmpty(line)) continue;
+                if (string.IsNullOrEmpty(line))
+                {
+                    if (remBlockToken != null)
+                    {
+                        AddComment(new Token
+                        {
+                            lineNumber = lineNumber,
+                            charNumber = 0,
+                            caseInsensitiveRaw = Environment.NewLine,
+                            raw = Environment.NewLine,
+                            lexem = remBlockToken.lexem
+                        });
+                    }
+                }
                 
                 if (remBlockToken != null)
                 {

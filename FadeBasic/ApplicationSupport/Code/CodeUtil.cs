@@ -2,6 +2,7 @@ using System.Text;
 using FadeBasic;
 using FadeBasic.ApplicationSupport.Project;
 using FadeBasic.Ast;
+using FadeBasic.Ast.Visitors;
 using FadeBasic.Virtual;
 
 namespace ApplicationSupport.Code;
@@ -31,6 +32,7 @@ public static class CodeUtil
         {
             var parser = new Parser(unit.lexerResults.stream, commandCollection);
             unit.program = parser.ParseProgram(options);
+            unit.program.AddTrivia(unit.lexerResults);
         }
 
         return unit;

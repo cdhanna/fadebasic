@@ -5,8 +5,10 @@ using System.Collections.Immutable;
 using System.Diagnostics;
 using System.IO;
 using System.Linq;
+using System.Reactive;
 using System.Threading.Tasks;
 using ApplicationSupport.Code;
+using ApplicationSupport.Docs;
 using FadeBasic;
 using FadeBasic.ApplicationSupport.Project;
 using FadeBasic.Ast;
@@ -29,9 +31,12 @@ public class CompilerService
     private ProjectService _projects;
     private readonly ILanguageServerFacade _facade;
 
+    private Dictionary<DocumentUri, DocHost> _projectToDocHost = new Dictionary<DocumentUri, DocHost>();
+    private Dictionary<DocumentUri, DocHost> _srcToDocHost = new Dictionary<DocumentUri, DocHost>();
     private Dictionary<DocumentUri, LexerResults> _docToLexResults = new Dictionary<DocumentUri, LexerResults>();
     private Dictionary<DocumentUri, ProgramNode> _docToAst = new Dictionary<DocumentUri, ProgramNode>();
     private Dictionary<DocumentUri, CodeUnit> _projectToUnit = new Dictionary<DocumentUri, CodeUnit>();
+    private Dictionary<DocumentUri, ProjectDocs> _srcToDocs = new Dictionary<DocumentUri, ProjectDocs>();
     
     public CompilerService(ILogger<CompilerService> logger, 
         DocumentService docs, 
@@ -83,6 +88,17 @@ public class CompilerService
         }
 
         // TODO: we should be able to compile the project...
+        return false;
+    }
+    
+    public bool TryGetDocsForSrc(DocumentUri srcUri, out ProjectDocs unit, out DocHost docHost)
+    {
+        docHost = default;
+        if (_srcToDocs.TryGetValue(srcUri, out unit) && _srcToDocHost.TryGetValue(srcUri, out docHost))
+        {
+            return true;
+        }
+
         return false;
     }
 
@@ -142,15 +158,31 @@ public class CompilerService
                     continue;
                 }
 
+
                 var context = project.Item1;
                 var commands = project.Item2;
+                
+                
+                if (!_projectToDocHost.TryGetValue(projectUri, out var docHost))
+                {
+                    docHost = _projectToDocHost[projectUri] = new DocHost(commands.docs, new DocHostOptions());
+                    var _ = docHost.Start();
+                }
+                else
+                {
+                    docHost.ChangeData(commands.docs);
+                }
 
+                // ProjectDocMethods.LoadDocs<MarkdownDocParser>(project.Item1.);
                 var sourceMap = context.CreateSourceMap(_docs.GetSourceLinesOrReadLines);
                 
-                var unit = sourceMap.Parse(commands);
+                var unit = sourceMap.Parse(commands.collection);
                 _projectToUnit[projectUri] = unit;
                 _docToLexResults[srcUri] = unit.lexerResults;
                 _docToAst[srcUri] = unit.program;
+                _srcToDocs[srcUri] = commands.docs;
+                _srcToDocHost[srcUri] = docHost;
+                
                 // TODO: technically, this code unit is valid for the entire project at this point...
                 
                 var program = unit.program;

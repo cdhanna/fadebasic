@@ -372,6 +372,7 @@ namespace FadeBasic
                     if (TryGetSymbol(variableRef.variableName, out var existingSymbol))
                     {
                         EnforceTypeAssignment(variableRef, assignment.expression.ParsedType, existingSymbol.typeInfo, false, out _);
+                        variableRef.DeclaredFromSymbol = existingSymbol;
                     }
                     else // no symbol exists, so this is a defacto local variable
                     {
@@ -381,18 +382,6 @@ namespace FadeBasic
                         };
                         var rightType = assignment.expression.ParsedType;
 
-                        // TypeInfo foundType = rightType;
-                        // // there are certain rules for type convergence. 
-                        // //  if the right-side is a string, then the left must be a string.
-                        // if (rightType.type == VariableType.String)
-                        // {
-                        //     if (defaultTypeInfo.type != VariableType.String)
-                        //     {
-                        //         // error! 
-                        //         foundType = defaultTypeInfo;
-                        //         variableRef.Errors.AddTypeError(variableRef, rightType, foundType);
-                        //     }
-                        // }
                         EnforceTypeAssignment(variableRef, rightType, defaultTypeInfo, true, out var foundType);
                         
                         
@@ -401,7 +390,7 @@ namespace FadeBasic
                         {
                             text = variableRef.variableName,
                             typeInfo = foundType,
-                            source = variableRef
+                            source = assignment
                         };
                         locals.Add(variableRef.variableName, symbol);
                         
@@ -728,6 +717,7 @@ namespace FadeBasic
 
         public Parser(TokenStream stream, CommandCollection commands)
         {
+            
             _stream = stream;
             _commands = commands;
         }
@@ -770,7 +760,6 @@ namespace FadeBasic
             
             // program.AddTypeInfo();
             program.AddScopeRelatedErrors(options);
-            
             
             return program;
         }

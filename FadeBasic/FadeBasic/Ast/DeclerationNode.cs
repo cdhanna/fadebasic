@@ -11,7 +11,7 @@ namespace FadeBasic.Ast
         Global
     }
 
-    public class DeclarationStatement : AstNode, IStatementNode
+    public class DeclarationStatement : AstNode, IStatementNode, IHasTriviaNode
     {
         public string variable;
         public ITypeReferenceNode type;
@@ -129,5 +129,7 @@ namespace FadeBasic.Ast
             if (ranks != null) foreach (var rank in ranks) yield return rank;
             if (initializerExpression != null) yield return initializerExpression;
         }
+
+        public string Trivia { get; set; }
     }
 }

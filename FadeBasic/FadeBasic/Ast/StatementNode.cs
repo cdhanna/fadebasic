@@ -185,7 +185,7 @@ namespace FadeBasic.Ast
         }
     }
 
-    public class AssignmentStatement : AstNode, IStatementNode
+    public class AssignmentStatement : AstNode, IStatementNode, IHasTriviaNode
     {
         public IVariableNode variable;
         public IExpressionNode expression;
@@ -205,6 +205,8 @@ namespace FadeBasic.Ast
             yield return variable;
             yield return expression;
         }
+
+        public string Trivia { get; set; }
     }
 
     public class ExitLoopStatement : AstNode, IStatementNode

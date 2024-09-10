@@ -1122,6 +1122,14 @@ namespace FadeBasic.Virtual
                 else
                 {
                     Compile(argExpr);
+
+                    var destinationTypeCode =
+                        commandStatement.command.args[commandStatement.argMap[argCounter]].typeCode;
+                    if (destinationTypeCode != TypeCodes.ANY)
+                    {
+                        // only cast the type if it isn't the catch-all "any"
+                        CompileCast(destinationTypeCode);
+                    }
                 }
                 argCounter++;
             }
@@ -1404,6 +1412,12 @@ namespace FadeBasic.Virtual
             _buffer.Add(OpCodes.CAST);
             _buffer.Add(TypeCodes.INT);
         }
+
+        void CompileCast(byte typeCode)
+        {
+            _buffer.Add(OpCodes.CAST);
+            _buffer.Add(typeCode);
+        }
         
         void CompileAssignmentLeftHandSide(IVariableNode variable)
         {
@@ -1661,7 +1675,8 @@ namespace FadeBasic.Virtual
                         args = commandExpr.args,
                         command = commandExpr.command,
                         startToken = commandExpr.startToken,
-                        endToken = commandExpr.endToken
+                        endToken = commandExpr.endToken,
+                        argMap = commandExpr.argMap
                     });
                     break;
                 case LiteralStringExpression literalString:
@@ -1872,6 +1887,11 @@ namespace FadeBasic.Virtual
                      *
                      */
                     
+                    /*
+                     * Do we need to cast either side? For example, if we had
+                     * 3.2 * 4, then the whole expression should be cast to a float
+                     */
+                    
                     Compile(op.lhs);
                     int jumpIndex = -1;
                     
@@ -1880,6 +1900,7 @@ namespace FadeBasic.Virtual
                         case OperationType.Or:
                             // we need to jump based on the value, but also need the value to return 
                             _buffer.Add(OpCodes.DUPE);
+                            CastToInt();
                         
                             // then, put a fake value in for the end of the rhs success jump... We'll fix it later.
                             jumpIndex = _buffer.Count;
@@ -1891,6 +1912,7 @@ namespace FadeBasic.Virtual
                         case OperationType.And:
                             // we need to jump based on the value, but also need the value to return 
                             _buffer.Add(OpCodes.DUPE);
+                            CastToInt();
 
                             // then, put a fake value in for the end of the rhs success jump... We'll fix it later.
                             jumpIndex = _buffer.Count;

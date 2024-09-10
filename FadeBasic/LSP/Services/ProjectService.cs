@@ -20,8 +20,8 @@ public class ProjectService
     private readonly DocumentService _docs;
     private readonly ILanguageServerFacade _facade;
 
-    private Dictionary<DocumentUri, (ProjectContext, CommandCollection)> _uriToProject =
-        new Dictionary<DocumentUri, (ProjectContext, CommandCollection)>();
+    private Dictionary<DocumentUri, (ProjectContext, ProjectCommandInfo)> _uriToProject =
+        new Dictionary<DocumentUri, (ProjectContext, ProjectCommandInfo)>();
 
     public ProjectService(ILogger<ProjectService> logger, DocumentService docs, ILanguageServerFacade facade)
     {
@@ -30,7 +30,7 @@ public class ProjectService
         _facade = facade;
     }
 
-    public bool TryGetProject(DocumentUri projectUri, out (ProjectContext, CommandCollection) context)
+    public bool TryGetProject(DocumentUri projectUri, out (ProjectContext, ProjectCommandInfo) context)
     {
         return _uriToProject.TryGetValue(projectUri, out context);
     }

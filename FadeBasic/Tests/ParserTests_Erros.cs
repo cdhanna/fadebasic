@@ -1594,7 +1594,7 @@ repeat
         var errors = prog.GetAllErrors();
         Assert.That(errors.Count, Is.EqualTo(2)); 
         Assert.That(errors[0].Display, Is.EqualTo($"[1:0] - {ErrorCodes.RepeatStatementMissingUntil}"));
-        Assert.That(errors[1].Display, Is.EqualTo($"[2:6] - {ErrorCodes.ExpressionMissing}"));
+        Assert.That(errors[1].Display, Is.EqualTo($"[2:0] - {ErrorCodes.ExpressionMissing}"));
     }
     
     

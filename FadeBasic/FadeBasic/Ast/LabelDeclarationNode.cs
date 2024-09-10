@@ -8,7 +8,7 @@ namespace FadeBasic.Ast
         public int statementIndex;
     }
     
-    public class LabelDeclarationNode : AstNode, IStatementNode
+    public class LabelDeclarationNode : AstNode, IStatementNode, IHasTriviaNode
     {
         public string label;
 
@@ -32,5 +32,7 @@ namespace FadeBasic.Ast
         {
             yield break;
         }
+
+        public string Trivia { get; set; }
     }
 }

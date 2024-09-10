@@ -561,7 +561,7 @@ namespace FadeBasic.Ast.Visitors
                                 }
                             }
 
-
+                            arrayRef.DeclaredFromSymbol = scope.functionSymbolTable[arrayRef.variableName];
                             break;
                         }
                         expr.Errors.Add(new ParseError(expr.StartToken, ErrorCodes.InvalidReference, $"unknown symbol, {arrayRef.variableName}"));
