@@ -4,6 +4,7 @@ using System.Diagnostics;
 using System.Linq;
 using System.Text;
 using System.Text.RegularExpressions;
+using FadeBasic.Json;
 
 namespace FadeBasic
 {
@@ -687,14 +688,15 @@ namespace FadeBasic
     
     [Serializable]
     [DebuggerDisplay("{raw} ({type}:{lineNumber}:{charNumber})")]
-    public class Token
+    public class Token : IJsonable
     {
         public int lineNumber;
         public int charNumber;
         public string raw;
         public string caseInsensitiveRaw;
-        public int Length => caseInsensitiveRaw.Length;
-        public LexemType type => lexem.type;
+        
+        public int Length => caseInsensitiveRaw?.Length ?? 0;
+        public LexemType type => lexem?.type ?? LexemType.EOF;
         public string Location => $"{lineNumber}:{charNumber}";
         public TokenFlags flags = TokenFlags.None;
         public Lexem lexem;
@@ -704,6 +706,15 @@ namespace FadeBasic
         {
             if (a == null || b == null) return false;
             return a.lineNumber == b.lineNumber && a.charNumber == b.charNumber;
+        }
+
+        public void ProcessJson(IJsonOperation op)
+        {
+            op.IncludeField(nameof(lineNumber), ref lineNumber);
+            op.IncludeField(nameof(charNumber), ref charNumber);
+            op.IncludeField(nameof(raw), ref raw);
+            op.IncludeField(nameof(caseInsensitiveRaw), ref caseInsensitiveRaw);
+            // op.IncludeField("lexemType", ref flags);
         }
     }
 

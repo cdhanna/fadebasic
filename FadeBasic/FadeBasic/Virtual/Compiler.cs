@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Linq.Expressions;
 using System.Reflection.Emit;
+using System.Runtime.CompilerServices;
 using FadeBasic.Ast;
 
 namespace FadeBasic.Virtual
@@ -82,9 +83,10 @@ namespace FadeBasic.Virtual
                 typeCode = typeCode,
                 byteSize = TypeCodes.GetByteSize(typeCode),
                 isGlobal = isGlobal
-            };
+            };  
 
             _varToReg[name] = compileVar;
+            
             return compileVar;
         }
 
@@ -112,12 +114,23 @@ namespace FadeBasic.Virtual
             return (byte)(registerCount++);
         }
     }
+
+    public class CompilerOptions
+    {
+        public bool GenerateDebugData = false;
+
+        public static readonly CompilerOptions Default = new CompilerOptions
+        {
+            GenerateDebugData = false
+        };
+    }
     
     public class Compiler
     {
         // public readonly CommandCollection commands;
         private List<byte> _buffer = new List<byte>();
-
+        private DebugData _dbg;
+        public DebugData DebugData => _dbg;
         public List<byte> Program => _buffer;
         // public int registerCount;
 
@@ -145,14 +158,17 @@ namespace FadeBasic.Virtual
         private Dictionary<string, int> _functionTable = new Dictionary<string, int>();
         
         
-        public Compiler(CommandCollection commands)
+        public Compiler(CommandCollection commands, CompilerOptions options=null)
         {
-            // this.commands = commands;
+            options ??= CompilerOptions.Default;
+            if (options.GenerateDebugData)
+            {
+                _dbg = new DebugData();
+            }
 
             var methods = new CommandInfo[commands.Commands.Count];
             for (var i = 0; i < commands.Commands.Count; i++)
             {
-                // methods[i] = HostMethodUtil.BuildHostMethodViaReflection(commands.Commands[i].method);
                 methods[i] = commands.Commands[i];
                 _commandToPtr[commands.Commands[i].UniqueName] = i;
             }
@@ -164,7 +180,6 @@ namespace FadeBasic.Virtual
             scopeStack = new Stack<CompileScope>();
             globalScope = new CompileScope();
             scopeStack.Push(globalScope);
-
         }
 
         public void Compile(ProgramNode program)
@@ -177,6 +192,7 @@ namespace FadeBasic.Virtual
             
             foreach (var statement in program.statements)
             {
+            
                 Compile(statement);
             }
 
@@ -269,8 +285,26 @@ namespace FadeBasic.Virtual
             _types[typeName] = type;
         }
 
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        void AddStartDebugToken(Token token)
+        {
+            if (_dbg == null) return; // no-op if we are not generating debugger info.
+            _dbg.AddStartToken(_buffer.Count, token); // this happens BEFORE the byte code is emitted. 
+        }
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        void AddStopDebugToken(Token token)
+        {
+            if (_dbg == null) return; // no-op if we are not generating debugger info.
+            _dbg.AddStopToken(_buffer.Count - 1, token); // this happens AFTER the byte code is emitted. 
+        }
+
         public void Compile(IStatementNode statement)
         {
+            /*
+             * every statement can have a breakpoint.
+             *  You can step OVER a statement, which we should capture at the end of this function.
+             *  That isn't quite right, because if you step over an IF statement, you don't jump over the entire branch...
+             */
             switch (statement)
             {
                 case CommentStatement _:
@@ -280,7 +314,11 @@ namespace FadeBasic.Virtual
                     Compile(declarationStatement);
                     break;
                 case AssignmentStatement assignmentStatement:
+                    
+                    AddStartDebugToken(assignmentStatement.startToken);
                     Compile(assignmentStatement);
+                    AddStopDebugToken(assignmentStatement.endToken);
+                    
                     break;
                 case CommandStatement commandStatement:
                     Compile(commandStatement);
@@ -818,7 +856,9 @@ namespace FadeBasic.Virtual
              */
             
             // first, compile the evaluation of the condition
+            AddStartDebugToken(ifStatement.condition.StartToken);
             Compile(ifStatement.condition);
+            AddStopDebugToken(ifStatement.condition.EndToken);
             
             // cast the expression to an int
             _buffer.Add(OpCodes.CAST);
@@ -1490,6 +1530,7 @@ namespace FadeBasic.Virtual
                     // _buffer.Add(OpCodes.STORE);
                     // _buffer.Add(compiledVar.registerAddress);
                     PushStore(_buffer, compiledVar.registerAddress, compiledVar.isGlobal);
+                    _dbg?.AddVariable(_buffer.Count - 1, compiledVar);
                     break;
                 case StructFieldReference fieldReferenceNode:
 
@@ -1666,6 +1707,7 @@ namespace FadeBasic.Virtual
         
         public void Compile(IExpressionNode expr)
         {
+
             // CompiledVariable compiledVar = null;
             switch (expr)
             {
@@ -1997,6 +2039,8 @@ namespace FadeBasic.Virtual
                 default:
                     throw new Exception("compiler: unknown expression");
             }
+            
+
         }
 
         

@@ -1,3 +1,3 @@
 ﻿using FadeBasic.Launch;
 
-Launcher.Run<Generated_toast3>();
+// Launcher.Run<Generated_toast3>();

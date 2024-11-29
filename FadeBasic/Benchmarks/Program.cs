@@ -6,4 +6,4 @@ using MoonSharp.Interpreter;
 
 // Script.RunString("a = 3 + 2");
 
-var summary = BenchmarkRunner.Run<Calling>();
+var summary = BenchmarkRunner.Run<Json>();

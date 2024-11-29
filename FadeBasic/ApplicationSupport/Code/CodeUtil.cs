@@ -9,11 +9,11 @@ namespace ApplicationSupport.Code;
 
 public static class CodeUtil
 {
-    public static byte[] Compile(this ProgramNode programNode, CommandCollection commandCollection)
+    public static Compiler Compile(this ProgramNode programNode, CommandCollection commandCollection, CompilerOptions options)
     {
-        var compiler = new Compiler(commandCollection);
+        var compiler = new Compiler(commandCollection, options);
         compiler.Compile(programNode);
-        return compiler.Program.ToArray();
+        return compiler;
     }
 
     public static CodeUnit Parse(this SourceMap sourceMap, CommandCollection commandCollection, ParseOptions options=null)

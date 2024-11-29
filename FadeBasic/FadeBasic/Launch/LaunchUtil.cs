@@ -1,9 +1,41 @@
 using System;
+using System.IO;
+using System.Net;
+using System.Net.Sockets;
+using System.Text;
+using System.Xml;
+using System.Xml.Linq;
+using FadeBasic.Json;
+using FadeBasic.Virtual;
+
 namespace FadeBasic.Launch
 {
     public class LaunchUtil
     {
 
+        public static int FreeTcpPort()
+        {
+            TcpListener l = new TcpListener(IPAddress.Loopback, 0);
+            l.Start();
+            int port = ((IPEndPoint)l.LocalEndpoint).Port;
+            l.Stop();
+            return port;
+        }
+
+        public static string PackDebugData(DebugData data)
+        {
+            var json = data.Jsonify();
+            var bytes = Encoding.UTF8.GetBytes(json);
+            return Convert.ToBase64String(bytes);
+        }
+
+        public static DebugData UnpackDebugData(string base64Json)
+        {
+            var bytes = Convert.FromBase64String(base64Json);
+            var json = Encoding.UTF8.GetString(bytes);
+            return JsonableExtensions.FromJson<DebugData>(json);
+        }
+        
         public static byte[] Unpack64(string encoded)
         {
             return Convert.FromBase64String(encoded);

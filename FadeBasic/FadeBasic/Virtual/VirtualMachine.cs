@@ -20,10 +20,13 @@ namespace FadeBasic.Virtual
         // parallel array with dataReg
         public ulong[] dataRegisters;
         public byte[] typeRegisters;
+        public int[] insIndexes;
+        
         public VirtualScope(int initialCapacity)
         {
             dataRegisters = new ulong[initialCapacity];
             typeRegisters = new byte[initialCapacity];
+            insIndexes = new int[initialCapacity];
         }
     }
 
@@ -34,12 +37,11 @@ namespace FadeBasic.Virtual
 
         public int instructionIndex;
 
-        // public Stack<byte> stack = new Stack<byte>();
+        
         public FastStack<byte> stack = new FastStack<byte>(256);
         public VmHeap heap;
         
         public HostMethodTable hostMethods;
-        public CommandCollection commands; // TODO: remove.
         public FastStack<int> methodStack;
 
         public VirtualScope globalScope;
@@ -117,6 +119,11 @@ namespace FadeBasic.Virtual
                     // {
                     //     break;
                     // }
+                    
+                    /*
+                     * TODO: Supporting a debugger...
+                     * 
+                     */
 
 
                     var ins = Advance();
@@ -310,6 +317,20 @@ namespace FadeBasic.Virtual
                             
                             scope.dataRegisters[addr] = data;
                             scope.typeRegisters[addr] = typeCode;
+                            scope.insIndexes[addr] = instructionIndex - 1; // minus one because the instruction has already been advanced. 
+                            
+                            /*
+                             * given we know the instruction address,
+                             * we could look that instruction up in the DebugData
+                             *  and if it exists, attach a variable name to this scope.
+                             *
+                             * however, from a perf standpoint, I don't want to do that universally unless we
+                             * are in a DEBUG mode. problematically, since this is dotnet runtime, there is no
+                             * way to have a perfect #compiler symbol thing for runtime.
+                             *
+                             * a compromise would be to store only the variable's declaration address, and the
+                             * debug data and server could use that LATER to re-assemble the information.
+                             */
 
                             break;
                         case OpCodes.STORE_GLOBAL:

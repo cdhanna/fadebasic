@@ -16,6 +16,7 @@ namespace FadeBasic.Build
     {
         public bool GenerateEntryPoint { get; set; } = true;
         public bool IgnoreSafetyChecks { get; set; } = false;
+        public bool GenerateDebugData { get; set; }
         
         [Required] public ITaskItem[] SourceFiles { get; set; }
         [Required] public ITaskItem[] Commands { get; set; }
@@ -143,7 +144,7 @@ namespace FadeBasic.Build
             }
 
 
-            LaunchableGenerator.GenerateLaunchable(GeneratedClassName,GenerateFileLocation,unit, commandCollection.collection, allClassNames, includeMain: GenerateEntryPoint);
+            LaunchableGenerator.GenerateLaunchable(GeneratedClassName,GenerateFileLocation,unit, commandCollection.collection, allClassNames, includeMain: GenerateEntryPoint, generateDebug: GenerateDebugData);
             GeneratedFile = GenerateFileLocation;
             return true;
         }

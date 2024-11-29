@@ -1,6 +1,10 @@
 <Project>
 
     <PropertyGroup>
+        
+        <!-- When the dotnet mode is debug, enable fade debug data by default, only if the debug hasn't been manually set one way or another-->
+        <FadeBasicDebug Condition="'$(FadeBasicDebug)'=='' AND '$(Configuration)'=='Debug'">true</FadeBasicDebug>
+        
         <FadeGenerateMain Condition="'$(FadeGenerateMain)'==''">True</FadeGenerateMain>
         <FadeIgnoreChecks Condition="'$(FadeIgnoreChecks)'==''">False</FadeIgnoreChecks>
         
@@ -14,6 +18,7 @@
 
     <Target Name="GenerateFadeBasic" BeforeTargets="CoreCompile" Inputs="@(FadeSource);@(Commands);@(ReferencePath)" Outputs="$(FadeGeneratedLaunchFile)">
         <FadeProjectTask 
+                GenerateDebugData="$(FadeBasicDebug)"
                 GeneratedClassName="$(FadeGeneratedLaunchType)" 
                 SourceFiles="@(FadeSource)"
                 Commands="@(FadeCommand)"

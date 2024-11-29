@@ -3744,7 +3744,6 @@ minX = min(1,2)
         Setup(src, out var compiler, out var prog);
         var vm = new VirtualMachine(prog);
         vm.hostMethods = compiler.methodTable;
-        vm.commands = TestCommands.CommandsForTesting;
         vm.Execute2();
         
         Assert.That(vm.typeRegisters[0], Is.EqualTo(TypeCodes.INT));
@@ -3758,7 +3757,6 @@ minX = min(1,2)
         Setup(src, out var compiler, out var prog);
         var vm = new VirtualMachine(prog);
         vm.hostMethods = compiler.methodTable;
-        vm.commands = TestCommands.CommandsForTesting;
         vm.Execute2();
         
         Assert.That(vm.typeRegisters[0], Is.EqualTo(TypeCodes.INT));

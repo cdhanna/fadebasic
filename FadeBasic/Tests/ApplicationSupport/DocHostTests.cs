@@ -37,8 +37,8 @@ public class DocHostTests
         
         var server = host.Start();
         
-        // await Task.Delay(100);
-        // await host.Kill();
+        await Task.Delay(100);
+        await host.Kill();
         
         await server;
 

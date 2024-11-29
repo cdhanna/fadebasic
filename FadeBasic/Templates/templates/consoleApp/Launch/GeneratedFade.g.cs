@@ -20,10 +20,17 @@ public class GeneratedFade : ILaunchable
     // this table represents the baked commands available within the program
     public CommandCollection CommandCollection => _collection;
 
+    public DebugData DebugData => _debugData;
+
     #region method table
     private static readonly CommandCollection _collection = new CommandCollection(
         new FadeBasic.Lib.Standard.ConsoleCommands(), new FadeBasic.Lib.Standard.StandardCommands()
     );
+    #endregion
+
+    #region debugData
+    protected DebugData _debugData = LaunchUtil.UnpackDebugData(encodedDebugData);
+    protected const string encodedDebugData = "eyJwb2ludHMiOltdImluc1RvVmFyaWFibGUiOnt9fQ==";
     #endregion
 
     #region bytecode

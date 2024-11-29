@@ -65,7 +65,6 @@ namespace FadeBasic.SourceGenerators
                 (node, _) => CouldBeMethod(node),
                 (transformContext, _) => GetMethodInfo(transformContext))
                 .Where(x => x != null)
-                // .SelectMany((x, _) => )
                 .Collect()
                 .SelectMany((x, _) => x.GroupBy(n => n.classSyntax.Identifier.Text).Select(y => y.ToList()))
                 .WithTrackingName("fade basic commands")
@@ -751,7 +750,6 @@ public static void {descriptor.MethodName}({nameof(VirtualMachine)} {VM})
             {
                 return false;
             }
-
             
             foreach (var attributeList in methodSyntax.AttributeLists)
             {
@@ -761,7 +759,6 @@ public static void {descriptor.MethodName}({nameof(VirtualMachine)} {VM})
                     
                     if (!isCommandAttr) continue;
                     commandAttributeSyntax = attribute;
-
                     
                     // check that the method is coming from the right type of family
                     switch (methodSyntax.Parent)
@@ -781,10 +778,6 @@ public static void {descriptor.MethodName}({nameof(VirtualMachine)} {VM})
                         default:
                             continue;
                     }
-                    
-                    // get the arguments, and assert that are of valid types
-                    
-                    
                     
                     return true;
                 }

@@ -4,6 +4,7 @@ using FadeBasic;
 using FadeBasic.ApplicationSupport.Project;
 using FadeBasic.Ast;
 using FadeBasic.Launch;
+using FadeBasic.Virtual;
 
 namespace ApplicationSupport.Launch;
 
@@ -13,10 +14,13 @@ public class LaunchableGenerator
     public const string TAG_BYTECODE = "__BYTE_CODE__";
     public const string TAG_MAIN = "__MAIN__";
     public const string TAG_ENCODED_BYTECODE = "__ENCODED_BYTE_CODE__";
+    public const string TAG_ENCODED_DEBUGDATA = "__ENCODED_DEBUG_DATA__";
     public const string TAG_COMMAND_ARRAY = "__COMMAND_ARR__";
     public const string TEMPLATE_BYTECODE_TAB = "        ";
     public const string TEMPLATE_ENCODED_BYTE_VAR = "encodedByteCode";
+    public const string TEMPLATE_ENCODED_DEBUGDATA_VAR = "encodedDebugData";
     public const string TEMPLATE_BYTECODE_VAR = "_byteCode";
+    public const string TEMPLATE_DEBUGDATA_VAR = "_debugData";
 
     public static readonly string MainTemplate =
 $@"
@@ -43,10 +47,17 @@ public class {TAG_CLASSNAME} : {nameof(ILaunchable)}
     // this table represents the baked commands available within the program
     public CommandCollection CommandCollection => _collection;
 
+    public DebugData DebugData => {TEMPLATE_DEBUGDATA_VAR};
+
     #region method table
     private static readonly CommandCollection _collection = new CommandCollection(
         {TAG_COMMAND_ARRAY}
     );
+    #endregion
+
+    #region debugData
+    protected DebugData {TEMPLATE_DEBUGDATA_VAR} = {nameof(LaunchUtil)}.{nameof(LaunchUtil.UnpackDebugData)}({TEMPLATE_ENCODED_DEBUGDATA_VAR});
+    protected const string {TEMPLATE_ENCODED_DEBUGDATA_VAR} = {TAG_ENCODED_DEBUGDATA};
     #endregion
 
     #region bytecode
@@ -56,19 +67,34 @@ public class {TAG_CLASSNAME} : {nameof(ILaunchable)}
 }}
 ";
 
-    public static void GenerateLaunchable(string className, string filePath, CodeUnit unit, CommandCollection collection, List<string> commandClasses, bool includeMain=true)
+    public static void GenerateLaunchable(string className, 
+        string filePath, 
+        CodeUnit unit, 
+        CommandCollection collection, 
+        List<string> commandClasses, 
+        bool includeMain=true,
+        bool generateDebug=false)
     {
-        var byteCode = unit.program.Compile(collection);
+        var compiler = unit.program.Compile(collection, new CompilerOptions
+        {
+            GenerateDebugData = generateDebug
+        });
+        var byteCode = compiler.Program.ToArray();
         var src = ClassTemplate;
 
         var byteCodeStr = LaunchUtil.Pack64(byteCode);
         string byteCodeReplacement = "\"" + byteCodeStr + "\"";
         var commandArray = GetCommandTable(commandClasses);
 
+        
+        var debugDataStr = generateDebug ? LaunchUtil.PackDebugData(compiler.DebugData) : "";
+        string debugDataReplacement = "\"" + debugDataStr + "\"";
+        
         var main = includeMain ? MainTemplate : "";
         src = src.Replace(TAG_MAIN, main);
         src = src.Replace(TAG_COMMAND_ARRAY, commandArray);
         src = src.Replace(TAG_ENCODED_BYTECODE, byteCodeReplacement);
+        src = src.Replace(TAG_ENCODED_DEBUGDATA, debugDataReplacement);
         src = src.Replace(TAG_CLASSNAME, className);
 
         var dir = Path.GetDirectoryName(filePath);

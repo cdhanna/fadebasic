@@ -7,5 +7,6 @@ namespace FadeBasic.Launch
     {
         public byte[] Bytecode { get; }
         public CommandCollection CommandCollection { get; }
+        public DebugData DebugData { get; }
     }
 }
