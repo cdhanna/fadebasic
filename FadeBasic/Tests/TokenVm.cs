@@ -2155,6 +2155,27 @@ x = (4-5) - (2 - 1)
         Assert.That(vm.typeRegisters[0], Is.EqualTo(TypeCodes.REAL));
     }
     
+    [TestCase("1.2", "+", "2", 3.2f)]
+    [TestCase("1.2", "-", "2", -.8f)]
+    [TestCase("1.2", "/", "2", .6f)]
+    [TestCase("1.2", "*", "2", 2.4f)]
+    public void Float_OpShortcuts(string init, string op, string second, float result)
+    {
+        var src = @$"x# = {init}
+x# {op}= {second}";
+        Setup(src, out _, out var prog);
+        
+        var vm = new VirtualMachine(prog);
+        vm.Execute2();
+
+        var outputRegisterValue = vm.dataRegisters[0];
+        var outputRegisterBytes = BitConverter.GetBytes(outputRegisterValue);
+        float output = float.Round( BitConverter.ToSingle(outputRegisterBytes, 0), 4);
+        
+        Assert.That(output, Is.EqualTo(result));
+        Assert.That(vm.typeRegisters[0], Is.EqualTo(TypeCodes.REAL));
+    }
+    
     
     [Test]
     public void Declare_Implicit()

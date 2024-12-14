@@ -4,6 +4,7 @@ using System.Collections.Generic;
 using System.Diagnostics;
 using System.Threading;
 using System.Threading.Tasks;
+using FadeBasic.Json;
 using FadeBasic.Virtual;
 
 namespace FadeBasic.Launch
@@ -18,6 +19,7 @@ namespace FadeBasic.Launch
         private Task _listenTask;
         private int messageIdCounter;
         private Task _receiveTask;
+        public int RemoteProcessId { get; private set; }
 
         private ConcurrentDictionary<int, Action<DebugMessage>> _ackHandlers =
             new ConcurrentDictionary<int, Action<DebugMessage>>();
@@ -30,10 +32,19 @@ namespace FadeBasic.Launch
 
         void RunClient(object state)
         {
-            outboundMessages.Enqueue(new DebugMessage
+            // outboundMessages.Enqueue(new DebugMessage
+            // {
+            //     id = GetNextMessageId(),
+            //     type = DebugMessageType.PROTO_HELLO
+            // });
+            Send(new DebugMessage
             {
                 id = GetNextMessageId(),
                 type = DebugMessageType.PROTO_HELLO
+            }, result =>
+            {
+                var detail = JsonableExtensions.FromJson<HelloResponseMessage>(result.RawJson);
+                RemoteProcessId = detail.processId;
             });
             DebugServerStreamUtil.ConnectToServer2(_port, outboundMessages, inboundMessages, _cts.Token);
             throw new Exception("client died");
@@ -175,24 +186,50 @@ namespace FadeBasic.Launch
             id = GetNextMessageId(),
             type = DebugMessageType.REQUEST_PAUSE,
         }, _ => handler());
-        //
-        // public void SendPlay(Action handler) => Send(new DebugControlMessage
-        // {
-        //     id = GetNextMessageId(),
-        //     type = DebugControlMessageTypes.PLAY,
-        //     arg = 0
-        // }, _ => handler());
+        
+        public void SendPlay(Action handler) => Send(new DebugMessage
+        {
+            id = GetNextMessageId(),
+            type = DebugMessageType.REQUEST_PLAY,
+        }, _ => handler());
+
+        public void SendNext(Action handler) => Send(new DebugMessage
+        {
+            id = GetNextMessageId(),
+            type = DebugMessageType.REQUEST_NEXT
+        }, _ => handler());
+
+        public void RequestStackFrames(Action<List<DebugStackFrame>> handler)
+        {
+            Send(new DebugMessage
+            {
+                id = GetNextMessageId(),
+                type = DebugMessageType.REQUEST_STACK_FRAMES
+            }, msg =>
+            {
+                var details = JsonableExtensions.FromJson<StackFrameMessage>(msg.RawJson);
+                handler?.Invoke(details.frames);
+            });
+        }
     }
 
-    public class DebugStackFrame
+    public class DebugStackFrame : IJsonable
     {
         public int lineNumber;
         public int colNumber;
 
+        public DebugStackFrame(){}
+        
         public DebugStackFrame(int lineNumber, int colNumber)
         {
             this.lineNumber = lineNumber;
             this.colNumber = colNumber;
+        }
+
+        public void ProcessJson(IJsonOperation op)
+        {
+            op.IncludeField(nameof(lineNumber), ref lineNumber);
+            op.IncludeField(nameof(colNumber), ref colNumber);
         }
     }
 }

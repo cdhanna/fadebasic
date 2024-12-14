@@ -17,7 +17,16 @@ public partial class FadeDebugAdapter
             var frames = new List<StackFrame>();
             for (var i = 0 ; i < debugFrames.Count; i ++)
             {
-                frames.Add(new StackFrame(i, "root", debugFrames[i].lineNumber, debugFrames[i].colNumber));
+                var frame = debugFrames[i];
+                var location = _sourceMap.GetOriginalLocation(frame.lineNumber, frame.colNumber);
+                var source = new Source
+                {
+                    Path = location.fileName
+                };
+                var stack = new StackFrame(i, "root", debugFrames[i].lineNumber, debugFrames[i].colNumber);
+                // TODO: need the Source
+                stack.Source = source;
+                frames.Add(stack);
             }
             responder.SetResponse(new StackTraceResponse(frames));
         });

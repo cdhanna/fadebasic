@@ -2,6 +2,7 @@
 
 using System.Diagnostics;
 using DAP;
+using FadeBasic.ApplicationSupport.Project;
 
 Console.WriteLine("DAP!!");
 
@@ -14,6 +15,7 @@ if (shouldWait)
     }
 }
 
+ProjectLoader.Initialize();
 var adapter = new FadeDebugAdapter(Console.OpenStandardInput(), Console.OpenStandardOutput());
 
 try

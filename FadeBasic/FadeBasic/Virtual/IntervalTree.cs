@@ -4,20 +4,31 @@ using System.Linq;
 
 namespace FadeBasic.Virtual
 {
+    public class IntervalTreeNode
+    {
+        public IntervalTree tree;
+        public DebugMap map;
+    }
+    
     [DebuggerDisplay("tree({min}-{max}) [{rangesSortedByStart.Count}]")]
     public class IntervalTree
     {
         public IntervalTree left, right;
-        public List<DebugMap> rangesSortedByStart, rangesSortedByStop;
+        public List<IntervalTreeNode> rangesSortedByStart, rangesSortedByStop;
         public int min, max, center;
         
 
         public static IntervalTree From(List<DebugMap> maps)
         {
+            if (maps == null || maps.Count == 0)
+            {
+                return null;
+            }
+            
             var firstIndex = maps[0].range.startToken.insIndex;
             var lastIndex = maps[maps.Count - 1].range.stopToken.insIndex;
             var center = (lastIndex + firstIndex) / 2;
-
+            
             var left = new List<DebugMap>();
             var right = new List<DebugMap>();
             var mid = new List<DebugMap>();
@@ -36,10 +47,19 @@ namespace FadeBasic.Virtual
                 }
             }
 
-            var midStartSorted = mid.ToList();
-            midStartSorted.Sort((a, b) => a.range.startToken.insIndex.CompareTo(b.range.startToken.insIndex));
-            var midStopSorted = mid.ToList();
-            midStopSorted.Sort((a, b) => a.range.stopToken.insIndex.CompareTo(b.range.stopToken.insIndex));
+            var midNodes = mid.Select(x =>
+            {
+                return new IntervalTreeNode
+                {
+                    map = x,
+                    tree = From(x.innerMaps)
+                };
+            }).ToList();
+            
+            var midStartSorted = midNodes.ToList();
+            midStartSorted.Sort((a, b) => a.map.range.startToken.insIndex.CompareTo(b.map.range.startToken.insIndex));
+            var midStopSorted = midNodes.ToList();
+            midStopSorted.Sort((a, b) => a.map.range.stopToken.insIndex.CompareTo(b.map.range.stopToken.insIndex));
 
             return new IntervalTree
             {
@@ -62,12 +82,19 @@ namespace FadeBasic.Virtual
             {
                 for (var i = 0; i < rangesSortedByStart.Count; i++)
                 {
-                    if (rangesSortedByStart[i].range.startToken.insIndex <= index)
+                    if (rangesSortedByStart[i].map.range.startToken.insIndex <= index)
                     {
                         // just take the first one and be done with it.
                         // TODO: maybe this will produce bad results?
-                        location = rangesSortedByStart[i];
-                        return true;
+                        if (rangesSortedByStart[i].tree != null)
+                        {
+                            return rangesSortedByStart[i].tree.TryFind(index, out location);
+                        }
+                        else
+                        {
+                            location = rangesSortedByStart[i].map;
+                            return true;
+                        }
                     }
                 }
 
@@ -77,10 +104,19 @@ namespace FadeBasic.Virtual
             {
                 for (var i = 0; i < rangesSortedByStop.Count; i++)
                 {
-                    if (rangesSortedByStop[i].range.stopToken.insIndex >= index)
+                    if (rangesSortedByStop[i].map.range.stopToken.insIndex >= index)
                     {
-                        location = rangesSortedByStop[i];
-                        return true;
+                        if (rangesSortedByStop[i].tree != null)
+                        {
+                            return rangesSortedByStop[i].tree.TryFind(index, out location);
+                        }
+                        else
+                        {
+                            location = rangesSortedByStop[i].map;
+                            return true;
+
+                        }
+                        // location = rangesSortedByStop[i];
                     }
                 }
 

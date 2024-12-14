@@ -26,6 +26,30 @@ namespace FadeBasic.Virtual
 
         public List<DebugMap> points = new List<DebugMap>();
 
+        public List<DebugMap> GetFlatPoints()
+        {
+            var flat = new List<DebugMap>();
+            var stack = new Stack<DebugMap>();
+            for (var i = points.Count - 1; i >= 0; i--)
+            {
+                stack.Push(points[i]);
+            }
+            while (stack.Count > 0)
+            {
+                var p = stack.Pop();
+                flat.Add(p);
+                if (p.innerMaps != null)
+                {
+                    for (var i = p.innerMaps.Count - 1; i >= 0; i--)
+                    {
+                        stack.Push(p.innerMaps[i]);
+                    }
+                }
+            }
+
+            return flat;
+        }
+
         // this is just used for building the points
         private Stack<DebugMap> _currentPointBuilder = new Stack<DebugMap>();
        
@@ -39,6 +63,7 @@ namespace FadeBasic.Virtual
         {
             var next = new DebugMap
             {
+                depth = _currentPointBuilder.Count,
                 range = new DebugTokenRange
                 {
                     startToken = new DebugToken
@@ -152,9 +177,11 @@ namespace FadeBasic.Virtual
     {
         public DebugTokenRange range; // the extents of this map
         public List<DebugMap> innerMaps;
+        public int depth;
         
         public void ProcessJson(IJsonOperation op)
         {
+            op.IncludeField(nameof(depth), ref depth);
             op.IncludeField(nameof(range), ref range);
             op.IncludeField(nameof(innerMaps), ref innerMaps);
         }

@@ -4,8 +4,6 @@ namespace DAP;
 
 public partial class FadeDebugAdapter
 {
-    
-
     protected override PauseResponse HandlePauseRequest(PauseArguments arguments)
     {
         _session.SendPause(() =>
@@ -25,5 +23,18 @@ public partial class FadeDebugAdapter
             Protocol.SendEvent(new ContinuedEvent());
         });
         return new ContinueResponse();
+    }
+
+    protected override NextResponse HandleNextRequest(NextArguments arguments)
+    {
+        _session.SendNext(() =>
+        {
+            Protocol.SendEvent(new StoppedEvent
+            {
+                Reason = StoppedEvent.ReasonValue.Step,
+                AllThreadsStopped = true,
+            });
+        });
+        return new NextResponse();
     }
 }

@@ -1,3 +1,5 @@
+using System.Diagnostics;
+using FadeBasic.ApplicationSupport.Project;
 using FadeBasic.Launch;
 using Microsoft.VisualStudio.Shared.VSCodeDebugProtocol;
 using Microsoft.VisualStudio.Shared.VSCodeDebugProtocol.Messages;
@@ -12,7 +14,9 @@ public partial class FadeDebugAdapter : DebugAdapterBase
     private string _fileName;
 
     private RemoteDebugSession _session;
-    
+    private ProjectContext? _project;
+    private SourceMap? _sourceMap;
+
     public FadeDebugAdapter(Stream stdIn, Stream stdOut)
     {
         
@@ -50,11 +54,15 @@ public partial class FadeDebugAdapter : DebugAdapterBase
     protected override LaunchResponse HandleLaunchRequest(LaunchArguments arguments)
     {
         _fileName = arguments.ConfigurationProperties.GetValueAsString("program");
+        
         if (String.IsNullOrEmpty(_fileName))
         {
             throw new ProtocolException("Launch failed because launch configuration did not specify 'program'.");
         }
 
+        _project = ProjectLoader.LoadCsProject(_fileName);
+        _sourceMap = _project.CreateSourceMap();
+        
         var res = new LaunchResponse();
         return res;
     }
@@ -98,6 +106,9 @@ public partial class FadeDebugAdapter : DebugAdapterBase
             [LaunchOptions.ENV_ENABLE_DEBUG] = "true",
             [LaunchOptions.ENV_DEBUG_PORT] = port,
         };
+        
+        // TODO: need to create a source-map for the program...
+        
         this.Protocol.SendClientRequest(startReq, x =>
         {
             
@@ -128,7 +139,14 @@ public partial class FadeDebugAdapter : DebugAdapterBase
 
     protected override DisconnectResponse HandleDisconnectRequest(DisconnectArguments arguments)
     {
-        // TODO: need to kill the debugee process...
+        // TODO: the TerminateDebuggee value is null, so 
+        //  I'm always killing the process.... but that feels wrong. What about just disconnecting? 
+        if (arguments.TerminateDebuggee.GetValueOrDefault())
+        {
+        }
+        
+        Process.GetProcessById(_session.RemoteProcessId).Kill();
+
         return new DisconnectResponse();
     }
 

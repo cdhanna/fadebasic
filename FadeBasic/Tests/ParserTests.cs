@@ -526,6 +526,37 @@ x = x - 1
         Assert.That(code, Is.EqualTo("((= (ref x),(- (ref x),(1))))"));
     }
     
+    [Test]
+    public void Shorthand_DecrementAssign()
+    {
+        var input = @"
+x = 3
+x -= 1
+";
+        var parser = MakeParser(input);
+        var prog = parser.ParseProgram();
+        prog.AssertNoParseErrors();
+        Assert.That(prog.statements.Count, Is.EqualTo(2));
+        var code = prog.ToString();
+        Assert.That(code, Is.EqualTo("((= (ref x),(3)),(= (ref x),(- (ref x),(1))))"));
+    }
+    
+    
+    [Test]
+    public void Shorthand_AddAssign()
+    {
+        var input = @"
+x = 3
+x += 1
+";
+        var parser = MakeParser(input);
+        var prog = parser.ParseProgram();
+        prog.AssertNoParseErrors();
+        Assert.That(prog.statements.Count, Is.EqualTo(2));
+        var code = prog.ToString();
+        Assert.That(code, Is.EqualTo("((= (ref x),(3)),(= (ref x),(+ (ref x),(1))))"));
+    }
+    
     
     [Test]
     public void Assign_MultipleOnOneLine()

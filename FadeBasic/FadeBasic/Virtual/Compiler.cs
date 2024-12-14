@@ -788,7 +788,10 @@ namespace FadeBasic.Virtual
             var whileLoopValue = _buffer.Count;
             
             // compile the condition expression
+            _dbg.AddStartToken(_buffer.Count, whileStatement.condition.StartToken);
             Compile(whileStatement.condition);
+            _dbg.AddStopToken(_buffer.Count, whileStatement.condition.EndToken);
+
             // cast the expression to an int
             _buffer.Add(OpCodes.CAST);
             _buffer.Add(TypeCodes.INT);
@@ -810,12 +813,13 @@ namespace FadeBasic.Virtual
             // keep track of the first index of the success
             var successJumpValue = _buffer.Count;
             _exitInstructionIndexes.Push(new List<int>());
+            _dbg.AddStartToken(_buffer.Count, whileStatement.condition.EndToken);
             foreach (var successStatement in whileStatement.statements)
             {
                 Compile(successStatement);
             }
+            _dbg.AddStopToken(_buffer.Count, whileStatement.EndToken);
             var exitStatementIndexes = _exitInstructionIndexes.Pop();
-
             // at the end of the successful statements, we need to jump back to the start
             AddPushInt(_buffer, whileLoopValue);
             _buffer.Add(OpCodes.JUMP);
@@ -1100,7 +1104,8 @@ namespace FadeBasic.Virtual
         public void Compile(CommandStatement commandStatement)
         { 
             // TODO: save local state?
-            
+            _dbg.AddStartToken(_buffer.Count, commandStatement.StartToken);
+
             // put each expression on the stack.
             var argCounter = 0;
             for (var i = 0; i < commandStatement.command.args.Length; i++)
@@ -1191,6 +1196,8 @@ namespace FadeBasic.Virtual
             }
 
             _buffer.Add(OpCodes.CALL_HOST);
+            _dbg.AddStopToken(_buffer.Count, commandStatement.EndToken);
+
         }
         
         public void Compile(DeclarationStatement declaration)

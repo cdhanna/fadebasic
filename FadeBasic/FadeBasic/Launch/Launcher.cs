@@ -1,6 +1,8 @@
 using System;
+using System.Diagnostics;
 using System.Net;
 using System.Net.Sockets;
+using System.Threading;
 using FadeBasic.Virtual;
 
 namespace FadeBasic.Launch
@@ -62,9 +64,14 @@ namespace FadeBasic.Launch
             }
             else
             {
+                // vm.Execute2(0); // 0 means run until suspend. 
+
+               
                 var session = new DebugSession(vm, instance.DebugData, options);
                 session.StartServer();
-                session.StartDebugging();
+                session.StartDebugging(); // needs infinite budget. 
+                
+                
                 // session.StartServer();
             }
             

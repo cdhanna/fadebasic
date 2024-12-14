@@ -97,6 +97,12 @@ namespace Tests
         {
             
         }
+        
+        [FadeBasicCommand("wait ms")]
+        public static void WiatMs(int amount)
+        {
+            
+        }
         //
         [FadeBasicCommand("callTest")]
         public static void CallTest()

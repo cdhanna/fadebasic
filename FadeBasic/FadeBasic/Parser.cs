@@ -1424,6 +1424,37 @@ namespace FadeBasic
                                 }
                                 
                                 return decl;
+                            
+                            
+                            // -= += ...
+                            case LexemType.OpMinus:
+                            case LexemType.OpPlus:
+                            case LexemType.OpMultiply:
+                            case LexemType.OpDivide:
+                                var thirdToken = _stream.Advance();
+                                switch (thirdToken.type)
+                                {
+                                    case LexemType.OpEqual:
+                                        var rhsExpr = ParseWikiExpression();
+
+                                        var opExpr = new BinaryOperandExpression(token, rhsExpr.EndToken, secondToken,
+                                            reference, rhsExpr);
+                                        return new AssignmentStatement
+                                        {
+                                            startToken = token,
+                                            endToken = rhsExpr.EndToken,
+                                            variable = reference,
+                                            expression = opExpr
+                                        };
+                                        break;
+                                    default:
+                                        _stream.AdvanceUntil(LexemType.EndStatement);
+                                        var invalidMathShortcutStatement = new NoOpStatement();
+                                        invalidMathShortcutStatement.Errors.Add(new ParseError(thirdToken, ErrorCodes.AmbiguousDeclarationOrAssignment));
+                                        return invalidMathShortcutStatement;
+
+                                }
+                                break;
                             default:
                                 
                                 // this is an error case, and the most general solution is to skip ahead to an end-statement and start anew. 

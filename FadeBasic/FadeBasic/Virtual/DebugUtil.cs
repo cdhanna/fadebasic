@@ -36,17 +36,6 @@ namespace FadeBasic.Virtual
 
     public static class DebugUtil
     {
-
-        public static void PackPosition(int lineNumber, int charNumber, out ulong data)
-        {
-            data = ((ulong)(uint)lineNumber << 32) | (uint)charNumber;
-        }
-
-        public static void UnpackPosition(ulong data, out int lineNumber, out int charNumber)
-        {
-            lineNumber = (int)(data >> 32); // Extract the upper 32 bits
-            charNumber = (int)(data & 0xFFFFFFFF); // Extract the lower 32 bits
-        }
         
         public static Dictionary<string, DebugRuntimeVariable> LookupVariables(VirtualMachine vm, DebugData dbg)
         {
