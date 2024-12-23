@@ -17,6 +17,18 @@ public class JsonTests
         }
     }
 
+    class StringInt : IJsonable
+    {
+        public string reason;
+        public int status;
+
+        public void ProcessJson(IJsonOperation op)
+        {
+            op.IncludeField(nameof(reason), ref reason);
+            op.IncludeField(nameof(status), ref status);
+        }
+    }
+
     class Dud : IJsonable
     {
         public int x;
@@ -34,6 +46,20 @@ public class JsonTests
         {
             op.IncludeField("duds", ref duds);
         }
+    }
+
+    [Test]
+    public void StringIntTest()
+    {
+        var x = new StringInt
+        {
+            reason = "derp derp tuna",
+            status = -1
+        };
+        var j = x.Jsonify();
+        var y = JsonableExtensions.FromJson<StringInt>(j);
+        Assert.That(y.status, Is.EqualTo(x.status));
+        Assert.That(y.reason, Is.EqualTo(x.reason));
     }
     
     [Test]

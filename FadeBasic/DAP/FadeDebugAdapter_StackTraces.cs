@@ -19,12 +19,14 @@ public partial class FadeDebugAdapter
             {
                 var frame = debugFrames[i];
                 var location = _sourceMap.GetOriginalLocation(frame.lineNumber, frame.colNumber);
+                
                 var source = new Source
                 {
                     Path = location.fileName
                 };
-                var stack = new StackFrame(i, "root", debugFrames[i].lineNumber, debugFrames[i].colNumber);
-                // TODO: need the Source
+
+                var correctedLineNumber = location.startLine + 1; // zero indexed vs one indexed. The DAP seems to expect 1 based indexing
+                var stack = new StackFrame(i, frame.name ?? "<root>", correctedLineNumber, location.startChar);
                 stack.Source = source;
                 frames.Add(stack);
             }

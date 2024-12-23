@@ -20,7 +20,7 @@ namespace FadeBasic.Virtual
 
         public int Count => ptr;
         public T Peek() => buffer[ptr - 1];
-
+        
         
         public void PopArraySpan(int size, out ReadOnlySpan<T> span)
         {

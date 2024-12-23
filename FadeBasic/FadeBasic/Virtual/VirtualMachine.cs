@@ -42,7 +42,7 @@ namespace FadeBasic.Virtual
         public VmHeap heap;
         
         public HostMethodTable hostMethods;
-        public FastStack<int> methodStack;
+        public FastStack<int> methodStack; // TODO: This could also store the index of the scope-stack at the time of the push; so that a debugger could know the scope at the frame.
 
         public VirtualScope globalScope;
         public FastStack<VirtualScope> scopeStack;

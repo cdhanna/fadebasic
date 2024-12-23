@@ -24,6 +24,8 @@ namespace FadeBasic.Launch
         private ConcurrentDictionary<int, Action<DebugMessage>> _ackHandlers =
             new ConcurrentDictionary<int, Action<DebugMessage>>();
 
+        public Action HitBreakpointCallback;
+        
         public RemoteDebugSession(int port)
         {
             _port = port;
@@ -57,13 +59,25 @@ namespace FadeBasic.Launch
                 while (inboundMessages.TryDequeue(out var message))
                 {
 
-                    // handle ack callbacks
-                    if (_ackHandlers.TryGetValue(message.id, out var handler))
+                    if (message.id < 0)
                     {
+                        // this is a rev-request
+
+                        switch (message.type)
+                        {
+                            case DebugMessageType.REV_REQUEST_BREAKPOINT:
+                                // ah, emit a stop event!
+                                HitBreakpointCallback?.Invoke();
+                                break;
+                        }
+                        
+                        
+                    } else if (_ackHandlers.TryGetValue(message.id, out var handler))
+                    {
+                        // handle ack callbacks
                         handler?.Invoke(message);
                     }
 
-                    // TODO: handle actual events from the debugger like, "hey do something!"
                 }
                 Thread.Sleep(10);
             }
@@ -80,65 +94,6 @@ namespace FadeBasic.Launch
             {
                 throw new Exception("Failed to acquire debug client messaging thread");
             }
-            // Task.Run(async () =>
-            // {
-            //     try
-            //     {
-            //         var joinTask = MessageServer<DebugMessage>.Join(_port);
-            //
-            //         var socket = await joinTask;
-            //
-            //         var sendTask = MessageServer<DebugMessage>.Emit(socket, _cts, outboundMessages);
-            //         var receiveTask = MessageServer<DebugMessage>.Listen(socket, _cts, inboundMessages);
-            //
-            //         Send(new DebugMessage
-            //         {
-            //             id = GetNextMessageId(),
-            //             type = DebugControlMessageTypes.PROTOCOL_HELLO
-            //         }, res =>
-            //         {
-            //             var isSuccess = (res.type == DebugControlMessageTypes.PROTOCOL_ACK);
-            //         });
-            //         
-            //         await sendTask;
-            //         await receiveTask;
-            //     }
-            //     catch (Exception ex)
-            //     {
-            //         throw;
-            //     }
-            // });
-            //
-            //
-            // // _listenTask =  DebugServerStreamUtil.ConnectToServerAsync(_port, outboundMessages, inboundMessages, _cts.Token);
-            //
-            // _receiveTask = Task.Run(async () =>
-            // {
-            //     try
-            //     {
-            //         while (!_cts.IsCancellationRequested)
-            //         {
-            //             await Task.Delay(1);
-            //             while (inboundMessages.TryDequeue(out var message))
-            //             {
-            //
-            //                 // handle ack callbacks
-            //                 if (_ackHandlers.TryGetValue(message.id, out var handler))
-            //                 {
-            //                     handler?.Invoke(message);
-            //                 }
-            //
-            //                 // TODO: handle actual events from the debugger like, "hey do something!"
-            //             }
-            //
-            //             Thread.Sleep(1);
-            //         }
-            //     }
-            //     catch (Exception ex)
-            //     {
-            //         throw;
-            //     }
-            // });
         }
 
         public int GetNextMessageId() => Interlocked.Increment(ref messageIdCounter);
@@ -149,38 +104,6 @@ namespace FadeBasic.Launch
             outboundMessages.Enqueue(message);
         }
 
-        // public void RequestStackFrames(Action<List<DebugStackFrame>> handler)
-        // {
-        //     var frames = new List<DebugStackFrame>();
-        //     DebugStackFrame current = null;
-        //     
-        //     Send(new DebugControlMessage
-        //     {
-        //         id = GetNextMessageId(),
-        //         arg = 0,
-        //         type = DebugControlMessageTypes.GET_CURRENT_STACK_FRAMES
-        //     }, msg =>
-        //     {
-        //         switch (msg.type)
-        //         {
-        //             case DebugControlMessageTypes.PROTOCOL_RES:
-        //                 if (current == null)
-        //                 {
-        //                     DebugUtil.UnpackPosition(msg.arg, out var lineNumber, out var charNumber );
-        //                     // line number, and char number are packed into a long.
-        //                     current = new DebugStackFrame(lineNumber, charNumber);
-        //                     frames.Add(current);
-        //                 }
-        //                 break;
-        //             case DebugControlMessageTypes.PROTOCOL_ACK:
-        //                 handler?.Invoke(frames);
-        //                 break;
-        //         }
-        //         // building up a response....
-        //         
-        //     });
-        // }
-        //
         public void SendPause(Action handler) => Send(new DebugMessage()
         {
             id = GetNextMessageId(),
@@ -193,11 +116,15 @@ namespace FadeBasic.Launch
             type = DebugMessageType.REQUEST_PLAY,
         }, _ => handler());
 
-        public void SendNext(Action handler) => Send(new DebugMessage
+        public void SendNext(Action<StepNextResponseMessage> handler) => Send(new DebugMessage
         {
             id = GetNextMessageId(),
             type = DebugMessageType.REQUEST_NEXT
-        }, _ => handler());
+        }, msg =>
+        {
+            var details = JsonableExtensions.FromJson<StepNextResponseMessage>(msg.RawJson);
+            handler(details);
+        });
 
         public void RequestStackFrames(Action<List<DebugStackFrame>> handler)
         {
@@ -211,12 +138,61 @@ namespace FadeBasic.Launch
                 handler?.Invoke(details.frames);
             });
         }
+
+        public void RequestBreakpoints(List<Breakpoint> breakpoints, Action<List<Breakpoint>> handler)
+        {
+            Send(new RequestBreakpointMessage
+            {
+                id = GetNextMessageId(),
+                type = DebugMessageType.REQUEST_BREAKPOINTS,
+                breakpoints = breakpoints
+            }, msg =>
+            {
+                var details = JsonableExtensions.FromJson<ResponseBreakpointMessage>(msg.RawJson);
+                handler?.Invoke(details.breakpoints);
+            });
+        }
+    }
+
+    public class Breakpoint : IJsonable
+    {
+        public int lineNumber;
+        public int colNumber;
+        public int status;
+        
+        public void ProcessJson(IJsonOperation op)
+        {
+            op.IncludeField(nameof(lineNumber), ref lineNumber);
+            op.IncludeField(nameof(colNumber), ref colNumber);
+            op.IncludeField(nameof(status), ref status);
+        }
+    }
+
+    public class RequestBreakpointMessage : DebugMessage
+    {
+        public List<Breakpoint> breakpoints;
+        public override void ProcessJson(IJsonOperation op)
+        {
+            base.ProcessJson(op);
+            op.IncludeField(nameof(breakpoints), ref breakpoints);
+        }
+    }
+
+    public class ResponseBreakpointMessage : DebugMessage
+    {
+        public List<Breakpoint> breakpoints;
+        public override void ProcessJson(IJsonOperation op)
+        {
+            base.ProcessJson(op);
+            op.IncludeField(nameof(breakpoints), ref breakpoints);
+        }
     }
 
     public class DebugStackFrame : IJsonable
     {
         public int lineNumber;
         public int colNumber;
+        public string name;
 
         public DebugStackFrame(){}
         
@@ -230,6 +206,7 @@ namespace FadeBasic.Launch
         {
             op.IncludeField(nameof(lineNumber), ref lineNumber);
             op.IncludeField(nameof(colNumber), ref colNumber);
+            op.IncludeField(nameof(name), ref name);
         }
     }
 }

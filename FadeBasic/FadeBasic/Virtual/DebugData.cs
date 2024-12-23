@@ -24,84 +24,105 @@ namespace FadeBasic.Virtual
         public Dictionary<int, DebugVariable> insToVariable = new Dictionary<int, DebugVariable>();
         // public HashSet<int> insBreakpoints = new HashSet<int>();
 
-        public List<DebugMap> points = new List<DebugMap>();
+        public Dictionary<int, DebugToken> insToFunction = new Dictionary<int, DebugToken>();
+        public List<DebugToken> statementTokens = new List<DebugToken>();
+        // public List<DebugMap> points = new List<DebugMap>();
 
-        public List<DebugMap> GetFlatPoints()
-        {
-            var flat = new List<DebugMap>();
-            var stack = new Stack<DebugMap>();
-            for (var i = points.Count - 1; i >= 0; i--)
-            {
-                stack.Push(points[i]);
-            }
-            while (stack.Count > 0)
-            {
-                var p = stack.Pop();
-                flat.Add(p);
-                if (p.innerMaps != null)
-                {
-                    for (var i = p.innerMaps.Count - 1; i >= 0; i--)
-                    {
-                        stack.Push(p.innerMaps[i]);
-                    }
-                }
-            }
-
-            return flat;
-        }
+        // public List<DebugMap> GetFlatPoints()
+        // {
+        //     var flat = new List<DebugMap>();
+        //     var stack = new Stack<DebugMap>();
+        //     for (var i = points.Count - 1; i >= 0; i--)
+        //     {
+        //         stack.Push(points[i]);
+        //     }
+        //     while (stack.Count > 0)
+        //     {
+        //         var p = stack.Pop();
+        //         flat.Add(p);
+        //         if (p.innerMaps != null)
+        //         {
+        //             for (var i = p.innerMaps.Count - 1; i >= 0; i--)
+        //             {
+        //                 stack.Push(p.innerMaps[i]);
+        //             }
+        //         }
+        //     }
+        //
+        //     return flat;
+        // }
 
         // this is just used for building the points
-        private Stack<DebugMap> _currentPointBuilder = new Stack<DebugMap>();
-       
+        // private Stack<DebugMap> _currentPointBuilder = new Stack<DebugMap>();
 
+
+        
+        public void AddStatementDebugToken(int insIndex, Token token)
+        {
+            statementTokens.Add(new DebugToken
+            {
+                insIndex = insIndex,
+                token = token
+            });
+        }
+   
         /// <summary>
         /// Every call to this method must be paired with a call to <see cref="AddVariable(FadeBasic.Virtual.DebugVariable)"/>
         /// </summary>
         /// <param name="insIndex"></param>
         /// <param name="token"></param>
-        public void AddStartToken(int insIndex, Token token)
-        {
-            var next = new DebugMap
-            {
-                depth = _currentPointBuilder.Count,
-                range = new DebugTokenRange
-                {
-                    startToken = new DebugToken
-                    {
-                        insIndex = insIndex,
-                        token = token
-                    }
-                },
-                innerMaps = new List<DebugMap>()
-            };
-
-            /*
-             * for every start call, add to the current, and keep track of current using a stack
-             */
-            if (_currentPointBuilder.Count > 0)
-            {
-                _currentPointBuilder.Peek().innerMaps.Add(next);
-            }
-            else
-            {
-                points.Add(next);
-            }
-            _currentPointBuilder.Push(next);
-        }
-        
-        public void AddStopToken(int insIndex, Token token)
-        {
-            var current = _currentPointBuilder.Pop();
-            current.range.stopToken = new DebugToken
-            {
-                insIndex = insIndex,
-                token = token
-            };
-        }
+        // public void AddStartToken(int insIndex, Token token)
+        // {
+        //     var next = new DebugMap
+        //     {
+        //         depth = _currentPointBuilder.Count,
+        //         range = new DebugTokenRange
+        //         {
+        //             startToken = new DebugToken
+        //             {
+        //                 insIndex = insIndex,
+        //                 token = token
+        //             }
+        //         },
+        //         innerMaps = new List<DebugMap>()
+        //     };
+        //
+        //     /*
+        //      * for every start call, add to the current, and keep track of current using a stack
+        //      */
+        //     if (_currentPointBuilder.Count > 0)
+        //     {
+        //         _currentPointBuilder.Peek().innerMaps.Add(next);
+        //     }
+        //     else
+        //     {
+        //         points.Add(next);
+        //     }
+        //     _currentPointBuilder.Push(next);
+        // }
+        //
+        // public void AddStopToken(int insIndex, Token token)
+        // {
+        //     var current = _currentPointBuilder.Pop();
+        //     current.range.stopToken = new DebugToken
+        //     {
+        //         insIndex = insIndex,
+        //         token = token
+        //     };
+        // }
         
         public void AddVariable(DebugVariable variable)
         {
             insToVariable[variable.insIndex] = variable;
+        }
+
+        public void AddFunction(int insIndex, Token functionNameToken)
+        {
+            insToFunction[insIndex] = new DebugToken
+            {
+                token = functionNameToken,
+                insIndex = insIndex
+            };
         }
         
         public void AddVariable(int insIndex, CompiledVariable compiledVar)
@@ -115,9 +136,12 @@ namespace FadeBasic.Virtual
 
         public void ProcessJson(IJsonOperation op)
         {
-            op.IncludeField(nameof(points), ref points);
+            // op.IncludeField(nameof(points), ref points);
             op.IncludeField(nameof(insToVariable), ref insToVariable);
+            op.IncludeField(nameof(statementTokens), ref statementTokens);
+            op.IncludeField(nameof(insToFunction), ref insToFunction);
         }
+
     }
     //
     // public static class DebugDataJson
@@ -172,6 +196,8 @@ namespace FadeBasic.Virtual
             op.IncludeField(nameof(stopToken), ref stopToken);
         }
     }
+    
+   
 
     public class DebugMap : IJsonable
     {

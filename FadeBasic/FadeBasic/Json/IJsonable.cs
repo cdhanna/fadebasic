@@ -110,7 +110,7 @@ namespace FadeBasic.Json
                     Read(ref span, out var valuePeek);
                     // var valuePeek = span[index];
 
-                    if (char.IsDigit(valuePeek))
+                    if (char.IsDigit(valuePeek) || valuePeek == '-')
                     {
                         index--;
                         ReadInteger(ref span, out var value);
@@ -206,7 +206,7 @@ namespace FadeBasic.Json
                 while (!found)
                 {
                     Read(ref span, out var curr);
-                    if (!char.IsDigit(curr))
+                    if (!char.IsDigit(curr) && curr != '-')
                     {
                         found = true;
                     }

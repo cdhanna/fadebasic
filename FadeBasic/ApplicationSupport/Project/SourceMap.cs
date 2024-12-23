@@ -89,11 +89,12 @@ public class SourceMap
 
     }
 
-    public bool GetMappedPosition(string file, int lineNumber, int charNumber, out Token foundToken)
+    public bool GetMappedPosition(string file, int lineNumber, int charNumber, out Token foundToken, bool strict=true)
     {
         foundToken = null;
         if (!_fileToRange.TryGetValue(file, out var fileRange))
         {
+            if (!strict) return false;
             throw new ArgumentOutOfRangeException(nameof(file), $"given file=[{file}] is not included in source map");
         }
 
@@ -102,6 +103,7 @@ public class SourceMap
         var line = startLine + lineNumber;
         if (!_lineToTokens.TryGetValue(line, out var tokens))
         {
+            if (!strict) return false;
             throw new InvalidOperationException($"given line=[{line}] do no map to an existing tokens");
         }
         
@@ -117,7 +119,6 @@ public class SourceMap
         }
 
         return false;
-        throw new InvalidOperationException($"given char=[{charNumber}] did not find a valid token");
     }
 
     public void ProvideTokens(LexerResults lexResults)

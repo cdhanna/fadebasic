@@ -8,8 +8,9 @@ namespace Tests;
 public partial class TokenVm
 {
     private ProgramNode? _exprAst;
+    public static DebugData SingletonDebugData;
 
-    void Setup(string src, out Compiler compiler, out List<byte> progam, int? expectedParseErrors=null)
+    void Setup(string src, out Compiler compiler, out List<byte> progam, int? expectedParseErrors=null, bool generaeteDebug=false)
     {
         var collection = TestCommands.CommandsForTesting;
         var lexer = new Lexer();
@@ -21,9 +22,14 @@ public partial class TokenVm
             _exprAst.AssertParseErrors(expectedParseErrors.Value);
         }
         
-        compiler = new Compiler(collection);
+        compiler = new Compiler(collection, new CompilerOptions
+        {
+            GenerateDebugData = generaeteDebug
+        });
+        
         compiler.Compile(_exprAst);
         progam = compiler.Program;
+        SingletonDebugData = compiler.DebugData;
     }
     
     
@@ -3389,6 +3395,27 @@ x = overloadA(x,4)
         Assert.That(vm.typeRegisters[0], Is.EqualTo(TypeCodes.INT));
         Assert.That(vm.dataRegisters[0], Is.EqualTo(5));
     }
+    
+//     [Test]
+//     public void CallStackCheck()
+//     {
+//         var src = @"n = 0
+// igloo()
+//
+// function igloo()
+//     print ""toast""
+//     while 1 > 0
+//         inc n
+//         print ""hello"", n
+//         wait ms 500
+//         getVm
+//     endwhile
+// endfunction";
+//         Setup(src, out var compiler, out var prog, generaeteDebug: true);
+//         var vm = new VirtualMachine(prog);
+//         vm.hostMethods = compiler.methodTable;
+//         vm.Execute2();
+//     }
     
     [Test]
     public void CallHost_Params()

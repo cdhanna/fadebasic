@@ -45,71 +45,84 @@ b# = 2.3
     }
 
     [Test]
-    public void Tree()
+    public void IndexMap()
     {
         var src = @"n = 0
-print ""toast""
-while 1 > 0
-    inc n
-    print ""hello"", n
-    wait ms 500
-endwhile";
+igloo()
+
+function igloo()
+    print ""toast""
+    while 1 > 0
+        inc n
+        print ""hello"", n
+        wait ms 500
+        getVm
+    endwhile
+endfunction";
         Compile(src, out _, out var compiler, out var vm);
         var dbg = compiler.DebugData;
 
-        var tree = IntervalTree.From(dbg.points);
-// ITS ONLY GETTING LINE 1 for some reason?
-        var hasIndex = tree.TryFind(176, out var index);
-    }
-    
-    
-    [Test]
-    public void Exploration_Breakpoints()
-    {
-        var src = @"
-a = 3
-b# = 2.3
-";
-        throw new NotImplementedException();
-        // Compile(src, out _, out var compiler, out var vm);
-        // var dbg = compiler.DebugData;
-        //
-        // dbg.insBreakpoints.Add(dbg.points[1].range.startToken.insIndex); // magic number where second variable is not yet defined
-        // var session = new DebugSession(vm, dbg);
-        // session.Execute();
-        // var variables = DebugUtil.LookupVariables(vm, dbg);
-        // Assert.That(variables.Count, Is.EqualTo(1));
-        //
-        // session.Continue();
-        // variables = DebugUtil.LookupVariables(vm, dbg);
-        // Assert.That(variables.Count, Is.EqualTo(2));
-    }
-
-    
-    [Test]
-    public void Exploration_GetMap()
-    {
-        var src = @"
-a = 3
-b# = 2.3
-if a > 2
-    a = 9
-endif
-";
-        Compile(src, out _, out var compiler, out var vm);
-        var dbg = compiler.DebugData;
-
-        var json = LaunchUtil.PackDebugData(dbg);
-        var db2 = LaunchUtil.UnpackDebugData(json);
-
-        var x = db2.points[2].range.startToken.insIndex + 9;
-        var tree = IntervalTree.From(dbg.points);
-
-        if (!tree.TryFind(x, out var map))
+        var map = new IndexCollection(dbg.statementTokens);
+        if (!map.TryFindClosestTokenBeforeIndex(176, out var lastToken))
         {
-            Assert.Fail("should have found map");
+            Assert.Fail("There should be something for the last token");
         }
+        // var tree = IntervalTree.From(dbg.points);
+// ITS ONLY GETTING LINE 1 for some reason?
+
+
+// TODO: 182 is not even in the tree, but that is the number that is being hit in real life after step-over. 
+        // var hasIndex = tree.TryFind(182, out var index);
     }
+    
+    
+//     [Test]
+//     public void Exploration_Breakpoints()
+//     {
+//         var src = @"
+// a = 3
+// b# = 2.3
+// ";
+//         throw new NotImplementedException();
+//         // Compile(src, out _, out var compiler, out var vm);
+//         // var dbg = compiler.DebugData;
+//         //
+//         // dbg.insBreakpoints.Add(dbg.points[1].range.startToken.insIndex); // magic number where second variable is not yet defined
+//         // var session = new DebugSession(vm, dbg);
+//         // session.Execute();
+//         // var variables = DebugUtil.LookupVariables(vm, dbg);
+//         // Assert.That(variables.Count, Is.EqualTo(1));
+//         //
+//         // session.Continue();
+//         // variables = DebugUtil.LookupVariables(vm, dbg);
+//         // Assert.That(variables.Count, Is.EqualTo(2));
+//     }
+
+    
+//     [Test]
+//     public void Exploration_GetMap()
+//     {
+//         var src = @"
+// a = 3
+// b# = 2.3
+// if a > 2
+//     a = 9
+// endif
+// ";
+//         Compile(src, out _, out var compiler, out var vm);
+//         var dbg = compiler.DebugData;
+//
+//         var json = LaunchUtil.PackDebugData(dbg);
+//         var db2 = LaunchUtil.UnpackDebugData(json);
+//
+//         var x = db2.points[2].range.startToken.insIndex + 9;
+//         var tree = IntervalTree.From(dbg.points);
+//
+//         if (!tree.TryFind(x, out var map))
+//         {
+//             Assert.Fail("should have found map");
+//         }
+//     }
 
     [Test]
     public async Task DebugServerTest()

@@ -4,11 +4,13 @@ using System.Diagnostics;
 using DAP;
 using FadeBasic.ApplicationSupport.Project;
 
-Console.WriteLine("DAP!!");
 
-var shouldWait = Environment.GetEnvironmentVariable("FADE_WAIT_FOR_DEBUG") == "true";
-if (shouldWait)
+DAPLogger.TryCreateLogger(out var logger);
+logger.Log("initializing...");
+
+if (DAPEnv.WaitForDebugger)
 {
+    logger.Log("waiting for C# debugger...");
     while (!Debugger.IsAttached)
     {
         Thread.Sleep(100);
@@ -16,7 +18,7 @@ if (shouldWait)
 }
 
 ProjectLoader.Initialize();
-var adapter = new FadeDebugAdapter(Console.OpenStandardInput(), Console.OpenStandardOutput());
+var adapter = new FadeDebugAdapter(logger, Console.OpenStandardInput(), Console.OpenStandardOutput());
 
 try
 {
@@ -26,5 +28,3 @@ catch (Exception ex)
 {
     throw;
 }
-
-var x = 1;

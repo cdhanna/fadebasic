@@ -286,17 +286,27 @@ namespace FadeBasic.Virtual
         }
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        void AddStartDebugToken(Token token)
+        void AddDebugToken(Token token, int insIndex=-1)
         {
             if (_dbg == null) return; // no-op if we are not generating debugger info.
-            _dbg.AddStartToken(_buffer.Count, token); // this happens BEFORE the byte code is emitted. 
+            if (insIndex < 0) 
+                insIndex = _buffer.Count;
+            _dbg.AddStatementDebugToken(insIndex, token);
         }
-        [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        void AddStopDebugToken(Token token)
-        {
-            if (_dbg == null) return; // no-op if we are not generating debugger info.
-            _dbg.AddStopToken(_buffer.Count - 1, token); // this happens AFTER the byte code is emitted. 
-        }
+
+        
+        // [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        // void AddStartDebugToken(Token token)
+        // {
+        //     if (_dbg == null) return; // no-op if we are not generating debugger info.
+        //     _dbg.AddStartToken(_buffer.Count, token); // this happens BEFORE the byte code is emitted. 
+        // }
+        // [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        // void AddStopDebugToken(Token token)
+        // {
+        //     if (_dbg == null) return; // no-op if we are not generating debugger info.
+        //     _dbg.AddStopToken(_buffer.Count - 1, token); // this happens AFTER the byte code is emitted. 
+        // }
 
         public void Compile(IStatementNode statement)
         {
@@ -308,17 +318,23 @@ namespace FadeBasic.Virtual
             switch (statement)
             {
                 case CommentStatement _:
+                    break;
+                default:
+                    AddDebugToken(statement.StartToken);
+                    break;
+            }
+            
+            
+            switch (statement)
+            {
+                case CommentStatement _:
                     // ignore comments
                     break;
                 case DeclarationStatement declarationStatement:
                     Compile(declarationStatement);
                     break;
                 case AssignmentStatement assignmentStatement:
-                    
-                    AddStartDebugToken(assignmentStatement.startToken);
                     Compile(assignmentStatement);
-                    AddStopDebugToken(assignmentStatement.endToken);
-                    
                     break;
                 case CommandStatement commandStatement:
                     Compile(commandStatement);
@@ -415,6 +431,9 @@ namespace FadeBasic.Virtual
             var ptr = _buffer.Count;
             _functionTable[functionStatement.name] = ptr; // TODO: what about duplicate function names?
             
+            // at the insIndex, take note of the name for the debug data. Later, the index that has the 
+            _dbg?.AddFunction(_buffer.Count - 1, functionStatement.nameToken);
+
             // push a new scope
             _buffer.Add(OpCodes.PUSH_SCOPE);
             
@@ -788,9 +807,7 @@ namespace FadeBasic.Virtual
             var whileLoopValue = _buffer.Count;
             
             // compile the condition expression
-            _dbg.AddStartToken(_buffer.Count, whileStatement.condition.StartToken);
             Compile(whileStatement.condition);
-            _dbg.AddStopToken(_buffer.Count, whileStatement.condition.EndToken);
 
             // cast the expression to an int
             _buffer.Add(OpCodes.CAST);
@@ -813,12 +830,10 @@ namespace FadeBasic.Virtual
             // keep track of the first index of the success
             var successJumpValue = _buffer.Count;
             _exitInstructionIndexes.Push(new List<int>());
-            _dbg.AddStartToken(_buffer.Count, whileStatement.condition.EndToken);
             foreach (var successStatement in whileStatement.statements)
             {
                 Compile(successStatement);
             }
-            _dbg.AddStopToken(_buffer.Count, whileStatement.EndToken);
             var exitStatementIndexes = _exitInstructionIndexes.Pop();
             // at the end of the successful statements, we need to jump back to the start
             AddPushInt(_buffer, whileLoopValue);
@@ -860,9 +875,7 @@ namespace FadeBasic.Virtual
              */
             
             // first, compile the evaluation of the condition
-            AddStartDebugToken(ifStatement.condition.StartToken);
             Compile(ifStatement.condition);
-            AddStopDebugToken(ifStatement.condition.EndToken);
             
             // cast the expression to an int
             _buffer.Add(OpCodes.CAST);
@@ -1104,8 +1117,6 @@ namespace FadeBasic.Virtual
         public void Compile(CommandStatement commandStatement)
         { 
             // TODO: save local state?
-            _dbg.AddStartToken(_buffer.Count, commandStatement.StartToken);
-
             // put each expression on the stack.
             var argCounter = 0;
             for (var i = 0; i < commandStatement.command.args.Length; i++)
@@ -1196,7 +1207,6 @@ namespace FadeBasic.Virtual
             }
 
             _buffer.Add(OpCodes.CALL_HOST);
-            _dbg.AddStopToken(_buffer.Count, commandStatement.EndToken);
 
         }
         

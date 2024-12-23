@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using FadeBasic;
 using FadeBasic.ApplicationSupport.Project;
 using FadeBasic.Launch;
 using Microsoft.VisualStudio.Shared.VSCodeDebugProtocol;
@@ -12,26 +13,30 @@ namespace DAP;
 public partial class FadeDebugAdapter : DebugAdapterBase
 {
     private string _fileName;
+    private string _debuggerLogPath;
 
     private RemoteDebugSession _session;
     private ProjectContext? _project;
     private SourceMap? _sourceMap;
+    private IDAPLogger _logger;
 
-    public FadeDebugAdapter(Stream stdIn, Stream stdOut)
+    public FadeDebugAdapter(IDAPLogger logger, Stream stdIn, Stream stdOut)
     {
-        
+        _logger = logger;
+
         InitializeProtocolClient(stdIn, stdOut);
         Protocol.DispatcherError += (sender, args) =>
         {
-
+            
+            logger.Log($"Unhandled error! type=[{args.Exception.GetType().Namespace}]\n message=[{args.Exception.Message}]\n stack=[{args.Exception.StackTrace}]");
         };
         Protocol.LogMessage += (sender, args) =>
         {
-
+            logger.Log($"{args.Category} [{args.Message}]");
         };
         Protocol.RequestReceived += (sender, args) =>
         {
-
+            logger.Log($"request command=[{args.Command}]");
         };
     }
 
@@ -44,9 +49,9 @@ public partial class FadeDebugAdapter : DebugAdapterBase
             SupportsConfigurationDoneRequest = true,
             
         };
+        
         var canRunInTerminal = arguments.SupportsRunInTerminalRequest;
         
-        Protocol.SendEvent(new InitializedEvent());
         return res;
     }
 
@@ -54,6 +59,7 @@ public partial class FadeDebugAdapter : DebugAdapterBase
     protected override LaunchResponse HandleLaunchRequest(LaunchArguments arguments)
     {
         _fileName = arguments.ConfigurationProperties.GetValueAsString("program");
+        _debuggerLogPath = arguments.ConfigurationProperties.GetValueAsString("debuggerLogPath");
         
         if (String.IsNullOrEmpty(_fileName))
         {
@@ -61,36 +67,13 @@ public partial class FadeDebugAdapter : DebugAdapterBase
         }
 
         _project = ProjectLoader.LoadCsProject(_fileName);
+        var projectInfo = ProjectBuilder.LoadCommandMetadata(_project.projectLibraries);
+        var lexer = new Lexer();
         _sourceMap = _project.CreateSourceMap();
+        var source = _sourceMap.fullSource;
+        var lexerResults = lexer.TokenizeWithErrors(source, projectInfo.collection);
+        _sourceMap.ProvideTokens(lexerResults);
         
-        var res = new LaunchResponse();
-        return res;
-    }
-
-    protected override SetExceptionBreakpointsResponse HandleSetExceptionBreakpointsRequest(SetExceptionBreakpointsArguments arguments)
-    {
-        var res = new SetExceptionBreakpointsResponse();
-        return res;
-    }
-
-    protected override SetBreakpointsResponse HandleSetBreakpointsRequest(SetBreakpointsArguments arguments)
-    {
-        var res = new SetBreakpointsResponse();
-        foreach (var breakpoint in arguments.Breakpoints)
-        {
-            res.Breakpoints.Add(new Breakpoint(false));
-        }
-
-        return res;
-    }
-
-    protected override SetFunctionBreakpointsResponse HandleSetFunctionBreakpointsRequest(SetFunctionBreakpointsArguments arguments)
-    {
-        return new SetFunctionBreakpointsResponse();
-    }
-
-    protected override ConfigurationDoneResponse HandleConfigurationDoneRequest(ConfigurationDoneArguments arguments)
-    {
         // at this point, we can actually kick off the process. 
         var path = Path.GetDirectoryName(_fileName);
         var port = LaunchUtil.FreeTcpPort();
@@ -98,26 +81,51 @@ public partial class FadeDebugAdapter : DebugAdapterBase
         {
             "dotnet", "run", _fileName, "-p:FadeBasicDebug=true"
         });
+        
         startReq.Kind = RunInTerminalArguments.KindValue.Integrated;
         startReq.Title = "Fade";
+        
         startReq.ArgsCanBeInterpretedByShell = true;
         startReq.Env = new Dictionary<string, object>
         {
             [LaunchOptions.ENV_ENABLE_DEBUG] = "true",
             [LaunchOptions.ENV_DEBUG_PORT] = port,
+            [LaunchOptions.ENV_DEBUG_LOG_PATH] = _debuggerLogPath
         };
         
-        // TODO: need to create a source-map for the program...
+        _session = new RemoteDebugSession(port);
+
+        _session.HitBreakpointCallback = () =>
+        {
+            Protocol.SendEvent(new StoppedEvent
+            {
+                Reason = StoppedEvent.ReasonValue.Breakpoint,
+                Description = "Hit a breakpoint",
+                AllThreadsStopped = true,
+                HitBreakpointIds = new List<int>(){0}
+            });
+        };
+
+        // as soon as this event is sent- debugger info will appear. 
+        Protocol.SendEvent(new InitializedEvent());
+        
         
         this.Protocol.SendClientRequest(startReq, x =>
         {
-            
-            _session = new RemoteDebugSession(port);
+            _logger.Log("Connecting to debug application");
             _session.Connect();
+        
         }, (args, err) =>
         {
             
         });
+        var res = new LaunchResponse();
+        return res;
+    }
+
+
+    protected override ConfigurationDoneResponse HandleConfigurationDoneRequest(ConfigurationDoneArguments arguments)
+    {
         return new ConfigurationDoneResponse();
     }
 
@@ -145,7 +153,7 @@ public partial class FadeDebugAdapter : DebugAdapterBase
         {
         }
         
-        Process.GetProcessById(_session.RemoteProcessId).Kill();
+        // Process.GetProcessById(_session.RemoteProcessId).Kill();
 
         return new DisconnectResponse();
     }

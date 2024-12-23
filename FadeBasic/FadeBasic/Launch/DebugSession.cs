@@ -15,6 +15,9 @@ using FadeBasic.Virtual;
 
 namespace FadeBasic.Launch
 {
+    
+    
+    
     // make a debug server!
     public class DebugSession
     {
@@ -38,10 +41,31 @@ namespace FadeBasic.Launch
         private int hasConnectedDebugger;
         private int pauseRequestedByMessageId;
         private int resumeRequestedByMessageId;
-        private IntervalTree _tree;
+        
+        private int messageIdCounter;
+        
+        
+        
+        
+
+
+        private DebugMessage stepNextMessage;
+
+        private DebugToken stepOverFromToken;
+        private int stepOverFromStackDepth;
+
+        public HashSet<DebugToken> breakpointTokens = new HashSet<DebugToken>();
+        
+        
+        // public DebugMap stepNextStartLocal;
+        
+        // private IntervalTree _tree;
+        public IndexCollection instructionMap;
         private DebugMap _pauseLocal;
 
         private Task _taskGraph;
+
+        public IDebugLogger logger;
 
         public int InstructionPointer => _vm.instructionIndex;
 
@@ -52,8 +76,26 @@ namespace FadeBasic.Launch
             _options = options ?? LaunchOptions.DefaultOptions;
             _dbg = dbg;
             _vm = vm;
-            var flat = dbg.GetFlatPoints();
-            _tree = IntervalTree.From(flat);
+            instructionMap = new IndexCollection(_dbg.statementTokens);
+
+            if (!string.IsNullOrEmpty(options?.debugLogPath))
+            {
+                logger = new DebugLogger(options.debugLogPath);
+            }
+            else
+            {
+                logger = new EmptyDebugLogger();
+            }
+            
+            logger.Log("Starting debug session...");
+            foreach (var token in _dbg.statementTokens)
+            {
+                var json = JsonableExtensions.Jsonify(token);
+                logger.Log(json);
+            }
+            
+            
+            // _tree = IntervalTree.From(dbg.points);
         }
 
         public void StartServer()
@@ -72,7 +114,15 @@ namespace FadeBasic.Launch
         void RunServer(object state)
         {
             DebugServerStreamUtil.OpenServer2(_options.debugPort, outboundMessages, receivedMessages, _cts.Token);
+            logger.Log("SERVER IS DEAD!");
             throw new Exception("uh oh server2 is dead");
+        }
+
+        void Ack(int originalId, DebugMessage responseMsg)
+        {
+            responseMsg.id = originalId;
+            responseMsg.type = DebugMessageType.PROTO_ACK;
+            outboundMessages.Enqueue(responseMsg);
         }
         
         void Ack(DebugMessage originalMessage)
@@ -91,12 +141,24 @@ namespace FadeBasic.Launch
             responseMsg.type = DebugMessageType.PROTO_ACK;
             outboundMessages.Enqueue(responseMsg);
         }
+
+        public int GetNextMessageId() => Interlocked.Decrement(ref messageIdCounter);
+
+        void SendStopMessage()
+        {
+            var message = new DebugMessage()
+            {
+                id = GetNextMessageId(),
+                type = DebugMessageType.REV_REQUEST_BREAKPOINT
+            };
+            outboundMessages.Enqueue(message);
+        } 
         
         void ReadMessage()
         {
             if (receivedMessages.TryDequeue(out var message))
             {
-                Console.WriteLine($"[DBG] Received message : {message.id}, {message.type}");
+                logger.Log($"[DBG] Received message : {message.id}, {message.type}");
 
                 switch (message.type)
                 {
@@ -110,51 +172,153 @@ namespace FadeBasic.Launch
                     case DebugMessageType.REQUEST_PAUSE:
                         pauseRequestedByMessageId = message.id;
                         Ack(message);
-                        Console.WriteLine($"[DBG] enqueued ack for pause");
-
+                        
+                        if (!instructionMap.TryFindClosestTokenBeforeIndex(_vm.instructionIndex, out var pausedAtToken))
+                        {
+                            logger.Log($"[DBG] could not find pause token");
+                        }
+                        else
+                        {
+                            logger.Log($"[DBG] paused at ins=[{_vm.instructionIndex}]  token {pausedAtToken.Jsonify()}");
+                        }
+                        
                         break;
                     case DebugMessageType.REQUEST_PLAY:
                         resumeRequestedByMessageId = message.id;
                         Ack(message);
                         break;
-                    case DebugMessageType.REQUEST_NEXT:
+                    case DebugMessageType.REQUEST_BREAKPOINTS:
+                        var detail = JsonableExtensions.FromJson<RequestBreakpointMessage>(message.RawJson);
+                        // _breakpoints = detail.breakpoints;
                         
-                        Ack(message); // TODO: only send the ack after we have started playing again...
+                        logger.Log($"Handling breakpoint resolution... breakpoint-count=[{detail.breakpoints.Count}]");
+                        breakpointTokens.Clear();
+
+                        var verifiedBreakpoints = new List<Breakpoint>();
+                        for (var i = 0; i < detail.breakpoints.Count; i++)
+                        {
+                            var requestedBreakPoint = detail.breakpoints[i];
+                            var verified = instructionMap.TryFindClosestTokenAtLocation(requestedBreakPoint.lineNumber,
+                                requestedBreakPoint.colNumber, out var token);
+
+                            var bp = new Breakpoint
+                            {
+                                status = verified ? 1 : -1,
+                                lineNumber = verified ? token.token.lineNumber : requestedBreakPoint.lineNumber,
+                                colNumber = verified ? token.token.charNumber : requestedBreakPoint.colNumber
+                            };
+                            logger.Log($" breakpoint index=[{i}] is verified=[{verified}] line=[{bp.lineNumber}] cn=[{bp.colNumber}]");
+                            verifiedBreakpoints.Add(bp);
+                            if (verified)
+                            {
+                                breakpointTokens.Add(token);
+                            }
+                        }
+                        
+                        
+                        Ack(message, new ResponseBreakpointMessage
+                        {
+                            breakpoints = verifiedBreakpoints
+                        });
+                        
+                        break;
+                    case DebugMessageType.REQUEST_NEXT:
+
+                        // stepping NEXT means "step over"
+                        //  that means go to the next statement that has the same stack depth, OR less than currently. 
+
+                        { // reset the info to blank
+                            stepOverFromToken = null;
+                            stepOverFromStackDepth = 0;
+                        }
+
+
+                        if (!instructionMap.TryFindClosestTokenBeforeIndex(_vm.instructionIndex, out stepOverFromToken))
+                        {
+                            logger.Log($"[DBG] could not find next starting token");
+                            Ack(message, new StepNextResponseMessage
+                            {
+                                reason = "no source location available for starting location",
+                                status = -1
+                            });
+                        }
+
+                        stepNextMessage = message; // need to to ACK later...
+                        stepOverFromStackDepth = _vm.stack.Count;
+
+                        logger.Log($"[DBG] stepping from {stepOverFromToken.Jsonify()}");
                         break;
                     case DebugMessageType.REQUEST_STACK_FRAMES:
-                        // TODO: 
-                        //  how do I generate a list of stack frames at any given moment? 
-                        //  probably by looking at the scopeStack in the vm
-                        Console.WriteLine($"[DBG] stack frames");
+                   
+                        // given the current location, find the current "statement", and use that to backtrack
+                        var locations = new Stack<int>();
 
-                        if (this._tree.TryFind(_vm.instructionIndex, out var map))
+                        for (var i = 0; i < _vm.methodStack.Count; i++) // push oldest to newest
                         {
-                            var lineNumber = map.range.startToken.token.lineNumber;
-                            var charNumber = map.range.startToken.token.charNumber;
-                            var frame = new DebugStackFrame(lineNumber, charNumber);
+                            locations.Push(_vm.methodStack.buffer[i]);
+                        }
+                        locations.Push(_vm.instructionIndex); // current location is latest in stack.
+
+                        var frames = new List<DebugStackFrame>();
+                        foreach (var stackPtr in locations)
+                        {
+                            if (!instructionMap.TryFindClosestTokenBeforeIndex(stackPtr, out var token))
+                            {
+                                logger.Log($"[DBG] no instruction for frame. ins=[{_vm.instructionIndex}]");
+                                continue;
+                            }
+
+                            string functionName = "<root!>";
+                            if (_dbg.insToFunction.TryGetValue(stackPtr, out var functionToken))
+                            {
+                                functionName = functionToken.token.raw; // TODO: I think the names are backwards?
+                            }
                             
-                            Ack(message, new StackFrameMessage
+                            frames.Add(new DebugStackFrame
                             {
-                                frames = new List<DebugStackFrame>
-                                {
-                                    frame
-                                }
+                                colNumber = token.token.charNumber,
+                                lineNumber = token.token.lineNumber,
+                                name = functionName
                             });
-                            Console.WriteLine($"[DBG] enqueued stack frame response");
-
+                            
                         }
-                        else
+                        
+                        Ack(message, new StackFrameMessage
                         {
-                            Console.WriteLine($"[DBG] no instruction for frame. ins=[{_vm.instructionIndex}]");
-                            Ack(message, new StackFrameMessage
-                            {
-                                frames = new List<DebugStackFrame>()
-                            });
-                        }
+                            frames = frames
+                        });
+                        logger.Log($"[DBG] enqueued stack frame response. frame-count=[{frames.Count}]");
+                        
+                        // if (this._tree.TryFind(_vm.instructionIndex, out var map))
+                        // {
+                        //     var lineNumber = map.range.startToken.token.lineNumber;
+                        //     var charNumber = map.range.startToken.token.charNumber;
+                        //     var frame = new DebugStackFrame(lineNumber, charNumber);
+                        //     
+                        //     Ack(message, new StackFrameMessage
+                        //     {
+                        //         frames = new List<DebugStackFrame>
+                        //         {
+                        //             frame
+                        //         }
+                        //     });
+                        //     Console.WriteLine($"[DBG] enqueued stack frame response");
+                        //
+                        // }
+                        // else
+                        // {
+                        //     Console.WriteLine($"[DBG] no instruction for frame. ins=[{_vm.instructionIndex}]");
+                        //     Ack(message, new StackFrameMessage
+                        //     {
+                        //         frames = new List<DebugStackFrame>()
+                        //     });
+                        // }
                         break;
                 }
             }
         }
+        
+        
         
 
         public void StartDebugging(int ops = 0)
@@ -181,36 +345,66 @@ namespace FadeBasic.Launch
                 
                 ReadMessage();
 
+                var hasCurrentToken =
+                    instructionMap.TryFindClosestTokenBeforeIndex(_vm.instructionIndex, out var currentToken);
+
+                if (hasCurrentToken)
+                {
+                    if (!IsPaused && breakpointTokens.Contains(currentToken))
+                    {
+                        logger.Log($"HIT BREAKPOINT {currentToken.Jsonify()}");
+                        pauseRequestedByMessageId = resumeRequestedByMessageId + 1; // mock
+                       
+                        // NEED TO ACTUALLY PAUSE AND WAIT FOR CONTINUATION...
+                        SendStopMessage();
+                        continue;
+                    }
+                }
+                
                 if (!IsPaused)
                 {
                     _vm.Execute2(1);
                 }
+                else
+                {
+                    // handle the step-next case
+                    if (stepNextMessage != null)
+                    {
+                        if (!hasCurrentToken)
+                        {
+                            Ack(stepNextMessage, new StepNextResponseMessage
+                            {
+                                reason = $"no source location available while stepping. ins=[{_vm.instructionIndex}]",
+                                status = -1
+                            });
+                            stepNextMessage = null;
+                        }
+                        else
+                        {
+                            var isNewToken = currentToken.insIndex != stepOverFromToken.insIndex;
+                            var isSameOrLessDepth = _vm.stack.Count <= stepOverFromStackDepth;
+
+                            if (isNewToken && isSameOrLessDepth)
+                            {
+                                // we have arrived at the stop location.
+                                Ack(stepNextMessage, new StepNextResponseMessage
+                                {
+                                    reason = "hit next",
+                                    status = 1
+                                });
+                                stepNextMessage = null;
+                            }
+                            else
+                            {
+                                _vm.Execute2(1);
+                            }
+                        }
+                        
+                    }
+                }
             }
             
         }
-        
-        // public void Continue() => Execute(true);
-
-        // public void Execute(bool ignoreFirstBreakpoint=false)
-        // {
-        //     while (_vm.instructionIndex < _vm.program.Length)
-        //     {
-        //         var isBreakpoint = _dbg.insBreakpoints.Contains(_vm.instructionIndex);
-        //         
-        //         if (isBreakpoint)
-        //         {
-        //             if (!ignoreFirstBreakpoint)
-        //             {
-        //                 break;
-        //             }
-        //             else
-        //             {
-        //                 ignoreFirstBreakpoint = false;
-        //             }
-        //         }
-        //         _vm.Execute2(1);
-        //     }
-        // }
         
     }
 
@@ -221,11 +415,14 @@ namespace FadeBasic.Launch
         PROTO_HELLO,
         PROTO_ACK,
         
+        REV_REQUEST_BREAKPOINT,
+        
         REQUEST_PAUSE,
         REQUEST_PLAY,
         REQUEST_NEXT,
         
-        REQUEST_STACK_FRAMES
+        REQUEST_STACK_FRAMES,
+        REQUEST_BREAKPOINTS
     }
 
     public interface IHasRawBytes
@@ -256,6 +453,19 @@ namespace FadeBasic.Launch
         public string RawJson { get; set; }
     }
 
+    public class StepNextResponseMessage : DebugMessage
+    {
+        public string reason;
+        public int status;
+
+        public override void ProcessJson(IJsonOperation op)
+        {
+            base.ProcessJson(op);
+            op.IncludeField(nameof(reason), ref reason);
+            op.IncludeField(nameof(status), ref status);
+        }
+    }
+    
     public class StackFrameMessage : DebugMessage
     {
         public List<DebugStackFrame> frames;

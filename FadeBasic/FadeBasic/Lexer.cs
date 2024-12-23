@@ -260,10 +260,13 @@ namespace FadeBasic
 
         public List<Token> Tokenize(string input, CommandCollection commands = default)
         {
-            var res = TokenizeWithErrors(input, commands);
+            var res = TokenizeWithErrors(input, commands?.Commands?.Select(c => c.name).ToList());
             return res.tokens;
         }
-        public LexerResults TokenizeWithErrors(string input, CommandCollection commands = default)
+
+        public LexerResults TokenizeWithErrors(string input, CommandCollection commands) =>
+            TokenizeWithErrors(input, commands?.Commands?.Select(c => c.name).ToList());
+        public LexerResults TokenizeWithErrors(string input, List<string> commandNames=null)
         {
             var tokens = new List<Token>();
             var comments = new List<Token>();
@@ -280,9 +283,9 @@ namespace FadeBasic
                 comments.Add(t);
                 combined.Add(t);
             }
-            if (commands == default)
+            if (commandNames == null)
             {
-                commands = new CommandCollection();
+                commandNames = new List<string>();
             }
 
             var errors = new List<LexerError>();
@@ -291,10 +294,10 @@ namespace FadeBasic
 
             var lexems = Lexems.ToList();
             // commands
-            foreach (var command in commands.Commands)
+            foreach (var commandName in commandNames)
             {
                 // var pattern = "";
-                var components = command.name.Select(x =>
+                var components = commandName.Select(x =>
                 {
                     switch (x)
                     {

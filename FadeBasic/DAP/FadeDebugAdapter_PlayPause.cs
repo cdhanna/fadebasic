@@ -27,8 +27,9 @@ public partial class FadeDebugAdapter
 
     protected override NextResponse HandleNextRequest(NextArguments arguments)
     {
-        _session.SendNext(() =>
+        _session.SendNext((msg) =>
         {
+            
             Protocol.SendEvent(new StoppedEvent
             {
                 Reason = StoppedEvent.ReasonValue.Step,

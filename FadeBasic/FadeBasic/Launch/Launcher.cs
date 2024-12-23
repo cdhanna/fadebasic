@@ -11,11 +11,14 @@ namespace FadeBasic.Launch
     {
         public const string ENV_ENABLE_DEBUG = "FADE_BASIC_DEBUG";
         public const string ENV_DEBUG_PORT = "FADE_BASIC_DEBUG_PORT";
+        public const string ENV_DEBUG_LOG_PATH = "FADE_BASIC_DEBUG_LOG_PATH";
         
         
         public bool debug;
         public int debugPort = 0;
         public bool debugWaitForConnection = true;
+        public string debugLogPath;
+        
 
         public static readonly LaunchOptions DefaultOptions;
         static LaunchOptions()
@@ -26,6 +29,7 @@ namespace FadeBasic.Launch
                 debug = debugEnv == "true" || debugEnv == "1",
                 debugPort = 0,
                 debugWaitForConnection = true,
+                debugLogPath = Environment.GetEnvironmentVariable(ENV_DEBUG_LOG_PATH)
             };
 
             if (!int.TryParse(Environment.GetEnvironmentVariable(ENV_DEBUG_PORT), out DefaultOptions.debugPort))
