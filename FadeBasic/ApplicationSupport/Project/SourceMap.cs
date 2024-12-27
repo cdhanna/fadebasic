@@ -108,6 +108,10 @@ public class SourceMap
         }
         
         // need to find the token that contains the given char number. 
+        if (!strict && tokens.Count > 0)
+        {
+            foundToken = tokens.FirstOrDefault(t => t.type != LexemType.EndStatement);
+        }
         for (var i = 0; i < tokens.Count; i++)
         {
             var token = tokens[i];
@@ -118,7 +122,7 @@ public class SourceMap
             }
         }
 
-        return false;
+        return foundToken != null;
     }
 
     public void ProvideTokens(LexerResults lexResults)

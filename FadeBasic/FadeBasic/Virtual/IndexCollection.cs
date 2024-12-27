@@ -53,9 +53,15 @@ namespace FadeBasic.Virtual
             token = null;
             for (var i = 1; i < _statementTokens.Count; i++)
             {
-                if (i == _statementTokens.Count - 1 || _statementTokens[i].insIndex > insIndex)
+               
+                if (_statementTokens[i].insIndex > insIndex)
                 {
                     token = _statementTokens[i - 1];
+                    return true;
+                }
+                if (i == _statementTokens.Count - 1)
+                {
+                    token = _statementTokens[i];
                     return true;
                 }
             }

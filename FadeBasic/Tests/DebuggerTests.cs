@@ -43,6 +43,27 @@ b# = 2.3
 
         Assert.That(variables.Count, Is.EqualTo(2));
     }
+    
+    
+    [Test]
+    public void FunctionMap()
+    {
+        var src = @"n = 1
+igloo(n)
+
+function igloo(y)
+x = y * 2
+toast()
+endfunction
+
+function toast()
+endfunction
+";
+        Compile(src, out _, out var compiler, out var vm);
+        var dbg = compiler.DebugData;
+        var map = new IndexCollection(dbg.statementTokens);
+     
+    }
 
     [Test]
     public void IndexMap()
@@ -123,6 +144,8 @@ endfunction";
 //             Assert.Fail("should have found map");
 //         }
 //     }
+
+
 
     [Test]
     public async Task DebugServerTest()

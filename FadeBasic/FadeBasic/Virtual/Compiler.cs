@@ -402,7 +402,7 @@ namespace FadeBasic.Virtual
                 InstructionIndex = _buffer.Count,
                 FunctionName = expr.variableName
             });
-            AddPushInt(_buffer, int.MaxValue);
+            AddPushInt(_buffer, int.MaxValue); // temp ptr value, will be replaced by function location later.
             _buffer.Add(OpCodes.JUMP_HISTORY);
         }
 
@@ -432,7 +432,7 @@ namespace FadeBasic.Virtual
             _functionTable[functionStatement.name] = ptr; // TODO: what about duplicate function names?
             
             // at the insIndex, take note of the name for the debug data. Later, the index that has the 
-            _dbg?.AddFunction(_buffer.Count - 1, functionStatement.nameToken);
+            _dbg?.AddFunction(ptr, functionStatement.nameToken);
 
             // push a new scope
             _buffer.Add(OpCodes.PUSH_SCOPE);
@@ -905,21 +905,26 @@ namespace FadeBasic.Virtual
                 Compile(successStatement);
             }
 
+            _dbg?.AddFakeDebugToken(_buffer.Count - 1, ifStatement.endToken);
+            
             // at the end of the successful statements, we need to jump to the end
             var endJumpIndex = _buffer.Count;
             AddPushInt(_buffer, int.MaxValue);
             _buffer.Add(OpCodes.JUMP);
 
+
             // this is where the else statements begin
             var elseJumpValue = _buffer.Count;
-            _buffer.Add(OpCodes.NOOP);
+            // _buffer.Add(OpCodes.NOOP);
             foreach (var elseStatement in ifStatement.negativeStatements)
             {
                 Compile(elseStatement);
             }
 
+            // _dbg?.AddFakeDebugToken(_buffer.Count - 1, ifStatement.endToken);
+
             var endJumpValue = _buffer.Count;
-            _buffer.Add(OpCodes.NOOP);
+            // _buffer.Add(OpCodes.NOOP);
             
             // now go back and fill in the success ptr
             var successJumpBytes = BitConverter.GetBytes(successJumpValue);

@@ -8,6 +8,23 @@ namespace FadeBasic.Virtual
         public string name;
         public byte typeCode;
         public ulong rawValue;
+        public int stackIndex;
+
+        public string GetValueDisplay(VirtualMachine vm)
+        {
+            switch (typeCode)
+            {
+                case TypeCodes.REAL:
+                    return FloatValue.ToString();
+                case TypeCodes.STRING:
+                    throw new NotImplementedException("need to look in heap");
+                case TypeCodes.BOOL:
+                    return rawValue == 0 ? "false" : "true";
+                default:
+                    return rawValue.ToString();
+            }
+        
+        }
 
         public string TypeName
         {
@@ -37,11 +54,13 @@ namespace FadeBasic.Virtual
     public static class DebugUtil
     {
         
-        public static Dictionary<string, DebugRuntimeVariable> LookupVariables(VirtualMachine vm, DebugData dbg)
+        public static Dictionary<string, DebugRuntimeVariable> LookupVariables(VirtualMachine vm, DebugData dbg, int index=-1)
         {
             var results = new Dictionary<string, DebugRuntimeVariable>();
             for (var i = 0; i < vm.scopeStack.ptr; i++)
             {
+                if (index != -1 && i != index) continue;
+                
                 var scope = vm.scopeStack.buffer[i];
 
                 for (var scopeIndex = 0; scopeIndex < scope.dataRegisters.Length; scopeIndex++)
@@ -56,6 +75,7 @@ namespace FadeBasic.Virtual
                     results[variable.name] = new DebugRuntimeVariable
                     {
                         name = variable.name,
+                        stackIndex = i,
                         typeCode = scope.typeRegisters[scopeIndex],
                         rawValue = scope.dataRegisters[scopeIndex]
                     };

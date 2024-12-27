@@ -30,6 +30,12 @@ namespace FadeBasic.Virtual
         }
     }
 
+    public struct JumpHistoryData
+    {
+        public int fromIns;
+        public int toIns;
+    }
+
     
     public class VirtualMachine
     {
@@ -48,6 +54,8 @@ namespace FadeBasic.Virtual
         public FastStack<VirtualScope> scopeStack;
 
         public VirtualScope scope;
+
+        public IDebugLogger logger;
 
         public ulong[] dataRegisters => scope.dataRegisters; // TODO: optimize to remove method call Peek()
         public byte[] typeRegisters => scope.typeRegisters;
@@ -209,6 +217,7 @@ namespace FadeBasic.Virtual
                             // the next instruction is the instruction ptr
                             VmUtil.ReadAsInt(ref stack, out insPtr);
                             methodStack.Push(instructionIndex) ;
+                            logger?.Log($"[VM] JUMP HISTORY FROM=[{instructionIndex}] TO=[{insPtr}]");
                             instructionIndex = insPtr;
                             break;
                         case OpCodes.RETURN:

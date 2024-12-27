@@ -25,6 +25,7 @@ namespace FadeBasic.Launch
             new ConcurrentDictionary<int, Action<DebugMessage>>();
 
         public Action HitBreakpointCallback;
+        public Action Exited;
         
         public RemoteDebugSession(int port)
         {
@@ -69,6 +70,9 @@ namespace FadeBasic.Launch
                                 // ah, emit a stop event!
                                 HitBreakpointCallback?.Invoke();
                                 break;
+                            case DebugMessageType.REV_REQUEST_EXITED:
+                                Exited?.Invoke();
+                                break;
                         }
                         
                         
@@ -104,6 +108,13 @@ namespace FadeBasic.Launch
             outboundMessages.Enqueue(message);
         }
 
+
+        public void SendTerminate(Action handler) => Send(new DebugMessage
+        {
+            id = GetNextMessageId(),
+            type = DebugMessageType.REQUEST_TERMINATE
+        }, _ => handler());
+        
         public void SendPause(Action handler) => Send(new DebugMessage()
         {
             id = GetNextMessageId(),
@@ -116,16 +127,50 @@ namespace FadeBasic.Launch
             type = DebugMessageType.REQUEST_PLAY,
         }, _ => handler());
 
-        public void SendNext(Action<StepNextResponseMessage> handler) => Send(new DebugMessage
+        public void SendStepOver(Action<StepNextResponseMessage> handler) => Send(new DebugMessage
         {
             id = GetNextMessageId(),
-            type = DebugMessageType.REQUEST_NEXT
+            type = DebugMessageType.REQUEST_STEP_OVER
+        }, msg =>
+        {
+            var details = JsonableExtensions.FromJson<StepNextResponseMessage>(msg.RawJson);
+            handler(details);
+        });
+        
+        public void SendStepIn(Action<StepNextResponseMessage> handler) => Send(new DebugMessage
+        {
+            id = GetNextMessageId(),
+            type = DebugMessageType.REQUEST_STEP_IN
+        }, msg =>
+        {
+            var details = JsonableExtensions.FromJson<StepNextResponseMessage>(msg.RawJson);
+            handler(details);
+        });
+        
+        public void SendStepOut(Action<StepNextResponseMessage> handler) => Send(new DebugMessage
+        {
+            id = GetNextMessageId(),
+            type = DebugMessageType.REQUEST_STEP_OUT
         }, msg =>
         {
             var details = JsonableExtensions.FromJson<StepNextResponseMessage>(msg.RawJson);
             handler(details);
         });
 
+        public void RequestScopes(int frameIndex, Action<List<DebugScope>> handler)
+        {
+            Send(new DebugScopeRequest
+            {
+                id = GetNextMessageId(),
+                type = DebugMessageType.REQUEST_SCOPES,
+                frameIndex = frameIndex
+            }, msg =>
+            {
+                var details = JsonableExtensions.FromJson<ScopesMessage>(msg.RawJson);
+                handler?.Invoke(details.scopes);
+            });
+        }
+        
         public void RequestStackFrames(Action<List<DebugStackFrame>> handler)
         {
             Send(new DebugMessage
@@ -152,6 +197,7 @@ namespace FadeBasic.Launch
                 handler?.Invoke(details.breakpoints);
             });
         }
+
     }
 
     public class Breakpoint : IJsonable
@@ -185,6 +231,17 @@ namespace FadeBasic.Launch
         {
             base.ProcessJson(op);
             op.IncludeField(nameof(breakpoints), ref breakpoints);
+        }
+    }
+
+    public class DebugScopeRequest : DebugMessage
+    {
+        public int frameIndex;
+
+        public override void ProcessJson(IJsonOperation op)
+        {
+            base.ProcessJson(op);
+            op.IncludeField(nameof(frameIndex), ref frameIndex);
         }
     }
 

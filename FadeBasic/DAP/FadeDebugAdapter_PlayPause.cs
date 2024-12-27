@@ -27,9 +27,8 @@ public partial class FadeDebugAdapter
 
     protected override NextResponse HandleNextRequest(NextArguments arguments)
     {
-        _session.SendNext((msg) =>
+        _session.SendStepOver((msg) =>
         {
-            
             Protocol.SendEvent(new StoppedEvent
             {
                 Reason = StoppedEvent.ReasonValue.Step,
@@ -37,5 +36,31 @@ public partial class FadeDebugAdapter
             });
         });
         return new NextResponse();
+    }
+
+    protected override StepInResponse HandleStepInRequest(StepInArguments arguments)
+    {
+        _session.SendStepIn((msg) =>
+        {
+            Protocol.SendEvent(new StoppedEvent
+            {
+                Reason = StoppedEvent.ReasonValue.Step,
+                AllThreadsStopped = true,
+            });
+        });
+        return new StepInResponse();
+    }
+
+    protected override StepOutResponse HandleStepOutRequest(StepOutArguments arguments)
+    {
+        _session.SendStepOut((msg) =>
+        {
+            Protocol.SendEvent(new StoppedEvent
+            {
+                Reason = StoppedEvent.ReasonValue.Step,
+                AllThreadsStopped = true,
+            });
+        });
+        return new StepOutResponse();
     }
 }

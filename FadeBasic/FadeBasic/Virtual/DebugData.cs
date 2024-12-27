@@ -56,7 +56,15 @@ namespace FadeBasic.Virtual
         // private Stack<DebugMap> _currentPointBuilder = new Stack<DebugMap>();
 
 
-        
+        public void AddFakeDebugToken(int insIndex, Token token)
+        {
+            statementTokens.Add(new DebugToken
+            {
+                insIndex = insIndex,
+                token = token,
+                isComputed = 1
+            });
+        }
         public void AddStatementDebugToken(int insIndex, Token token)
         {
             statementTokens.Add(new DebugToken
@@ -123,6 +131,12 @@ namespace FadeBasic.Virtual
                 token = functionNameToken,
                 insIndex = insIndex
             };
+            statementTokens.Add(new DebugToken
+            {
+                insIndex = insIndex,
+                token = functionNameToken,
+                isComputed = 1
+            });
         }
         
         public void AddVariable(int insIndex, CompiledVariable compiledVar)
@@ -177,10 +191,16 @@ namespace FadeBasic.Virtual
         public int insIndex;
         public Token token;
         
+        /// <summary>
+        /// When the token is being manufactured within the compiler, and ISN'T directly tied to source code. 
+        /// </summary>
+        public int isComputed;
+        
         public void ProcessJson(IJsonOperation op)
         {
             op.IncludeField(nameof(insIndex), ref insIndex);
             op.IncludeField(nameof(token), ref token);
+            op.IncludeField(nameof(isComputed), ref isComputed);
         }
     }
 

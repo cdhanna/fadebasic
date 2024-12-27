@@ -1,6 +1,8 @@
 using FadeBasic;
 using FadeBasic.Json;
+using FadeBasic.Launch;
 using FadeBasic.Virtual;
+using DebugVariable = FadeBasic.Launch.DebugVariable;
 
 namespace Tests;
 
@@ -46,6 +48,36 @@ public class JsonTests
         {
             op.IncludeField("duds", ref duds);
         }
+    }
+
+    [Test]
+    public void DebugScopeTest()
+    {
+        var msg = new ScopesMessage
+        {
+            id = 3,
+            type = DebugMessageType.PROTO_ACK,
+            scopes = new List<DebugScope>
+            {
+                new DebugScope
+                {
+                    variables = new List<DebugVariable>
+                    {
+                        new DebugVariable
+                        {
+                            name = "toast",
+                            type = "int",
+                            value = "32"
+                        }
+                    }
+                }
+            }
+        };
+
+        var json = msg.Jsonify();
+
+        var parsed = JsonableExtensions.FromJson<ScopesMessage>(json);
+        Assert.That(parsed.scopes[0].variables[0].type, Is.EqualTo("int"));
     }
 
     [Test]

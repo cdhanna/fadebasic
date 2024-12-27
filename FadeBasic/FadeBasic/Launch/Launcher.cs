@@ -74,7 +74,7 @@ namespace FadeBasic.Launch
                 var session = new DebugSession(vm, instance.DebugData, options);
                 session.StartServer();
                 session.StartDebugging(); // needs infinite budget. 
-                
+                session.ShutdownServer();
                 
                 // session.StartServer();
             }

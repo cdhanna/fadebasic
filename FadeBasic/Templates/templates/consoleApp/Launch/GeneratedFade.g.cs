@@ -30,7 +30,7 @@ public class GeneratedFade : ILaunchable
 
     #region debugData
     protected DebugData _debugData = LaunchUtil.UnpackDebugData(encodedDebugData);
-    protected const string encodedDebugData = "eyJwb2ludHMiOlt7InJhbmdlIjp7InN0YXJ0VG9rZW4iOnsiaW5zSW5kZXgiOjAsInRva2VuIjp7ImxpbmVOdW1iZXIiOjQsImNoYXJOdW1iZXIiOjAsInJhdyI6InByaW50IiwiY2FzZUluc2Vuc2l0aXZlUmF3IjoicHJpbnQifX0sInN0b3BUb2tlbiI6eyJpbnNJbmRleCI6OTAsInRva2VuIjp7ImxpbmVOdW1iZXIiOjUsImNoYXJOdW1iZXIiOjAsInJhdyI6bnVsbCwiY2FzZUluc2Vuc2l0aXZlUmF3IjoiCiJ9fX0sImlubmVyTWFwcyI6W119XSJpbnNUb1ZhcmlhYmxlIjp7fX0=";
+    protected const string encodedDebugData = "eyJpbnNUb1ZhcmlhYmxlIjp7fSJzdGF0ZW1lbnRUb2tlbnMiOlt7Imluc0luZGV4IjowLCJ0b2tlbiI6eyJsaW5lTnVtYmVyIjo0LCJjaGFyTnVtYmVyIjowLCJyYXciOiJwcmludCIsImNhc2VJbnNlbnNpdGl2ZVJhdyI6InByaW50In0sImlzQ29tcHV0ZWQiOjB9XSJpbnNUb0Z1bmN0aW9uIjp7fX0=";
     #endregion
 
     #region bytecode

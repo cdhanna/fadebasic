@@ -17,14 +17,24 @@ namespace FadeBasic.Launch
 {
     
     
-    
     // make a debug server!
     public class DebugSession
     {
+
+        enum State
+        {
+            INIT,
+            PLAYING,
+            PAUSED,
+            STEPPING_NEXT
+        }
+        
+        
         private VirtualMachine _vm;
         private DebugData _dbg;
         private LaunchOptions _options;
 
+        private bool requestedExit;
         private bool started;
         private Task _serverTask;
         private Task _processingTask;
@@ -43,28 +53,22 @@ namespace FadeBasic.Launch
         private int resumeRequestedByMessageId;
         
         private int messageIdCounter;
-        
-        
-        
-        
 
 
+        private int currentInsLookupOffset = 0;
         private DebugMessage stepNextMessage;
+        private DebugMessage stepIntoMessage;
+        private DebugMessage stepOutMessage;
 
         private DebugToken stepOverFromToken;
-        private int stepOverFromStackDepth;
+        private DebugToken stepInFromToken;
+        private DebugToken stepOutFromToken;
+        private int stepStackDepth;
 
         public HashSet<DebugToken> breakpointTokens = new HashSet<DebugToken>();
-        
-        
-        // public DebugMap stepNextStartLocal;
-        
-        // private IntervalTree _tree;
+        public DebugToken hitBreakpointToken;
         public IndexCollection instructionMap;
-        private DebugMap _pauseLocal;
-
-        private Task _taskGraph;
-
+        
         public IDebugLogger logger;
 
         public int InstructionPointer => _vm.instructionIndex;
@@ -86,8 +90,10 @@ namespace FadeBasic.Launch
             {
                 logger = new EmptyDebugLogger();
             }
-            
+            _vm.logger = logger;
+
             logger.Log("Starting debug session...");
+
             foreach (var token in _dbg.statementTokens)
             {
                 var json = JsonableExtensions.Jsonify(token);
@@ -109,6 +115,17 @@ namespace FadeBasic.Launch
             {
                 throw new Exception("Could not acquire server thread.");
             }
+        }
+
+        public void ShutdownServer()
+        {
+            logger.Log("Starting server shutdown...");
+            while (outboundMessages.Count > 0)
+            {
+                Thread.Sleep(10); // wait for messages to go away...
+            }
+            logger.Log("Messages done...");
+            _cts.Cancel();
         }
 
         void RunServer(object state)
@@ -152,7 +169,17 @@ namespace FadeBasic.Launch
                 type = DebugMessageType.REV_REQUEST_BREAKPOINT
             };
             outboundMessages.Enqueue(message);
-        } 
+        }
+
+        void SendExitedMessage()
+        {
+            var message = new DebugMessage()
+            {
+                id = GetNextMessageId(),
+                type = DebugMessageType.REV_REQUEST_EXITED
+            };
+            outboundMessages.Enqueue(message);
+        }
         
         void ReadMessage()
         {
@@ -186,6 +213,11 @@ namespace FadeBasic.Launch
                     case DebugMessageType.REQUEST_PLAY:
                         resumeRequestedByMessageId = message.id;
                         Ack(message);
+                        break;
+                    case DebugMessageType.REQUEST_TERMINATE:
+                        requestedExit = true;
+                        Ack(message);
+                        Environment.Exit(0);
                         break;
                     case DebugMessageType.REQUEST_BREAKPOINTS:
                         var detail = JsonableExtensions.FromJson<RequestBreakpointMessage>(message.RawJson);
@@ -222,17 +254,60 @@ namespace FadeBasic.Launch
                         });
                         
                         break;
-                    case DebugMessageType.REQUEST_NEXT:
+                    case DebugMessageType.REQUEST_STEP_IN:
+
+                        { // reset the info to blank
+                            stepInFromToken = null;
+                            stepStackDepth = 0;
+                        }
+                        
+                        if (!instructionMap.TryFindClosestTokenBeforeIndex(_vm.instructionIndex, out stepInFromToken))
+                        {
+                            logger.Log($"[DBG] could not find into starting token");
+                            Ack(message, new StepNextResponseMessage
+                            {
+                                reason = "no source location available for starting location",
+                                status = -1
+                            });
+                        }
+
+                        stepIntoMessage = message; // need to to ACK later...
+                        stepStackDepth = _vm.methodStack.Count;
+
+                        logger.Log($"[DBG] stepping in ins=[{_vm.program[_vm.instructionIndex]}] depth=[{stepStackDepth}] from {stepInFromToken.Jsonify()}");
+                        break;
+                    case DebugMessageType.REQUEST_STEP_OUT:
+
+                        { // reset the info to blank
+                            stepOutFromToken = null;
+                            stepStackDepth = 0;
+                        }
+                        
+                        if (!instructionMap.TryFindClosestTokenBeforeIndex(_vm.instructionIndex, out stepOutFromToken))
+                        {
+                            logger.Log($"[DBG] could not find out starting token");
+                            Ack(message, new StepNextResponseMessage
+                            {
+                                reason = "no source location available for starting location",
+                                status = -1
+                            });
+                        }
+
+                        stepOutMessage = message; // need to to ACK later...
+                        stepStackDepth = _vm.methodStack.Count;
+
+                        logger.Log($"[DBG] stepping out from {stepOutFromToken.Jsonify()}");
+                        break;
+                    case DebugMessageType.REQUEST_STEP_OVER:
 
                         // stepping NEXT means "step over"
                         //  that means go to the next statement that has the same stack depth, OR less than currently. 
 
                         { // reset the info to blank
                             stepOverFromToken = null;
-                            stepOverFromStackDepth = 0;
+                            stepStackDepth = 0;
                         }
-
-
+                        
                         if (!instructionMap.TryFindClosestTokenBeforeIndex(_vm.instructionIndex, out stepOverFromToken))
                         {
                             logger.Log($"[DBG] could not find next starting token");
@@ -244,82 +319,123 @@ namespace FadeBasic.Launch
                         }
 
                         stepNextMessage = message; // need to to ACK later...
-                        stepOverFromStackDepth = _vm.stack.Count;
+                        stepStackDepth = _vm.methodStack.Count;
 
-                        logger.Log($"[DBG] stepping from {stepOverFromToken.Jsonify()}");
+                        logger.Debug($"stepping from {stepOverFromToken.Jsonify()}");
+                        break;
+                    
+                    case DebugMessageType.REQUEST_SCOPES:
+                        var scopeRequest = JsonableExtensions.FromJson<DebugScopeRequest>(message.RawJson);
+                        var scopeFrames = GetFrames();
+                        var frameIndex = scopeRequest.frameIndex;
+                        logger.Info($"got stack frame request with frame-id=[{frameIndex}] frame-count=[{scopeFrames.Count}] scope-stack=[{_vm.scopeStack.Count}]");
+
+                        if (frameIndex < 0 || frameIndex >= scopeFrames.Count)
+                        {
+                            logger.Error($"scope request failed because frame-index=[{frameIndex}] was out of bounds of max=[{scopeFrames.Count}]");
+                        }
+                        var dict = DebugUtil.LookupVariables(_vm, _dbg, frameIndex);
+                        var scope = new DebugScope();
+                        
+                        logger.Info($"variables count=[{dict.Count}]");
+                        foreach (var kvp in dict)
+                        {
+                            scope.variables.Add(new DebugVariable
+                            {
+                                name = kvp.Key,
+                                value = kvp.Value.GetValueDisplay(_vm),
+                                type = kvp.Value.TypeName
+                            });
+                            logger.Info($"variable name=[{kvp.Key}] raw val=[{kvp.Value.rawValue}] type=[{kvp.Value.TypeName}]");
+                        }
+                        Ack(message, new ScopesMessage
+                        {
+                            scopes = new List<DebugScope>
+                            {
+                                scope
+                            }
+                        });
+                        logger.Log("sent back request..");
+                        
+                        // logger.Info($"Looking at scope length=[{scope.insIndexes.Length}] dbg-count=[{_dbg.insToVariable.Count}]");
+                        // for (var i = 0; i < scope.insIndexes.Length; i++)
+                        // {
+                        //     var ins = scope.insIndexes[i];
+                        //     var typeCode = scope.typeRegisters[i];
+                        //     var value = scope.dataRegisters[i];
+                        //     logger.Info($"found variable at ins=[{ins}] typecode=[{typeCode}] data=[{value}]");
+                        //     if (!_dbg.insToVariable.TryGetValue(ins, out var variable))
+                        //     {
+                        //         logger.Error($"failed to find variable");
+                        //     }
+                        //     else
+                        //     {
+                        //         logger.Info($"variable is name=[{variable.name}]");
+                        //     }
+                        // }
+                        
                         break;
                     case DebugMessageType.REQUEST_STACK_FRAMES:
-                   
-                        // given the current location, find the current "statement", and use that to backtrack
-                        var locations = new Stack<int>();
-
-                        for (var i = 0; i < _vm.methodStack.Count; i++) // push oldest to newest
-                        {
-                            locations.Push(_vm.methodStack.buffer[i]);
-                        }
-                        locations.Push(_vm.instructionIndex); // current location is latest in stack.
-
-                        var frames = new List<DebugStackFrame>();
-                        foreach (var stackPtr in locations)
-                        {
-                            if (!instructionMap.TryFindClosestTokenBeforeIndex(stackPtr, out var token))
-                            {
-                                logger.Log($"[DBG] no instruction for frame. ins=[{_vm.instructionIndex}]");
-                                continue;
-                            }
-
-                            string functionName = "<root!>";
-                            if (_dbg.insToFunction.TryGetValue(stackPtr, out var functionToken))
-                            {
-                                functionName = functionToken.token.raw; // TODO: I think the names are backwards?
-                            }
-                            
-                            frames.Add(new DebugStackFrame
-                            {
-                                colNumber = token.token.charNumber,
-                                lineNumber = token.token.lineNumber,
-                                name = functionName
-                            });
-                            
-                        }
-                        
+                        var frames = GetFrames();
                         Ack(message, new StackFrameMessage
                         {
                             frames = frames
                         });
-                        logger.Log($"[DBG] enqueued stack frame response. frame-count=[{frames.Count}]");
+                        logger.Debug($"enqueued stack frame response. frame-count=[{frames.Count}]");
                         
-                        // if (this._tree.TryFind(_vm.instructionIndex, out var map))
-                        // {
-                        //     var lineNumber = map.range.startToken.token.lineNumber;
-                        //     var charNumber = map.range.startToken.token.charNumber;
-                        //     var frame = new DebugStackFrame(lineNumber, charNumber);
-                        //     
-                        //     Ack(message, new StackFrameMessage
-                        //     {
-                        //         frames = new List<DebugStackFrame>
-                        //         {
-                        //             frame
-                        //         }
-                        //     });
-                        //     Console.WriteLine($"[DBG] enqueued stack frame response");
-                        //
-                        // }
-                        // else
-                        // {
-                        //     Console.WriteLine($"[DBG] no instruction for frame. ins=[{_vm.instructionIndex}]");
-                        //     Ack(message, new StackFrameMessage
-                        //     {
-                        //         frames = new List<DebugStackFrame>()
-                        //     });
-                        // }
                         break;
                 }
             }
         }
-        
-        
-        
+
+        public List<DebugStackFrame> GetFrames()
+        {
+            return GetFramesFromVm(_vm, instructionMap, _dbg, logger);
+        }
+
+        public static List<DebugStackFrame> GetFramesFromVm(VirtualMachine vm, IndexCollection map, DebugData dbg, IDebugLogger logger)
+        {
+            // given the current location, find the current "statement", and use that to backtrack
+            var locations = new Stack<int>();
+
+            for (var i = 0; i < vm.methodStack.Count; i++) // push oldest to newest
+            {
+                locations.Push(vm.methodStack.buffer[i]);
+            }
+            locations.Push(vm.instructionIndex); // current location is latest in stack.
+
+            var frames = new List<DebugStackFrame>();
+            foreach (var stackPtr in locations)
+            {
+                if (!map.TryFindClosestTokenBeforeIndex(stackPtr, out var token))
+                {
+                    logger?.Error($"no instruction for frame. ins=[{vm.instructionIndex}]");
+                    continue;
+                }
+
+                string functionName = $"<root {token?.token?.raw}!>";
+                logger?.Debug($"stack ptr=[{stackPtr}] found token=[{token.Jsonify()}]");
+                if (dbg.insToFunction.TryGetValue(stackPtr, out var functionToken))
+                {
+                    functionName = functionToken.token.raw; // TODO: I think the names are backwards?
+                }
+                else
+                {
+                    var table = string.Join(",\n", dbg.insToFunction.Select(kvp => $"  [{kvp.Key}]->{kvp.Value.Jsonify()}"));
+                    logger.Info($"stacktrace failed to find function name for ptr=[{stackPtr}]\n{table}\n\n");
+                }
+                            
+                frames.Add(new DebugStackFrame
+                {
+                    colNumber = token.token.charNumber,
+                    lineNumber = token.token.lineNumber,
+                    name = functionName
+                });
+                            
+            }
+
+            return frames;
+        }
 
         public void StartDebugging(int ops = 0)
         {
@@ -332,9 +448,9 @@ namespace FadeBasic.Launch
                 Thread.Sleep(1);
             }
             
-            if (ops > 0 && budget <= 0) return; // the while-loop below should do this too, but for sake of reading...
+            // if (ops > 0 && budget <= 0) return; // the while-loop below should do this too, but for sake of reading...
+            // if (requestedExit) return;
             
-            //
             while (_vm.instructionIndex < _vm.program.Length)
             {
                 if (ops > 0 && budget-- <= 0)
@@ -342,23 +458,46 @@ namespace FadeBasic.Launch
                     // break up the execution of the debug session so that it can be interwoven with client process.
                     break;
                 }
+
+                if (requestedExit)
+                {
+                    break;
+                }
                 
                 ReadMessage();
+                
 
                 var hasCurrentToken =
                     instructionMap.TryFindClosestTokenBeforeIndex(_vm.instructionIndex, out var currentToken);
-
+                
+                // logger.Log($"ins={_vm.instructionIndex}");
                 if (hasCurrentToken)
                 {
-                    if (!IsPaused && breakpointTokens.Contains(currentToken))
+                    // logger.Log($"_t= {currentToken.Jsonify()}");
+
+                    { // check if we have moved past the current token.
+                        if (hitBreakpointToken != null)
+                        {
+                            if (currentToken != hitBreakpointToken)
+                            {
+                                hitBreakpointToken = null;
+                            }
+                        }
+                    }
+
+                    if (!IsPaused && breakpointTokens.Contains(currentToken) && hitBreakpointToken == null)
                     {
                         logger.Log($"HIT BREAKPOINT {currentToken.Jsonify()}");
-                        pauseRequestedByMessageId = resumeRequestedByMessageId + 1; // mock
-                       
+                        pauseRequestedByMessageId = 1;
+                        resumeRequestedByMessageId = 0;
+                        
+                        hitBreakpointToken = currentToken;
                         // NEED TO ACTUALLY PAUSE AND WAIT FOR CONTINUATION...
                         SendStopMessage();
                         continue;
                     }
+                
+                    
                 }
                 
                 if (!IsPaused)
@@ -382,9 +521,12 @@ namespace FadeBasic.Launch
                         else
                         {
                             var isNewToken = currentToken.insIndex != stepOverFromToken.insIndex;
-                            var isSameOrLessDepth = _vm.stack.Count <= stepOverFromStackDepth;
+                            var isSameOrLessDepth = _vm.methodStack.Count <= stepStackDepth;
+                            var isReal = currentToken.isComputed == 0;
 
-                            if (isNewToken && isSameOrLessDepth)
+                            logger.Log($"[VRB] looking for into-over real=[{isReal}]  is-new=[{isNewToken}] ins=[{_vm.instructionIndex}] depth=[{_vm.methodStack.Count}] start-depth=[{stepStackDepth}] token=[{currentToken.Jsonify()}] ");
+
+                            if (isNewToken && isSameOrLessDepth && isReal)
                             {
                                 // we have arrived at the stop location.
                                 Ack(stepNextMessage, new StepNextResponseMessage
@@ -399,11 +541,83 @@ namespace FadeBasic.Launch
                                 _vm.Execute2(1);
                             }
                         }
-                        
+                    }
+                    // handle step-in case
+                    else if (stepIntoMessage != null)
+                    {
+                        if (!hasCurrentToken)
+                        {
+                            logger.Log("[ERR] Failed to find step-into, so cancelling!");
+                            Ack(stepIntoMessage, new StepNextResponseMessage
+                            {
+                                reason = $"no source location available while stepping in. ins=[{_vm.instructionIndex}]",
+                                status = -1
+                            });
+                            stepIntoMessage = null;
+                        }
+                        else
+                        {
+                            var isNewToken = currentToken.insIndex != stepInFromToken.insIndex;
+                            var isReal = currentToken.isComputed == 0;
+                            // var isSameOrMoreDepth = _vm.scopeStack.Count >= stepStackDepth ;
+
+                            if (isNewToken && isReal)
+                            {
+                                // we have arrived at the stop location.
+                                Ack(stepIntoMessage, new StepNextResponseMessage
+                                {
+                                    reason = "hit in",
+                                    status = 1
+                                });
+                                stepIntoMessage = null;
+                            }
+                            else
+                            {
+                                _vm.Execute2(1);
+                            }
+                        }
+                    }
+                    // handle step-out case
+                    else if (stepOutMessage != null)
+                    {
+                        if (!hasCurrentToken)
+                        {
+                            Ack(stepOutMessage, new StepNextResponseMessage
+                            {
+                                reason = $"no source location available while stepping out. ins=[{_vm.instructionIndex}]",
+                                status = -1
+                            });
+                            stepOutMessage = null;
+                        }
+                        else
+                        {
+                            var isNewToken = currentToken.insIndex != stepOutFromToken.insIndex;
+                            var isLessThanOrZero = _vm.methodStack.Count < stepStackDepth || _vm.methodStack.Count == 0;
+                            var isReal = currentToken.isComputed == 0;
+
+                            logger.Log($"[VRB] looking for out-step is-new=[{isNewToken}] ins=[{_vm.instructionIndex}] depth=[{_vm.methodStack.Count}] start-depth=[{stepStackDepth}] token=[{currentToken.Jsonify()}] ");
+
+                            if (isNewToken && isLessThanOrZero && isReal)
+                            {
+                                // we have arrived at the stop location.
+                                Ack(stepOutMessage, new StepNextResponseMessage
+                                {
+                                    reason = "hit out",
+                                    status = 1
+                                });
+                                stepOutMessage = null;
+                            }
+                            else
+                            {
+                                _vm.Execute2(1);
+                            }
+                        }
                     }
                 }
             }
-            
+
+
+            SendExitedMessage();
         }
         
     }
@@ -416,12 +630,17 @@ namespace FadeBasic.Launch
         PROTO_ACK,
         
         REV_REQUEST_BREAKPOINT,
+        REV_REQUEST_EXITED,
         
         REQUEST_PAUSE,
         REQUEST_PLAY,
-        REQUEST_NEXT,
+        REQUEST_STEP_OVER,
+        REQUEST_STEP_IN,
+        REQUEST_STEP_OUT,
+        REQUEST_TERMINATE,
         
         REQUEST_STACK_FRAMES,
+        REQUEST_SCOPES,
         REQUEST_BREAKPOINTS
     }
 
@@ -465,6 +684,40 @@ namespace FadeBasic.Launch
             op.IncludeField(nameof(status), ref status);
         }
     }
+
+    public class ScopesMessage : DebugMessage
+    {
+        public List<DebugScope> scopes = new List<DebugScope>();
+
+        public override void ProcessJson(IJsonOperation op)
+        {
+            base.ProcessJson(op);
+            op.IncludeField(nameof(scopes), ref scopes);
+        }
+    }
+
+    public class DebugScope : IJsonable
+    {
+        public List<DebugVariable> variables = new List<DebugVariable>();
+        public void ProcessJson(IJsonOperation op)
+        {
+            op.IncludeField(nameof(variables), ref variables);
+        }
+    }
+
+    public class DebugVariable : IJsonable
+    {
+        public string name;
+        public string type;
+        public string value;
+            
+        public void ProcessJson(IJsonOperation op)
+        {
+            op.IncludeField(nameof(name), ref name);
+            op.IncludeField(nameof(type), ref type);
+            op.IncludeField(nameof(value), ref value);
+        }
+    }
     
     public class StackFrameMessage : DebugMessage
     {
@@ -482,6 +735,7 @@ namespace FadeBasic.Launch
         public int processId;
         public override void ProcessJson(IJsonOperation op)
         {
+            base.ProcessJson(op);
             op.IncludeField(nameof(processId), ref processId);
         }
     }

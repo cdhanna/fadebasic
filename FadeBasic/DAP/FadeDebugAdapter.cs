@@ -84,7 +84,6 @@ public partial class FadeDebugAdapter : DebugAdapterBase
         
         startReq.Kind = RunInTerminalArguments.KindValue.Integrated;
         startReq.Title = "Fade";
-        
         startReq.ArgsCanBeInterpretedByShell = true;
         startReq.Env = new Dictionary<string, object>
         {
@@ -104,6 +103,12 @@ public partial class FadeDebugAdapter : DebugAdapterBase
                 AllThreadsStopped = true,
                 HitBreakpointIds = new List<int>(){0}
             });
+        };
+
+        _session.Exited = () =>
+        {
+            Protocol.SendEvent(new ExitedEvent());
+            Protocol.SendEvent(new TerminatedEvent());
         };
 
         // as soon as this event is sent- debugger info will appear. 
@@ -142,21 +147,33 @@ public partial class FadeDebugAdapter : DebugAdapterBase
             }
         };
     }
-    
-    
+
+    protected override void HandleTerminateRequestAsync(IRequestResponder<TerminateArguments> responder)
+    {
+        _session.SendTerminate(() =>
+        {
+            responder.SetResponse(new TerminateResponse());
+        });
+    }
+
 
     protected override DisconnectResponse HandleDisconnectRequest(DisconnectArguments arguments)
     {
-        // TODO: the TerminateDebuggee value is null, so 
-        //  I'm always killing the process.... but that feels wrong. What about just disconnecting? 
-        if (arguments.TerminateDebuggee.GetValueOrDefault())
-        {
-        }
-        
-        // Process.GetProcessById(_session.RemoteProcessId).Kill();
+        _logger.Log("KILLING: " + _session.RemoteProcessId);
+        _session.SendTerminate(() => { });
 
+        Protocol.SendEvent(new ExitedEvent(0));
         return new DisconnectResponse();
     }
+    
+    // protected override void HandleDisconnectRequestAsync(IRequestResponder<DisconnectArguments> responder)
+    // {
+    //     _session.SendTerminate(() =>
+    //     {
+    //         Protocol.SendEvent(new ExitedEvent());
+    //         responder.SetResponse(new DisconnectResponse());
+    //     });
+    // }
 
     protected override void HandleProtocolError(Exception ex)
     {

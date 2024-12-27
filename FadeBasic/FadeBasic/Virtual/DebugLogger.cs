@@ -3,14 +3,34 @@ using System.IO;
 
 namespace FadeBasic.Virtual
 {
+    public enum LogLevel
+    {
+        DEBUG = 1,
+        INFO = 2,
+        ERROR = 3
+    }
+    
     public interface IDebugLogger
     {
-        void Log(string msg);
+        public LogLevel Level { get; set; }
+        void Emit(LogLevel level, string msg);
     }
+    
+    public static class IDebugLoggerExtensions
+    {
+        public static void Info(this IDebugLogger logger, string msg) => logger.Emit(LogLevel.INFO, msg);
+        public static void Debug(this IDebugLogger logger, string msg) => logger.Emit(LogLevel.DEBUG, msg);
+        public static void Log(this IDebugLogger logger, string msg) => logger.Emit(LogLevel.INFO, msg);
+        public static void Error(this IDebugLogger logger, string msg) => logger.Emit(LogLevel.ERROR, msg);
+    }
+    
+    
 
     public class EmptyDebugLogger : IDebugLogger
     {
-        public void Log(string msg)
+        public LogLevel Level { get; set; }
+
+        public void Emit(LogLevel level, string msg)
         {
         }
     }
@@ -19,6 +39,7 @@ namespace FadeBasic.Virtual
     {
         private FileStream _fs;
         private StreamWriter _sw;
+        public LogLevel Level { get; set; }
 
         public DebugLogger(string logPath)
         {
@@ -29,9 +50,13 @@ namespace FadeBasic.Virtual
             };
         }
         
-        public void Log(string msg)
+        public void Emit(LogLevel level, string msg)
         {
-            _sw.WriteLine(msg);
+            if (level >= Level)
+            {
+                var format = $"[{level}] {msg}";
+                _sw.WriteLine(format);
+            }
         }
 
         public void Dispose()
