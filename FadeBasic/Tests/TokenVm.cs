@@ -267,6 +267,23 @@ y$ = ""world"" + x$
         
     }
 
+    [Test]
+    public void String_Declare2()
+    {
+        var src = "y=4\nx$ = \"hello\" ";
+        Setup(src, out _, out var prog);
+        
+        var vm = new VirtualMachine(prog);
+        vm.Execute2();
+        
+        Assert.That(vm.dataRegisters[1], Is.EqualTo(0)); // the ptr to the string in memory
+        Assert.That(vm.typeRegisters[1], Is.EqualTo(TypeCodes.STRING));
+        
+        vm.heap.Read(0, "hello".Length * 4, out var memory);
+        var str = VmConverter.ToString(memory);
+        
+        Assert.That(str, Is.EqualTo("hello"));
+    }
     
     [Test]
     public void String_Declare()

@@ -6,7 +6,8 @@ namespace DAP;
 
 public partial class FadeDebugAdapter
 {
-
+    private Dictionary<int, DebugScope> variableReferenceToscopes = new Dictionary<int, DebugScope>();
+    
     List<Scope> ConvertToScopes(List<DebugScope> debugScopes)
     {
         var scopes = new List<Scope>();
@@ -16,9 +17,10 @@ public partial class FadeDebugAdapter
             var dbgScope = debugScopes[i];
             scopes.Add(scope);
 
-            scope.Name = "Locals";
+            scope.Name = $"Vars ({i}) ";
             scope.NamedVariables = dbgScope.variables.Count;
-            scope.VariablesReference = i+1;
+            scope.VariablesReference = i + 1;
+            variableReferenceToscopes[scope.VariablesReference] = dbgScope;
         }
         return scopes;
     }
@@ -26,6 +28,7 @@ public partial class FadeDebugAdapter
     protected override void HandleScopesRequestAsync(IRequestResponder<ScopesArguments, ScopesResponse> responder)
     {
         // responder.Arguments.
+        
         _session.RequestScopes(responder.Arguments.FrameId, scopes =>
         {
             var finalScopes = ConvertToScopes(scopes);
@@ -39,24 +42,47 @@ public partial class FadeDebugAdapter
 
     protected override void HandleVariablesRequestAsync(IRequestResponder<VariablesArguments, VariablesResponse> responder)
     {
-        _session.RequestScopes(0, dbgScopes =>
+        
+        if (!variableReferenceToscopes.TryGetValue(responder.Arguments.VariablesReference, out var dbgScope))
         {
-            var scopes = ConvertToScopes(dbgScopes);
-            var dbgScope = dbgScopes[responder.Arguments.VariablesReference-1];
-
-            var res = new VariablesResponse();
-            foreach (var variable in dbgScope.variables)
+            _logger.Log("[ERR] invalid variables requested. ");
+            responder.SetResponse(new VariablesResponse()
             {
-                res.Variables.Add(new Variable
-                {
-                    Name = variable.name,
-                    Type = variable.type,
-                    Value = variable.value,
-                });
-            }
-            
-            
-            responder.SetResponse(res);
-        });
+            });
+        }
+        
+        var res = new VariablesResponse();
+        foreach (var variable in dbgScope.variables)
+        {
+            res.Variables.Add(new Variable
+            {
+                Name = variable.name,
+                Type = variable.type,
+                Value = variable.value,
+            });
+        }
+        
+        
+        responder.SetResponse(res);
+
+        // _session.RequestScopes(0, dbgScopes =>
+        // {
+        //     // var scopes = ConvertToScopes(dbgScopes);
+        //     var dbgScope = dbgScopes[responder.Arguments.VariablesReference-1];
+        //
+        //     var res = new VariablesResponse();
+        //     foreach (var variable in dbgScope.variables)
+        //     {
+        //         res.Variables.Add(new Variable
+        //         {
+        //             Name = variable.name,
+        //             Type = variable.type,
+        //             Value = variable.value,
+        //         });
+        //     }
+        //     
+        //     
+        //     responder.SetResponse(res);
+        // });
     }
 }

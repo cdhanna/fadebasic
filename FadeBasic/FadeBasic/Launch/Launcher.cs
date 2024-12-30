@@ -10,6 +10,7 @@ namespace FadeBasic.Launch
     public class LaunchOptions
     {
         public const string ENV_ENABLE_DEBUG = "FADE_BASIC_DEBUG";
+        public const string ENV_ENABLE_DEBUG_DONT_WAIT = "FADE_BASIC_DEBUG_DONT_WAIT";
         public const string ENV_DEBUG_PORT = "FADE_BASIC_DEBUG_PORT";
         public const string ENV_DEBUG_LOG_PATH = "FADE_BASIC_DEBUG_LOG_PATH";
         
@@ -24,11 +25,12 @@ namespace FadeBasic.Launch
         static LaunchOptions()
         {
             var debugEnv = Environment.GetEnvironmentVariable(ENV_ENABLE_DEBUG)?.ToLowerInvariant();
+            var debugDontWait = Environment.GetEnvironmentVariable(ENV_ENABLE_DEBUG_DONT_WAIT)?.ToLowerInvariant();
             DefaultOptions = new LaunchOptions
             {
                 debug = debugEnv == "true" || debugEnv == "1",
                 debugPort = 0,
-                debugWaitForConnection = true,
+                debugWaitForConnection = !(debugDontWait == "true" || debugDontWait == "1"),
                 debugLogPath = Environment.GetEnvironmentVariable(ENV_DEBUG_LOG_PATH)
             };
 

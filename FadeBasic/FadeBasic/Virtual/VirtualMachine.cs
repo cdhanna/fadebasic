@@ -48,7 +48,7 @@ namespace FadeBasic.Virtual
         public VmHeap heap;
         
         public HostMethodTable hostMethods;
-        public FastStack<int> methodStack; // TODO: This could also store the index of the scope-stack at the time of the push; so that a debugger could know the scope at the frame.
+        public FastStack<JumpHistoryData> methodStack; // TODO: This could also store the index of the scope-stack at the time of the push; so that a debugger could know the scope at the frame.
 
         public VirtualScope globalScope;
         public FastStack<VirtualScope> scopeStack;
@@ -68,7 +68,7 @@ namespace FadeBasic.Virtual
             this.program = program;
             globalScope = scope = new VirtualScope(256);
             scopeStack = new FastStack<VirtualScope>(16);
-            methodStack = new FastStack<int>(16);
+            methodStack = new FastStack<JumpHistoryData>(16);
             heap = new VmHeap(128);
             scopeStack.Push(globalScope);
         }
@@ -216,7 +216,11 @@ namespace FadeBasic.Virtual
                         case OpCodes.JUMP_HISTORY:
                             // the next instruction is the instruction ptr
                             VmUtil.ReadAsInt(ref stack, out insPtr);
-                            methodStack.Push(instructionIndex) ;
+                            methodStack.Push(new JumpHistoryData
+                            {
+                                toIns = insPtr,
+                                fromIns = instructionIndex
+                            }) ;
                             logger?.Log($"[VM] JUMP HISTORY FROM=[{instructionIndex}] TO=[{insPtr}]");
                             instructionIndex = insPtr;
                             break;
@@ -227,7 +231,8 @@ namespace FadeBasic.Virtual
                                  * the use case to allow a return on an empty stack is
                                  * using GOSUB and not adding an END statement before the program hits the labels.
                                  */
-                                instructionIndex = methodStack.Pop();
+                                var jumpHistoryData = methodStack.Pop();
+                                instructionIndex = jumpHistoryData.fromIns;
                             }
                             break;
                         case OpCodes.DUPE:
@@ -420,12 +425,7 @@ namespace FadeBasic.Virtual
                             throw new Exception("Unknown op code: " + ins);
                     }
                 }
-
-                // for (var i = 0; i < ticks.Length; i++)
-                // {
-                //     Console.WriteLine(ticks[i]);
-                // }
-
+                
             }
             
 

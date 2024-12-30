@@ -17,7 +17,7 @@ namespace FadeBasic.Virtual
                 case TypeCodes.REAL:
                     return FloatValue.ToString();
                 case TypeCodes.STRING:
-                    throw new NotImplementedException("need to look in heap");
+                    return "STRING";
                 case TypeCodes.BOOL:
                     return rawValue == 0 ? "false" : "true";
                 default:
@@ -57,25 +57,26 @@ namespace FadeBasic.Virtual
         public static Dictionary<string, DebugRuntimeVariable> LookupVariables(VirtualMachine vm, DebugData dbg, int index=-1)
         {
             var results = new Dictionary<string, DebugRuntimeVariable>();
-            for (var i = 0; i < vm.scopeStack.ptr; i++)
+            for (var i = 0; i < vm.scopeStack.Count; i++)
             {
                 if (index != -1 && i != index) continue;
-                
-                var scope = vm.scopeStack.buffer[i];
+
+                var reverseIndex = vm.scopeStack.Count - (i + 1);
+                var scope = vm.scopeStack.buffer[reverseIndex];
 
                 for (var scopeIndex = 0; scopeIndex < scope.dataRegisters.Length; scopeIndex++)
                 {
                     var insIndex = scope.insIndexes[scopeIndex];
                     if (!dbg.insToVariable.TryGetValue(insIndex, out var variable))
                     {
-                        // as soon as we do not have a variable, then there are no more variables to be known!
-                        break;
+                        // TODO: feels like there should be a better way than searching the entire space. 
+                        continue;
                     }
 
                     results[variable.name] = new DebugRuntimeVariable
                     {
                         name = variable.name,
-                        stackIndex = i,
+                        stackIndex = reverseIndex,
                         typeCode = scope.typeRegisters[scopeIndex],
                         rawValue = scope.dataRegisters[scopeIndex]
                     };

@@ -46,15 +46,23 @@ namespace FadeBasic.Virtual
             return token != null;
         }
         
-        public bool TryFindClosestTokenBeforeIndex(int insIndex, out DebugToken token)
+        public bool TryFindClosestTokenBeforeIndex(int insIndex, out DebugToken token, bool ignoreComputed=false)
         {
             // TODO: make this a binary search tree or something... Later? 
 
             token = null;
             for (var i = 1; i < _statementTokens.Count; i++)
             {
-               
-                if (_statementTokens[i].insIndex > insIndex)
+                if (ignoreComputed)
+                {
+                    if (_statementTokens[i - 1].isComputed == 1)
+                    {
+                        continue; 
+                    }
+                }
+                
+                
+                if (_statementTokens[i].insIndex > insIndex )
                 {
                     token = _statementTokens[i - 1];
                     return true;

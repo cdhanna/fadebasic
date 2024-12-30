@@ -1,5 +1,8 @@
 using System;
+using System.Diagnostics;
+using System.Threading;
 using FadeBasic.SourceGenerators;
+using FadeBasic.Virtual;
 
 namespace FadeBasic.Lib.Standard
 {
@@ -10,6 +13,20 @@ namespace FadeBasic.Lib.Standard
         static StandardCommands()
         {
             
+        }
+
+        /// <summary>
+        /// This command only exists to help attach a C# debugger to the program.
+        /// This command will halt execution until a C# debugger is attached to the execution host. 
+        /// </summary>
+        /// <param name="vm"></param>
+        [FadeBasicCommand("debug breakpoint")]
+        public static void DebugBreakpoint([FromVm] VirtualMachine vm)
+        {
+            while (!Debugger.IsAttached)
+            {
+                Thread.Sleep(500);
+            }
         }
         
         [FadeBasicCommand("randomize")]

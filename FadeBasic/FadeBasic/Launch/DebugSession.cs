@@ -326,27 +326,53 @@ namespace FadeBasic.Launch
                     
                     case DebugMessageType.REQUEST_SCOPES:
                         var scopeRequest = JsonableExtensions.FromJson<DebugScopeRequest>(message.RawJson);
-                        var scopeFrames = GetFrames();
+                        var scopeFrames = GetFrames2();
                         var frameIndex = scopeRequest.frameIndex;
-                        logger.Info($"got stack frame request with frame-id=[{frameIndex}] frame-count=[{scopeFrames.Count}] scope-stack=[{_vm.scopeStack.Count}]");
-
+                        logger.Debug($"got stack frame request with frame-id=[{frameIndex}] frame-count=[{scopeFrames.Count}] scope-stack=[{_vm.scopeStack.Count}] dbg-count=[{_dbg.insToVariable.Count}]");
                         if (frameIndex < 0 || frameIndex >= scopeFrames.Count)
                         {
                             logger.Error($"scope request failed because frame-index=[{frameIndex}] was out of bounds of max=[{scopeFrames.Count}]");
                         }
+
+                        logger.Debug("checking for type register data...");
+                        for (var s = 0; s < _vm.scopeStack.Count; s++)
+                        {
+                            logger.Debug($"scope=[{s}]");
+                            for (var i = 0; i < _vm.scopeStack.buffer[s].typeRegisters.Length; i++)
+                            {
+                                // if (_vm.scopeStack.buffer[s].typeRegisters[i] == 0) continue;
+                                logger.Debug($" [{i}] -> [{(int)_vm.scopeStack.buffer[s].typeRegisters[i]}]");
+                            }
+                        }
+                        logger.Debug($"global scope");
+                        for (var i = 0; i < _vm.globalScope.typeRegisters.Length; i++)
+                        {
+                            // if (_vm.globalScope.typeRegisters[i] == 0) continue;
+                            logger.Debug($" [{i}] -> [{_vm.globalScope.typeRegisters[i]}]");
+                        }
+                        logger.Debug($"top scope");
+                        for (var i = 0; i < _vm.scope.typeRegisters.Length; i++)
+                        {
+                            // if (_vm.scope.typeRegisters[i] == 0) continue;
+                            logger.Debug($" [{i}] -> [{_vm.scope.typeRegisters[i]}]");
+                        }
+
+                        
+
                         var dict = DebugUtil.LookupVariables(_vm, _dbg, frameIndex);
                         var scope = new DebugScope();
                         
                         logger.Info($"variables count=[{dict.Count}]");
                         foreach (var kvp in dict)
                         {
+                            // var type
                             scope.variables.Add(new DebugVariable
                             {
                                 name = kvp.Key,
                                 value = kvp.Value.GetValueDisplay(_vm),
                                 type = kvp.Value.TypeName
                             });
-                            logger.Info($"variable name=[{kvp.Key}] raw val=[{kvp.Value.rawValue}] type=[{kvp.Value.TypeName}]");
+                            logger.Info($"variable name=[{kvp.Key}] raw val=[{kvp.Value.rawValue}] tc=[{kvp.Value.typeCode}] type=[{kvp.Value.TypeName}]");
                         }
                         Ack(message, new ScopesMessage
                         {
@@ -376,7 +402,7 @@ namespace FadeBasic.Launch
                         
                         break;
                     case DebugMessageType.REQUEST_STACK_FRAMES:
-                        var frames = GetFrames();
+                        var frames = GetFrames2();
                         Ack(message, new StackFrameMessage
                         {
                             frames = frames
@@ -393,26 +419,84 @@ namespace FadeBasic.Launch
             return GetFramesFromVm(_vm, instructionMap, _dbg, logger);
         }
 
+        public List<DebugStackFrame> GetFrames2()
+        {
+            var frames = new List<DebugStackFrame>();
+
+            DebugToken current;
+            
+            // put the current location first, 
+            if (!instructionMap.TryFindClosestTokenBeforeIndex(_vm.instructionIndex, out current))
+            {
+                logger.Error($"Failed to find current location at ins=[{_vm.instructionIndex}]");
+                return frames;
+            }
+
+            // move up the method chain....
+            {
+                for (var i = _vm.methodStack.Count - 1; i >= 0; i--)
+                {
+                    var method = _vm.methodStack.buffer[i];
+
+                    // find the name of the method we are current inside of...
+                    if (!_dbg.insToFunction.TryGetValue(method.toIns, out var methodToken))
+                    {
+                        logger.Error($"There is no method token found for ins=[{method.toIns}]");
+                        continue;
+                    }
+                    
+                    // add a frame to represent this location...
+                    frames.Add(new DebugStackFrame
+                    {
+                        name = methodToken.token.raw,
+                        lineNumber = current.token.lineNumber,
+                        colNumber = current.token.charNumber
+                    });
+                    
+                    // find where this method was invoked from...
+                    if (!instructionMap.TryFindClosestTokenBeforeIndex(method.fromIns - 1, out current))
+                    {
+                        logger.Error($"There is no method source site found for ins=[{method.fromIns - 1}]");
+                    }
+                }
+            }
+            
+            frames.Add(new DebugStackFrame
+            {
+                name = "(top scope)",
+                lineNumber = current.token.lineNumber,
+                colNumber = current.token.charNumber
+            });
+            
+            return frames;
+        }
+
         public static List<DebugStackFrame> GetFramesFromVm(VirtualMachine vm, IndexCollection map, DebugData dbg, IDebugLogger logger)
         {
-            // given the current location, find the current "statement", and use that to backtrack
-            var locations = new Stack<int>();
-
-            for (var i = 0; i < vm.methodStack.Count; i++) // push oldest to newest
-            {
-                locations.Push(vm.methodStack.buffer[i]);
-            }
-            locations.Push(vm.instructionIndex); // current location is latest in stack.
-
+            
+            var locations = new List<JumpHistoryData>();
             var frames = new List<DebugStackFrame>();
-            foreach (var stackPtr in locations)
+
+            // the method stack is current-to-oldest sorted. 
+            for (var i = vm.methodStack.Count - 1; i >= 0; i--) 
+            {
+                locations.Add(vm.methodStack.buffer[i]);
+            }
+            
+
+            DebugStackFrame BuildFrameFromIndex(int stackPtr)
             {
                 if (!map.TryFindClosestTokenBeforeIndex(stackPtr, out var token))
                 {
-                    logger?.Error($"no instruction for frame. ins=[{vm.instructionIndex}]");
-                    continue;
+                    logger?.Error($"no instruction for frame. ins=[{stackPtr}]");
+                    return null;
                 }
 
+                return BuildFrame(stackPtr, token);
+            }
+
+            DebugStackFrame BuildFrame(int stackPtr, DebugToken token)
+            {
                 string functionName = $"<root {token?.token?.raw}!>";
                 logger?.Debug($"stack ptr=[{stackPtr}] found token=[{token.Jsonify()}]");
                 if (dbg.insToFunction.TryGetValue(stackPtr, out var functionToken))
@@ -425,13 +509,46 @@ namespace FadeBasic.Launch
                     logger.Info($"stacktrace failed to find function name for ptr=[{stackPtr}]\n{table}\n\n");
                 }
                             
-                frames.Add(new DebugStackFrame
+                return new DebugStackFrame
                 {
                     colNumber = token.token.charNumber,
                     lineNumber = token.token.lineNumber,
                     name = functionName
-                });
-                            
+                };
+
+            }
+            
+            foreach (var data in locations)
+            {
+                if (!map.TryFindClosestTokenBeforeIndex(data.toIns, out var token))
+                {
+                    logger?.Error($"no instruction for frame. ins=[{data.toIns}]");
+                    continue;
+                }
+
+                var frame = BuildFrame(data.toIns, token);
+                frames.Add(frame);
+            }
+
+            { // add the oldest-oldest thing, which is the top-level scope.
+                if (locations.Count == 0)
+                {
+                    // just use the current instruction index when there are no functions
+                    var frame = BuildFrameFromIndex(vm.instructionIndex);
+                    if (frame != null)
+                    {
+                        frames.Add(frame);
+                    }
+                }
+                else
+                {
+                    // or use the location the first function was at
+                    var frame = BuildFrameFromIndex(vm.methodStack.buffer[0].fromIns);
+                    if (frame != null)
+                    {
+                        frames.Add(frame);
+                    }
+                }
             }
 
             return frames;
@@ -440,12 +557,26 @@ namespace FadeBasic.Launch
         public void StartDebugging(int ops = 0)
         {
             var budget = ops;
-            
             while (_options.debugWaitForConnection && hasConnectedDebugger == 0)
             {
                 if (ops > 0 && budget-- == 0) break; 
                 ReadMessage();
                 Thread.Sleep(1);
+            }
+
+            // if (!_options.debugWaitForConnection) // this causes the right typeRegister scenario...
+            // {
+            //     _vm.Execute2();
+            //     return;
+            // }
+            
+            if (!_options.debugWaitForConnection)
+            {
+                for (var i = 0; i < 1000; i++)
+                {
+                    _vm.Execute2(1);
+                }
+                return;
             }
             
             // if (ops > 0 && budget <= 0) return; // the while-loop below should do this too, but for sake of reading...

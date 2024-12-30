@@ -49,7 +49,7 @@ public partial class FadeDebugAdapter : DebugAdapterBase
             SupportsConfigurationDoneRequest = true,
             
         };
-        
+        _logger.Log($"VARIABLE_SUPPORT=[{arguments.SupportsVariableType}]");
         var canRunInTerminal = arguments.SupportsRunInTerminalRequest;
         
         return res;
