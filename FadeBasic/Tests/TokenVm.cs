@@ -98,28 +98,29 @@ endfunction
         vm.Execute2(0); // just don't explode.
     }
 
-    
+
     [Test]
     public void TestDeclare_Registers()
     {
         var src = "x AS WORD: x = 12";
         Setup(src, out _, out var prog);
-        
-        // Assert.That(prog.Count, Is.EqualTo(6)); // type code and 4 bytes for the int
-        Assert.That(prog[0], Is.EqualTo(OpCodes.PUSH));
-        Assert.That(prog[1], Is.EqualTo(TypeCodes.INT));
-        Assert.That(prog[2], Is.EqualTo(12));
-        Assert.That(prog[3], Is.EqualTo(0));
-        Assert.That(prog[4], Is.EqualTo(0));
-        Assert.That(prog[5], Is.EqualTo(0));
-        Assert.That(prog[6], Is.EqualTo(OpCodes.CAST));
-        Assert.That(prog[7], Is.EqualTo(TypeCodes.WORD));
 
-        Assert.That(prog[8], Is.EqualTo(OpCodes.STORE));
-        Assert.That(prog[9], Is.EqualTo(0));
+        // Assert.That(prog.Count, Is.EqualTo(6)); // type code and 4 bytes for the int
+        var offset = 4; // the size of the ptr representing the interned data
+        Assert.That(prog[0 + offset], Is.EqualTo(OpCodes.PUSH));
+        Assert.That(prog[1 + offset], Is.EqualTo(TypeCodes.INT));
+        Assert.That(prog[2 + offset], Is.EqualTo(12));
+        Assert.That(prog[3 + offset], Is.EqualTo(0));
+        Assert.That(prog[4 + offset], Is.EqualTo(0));
+        Assert.That(prog[5 + offset], Is.EqualTo(0));
+        Assert.That(prog[6 + offset], Is.EqualTo(OpCodes.CAST));
+        Assert.That(prog[7 + offset], Is.EqualTo(TypeCodes.WORD));
+
+        Assert.That(prog[8 + offset], Is.EqualTo(OpCodes.STORE));
+        Assert.That(prog[9 + offset], Is.EqualTo(0));
     }
 
-    
+
     [Test]
     public void String_Init_StartEmpty()
     {
@@ -268,13 +269,14 @@ y$ = ""world"" + x$
     }
 
     [Test]
-    public void String_Declare2()
+    public void String_Declare2_WithIncrementalEval()
     {
         var src = "y=4\nx$ = \"hello\" ";
         Setup(src, out _, out var prog);
         
         var vm = new VirtualMachine(prog);
-        vm.Execute2();
+        for (var i = 0 ; i < vm.program.Length; i ++)
+            vm.Execute2(1);
         
         Assert.That(vm.dataRegisters[1], Is.EqualTo(0)); // the ptr to the string in memory
         Assert.That(vm.typeRegisters[1], Is.EqualTo(TypeCodes.STRING));
@@ -1589,8 +1591,8 @@ Return
         var vm = new VirtualMachine(prog);
         vm.Execute().MoveNext();
         
-        Assert.That(vm.dataRegisters[0], Is.EqualTo(3));
-        Assert.That(vm.typeRegisters[0], Is.EqualTo(TypeCodes.WORD));
+        Assert.That(vm.globalScope.dataRegisters[0], Is.EqualTo(3));
+        Assert.That(vm.globalScope.typeRegisters[0], Is.EqualTo(TypeCodes.WORD));
     }
 
     
@@ -2209,12 +2211,12 @@ x# {op}= {second}";
         var vm = new VirtualMachine(prog);
         vm.Execute2();
 
-        var outputRegisterValue = vm.dataRegisters[0];
+        var outputRegisterValue = vm.globalScope.dataRegisters[0];
         var outputRegisterBytes = BitConverter.GetBytes(outputRegisterValue);
         float output = BitConverter.ToSingle(outputRegisterBytes, 0);
         
         Assert.That(output, Is.EqualTo(3));
-        Assert.That(vm.typeRegisters[0], Is.EqualTo(TypeCodes.REAL));
+        Assert.That(vm.globalScope.typeRegisters[0], Is.EqualTo(TypeCodes.REAL));
     }
 
     
@@ -2374,8 +2376,8 @@ next
         Assert.That(vm.dataRegisters[0], Is.EqualTo(4)); // register 0 is x, 
         Assert.That(vm.typeRegisters[0], Is.EqualTo(TypeCodes.INT));
         
-        Assert.That(vm.dataRegisters[1], Is.EqualTo(3)); // register 1 is y, 
-        Assert.That(vm.typeRegisters[1], Is.EqualTo(TypeCodes.INT));
+        Assert.That(vm.globalScope.dataRegisters[1], Is.EqualTo(3)); // register 1 is y, 
+        Assert.That(vm.globalScope.typeRegisters[1], Is.EqualTo(TypeCodes.INT));
         
         Assert.That(vm.dataRegisters[2], Is.EqualTo(0)); // register 2 should have nothing in it
         Assert.That(vm.typeRegisters[2], Is.EqualTo(0));
@@ -3010,7 +3012,7 @@ y = x(2,3).derp
         vm.Execute2();
         
         Assert.That(vm.heap.Cursor, Is.EqualTo(6*12));
-        Assert.That(vm.dataRegisters[3], Is.EqualTo(3));
+        Assert.That(vm.globalScope.dataRegisters[3], Is.EqualTo(3));
     }
     
     

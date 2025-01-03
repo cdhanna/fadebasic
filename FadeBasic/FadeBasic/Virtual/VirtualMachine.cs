@@ -2,6 +2,8 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Runtime.CompilerServices;
+using System.Text;
+using FadeBasic.Json;
 
 namespace FadeBasic.Virtual
 {
@@ -15,18 +17,27 @@ namespace FadeBasic.Virtual
     
     public struct VirtualScope
     {
-        // public readonly int initialCapacity;
-        
-        // parallel array with dataReg
+        // parallel arrays with dataReg
         public ulong[] dataRegisters;
+        
+        /// <summary>
+        /// The type codes
+        /// </summary>
         public byte[] typeRegisters;
+        
+        /// <summary>
+        /// the typeId is the index into the type-table for this struct-based type. 
+        /// </summary>
+        public int[] typeIdRegisters;
         public int[] insIndexes;
+        public byte[] globalFlag;
         
         public VirtualScope(int initialCapacity)
         {
             dataRegisters = new ulong[initialCapacity];
             typeRegisters = new byte[initialCapacity];
             insIndexes = new int[initialCapacity];
+            globalFlag = new byte[initialCapacity];
         }
     }
 
@@ -60,6 +71,8 @@ namespace FadeBasic.Virtual
         public ulong[] dataRegisters => scope.dataRegisters; // TODO: optimize to remove method call Peek()
         public byte[] typeRegisters => scope.typeRegisters;
 
+        public int internedDataInstructionIndex;
+
         public VirtualMachine(IEnumerable<byte> program) : this(program.ToArray())
         {
         }
@@ -67,10 +80,18 @@ namespace FadeBasic.Virtual
         {
             this.program = program;
             globalScope = scope = new VirtualScope(256);
+            // scope = new VirtualScope(256);
             scopeStack = new FastStack<VirtualScope>(16);
             methodStack = new FastStack<JumpHistoryData>(16);
             heap = new VmHeap(128);
             scopeStack.Push(globalScope);
+            
+            instructionIndex = 4;
+            internedDataInstructionIndex = BitConverter.ToInt32(program, 0);
+
+            
+            ReadInternedData();
+            // scopeStack.Push(scope);
         }
 
 
@@ -94,19 +115,56 @@ namespace FadeBasic.Virtual
             isSuspendRequested = true;
         }
 
+        /// <summary>
+        /// The state structure keeps track of data between instruction evaluations.
+        /// If you were to run the <see cref="VirtualMachine.Execute2"/> with infinite budget, then
+        /// these variables would be kept local within the for-loop.
+        /// But if you ran the method 1000 times with a budget of 1, these variables need to be restored. 
+        /// </summary>
+        public struct VmState
+        {
+            public byte vTypeCode, typeCode, addr, size;
+            public ulong data;
+            public int insPtr;
+        }
+
+        public VmState state = new VmState();
+        private InternedData internedData;
+
+        void ReadInternedData()
+        {
+            var internedBytes =
+                program.AsSpan(internedDataInstructionIndex, program.Length - internedDataInstructionIndex);
+            
+            
+            /*
+             * the byte[] represents a blob of data.
+             * Ideally it would be a straight forward parse...
+             *   JSON is easiest, but not as performant...
+             *   a custom format is hardest, but would be fast. 
+             */
+            var json = Encoding.Default.GetString(internedBytes.ToArray());
+            internedData = JsonableExtensions.FromJson<InternedData>(json);
+        }
+
         public void Execute2(int instructionBatchCount=1000)
         {
             isSuspendRequested = false;
+
+            
             // while (true)
             {
+
+                // the arrays do not need to be held between instruction evaluations
                 byte[] aBytes;
                 byte[] bBytes;
-                // byte[] cBytes;
                 ReadOnlySpan<byte> aSpan, bSpan, cSpan;
-                byte aTypeCode = 0, bTypeCode = 0, vTypeCode = 0, typeCode = 0;
-                ulong data;
-                byte addr, size;
-                int insPtr;
+                
+                // these pointer/data values need to be held between instruction evaluations, and therefor stay in the state. 
+                byte vTypeCode = state.vTypeCode, typeCode = state.typeCode;
+                ulong data = state.data;
+                byte addr = state.addr, size = state.size;
+                int insPtr = state.insPtr;
                 
                 // var sw = new Stopwatch();
                 var incrementer = instructionBatchCount > 0 ? 1 : 0;
@@ -116,24 +174,6 @@ namespace FadeBasic.Virtual
                         && !isSuspendRequested; 
                      i += incrementer)
                 {
-                    // if at end of program, exit.
-                    // if (instructionIndex >= program.Length)
-                    // {
-                    //
-                    //     break;
-                    // }
-                    //
-                    // if (isSuspendRequested)
-                    // {
-                    //     break;
-                    // }
-                    
-                    /*
-                     * TODO: Supporting a debugger...
-                     * 
-                     */
-
-
                     var ins = Advance();
                     switch (ins)
                     {
@@ -332,7 +372,8 @@ namespace FadeBasic.Virtual
                             scope.dataRegisters[addr] = data;
                             scope.typeRegisters[addr] = typeCode;
                             scope.insIndexes[addr] = instructionIndex - 1; // minus one because the instruction has already been advanced. 
-                            
+                            globalScope.globalFlag[addr] = 0;
+
                             /*
                              * given we know the instruction address,
                              * we could look that instruction up in the DebugData
@@ -352,6 +393,9 @@ namespace FadeBasic.Virtual
                             VmUtil.ReadSpanAsUInt(ref stack, out data);
                             globalScope.dataRegisters[addr] = data;
                             globalScope.typeRegisters[addr] = typeCode;
+                            globalScope.globalFlag[addr] = 1;
+                            scope.insIndexes[addr] = instructionIndex - 1; // minus one because the instruction has already been advanced. 
+
                             break;
                         case OpCodes.LOAD:
                             addr = Advance();
@@ -425,7 +469,12 @@ namespace FadeBasic.Virtual
                             throw new Exception("Unknown op code: " + ins);
                     }
                 }
-                
+
+                state.vTypeCode = vTypeCode;
+                state.typeCode = typeCode;
+                state.data = data;
+                state.size = size;
+                state.insPtr = insPtr;
             }
             
 

@@ -28,6 +28,50 @@ EndFunction
 
     
     [Test]
+    public void Function_GotoHell()
+    {
+        // TODO: how do we stop people from jumping INTO a function? 
+        //  probably by adding a restrictino that you cannot goto between function scopes ? 
+        var src = @"
+x = Test()
+goto truck ` this line causes execution to jump into a function, which is bad bad bad
+` the important part is that no END expression exists, but the compiler should auto-end
+Function Test()
+    a = 1 + 2
+    truck:
+EndFunction a
+Function Death()
+Endfunction
+";
+        Setup(src, out _, out var prog);
+        
+        var vm = new VirtualMachine(prog);
+        vm.Execute().MoveNext();
+        
+        Assert.That(vm.dataRegisters[0], Is.EqualTo(3)); 
+        Assert.That(vm.typeRegisters[0], Is.EqualTo(TypeCodes.INT));
+    }
+    
+    [Test]
+    public void Function_AutoEnd()
+    {
+        var src = @"
+x = Test()
+` the important part is that no END expression exists, but the compiler should auto-end
+Function Test()
+a = 1 + 2
+EndFunction a
+";
+        Setup(src, out _, out var prog);
+        
+        var vm = new VirtualMachine(prog);
+        vm.Execute().MoveNext();
+        
+        Assert.That(vm.dataRegisters[0], Is.EqualTo(3)); 
+        Assert.That(vm.typeRegisters[0], Is.EqualTo(TypeCodes.INT));
+    }
+    
+    [Test]
     public void Function_Simple()
     {
         var src = @"

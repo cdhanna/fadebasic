@@ -333,39 +333,26 @@ namespace FadeBasic.Launch
                         {
                             logger.Error($"scope request failed because frame-index=[{frameIndex}] was out of bounds of max=[{scopeFrames.Count}]");
                         }
-
-                        logger.Debug("checking for type register data...");
-                        for (var s = 0; s < _vm.scopeStack.Count; s++)
-                        {
-                            logger.Debug($"scope=[{s}]");
-                            for (var i = 0; i < _vm.scopeStack.buffer[s].typeRegisters.Length; i++)
-                            {
-                                // if (_vm.scopeStack.buffer[s].typeRegisters[i] == 0) continue;
-                                logger.Debug($" [{i}] -> [{(int)_vm.scopeStack.buffer[s].typeRegisters[i]}]");
-                            }
-                        }
-                        logger.Debug($"global scope");
-                        for (var i = 0; i < _vm.globalScope.typeRegisters.Length; i++)
-                        {
-                            // if (_vm.globalScope.typeRegisters[i] == 0) continue;
-                            logger.Debug($" [{i}] -> [{_vm.globalScope.typeRegisters[i]}]");
-                        }
-                        logger.Debug($"top scope");
-                        for (var i = 0; i < _vm.scope.typeRegisters.Length; i++)
-                        {
-                            // if (_vm.scope.typeRegisters[i] == 0) continue;
-                            logger.Debug($" [{i}] -> [{_vm.scope.typeRegisters[i]}]");
-                        }
-
                         
+                        var dict = DebugUtil.LookupVariables(_vm, _dbg, frameIndex, global: false);
+                        var globalDict = DebugUtil.LookupVariables(_vm, _dbg, frameIndex, global: true);
 
-                        var dict = DebugUtil.LookupVariables(_vm, _dbg, frameIndex);
-                        var scope = new DebugScope();
+                        // DebugUtil.LookupVariablesFromScope(globalDict, _dbg, ref _vm.globalScope);
+
+                        var scope = new DebugScope
+                        {
+                            scopeName = "Locals"
+                        };
+
+                        var global = new DebugScope
+                        {
+                            scopeName = "Globals"
+                        };
                         
                         logger.Info($"variables count=[{dict.Count}]");
+                        logger.Info($"global variables count=[{globalDict.Count}]");
                         foreach (var kvp in dict)
                         {
-                            // var type
                             scope.variables.Add(new DebugVariable
                             {
                                 name = kvp.Key,
@@ -374,10 +361,21 @@ namespace FadeBasic.Launch
                             });
                             logger.Info($"variable name=[{kvp.Key}] raw val=[{kvp.Value.rawValue}] tc=[{kvp.Value.typeCode}] type=[{kvp.Value.TypeName}]");
                         }
+                        foreach (var kvp in globalDict)
+                        {
+                            global.variables.Add(new DebugVariable
+                            {
+                                name = kvp.Key,
+                                value = kvp.Value.GetValueDisplay(_vm),
+                                type = kvp.Value.TypeName
+                            });
+                            logger.Info($"global variable name=[{kvp.Key}] raw val=[{kvp.Value.rawValue}] tc=[{kvp.Value.typeCode}] type=[{kvp.Value.TypeName}]");
+                        }
                         Ack(message, new ScopesMessage
                         {
                             scopes = new List<DebugScope>
                             {
+                                global,
                                 scope
                             }
                         });
@@ -564,24 +562,6 @@ namespace FadeBasic.Launch
                 Thread.Sleep(1);
             }
 
-            // if (!_options.debugWaitForConnection) // this causes the right typeRegister scenario...
-            // {
-            //     _vm.Execute2();
-            //     return;
-            // }
-            
-            if (!_options.debugWaitForConnection)
-            {
-                for (var i = 0; i < 1000; i++)
-                {
-                    _vm.Execute2(1);
-                }
-                return;
-            }
-            
-            // if (ops > 0 && budget <= 0) return; // the while-loop below should do this too, but for sake of reading...
-            // if (requestedExit) return;
-            
             while (_vm.instructionIndex < _vm.program.Length)
             {
                 if (ops > 0 && budget-- <= 0)
@@ -829,9 +809,11 @@ namespace FadeBasic.Launch
 
     public class DebugScope : IJsonable
     {
+        public string scopeName;
         public List<DebugVariable> variables = new List<DebugVariable>();
         public void ProcessJson(IJsonOperation op)
         {
+            op.IncludeField(nameof(scopeName), ref scopeName);
             op.IncludeField(nameof(variables), ref variables);
         }
     }

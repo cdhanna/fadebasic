@@ -4,11 +4,13 @@ using System.Linq;
 using System.Linq.Expressions;
 using System.Reflection.Emit;
 using System.Runtime.CompilerServices;
+using System.Text;
 using FadeBasic.Ast;
+using FadeBasic.Json;
 
 namespace FadeBasic.Virtual
 {
-    public class CompiledVariable
+    public class CompiledVariable : IJsonable
     {
         public byte byteSize;
         public byte typeCode;
@@ -16,9 +18,19 @@ namespace FadeBasic.Virtual
         public string structType;
         public byte registerAddress;
         public bool isGlobal;
+        
+        public void ProcessJson(IJsonOperation op)
+        {
+            op.IncludeField(nameof(byteSize), ref byteSize);
+            op.IncludeField(nameof(typeCode), ref typeCode);
+            op.IncludeField(nameof(name), ref name);
+            op.IncludeField(nameof(structType), ref structType);
+            op.IncludeField(nameof(registerAddress), ref registerAddress);
+            op.IncludeField(nameof(isGlobal), ref isGlobal);
+        }
     }
 
-    public class CompiledArrayVariable
+    public class CompiledArrayVariable : IJsonable
     {
         public int byteSize;
         public byte typeCode;
@@ -28,19 +40,45 @@ namespace FadeBasic.Virtual
         public bool isGlobal;
         public byte[] rankSizeRegisterAddresses; // an array where the index is the rank, and the value is the ptr to a register whose value holds the size of the rank
         public byte[] rankIndexScalerRegisterAddresses; // an array where the index is the rank, and the value is the ptr to a register whose value holds the multiplier factor for the rank's indexing
+        public void ProcessJson(IJsonOperation op)
+        {
+            op.IncludeField(nameof(byteSize), ref byteSize);
+            op.IncludeField(nameof(typeCode), ref typeCode);
+            op.IncludeField(nameof(name), ref name);
+            op.IncludeField(nameof(structType), ref structType);
+            op.IncludeField(nameof(registerAddress), ref registerAddress);
+            op.IncludeField(nameof(isGlobal), ref isGlobal);
+            op.IncludeField(nameof(rankSizeRegisterAddresses), ref rankSizeRegisterAddresses);
+            op.IncludeField(nameof(rankIndexScalerRegisterAddresses), ref rankIndexScalerRegisterAddresses);
+        }
     }
 
-    public class CompiledType
+    public class CompiledType : IJsonable
     {
+        public string typeName;
         public int byteSize;
         public Dictionary<string, CompiledTypeMember> fields = new Dictionary<string, CompiledTypeMember>();
+        public void ProcessJson(IJsonOperation op)
+        {
+            op.IncludeField(nameof(typeName), ref typeName);
+            op.IncludeField(nameof(byteSize), ref byteSize);
+            op.IncludeField(nameof(fields), ref fields);
+        }
     }
 
-    public struct CompiledTypeMember
+    public struct CompiledTypeMember : IJsonable
     {
         public int Offset, Length;
         public byte TypeCode;
         public CompiledType Type;
+        
+        public void ProcessJson(IJsonOperation op)
+        {
+            op.IncludeField(nameof(Offset), ref Offset);
+            op.IncludeField(nameof(Length), ref Length);
+            op.IncludeField(nameof(TypeCode), ref TypeCode);
+            op.IncludeField(nameof(Type), ref Type);
+        }
     }
 
     public struct LabelReplacement
@@ -124,6 +162,45 @@ namespace FadeBasic.Virtual
             GenerateDebugData = false
         };
     }
+
+    public class InternedData : IJsonable
+    {
+        public Dictionary<string, InternedType> types;
+        
+        public void ProcessJson(IJsonOperation op)
+        {
+            op.IncludeField(nameof(types), ref types);
+        }
+    }
+
+    public class InternedType : IJsonable
+    {
+        public string name;
+        public int byteSize;
+        public Dictionary<string, InternedField> fields = new Dictionary<string, InternedField>();
+        public void ProcessJson(IJsonOperation op)
+        {
+            op.IncludeField(nameof(name), ref name);
+            op.IncludeField(nameof(byteSize), ref byteSize);
+            op.IncludeField(nameof(fields), ref fields);
+        }
+    }
+
+    public class InternedField : IJsonable
+    {
+        public int offset, length;
+        public byte typeCode;
+        public string typeName;
+        
+        public void ProcessJson(IJsonOperation op)
+        {
+            op.IncludeField(nameof(offset), ref offset);
+            op.IncludeField(nameof(length), ref length);
+            op.IncludeField(nameof(typeCode), ref typeCode);
+            op.IncludeField(nameof(typeName), ref typeName);
+        }
+    }
+    
     
     public class Compiler
     {
@@ -185,6 +262,14 @@ namespace FadeBasic.Virtual
         public void Compile(ProgramNode program)
         {
 
+            // push a temporary value that will be replaced later.
+            //  this value represents the ins-ptr where the interned-data lives.
+            var value = BitConverter.GetBytes(0);
+            for (var i = 0 ; i < value.Length; i ++)
+            {
+                _buffer.Add(value[i]);
+            }
+            
             foreach (var typeDef in program.typeDefinitions)
             {
                 Compile(typeDef);
@@ -196,10 +281,25 @@ namespace FadeBasic.Virtual
                 Compile(statement);
             }
 
-            // TODO: inject 'end'? 
+            // prevent the execution from ever going to the functions. GOTO statements _should_ be illegal to jump into a function's scope. 
+            CompileEnd();
+            
             foreach (var function in program.functions)
             {
                 Compile(function);
+            }
+
+            { // handle interned data
+
+                { // replace the jump ptr at index=0 to tell us where the data lives. 
+                    var internLocationBytes = BitConverter.GetBytes(_buffer.Count);
+                    for (var i = 0; i < internLocationBytes.Length; i++)
+                    {
+                        _buffer[0 + i] = internLocationBytes[i];
+                    }
+                }
+
+                PushInternedData();
             }
             
             // replace all label instructions...
@@ -235,6 +335,39 @@ namespace FadeBasic.Virtual
             }
         }
 
+        public void PushInternedData()
+        {
+            // the type table will be the JSONified
+            var data = new InternedData();
+            data.types = new Dictionary<string, InternedType>();
+            foreach (var kvp in _types)
+            {
+                var type = new InternedType
+                {
+                    name = kvp.Key,
+                    byteSize = kvp.Value.byteSize,
+                };
+
+                foreach (var fieldKvp in kvp.Value.fields)
+                {
+                    var field = new InternedField
+                    {
+                        length = fieldKvp.Value.Length,
+                        offset = fieldKvp.Value.Offset,
+                        typeCode = fieldKvp.Value.TypeCode,
+                        typeName = fieldKvp.Value.Type?.typeName,
+                    };
+                    type.fields.Add(fieldKvp.Key, field);
+                }
+                
+                data.types.Add(type.name, type);
+            }
+
+            var json = data.Jsonify();
+            var jsonBytes = Encoding.Default.GetBytes(json);
+            _buffer.AddRange(jsonBytes);
+        }
+
         public void Compile(TypeDefinitionStatement typeDefinition)
         {
             /*
@@ -243,7 +376,10 @@ namespace FadeBasic.Virtual
              * and we need to calculate the total size for the struct
              */
             var typeName = typeDefinition.name.variableName;
-            var type = new CompiledType();
+            var type = new CompiledType
+            {
+                typeName = typeName
+            };
             int totalSize = 0;
             foreach (var decl in typeDefinition.declarations)
             {
@@ -954,6 +1090,11 @@ namespace FadeBasic.Virtual
 
         private void Compile(EndProgramStatement endProgramStatement)
         {
+            CompileEnd();
+        }
+
+        private void CompileEnd()
+        {
             // jump to the end of the instruction pointer space, a hack?
             AddPushInt(_buffer, int.MaxValue);
             _buffer.Add(OpCodes.JUMP);
@@ -1357,6 +1498,8 @@ namespace FadeBasic.Virtual
                 // _buffer.Add(OpCodes.STORE);
                 // _buffer.Add(arrayVar.registerAddress);
                 PushStore(_buffer, arrayVar.registerAddress, arrayVar.isGlobal);
+                _dbg?.AddVariable(_buffer.Count - 1, arrayVar);
+
             }
             
             
@@ -1452,10 +1595,9 @@ namespace FadeBasic.Virtual
             {
                 throw new Exception("Referencing type that does not exist yet. In assignment." + compiledVar.name + " and " + compiledVar.structType);
             }
-            _buffer.Add(OpCodes.BREAKPOINT); // we don't actually want the type code to live on the heap
-
+            
             if (ignoreType)
-            _buffer.Add(OpCodes.DISCARD); // we don't actually want the type code to live on the heap
+                _buffer.Add(OpCodes.DISCARD); // we don't actually want the type code to live on the heap
 
             // push the size of the write operation- it is the size of the struct we happen to have!
             AddPushInt(_buffer, structType.byteSize);

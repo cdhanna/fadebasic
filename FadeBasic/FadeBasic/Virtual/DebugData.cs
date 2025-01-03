@@ -138,7 +138,15 @@ namespace FadeBasic.Virtual
                 isComputed = 1
             });
         }
-        
+
+        public void AddVariable(int insIndex, CompiledArrayVariable compiledVar)
+        {
+            AddVariable(new DebugVariable
+            {
+                insIndex = insIndex,
+                name = compiledVar.name
+            });
+        }
         public void AddVariable(int insIndex, CompiledVariable compiledVar)
         {
             AddVariable(new DebugVariable

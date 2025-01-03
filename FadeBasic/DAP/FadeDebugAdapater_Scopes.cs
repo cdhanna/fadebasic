@@ -17,7 +17,7 @@ public partial class FadeDebugAdapter
             var dbgScope = debugScopes[i];
             scopes.Add(scope);
 
-            scope.Name = $"Vars ({i}) ";
+            scope.Name = dbgScope.scopeName;
             scope.NamedVariables = dbgScope.variables.Count;
             scope.VariablesReference = i + 1;
             variableReferenceToscopes[scope.VariablesReference] = dbgScope;

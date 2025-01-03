@@ -44,6 +44,21 @@ b# = 2.3
         Assert.That(variables.Count, Is.EqualTo(2));
     }
     
+    [Test]
+    public void Exploration_Variables_Arrays()
+    {
+        var src = @"
+dim x(3)
+x(1) = 1
+";
+        Compile(src, out _, out var compiler, out var vm);
+        var dbg = compiler.DebugData;
+        vm.Execute2();
+
+        var variables = DebugUtil.LookupVariables(vm, dbg, global: true);
+
+        Assert.That(variables.Count, Is.EqualTo(1));
+    }
     
     [Test]
     public void FunctionMap()

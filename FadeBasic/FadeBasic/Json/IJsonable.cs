@@ -4,6 +4,7 @@ using System.IO;
 using System.Net.NetworkInformation;
 using System.Text;
 using FadeBasic.Launch;
+using FadeBasic.Virtual;
 
 namespace FadeBasic.Json
 {
@@ -19,11 +20,15 @@ namespace FadeBasic.Json
     {
         void Process(IJsonable jsonable);
         void IncludeField(string name, ref int fieldValue);
+        void IncludeField(string name, ref byte fieldValue);
+        void IncludeField(string name, ref bool fieldValue);
         void IncludeField(string name, ref string fieldValue);
+        void IncludeField(string name, ref byte[] fieldValue);
         void IncludeField(string name, ref DebugMessageType fieldValue);
         void IncludeField<T>(string name, ref T fieldValue) where T : IJsonable, new();
         void IncludeField<T>(string name, ref List<T> fieldValue) where T : IJsonable, new();
         void IncludeField<T>(string name, ref Dictionary<int, T> fieldValue) where T : IJsonable, new();
+        void IncludeField<T>(string name, ref Dictionary<string, T> fieldValue) where T : IJsonable, new();
     }
 
     public static class JsonableExtensions
@@ -69,6 +74,7 @@ namespace FadeBasic.Json
     {
         public Dictionary<string, JsonData> objects = new Dictionary<string, JsonData>();
         public Dictionary<string, List<JsonData>> arrays = new Dictionary<string, List<JsonData>>();
+        public Dictionary<string, List<int>> numberArrays = new Dictionary<string, List<int>>();
         public Dictionary<string, int> ints = new Dictionary<string, int>();
         public Dictionary<string, string> strings = new Dictionary<string, string>();
         
@@ -136,21 +142,60 @@ namespace FadeBasic.Json
                     }
                     else if (valuePeek == JsonConstants.OPEN_ARRAY)
                     {
-                        var list = new List<JsonData>();
-                        while (span[index] != JsonConstants.CLOSE_ARRAY)
+                        var elementPeek = span[index];
+
+                        if (elementPeek == JsonConstants.CLOSE_ARRAY)
                         {
-                            if (list.Count > 0)
+                            obj.arrays[field.ToString()] = new List<JsonData>();
+                            obj.numberArrays[field.ToString()] = new List<int>();
+                        } else if (elementPeek == JsonConstants.OPEN_BRACKET)
+                        {
+                            var list = new List<JsonData>();
+
+                            while (span[index] != JsonConstants.CLOSE_ARRAY)
                             {
-                                ReadAndAssert(ref span, JsonConstants.COMMA);
+                                if (list.Count > 0)
+                                {
+                                    ReadAndAssert(ref span, JsonConstants.COMMA);
+                                }
+
+                                ReadObject(ref span, out var element);
+                                list.Add(element);
                             }
-                            ReadObject(ref span, out var element);
-                            list.Add(element);
+
+                            obj.arrays[field.ToString()] = list;
+                            obj.numberArrays[field.ToString()] = new List<int>();
+                        } else if (char.IsNumber(elementPeek))
+                        {
+                            var numberList = new List<int>();
+
+                            while (span[index] != JsonConstants.CLOSE_ARRAY)
+                            {
+                                if (numberList.Count > 0)
+                                {
+                                    ReadAndAssert(ref span, JsonConstants.COMMA);
+                                }
+                                ReadInteger(ref span, out var number);
+                                numberList.Add(number);
+                            }
+                            obj.arrays[field.ToString()] = new List<JsonData>();
+                            obj.numberArrays[field.ToString()] = numberList;
                         }
+                        
+                        // while (span[index] != JsonConstants.CLOSE_ARRAY)
+                        // {
+                        //     if (list.Count > 0)
+                        //     {
+                        //         ReadAndAssert(ref span, JsonConstants.COMMA);
+                        //     }
+                        //     ReadObject(ref span, out var element);
+                        //     list.Add(element);
+                        // }
 
                         ReadAndAssert(ref span, JsonConstants.CLOSE_ARRAY);
 
 
-                        obj.arrays[field.ToString()] = list;
+                        // obj.arrays[field.ToString()] = list;
                     }
 
                     // read comma if it exists...
@@ -273,9 +318,37 @@ namespace FadeBasic.Json
             _data.ints.TryGetValue(name, out fieldValue);
         }
 
+        public void IncludeField(string name, ref byte fieldValue)
+        {
+            _data.ints.TryGetValue(name, out var byteValue);
+            fieldValue = (byte)byteValue;
+        }
+
+        public void IncludeField(string name, ref bool fieldValue)
+        {
+            _data.ints.TryGetValue(name, out var byteValue);
+            fieldValue = byteValue > 0;
+        }
+
         public void IncludeField(string name, ref string fieldValue)
         {
             _data.strings.TryGetValue(name, out fieldValue);
+        }
+
+        public void IncludeField(string name, ref byte[] fieldValue)
+        {
+            if (!_data.numberArrays.TryGetValue(name, out var numbers))
+            {
+                fieldValue = Array.Empty<byte>();
+            }
+            else
+            {
+                fieldValue = new byte[numbers.Count];
+                for (var i = 0; i < numbers.Count; i++)
+                {
+                    fieldValue[i] = (byte)numbers[i];
+                }
+            }
         }
 
         public void IncludeField(string name, ref DebugMessageType fieldValue)
@@ -285,7 +358,6 @@ namespace FadeBasic.Json
                 fieldValue = (DebugMessageType)fieldInt;
             }
         }
-
 
         public void IncludeField<T>(string name, ref T fieldValue) where T : IJsonable, new()
         {
@@ -327,6 +399,20 @@ namespace FadeBasic.Json
                 }
             }
         }
+
+        public void IncludeField<T>(string name, ref Dictionary<string, T> fieldValue) where T : IJsonable, new()
+        {
+            if (_data.objects.TryGetValue(name, out var dict))
+            {
+                fieldValue = new Dictionary<string, T>();
+                foreach (var kvp in dict.objects)
+                {
+                    var subOp = new JsonReadOp(kvp.Value);
+                    fieldValue[kvp.Key] = new T();
+                    subOp.Process(fieldValue[kvp.Key]);
+                }
+            }
+        }
     }
 
     public class JsonWriteOp : IJsonOperation
@@ -363,6 +449,13 @@ namespace FadeBasic.Json
         }
 
         public void IncludeField(string name, ref int fieldValue) => IncludePrim(name, ref fieldValue);
+        public void IncludeField(string name, ref byte fieldValue) => IncludePrim(name, ref fieldValue);
+
+        public void IncludeField(string name, ref bool fieldValue)
+        {
+            var value = fieldValue ? 1 : 0;
+            IncludePrim(name, ref value);
+        }
 
         public void IncludeField(string name, ref string fieldValue)
         {
@@ -390,12 +483,35 @@ namespace FadeBasic.Json
             fieldCount++;
         }
 
+        public void IncludeField(string name, ref byte[] fieldValue)
+        {
+            if (fieldCount > 0)
+            {
+                _sb.Append(JsonConstants.COMMA);
+            }
+            _sb.Append(JsonConstants.QUOTE);
+            _sb.Append(name);
+            _sb.Append(JsonConstants.QUOTE);
+            _sb.Append(JsonConstants.COLON);
+            _sb.Append(JsonConstants.OPEN_ARRAY);
+            for (var i = 0; i < fieldValue.Length; i++)
+            {
+                if (i > 0)
+                {
+                    _sb.Append(JsonConstants.COMMA);
+                }
+                _sb.Append(fieldValue[i]);
+
+            }
+            _sb.Append(JsonConstants.CLOSE_ARRAY);
+            fieldCount++;
+        }
+
         public void IncludeField(string name, ref DebugMessageType fieldValue)
         {
             var val = (int)fieldValue;
             IncludePrim(name, ref val);
         }
-
 
         public void IncludeField<T>(string name, ref T fieldValue) where T : IJsonable, new()
         {
@@ -487,6 +603,41 @@ namespace FadeBasic.Json
             _sb.Append(JsonConstants.CLOSE_BRACKET);
 
             
+        }
+
+        public void IncludeField<T>(string name, ref Dictionary<string, T> fieldValue) where T : IJsonable, new()
+        {
+            if (fieldCount > 0)
+            {
+                _sb.Append(JsonConstants.COMMA);
+            }
+
+            _sb.Append(JsonConstants.QUOTE);
+            _sb.Append(name);
+            _sb.Append(JsonConstants.QUOTE);
+            _sb.Append(JsonConstants.COLON);
+            _sb.Append(JsonConstants.OPEN_BRACKET);
+            var first = true;
+            foreach (var kvp in fieldValue)
+            {
+                if (!first)
+                {
+                    _sb.Append(JsonConstants.COMMA);
+                }
+                first = false;
+
+                _sb.Append(JsonConstants.QUOTE);
+                _sb.Append(kvp.Key);
+                _sb.Append(JsonConstants.QUOTE);
+                _sb.Append(JsonConstants.COLON);
+                
+                var subOp = new JsonWriteOp(_sb);
+                var val = kvp.Value;
+                subOp.Process(val);
+                // subOp.IncludeField(kvp.ToString(), ref val);
+            }
+            _sb.Append(JsonConstants.CLOSE_BRACKET);
+
         }
     }
 }
