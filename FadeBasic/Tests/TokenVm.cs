@@ -1635,6 +1635,27 @@ y = x(1)
         Assert.That(vm.typeRegisters[3 /* dim register offset */], Is.EqualTo(TypeCodes.BYTE));
 
     }
+    
+    
+    [Test]
+    public void Array_LengthCheck()
+    {
+        var src = @"
+dim x(12,3,50) as word
+x(0) = 4
+";
+        Setup(src, out var compiler, out var prog);
+        
+        var vm = new VirtualMachine(prog);
+        vm.Execute2();
+        // Assert.That(vm.heap.Cursor, Is.EqualTo(4));
+
+        // Assert.That(vm.dataRegisters[0], Is.EqualTo(0));
+        // Assert.That(vm.typeRegisters[0], Is.EqualTo(TypeCodes.INT));
+        // Assert.That(vm.dataRegisters[3 /* dim register offset */], Is.EqualTo(140));
+        // Assert.That(vm.typeRegisters[3 /* dim register offset */], Is.EqualTo(TypeCodes.INT)); // int, because y is not declared as a byte, so it is an int by default
+
+    }
 
     [Test]
     public void Array_Math()

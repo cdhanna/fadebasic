@@ -4,6 +4,13 @@ using System.Runtime.InteropServices.ComTypes;
 
 namespace FadeBasic.Virtual
 {
+    public struct VmAllocation
+    {
+        public int ptr;
+        public int length;
+        public HeapTypeFormat format;
+    }
+    
     public struct VmHeap
     {
         public byte[] memory;
@@ -12,19 +19,21 @@ namespace FadeBasic.Virtual
         public int Cursor => _cursor;
         /// <summary>
         /// key: a ptr
-        /// value: a length
+        /// value: a length (and metadata)
         ///
         /// If it exists in this dictionary, then it is "leased"
         /// </summary>
-        private Dictionary<int, int> _allocations;// = new Dictionary<int, int>();
+        private Dictionary<int, VmAllocation> _allocations;// = new Dictionary<int, int>();
 
         private Dictionary<int, Stack<int>> _lengthToPtrs;// = new Dictionary<int, Stack<int>>();
 
+        
+        
         public VmHeap(int initialCapacity)
         {
             memory = new byte[initialCapacity];
             _cursor = 0;
-            _allocations = new Dictionary<int, int>();
+            _allocations = new Dictionary<int, VmAllocation>();
             _lengthToPtrs = new Dictionary<int, Stack<int>>();
         }
 
@@ -68,30 +77,34 @@ namespace FadeBasic.Virtual
             }
         }
 
-        public void Allocate(byte typeCode, int arrayLength, out int ptr)
+        // public void Allocate(byte typeCode, int arrayLength, out int ptr)
+        // {
+        //     var size = arrayLength * TypeCodes.GetByteSize(typeCode);
+        //     Allocate(ref HeapTypeFormat.STRING_FORMAT, size, out ptr);
+        // }
+        public void AllocateString(int length, out int ptr)
         {
-            var size = arrayLength * TypeCodes.GetByteSize(typeCode);
-            Allocate(size, out ptr);
+            Allocate(ref HeapTypeFormat.STRING_FORMAT, length, out ptr);
         }
 
         public void Free(int ptr)
         {
-            if (!_allocations.TryGetValue(ptr, out var length))
+            if (!_allocations.TryGetValue(ptr, out var allocation))
             {
                 throw new Exception("VmHeap: cannot free a section of memory that was not directly allocated");
             }
 
             _allocations.Remove(ptr);
             // _ptrToFreed[ptr] = length;
-            if (!_lengthToPtrs.TryGetValue(length, out var ptrs))
+            if (!_lengthToPtrs.TryGetValue(allocation.length, out var ptrs))
             {
-                ptrs = _lengthToPtrs[length] = new Stack<int>();
+                ptrs = _lengthToPtrs[allocation.length] = new Stack<int>();
             }
             
             ptrs.Push(ptr);
         }
         
-        public void Allocate(int size, out int ptr)
+        public void Allocate(ref HeapTypeFormat format, int size, out int ptr)
         {
             
             if (_cursor + size >= memory.Length)
@@ -103,7 +116,12 @@ namespace FadeBasic.Virtual
                     throw new NotImplementedException(
                         "this is untested code. When you see this, check the code and remove this exception...");
                     ptr = availablePtrs.Pop();
-                    _allocations[ptr] = size;
+                    _allocations[ptr] = new VmAllocation
+                    {
+                        length = size,
+                        format = format,
+                        ptr = ptr
+                    };
                     return;
                 }
 
@@ -115,7 +133,12 @@ namespace FadeBasic.Virtual
 
             // reserve from the cursor to size offset...
             ptr = _cursor;
-            _allocations[ptr] = size;
+            _allocations[ptr] = new VmAllocation
+            {
+                length = size,
+                format = format,
+                ptr = ptr
+            };
             if (size == 0)
             {
                 _cursor += 1; // increase the cursor by 1, so that this spot is held as "empty"
@@ -128,14 +151,23 @@ namespace FadeBasic.Virtual
 
         public void GetAllocationSize(int ptr, out int size)
         {
-            if (!_allocations.TryGetValue(ptr, out size))
+            if (!_allocations.TryGetValue(ptr, out var allocation))
             {
                 throw new Exception("vm heap: invalid ptr cannot access allocation size, " + ptr);
             }
+
+            size = allocation.length;
         }
         public bool TryGetAllocationSize(int ptr, out int size)
         {
-            return _allocations.TryGetValue(ptr, out size);
+            var success = _allocations.TryGetValue(ptr, out var allocation);
+            size = allocation.length;
+            return success;
+        }
+
+        public bool TryGetAllocation(int ptr, out VmAllocation allocation)
+        {
+            return _allocations.TryGetValue(ptr, out allocation);
         }
     }
 }

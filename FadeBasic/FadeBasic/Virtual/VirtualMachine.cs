@@ -25,10 +25,6 @@ namespace FadeBasic.Virtual
         /// </summary>
         public byte[] typeRegisters;
         
-        /// <summary>
-        /// the typeId is the index into the type-table for this struct-based type. 
-        /// </summary>
-        public int[] typeIdRegisters;
         public int[] insIndexes;
         public byte[] globalFlag;
         
@@ -129,7 +125,8 @@ namespace FadeBasic.Virtual
         }
 
         public VmState state = new VmState();
-        private InternedData internedData;
+        public InternedData internedData;
+        public Dictionary<int, InternedType> typeTable = new Dictionary<int, InternedType>();
 
         void ReadInternedData()
         {
@@ -145,6 +142,11 @@ namespace FadeBasic.Virtual
              */
             var json = Encoding.Default.GetString(internedBytes.ToArray());
             internedData = JsonableExtensions.FromJson<InternedData>(json);
+
+            foreach (var kvp in internedData.types)
+            {
+                typeTable[kvp.Value.typeId] = kvp.Value;
+            }
         }
 
         public void Execute2(int instructionBatchCount=1000)
@@ -291,8 +293,13 @@ namespace FadeBasic.Virtual
                             size = TypeCodes.GetByteSize(typeCode);
                             stack.PushArray(program, instructionIndex, size);
                             instructionIndex += size;
-                            
                             break;
+                        
+                        case OpCodes.PUSH_TYPE_FORMAT:
+                            stack.PushArray(program, instructionIndex, HeapTypeFormat.SIZE);
+                            instructionIndex += HeapTypeFormat.SIZE;
+                            break;
+                            
                         case OpCodes.NOT:
                             VmUtil.ReadSpan(ref stack, out typeCode, out aSpan);
                             VmUtil.Not(typeCode, aSpan, out cSpan);
@@ -419,9 +426,13 @@ namespace FadeBasic.Virtual
                             break;
   
                         case OpCodes.ALLOC:
+                            
+                            // read the heap-type format
+                            VmUtil.ReadAsTypeFormat(ref stack, out var format);
+                            
                             // next value is an int, we know this.
                             VmUtil.ReadAsInt(ref stack, out var allocLength);
-                            heap.Allocate(allocLength, out var allocPtr);
+                            heap.Allocate(ref format, allocLength, out var allocPtr);
                             // push the address onto the stack
                             bBytes = BitConverter.GetBytes(allocPtr);
                             VmUtil.PushSpan(ref stack, bBytes, TypeCodes.INT);

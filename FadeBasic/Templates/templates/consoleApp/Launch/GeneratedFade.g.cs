@@ -30,11 +30,11 @@ public class GeneratedFade : ILaunchable
 
     #region debugData
     protected DebugData _debugData = LaunchUtil.UnpackDebugData(encodedDebugData);
-    protected const string encodedDebugData = "eyJpbnNUb1ZhcmlhYmxlIjp7fSJzdGF0ZW1lbnRUb2tlbnMiOlt7Imluc0luZGV4IjowLCJ0b2tlbiI6eyJsaW5lTnVtYmVyIjo0LCJjaGFyTnVtYmVyIjowLCJyYXciOiJwcmludCIsImNhc2VJbnNlbnNpdGl2ZVJhdyI6InByaW50In0sImlzQ29tcHV0ZWQiOjB9XSJpbnNUb0Z1bmN0aW9uIjp7fX0=";
+    protected const string encodedDebugData = "eyJpbnNUb1ZhcmlhYmxlIjp7fSJzdGF0ZW1lbnRUb2tlbnMiOlt7Imluc0luZGV4Ijo0LCJ0b2tlbiI6eyJsaW5lTnVtYmVyIjo0LCJjaGFyTnVtYmVyIjowLCJyYXciOiJwcmludCIsImNhc2VJbnNlbnNpdGl2ZVJhdyI6InByaW50In0sImlzQ29tcHV0ZWQiOjB9XSJpbnNUb0Z1bmN0aW9uIjp7fX0=";
     #endregion
 
     #region bytecode
     protected byte[] _byteCode = LaunchUtil.Unpack64(encodedByteCode);
-    protected const string encodedByteCode = "EgBoAAAAEgBlAAAAEgBsAAAAEgBsAAAAEgBvAAAAEgAgAAAAEgB3AAAAEgBvAAAAEgByAAAAEgBsAAAAEgBkAAAAAQAsAAAAEQoTCQkBAAEAAAABAAEAAAAO";
+    protected const string encodedByteCode = "bAAAABIAaAAAABIAZQAAABIAbAAAABIAbAAAABIAbwAAABIAIAAAABIAdwAAABIAbwAAABIAcgAAABIAbAAAABIAZAAAAAEALAAAABEtAAkAAAAAChMJCQEAAQAAAAEAAQAAAA4BAP///38VeyJ0eXBlcyI6e319";
     #endregion
 }

@@ -1,8 +1,5 @@
 using System;
 using System.Collections.Generic;
-using System.Linq;
-using System.Linq.Expressions;
-using System.Reflection.Emit;
 using System.Runtime.CompilerServices;
 using System.Text;
 using FadeBasic.Ast;
@@ -56,11 +53,13 @@ namespace FadeBasic.Virtual
     public class CompiledType : IJsonable
     {
         public string typeName;
+        public int typeId;
         public int byteSize;
         public Dictionary<string, CompiledTypeMember> fields = new Dictionary<string, CompiledTypeMember>();
         public void ProcessJson(IJsonOperation op)
         {
             op.IncludeField(nameof(typeName), ref typeName);
+            op.IncludeField(nameof(typeId), ref typeId);
             op.IncludeField(nameof(byteSize), ref byteSize);
             op.IncludeField(nameof(fields), ref fields);
         }
@@ -177,10 +176,12 @@ namespace FadeBasic.Virtual
     {
         public string name;
         public int byteSize;
+        public int typeId;
         public Dictionary<string, InternedField> fields = new Dictionary<string, InternedField>();
         public void ProcessJson(IJsonOperation op)
         {
             op.IncludeField(nameof(name), ref name);
+            op.IncludeField(nameof(typeId), ref typeId);
             op.IncludeField(nameof(byteSize), ref byteSize);
             op.IncludeField(nameof(fields), ref fields);
         }
@@ -191,6 +192,7 @@ namespace FadeBasic.Virtual
         public int offset, length;
         public byte typeCode;
         public string typeName;
+        public int typeId;
         
         public void ProcessJson(IJsonOperation op)
         {
@@ -198,6 +200,7 @@ namespace FadeBasic.Virtual
             op.IncludeField(nameof(length), ref length);
             op.IncludeField(nameof(typeCode), ref typeCode);
             op.IncludeField(nameof(typeName), ref typeName);
+            op.IncludeField(nameof(typeId), ref typeId);
         }
     }
     
@@ -222,6 +225,7 @@ namespace FadeBasic.Virtual
         //     new Dictionary<string, CompiledArrayVariable>();
 
         private Dictionary<string, CompiledType> _types = new Dictionary<string, CompiledType>();
+        private Dictionary<int, CompiledType> _typeTable = new Dictionary<int, CompiledType>();
 
         public HostMethodTable methodTable;
 
@@ -344,6 +348,7 @@ namespace FadeBasic.Virtual
             {
                 var type = new InternedType
                 {
+                    typeId = kvp.Value.typeId,
                     name = kvp.Key,
                     byteSize = kvp.Value.byteSize,
                 };
@@ -356,6 +361,7 @@ namespace FadeBasic.Virtual
                         offset = fieldKvp.Value.Offset,
                         typeCode = fieldKvp.Value.TypeCode,
                         typeName = fieldKvp.Value.Type?.typeName,
+                        typeId = fieldKvp.Value.Type?.typeId ?? 0
                     };
                     type.fields.Add(fieldKvp.Key, field);
                 }
@@ -378,15 +384,17 @@ namespace FadeBasic.Virtual
             var typeName = typeDefinition.name.variableName;
             var type = new CompiledType
             {
+                typeId = _typeTable.Count + 1, // include the +1 to imply that a typeId of 0 is invalid (if you see 0, its implies a bug happened)
                 typeName = typeName
             };
+            
             int totalSize = 0;
             foreach (var decl in typeDefinition.declarations)
             {
                 var fieldOffset = totalSize;
                 var typeMember = new CompiledTypeMember
                 {
-                    Offset = fieldOffset
+                    Offset = fieldOffset,
                 };
 
                 int size = 0;
@@ -419,6 +427,7 @@ namespace FadeBasic.Virtual
             type.byteSize = totalSize;
             
             _types[typeName] = type;
+            _typeTable[type.typeId] = type;
         }
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
@@ -1390,6 +1399,15 @@ namespace FadeBasic.Virtual
                             // we need to allocate some memory for this instance!
                             AddPushInt(_buffer, structType.byteSize);
                             
+                            // create the type-format for the allocation
+                            var tf = new HeapTypeFormat
+                            {
+                                typeCode = TypeCodes.STRUCT,
+                                typeFlags = 0,
+                                typeId = _types[compiledVar.structType].typeId
+                            };
+                            AddPushTypeFormat(_buffer, ref tf);
+                            
                             // call alloc, which expects to find the length on the stack, and the ptr is returned.
                             _buffer.Add(OpCodes.ALLOC);
                     
@@ -1401,6 +1419,8 @@ namespace FadeBasic.Virtual
                             // _buffer.Add(OpCodes.STORE);
                             // _buffer.Add(compiledVar.registerAddress);
                             PushStore(_buffer, compiledVar.registerAddress, compiledVar.isGlobal);
+                            _dbg?.AddVariable(_buffer.Count - 1, compiledVar);
+
                             break;
                 
                         default:
@@ -1493,6 +1513,16 @@ namespace FadeBasic.Virtual
                 AddPushInt(_buffer, sizeOfElement);
                 
                 _buffer.Add(OpCodes.MUL); // multiply the length by the size, to get the entire byte-size of the requested array
+                
+                // inject the type format.
+                var tf = new HeapTypeFormat
+                {
+                    typeCode = arrayVar.typeCode,
+                    typeId = arrayVar.structType?.typeId ?? 0,
+                    typeFlags = HeapTypeFormat.CreateArrayFlag(declaration.ranks.Length)
+                };
+                AddPushTypeFormat(_buffer, ref tf);
+                
                 _buffer.Add(OpCodes.ALLOC); // push the alloc instruction
                 
                 // _buffer.Add(OpCodes.STORE);
@@ -1904,6 +1934,9 @@ namespace FadeBasic.Virtual
                     // this one will get used by the Write call
                     _buffer.Add(OpCodes.DUPE); // SIZE, SIZE, <Data>
 
+                    // add in the type-format
+                    AddPushTypeFormat(_buffer, ref HeapTypeFormat.STRING_FORMAT);
+                    
                     // allocate a ptr to the stack
                     _buffer.Add(OpCodes.ALLOC); // PTR, SIZE, <Data>
                     
@@ -2237,6 +2270,13 @@ namespace FadeBasic.Virtual
                 buffer.Add(value[i]);
             }
         }
+
+        private static void AddPushTypeFormat(List<byte> buffer, ref HeapTypeFormat format)
+        {
+            buffer.Add(OpCodes.PUSH_TYPE_FORMAT);
+            HeapTypeFormat.AddToBuffer(ref format, buffer);
+        }
+        
         private static void AddPushInt(List<byte> buffer, int x)
         {
             buffer.Add(OpCodes.PUSH);

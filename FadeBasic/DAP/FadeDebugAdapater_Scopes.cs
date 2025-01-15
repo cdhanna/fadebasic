@@ -6,23 +6,12 @@ namespace DAP;
 
 public partial class FadeDebugAdapter
 {
-    private Dictionary<int, DebugScope> variableReferenceToscopes = new Dictionary<int, DebugScope>();
-    
-    List<Scope> ConvertToScopes(List<DebugScope> debugScopes)
-    {
-        var scopes = new List<Scope>();
-        for (var i = 0; i < debugScopes.Count; i++)
-        {
-            var scope = new Scope();
-            var dbgScope = debugScopes[i];
-            scopes.Add(scope);
+    // private Dictionary<int, DebugScope> variableReferenceToscopes = new Dictionary<int, DebugScope>();
+    public VariableDatabase db = new VariableDatabase();
 
-            scope.Name = dbgScope.scopeName;
-            scope.NamedVariables = dbgScope.variables.Count;
-            scope.VariablesReference = i + 1;
-            variableReferenceToscopes[scope.VariablesReference] = dbgScope;
-        }
-        return scopes;
+    void ResetVariableLifetime()
+    {
+        db = new VariableDatabase();
     }
     
     protected override void HandleScopesRequestAsync(IRequestResponder<ScopesArguments, ScopesResponse> responder)
@@ -31,58 +20,119 @@ public partial class FadeDebugAdapter
         
         _session.RequestScopes(responder.Arguments.FrameId, scopes =>
         {
-            var finalScopes = ConvertToScopes(scopes);
-            // TODO: huh? 
+            var finaScopes = new List<Scope>();
+            foreach (var dbgScope in scopes)
+            {
+                var scope = db.AddScope(responder.Arguments.FrameId, dbgScope);
+                finaScopes.Add(scope);
+            }
+            
             responder.SetResponse(new ScopesResponse
             {
-                Scopes = finalScopes
+                Scopes = finaScopes
             });
         });
     }
 
     protected override void HandleVariablesRequestAsync(IRequestResponder<VariablesArguments, VariablesResponse> responder)
     {
-        
-        if (!variableReferenceToscopes.TryGetValue(responder.Arguments.VariablesReference, out var dbgScope))
+
+        if (!db.TryGetEntry(responder.Arguments.VariablesReference, out var entry))
         {
             _logger.Log("[ERR] invalid variables requested. ");
             responder.SetResponse(new VariablesResponse()
             {
             });
         }
-        
         var res = new VariablesResponse();
-        foreach (var variable in dbgScope.variables)
+        
+        foreach (var variable in entry.Variables)
         {
-            res.Variables.Add(new Variable
+            var variableId = variable.id;
+            if (db.TryGetVariable(variable, out var existing))
             {
-                Name = variable.name,
-                Type = variable.type,
-                Value = variable.value,
-            });
+                res.Variables.Add(existing);
+            }
+            else
+            {
+                // need to construct the variable...
+                
+                var newVariable = new Variable
+                {
+                    // VariablesReference = variable.id,
+                    Name = variable.name,
+                    Type = variable.type,
+                    Value = variable.value,
+                };
+                
+                // need to ask that we expand the variables...
+                if (variable.fieldCount > 0 || variable.elementCount > 0)
+                {
+                    newVariable.VariablesReference = variable.id;
+                    _session.RequestVariableInfo(variable.id, (subScopes) =>
+                    {
+                        subScopes[0].id = variableId;
+                        db.AddScope(-1, subScopes[0]);
+                        // TODO: wait for the response from these messages before continuing, 
+                        //  because we need to tell our local cache what variable ids can be requested
+                        //  maybe use a ref int counter with Interlocked
+                    });
+                }
+
+
+                if (variable.fieldCount > 0) newVariable.NamedVariables = variable.fieldCount;
+                if (variable.elementCount > 0) newVariable.IndexedVariables = variable.elementCount;
+                
+                res.Variables.Add(db.AddVariable(variable, newVariable));
+                
+                
+                
+                // if (variable.fieldCount == 0 && variable.elementCount == 0)
+                // {
+                //     // this is a primitive, 
+                //     res.Variables.Add(db.AddVariable(variable, new Variable
+                //     {
+                //         Name = variable.name,
+                //         Type = variable.type,
+                //         Value = variable.value,
+                //     }));
+                // } else if (variable.elementCount > 0)
+                // {
+                //     res.Variables.Add(db.AddVariable(variable, new Variable
+                //     {
+                //         Name = variable.name,
+                //         Type = variable.type,
+                //         Value = variable.value,
+                //         IndexedVariables = variable.elementCount
+                //     }));
+                // }
+                // else if (variable.fieldCount > 0)
+                // {
+                //     // need to ask that we expand the variables...
+                //     _session.RequestVariableInfo(variable.id, (subScopes) =>
+                //     {
+                //         subScopes[0].id = variableId;
+                //         db.AddScope(-1, subScopes[0]);
+                //         // TODO: wait for the response from these messages before continuing, 
+                //         //  because we need to tell our local cache what variable ids can be requested
+                //         //  maybe use a ref int counter with Interlocked
+                //     });
+                //     
+                //     
+                //     // this is a struct, and we need to know more!
+                //     res.Variables.Add(db.AddVariable(variable, new Variable
+                //     {
+                //         VariablesReference = variable.id,
+                //         Name = variable.name,
+                //         Type = variable.type,
+                //         Value = variable.value,
+                //         NamedVariables = variable.fieldCount
+                //     }));
+                // }
+                
+            }
         }
         
-        
         responder.SetResponse(res);
-
-        // _session.RequestScopes(0, dbgScopes =>
-        // {
-        //     // var scopes = ConvertToScopes(dbgScopes);
-        //     var dbgScope = dbgScopes[responder.Arguments.VariablesReference-1];
-        //
-        //     var res = new VariablesResponse();
-        //     foreach (var variable in dbgScope.variables)
-        //     {
-        //         res.Variables.Add(new Variable
-        //         {
-        //             Name = variable.name,
-        //             Type = variable.type,
-        //             Value = variable.value,
-        //         });
-        //     }
-        //     
-        //     
-        //     responder.SetResponse(res);
-        // });
     }
 }

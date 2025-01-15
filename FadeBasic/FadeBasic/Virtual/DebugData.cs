@@ -144,15 +144,18 @@ namespace FadeBasic.Virtual
             AddVariable(new DebugVariable
             {
                 insIndex = insIndex,
-                name = compiledVar.name
+                name = compiledVar.name,
+                isPtr = 1
             });
         }
         public void AddVariable(int insIndex, CompiledVariable compiledVar)
         {
+            
             AddVariable(new DebugVariable
             {
                 insIndex = insIndex,
-                name = compiledVar.name
+                name = compiledVar.name,
+                isPtr = string.IsNullOrEmpty(compiledVar.structType) ? 0 : 1
             });
         }
 
@@ -244,6 +247,8 @@ namespace FadeBasic.Virtual
     public class DebugVariable : IJsonable
     {
         public int insIndex;
+
+        public int isPtr;
         // public byte byteSize;
         // public byte typeCode;
         public string name;
@@ -255,6 +260,7 @@ namespace FadeBasic.Virtual
         {
             op.IncludeField(nameof(insIndex), ref insIndex);
             op.IncludeField(nameof(name), ref name);
+            op.IncludeField(nameof(isPtr), ref isPtr);
         }
     }
 }

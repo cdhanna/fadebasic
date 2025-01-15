@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Globalization;
 using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 using FadeBasic.Ast;
@@ -98,20 +99,94 @@ namespace FadeBasic.Virtual
                     throw new NotImplementedException("Unknown type code");
             }
         }
+
+        public static float ConvertToFloat(ulong rawValue)
+        {
+            var outputRegisterBytes = BitConverter.GetBytes(rawValue);
+            float output = BitConverter.ToSingle(outputRegisterBytes, 0);
+            return output;
+        }
+        
+        public static string GetTypeName(byte typeCode, VirtualMachine vm, ulong rawValue)
+        {
+            if (!VmUtil.TryGetVariableTypeDisplay(typeCode, out var typeName))
+            {
+                return "UNKNOWN";
+            }
+
+            if (typeCode == TypeCodes.STRUCT)
+            {
+                // the rawValue is a ptr into the heap...
+                if (vm.heap.TryGetAllocation((int) rawValue, out var allocation))
+                {
+                    var typeId = allocation.format.typeId;
+                    var type = vm.typeTable[typeId];
+                    typeName = type.name;
+                }
+            }
+
+            return typeName;
+        }
+
+        public static string ConvertValueToDisplayString(byte typeCode, VirtualMachine vm, ref ReadOnlySpan<byte> span)
+        {
+            switch (typeCode)
+            {
+                case TypeCodes.INT:
+                    return BitConverter.ToInt32(span.ToArray(), 0).ToString();
+                case TypeCodes.BOOL:
+                    return span[0] == 0 ? "false" : "true";
+                case TypeCodes.REAL:
+                    var num = BitConverter.ToSingle(span.ToArray(), 0);
+                    return num.ToString(CultureInfo.InvariantCulture);
+                case TypeCodes.STRING:
+                    var address = BitConverter.ToInt32(span.ToArray(), 0);
+                    if (vm.heap.TryGetAllocationSize(address, out var strSize))
+                    {
+                        vm.heap.Read(address, strSize, out var strBytes);
+                        return  VmConverter.ToString(strBytes);
+                    }
+                    else
+                    {
+                        return "<?>";
+                    }
+
+                default:
+                    throw new NotImplementedException($"don't know how to convert span of size=[{span.Length}] to typecode=[{typeCode}]");
+                //
+                // case TypeCodes.STRING:
+                //     var address = (int)rawValue;
+                //     if (vm.heap.TryGetAllocationSize(address, out var strSize))
+                //     {
+                //         vm.heap.Read(address, strSize, out var strBytes);
+                //         return  VmConverter.ToString(strBytes);
+                //     }
+                //     else
+                //     {
+                //         return "<?>";
+                //     }
+             
+                // case TypeCodes.STRUCT:
+                //     return "[" + GetTypeName(typeCode, vm, rawValue) + "]";
+                //     
+                // default:
+                //     return rawValue.ToString();
+            }
+        }
         
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        public static object DbgConvert(byte typeCode, byte[] values)
+        public static object DbgConvert(byte typeCode, ref ReadOnlySpan<byte> values)
         {
             switch (typeCode)
             {
                 case TypeCodes.BYTE:
                     return values[0];
                 case TypeCodes.WORD:
-                    return BitConverter.ToInt16(values, 0);
+                    return BitConverter.ToInt16(values.ToArray(), 0);
                 case TypeCodes.INT:
-                    return BitConverter.ToInt32(values, 0);
+                    return BitConverter.ToInt32(values.ToArray(), 0);
                 case TypeCodes.REAL:
-                    return BitConverter.ToSingle(values, 0);
+                    return BitConverter.ToSingle(values.ToArray(), 0);
                 case TypeCodes.BOOL:
                     return values[0] == 1;
                 default:
@@ -159,7 +234,7 @@ namespace FadeBasic.Virtual
             {
                 case CommandArgRuntimeState.RegisterRef:
                     VmConverter.FromString(value, out strBytes);
-                    vm.heap.Allocate(strBytes.Length, out strPtr);
+                    vm.heap.Allocate(ref HeapTypeFormat.STRING_FORMAT, strBytes.Length, out strPtr);
                     vm.heap.Write(strPtr, strBytes.Length, strBytes);
                     vm.dataRegisters[address] = BitConverter.ToUInt32(BitConverter.GetBytes(strPtr), 0);
                     vm.typeRegisters[address] = typeCode;
@@ -167,7 +242,7 @@ namespace FadeBasic.Virtual
                 case CommandArgRuntimeState.HeapRef:
                     
                     VmConverter.FromString(value, out strBytes);
-                    vm.heap.Allocate(strBytes.Length, out strPtr);
+                    vm.heap.Allocate(ref HeapTypeFormat.STRING_FORMAT,strBytes.Length, out strPtr);
                     vm.heap.Write(strPtr, strBytes.Length, strBytes);
                     vm.heap.Write(address, 4, BitConverter.GetBytes(strPtr));
                     break;
@@ -364,6 +439,14 @@ namespace FadeBasic.Virtual
             }
             ReadSpan(ref stack, TypeCodes.INT, out var span);
             result = BitConverter.ToInt32(span.ToArray(), 0);
+        }
+
+        public static void ReadAsTypeFormat(ref FastStack<byte> stack, out HeapTypeFormat format)
+        {
+            stack.PopArraySpan(HeapTypeFormat.SIZE, out var span);
+            format.typeFlags = span[0];
+            format.typeCode = span[1];
+            format.typeId = BitConverter.ToInt32(span.ToArray(), 2);
         }
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
@@ -733,7 +816,8 @@ namespace FadeBasic.Virtual
                     heap.GetAllocationSize(aPtr, out var aLength);
                     heap.GetAllocationSize(bPtr, out var bLength);
                     var sumLength = aLength + bLength;
-                    heap.Allocate(sumLength, out var sumPtr);
+                    
+                    heap.Allocate(ref HeapTypeFormat.STRING_FORMAT, sumLength, out var sumPtr);
                     
                     // now write the two string bytes into sumPtr
                     heap.Copy(bPtr, sumPtr, bLength);

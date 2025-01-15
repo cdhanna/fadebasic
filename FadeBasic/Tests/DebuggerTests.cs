@@ -48,17 +48,57 @@ b# = 2.3
     public void Exploration_Variables_Arrays()
     {
         var src = @"
-dim x(3)
-x(1) = 1
+type vec
+    x
+    y
+endtype
+dim x(3,5) as vec
+";
+        Compile(src, out _, out var compiler, out var vm);
+        var dbg = compiler.DebugData;
+
+        var session = new DebugSession(vm, dbg, new LaunchOptions
+        {
+            debugWaitForConnection = false,
+            debug = true,
+            debugPort = 9999
+        });
+        session.StartDebugging();
+
+        session.variableDb.GetGlobalVariablesForFrame(0);
+        var scope = session.variableDb.Expand(2);
+        // session.variableDb.Expand()
+
+        var variables = DebugUtil.LookupVariables(vm, dbg, global: true);
+        
+        
+        Assert.That(variables.Count, Is.EqualTo(1));
+    }
+    
+    
+    [Test]
+    public void Exploration_Variables_Structs()
+    {
+        var src = @"
+TYPE egg
+    x
+ENDTYPE
+
+greg AS egg
+greg.x = 3
+dan AS egg
+dan.x = 5
+
 ";
         Compile(src, out _, out var compiler, out var vm);
         var dbg = compiler.DebugData;
         vm.Execute2();
 
-        var variables = DebugUtil.LookupVariables(vm, dbg, global: true);
+        var variables = DebugUtil.LookupVariables(vm, dbg, global: false);
 
         Assert.That(variables.Count, Is.EqualTo(1));
     }
+
     
     [Test]
     public void FunctionMap()

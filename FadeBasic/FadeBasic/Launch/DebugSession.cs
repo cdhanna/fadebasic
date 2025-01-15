@@ -30,7 +30,7 @@ namespace FadeBasic.Launch
         }
         
         
-        private VirtualMachine _vm;
+        public VirtualMachine _vm;
         private DebugData _dbg;
         private LaunchOptions _options;
 
@@ -71,6 +71,8 @@ namespace FadeBasic.Launch
         
         public IDebugLogger logger;
 
+        public DebugVariableDatabase variableDb;
+        
         public int InstructionPointer => _vm.instructionIndex;
 
         public bool IsPaused => pauseRequestedByMessageId > resumeRequestedByMessageId;
@@ -91,6 +93,7 @@ namespace FadeBasic.Launch
                 logger = new EmptyDebugLogger();
             }
             _vm.logger = logger;
+            variableDb = new DebugVariableDatabase(vm, dbg, logger);
 
             logger.Log("Starting debug session...");
 
@@ -185,8 +188,8 @@ namespace FadeBasic.Launch
         {
             if (receivedMessages.TryDequeue(out var message))
             {
-                logger.Log($"[DBG] Received message : {message.id}, {message.type}");
-
+                logger.Log($"[DBG] Received message : {message.id}, {message.type.ToString()}");
+      
                 switch (message.type)
                 {
                     case DebugMessageType.PROTO_HELLO:
@@ -212,6 +215,7 @@ namespace FadeBasic.Launch
                         break;
                     case DebugMessageType.REQUEST_PLAY:
                         resumeRequestedByMessageId = message.id;
+                        variableDb.ClearLifetime();
                         Ack(message);
                         break;
                     case DebugMessageType.REQUEST_TERMINATE:
@@ -259,6 +263,8 @@ namespace FadeBasic.Launch
                         { // reset the info to blank
                             stepInFromToken = null;
                             stepStackDepth = 0;
+                            variableDb.ClearLifetime();
+
                         }
                         
                         if (!instructionMap.TryFindClosestTokenBeforeIndex(_vm.instructionIndex, out stepInFromToken))
@@ -281,6 +287,8 @@ namespace FadeBasic.Launch
                         { // reset the info to blank
                             stepOutFromToken = null;
                             stepStackDepth = 0;
+                            variableDb.ClearLifetime();
+
                         }
                         
                         if (!instructionMap.TryFindClosestTokenBeforeIndex(_vm.instructionIndex, out stepOutFromToken))
@@ -306,6 +314,8 @@ namespace FadeBasic.Launch
                         { // reset the info to blank
                             stepOverFromToken = null;
                             stepStackDepth = 0;
+                            variableDb.ClearLifetime();
+
                         }
                         
                         if (!instructionMap.TryFindClosestTokenBeforeIndex(_vm.instructionIndex, out stepOverFromToken))
@@ -324,6 +334,17 @@ namespace FadeBasic.Launch
                         logger.Debug($"stepping from {stepOverFromToken.Jsonify()}");
                         break;
                     
+                    case DebugMessageType.REQUEST_VARIABLE_EXPANSION:
+                        var variableRequest = JsonableExtensions.FromJson<DebugVariableExpansionRequest>(message.RawJson);
+                        var subScope = variableDb.Expand(variableRequest.variableId);
+                        Ack(message, new ScopesMessage
+                        {
+                            scopes = new List<DebugScope>
+                            {
+                                subScope
+                            }
+                        });
+                        break;
                     case DebugMessageType.REQUEST_SCOPES:
                         var scopeRequest = JsonableExtensions.FromJson<DebugScopeRequest>(message.RawJson);
                         var scopeFrames = GetFrames2();
@@ -333,70 +354,18 @@ namespace FadeBasic.Launch
                         {
                             logger.Error($"scope request failed because frame-index=[{frameIndex}] was out of bounds of max=[{scopeFrames.Count}]");
                         }
-                        
-                        var dict = DebugUtil.LookupVariables(_vm, _dbg, frameIndex, global: false);
-                        var globalDict = DebugUtil.LookupVariables(_vm, _dbg, frameIndex, global: true);
 
-                        // DebugUtil.LookupVariablesFromScope(globalDict, _dbg, ref _vm.globalScope);
+                        var global = variableDb.GetGlobalVariablesForFrame(frameIndex);
+                        var local = variableDb.GetLocalVariablesForFrame(frameIndex);
 
-                        var scope = new DebugScope
-                        {
-                            scopeName = "Locals"
-                        };
-
-                        var global = new DebugScope
-                        {
-                            scopeName = "Globals"
-                        };
-                        
-                        logger.Info($"variables count=[{dict.Count}]");
-                        logger.Info($"global variables count=[{globalDict.Count}]");
-                        foreach (var kvp in dict)
-                        {
-                            scope.variables.Add(new DebugVariable
-                            {
-                                name = kvp.Key,
-                                value = kvp.Value.GetValueDisplay(_vm),
-                                type = kvp.Value.TypeName
-                            });
-                            logger.Info($"variable name=[{kvp.Key}] raw val=[{kvp.Value.rawValue}] tc=[{kvp.Value.typeCode}] type=[{kvp.Value.TypeName}]");
-                        }
-                        foreach (var kvp in globalDict)
-                        {
-                            global.variables.Add(new DebugVariable
-                            {
-                                name = kvp.Key,
-                                value = kvp.Value.GetValueDisplay(_vm),
-                                type = kvp.Value.TypeName
-                            });
-                            logger.Info($"global variable name=[{kvp.Key}] raw val=[{kvp.Value.rawValue}] tc=[{kvp.Value.typeCode}] type=[{kvp.Value.TypeName}]");
-                        }
                         Ack(message, new ScopesMessage
                         {
                             scopes = new List<DebugScope>
                             {
                                 global,
-                                scope
+                                local
                             }
                         });
-                        logger.Log("sent back request..");
-                        
-                        // logger.Info($"Looking at scope length=[{scope.insIndexes.Length}] dbg-count=[{_dbg.insToVariable.Count}]");
-                        // for (var i = 0; i < scope.insIndexes.Length; i++)
-                        // {
-                        //     var ins = scope.insIndexes[i];
-                        //     var typeCode = scope.typeRegisters[i];
-                        //     var value = scope.dataRegisters[i];
-                        //     logger.Info($"found variable at ins=[{ins}] typecode=[{typeCode}] data=[{value}]");
-                        //     if (!_dbg.insToVariable.TryGetValue(ins, out var variable))
-                        //     {
-                        //         logger.Error($"failed to find variable");
-                        //     }
-                        //     else
-                        //     {
-                        //         logger.Info($"variable is name=[{variable.name}]");
-                        //     }
-                        // }
                         
                         break;
                     case DebugMessageType.REQUEST_STACK_FRAMES:
@@ -752,6 +721,7 @@ namespace FadeBasic.Launch
         
         REQUEST_STACK_FRAMES,
         REQUEST_SCOPES,
+        REQUEST_VARIABLE_EXPANSION,
         REQUEST_BREAKPOINTS
     }
 
@@ -809,26 +779,35 @@ namespace FadeBasic.Launch
 
     public class DebugScope : IJsonable
     {
+        public int id;
         public string scopeName;
         public List<DebugVariable> variables = new List<DebugVariable>();
         public void ProcessJson(IJsonOperation op)
         {
+            op.IncludeField(nameof(id), ref id);
             op.IncludeField(nameof(scopeName), ref scopeName);
             op.IncludeField(nameof(variables), ref variables);
         }
     }
-
+    
     public class DebugVariable : IJsonable
     {
+        public int id;
         public string name;
         public string type;
         public string value;
-            
+
+        public int fieldCount;
+        public int elementCount;
+        
         public void ProcessJson(IJsonOperation op)
         {
+            op.IncludeField(nameof(id), ref id);
             op.IncludeField(nameof(name), ref name);
             op.IncludeField(nameof(type), ref type);
             op.IncludeField(nameof(value), ref value);
+            op.IncludeField(nameof(fieldCount), ref fieldCount);
+            op.IncludeField(nameof(elementCount), ref elementCount);
         }
     }
     

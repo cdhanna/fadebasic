@@ -170,6 +170,20 @@ namespace FadeBasic.Launch
                 handler?.Invoke(details.scopes);
             });
         }
+
+        public void RequestVariableInfo(int variableId, Action<List<DebugScope>> handler)
+        {
+            Send(new DebugVariableExpansionRequest
+            {
+                id = GetNextMessageId(),
+                type = DebugMessageType.REQUEST_VARIABLE_EXPANSION,
+                variableId = variableId
+            }, msg =>
+            {
+                var details = JsonableExtensions.FromJson<ScopesMessage>(msg.RawJson);
+                handler?.Invoke(details.scopes);
+            });
+        }
         
         public void RequestStackFrames(Action<List<DebugStackFrame>> handler)
         {
@@ -242,6 +256,17 @@ namespace FadeBasic.Launch
         {
             base.ProcessJson(op);
             op.IncludeField(nameof(frameIndex), ref frameIndex);
+        }
+    }
+    
+    public class DebugVariableExpansionRequest : DebugMessage
+    {
+        public int variableId;
+
+        public override void ProcessJson(IJsonOperation op)
+        {
+            base.ProcessJson(op);
+            op.IncludeField(nameof(variableId), ref variableId);
         }
     }
 

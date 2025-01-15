@@ -1,4 +1,8 @@
+using System;
+using System.Collections.Generic;
 using System.Runtime.CompilerServices;
+using System.Runtime.InteropServices;
+using FadeBasic.Ast;
 
 namespace FadeBasic.Virtual
 {
@@ -73,6 +77,61 @@ namespace FadeBasic.Virtual
         public static byte GetOrder(byte typeCode) => ORDER_PREC[typeCode];
     }
 
+    [StructLayout(LayoutKind.Sequential)]
+    public struct HeapTypeFormat
+    {
+        public const int SIZE = sizeof(int) + sizeof(byte) * 2;
+        
+        public int typeId;
+        public byte typeCode;
+        public byte typeFlags;
+
+        private const byte FLAG_ARRAY1 = 4;
+        private const byte FLAG_ARRAY2 = 8;
+        private const byte FLAG_ARRAY3 = 16;
+        private const byte FLAG_ARRAY4 = 32;
+        private const byte FLAG_ARRAY5 = 64;
+
+        public static HeapTypeFormat STRING_FORMAT = new HeapTypeFormat
+        {
+            typeCode = TypeCodes.STRING
+        };
+        
+        public static byte CreateArrayFlag(int ranks)
+        {
+            if (ranks == 0) return 0;
+            var flag = (byte)Math.Pow(2, ranks + 1);
+            return flag;
+        }
+        
+        public static void AddToBuffer(ref HeapTypeFormat format, List<byte> buffer)
+        {
+            buffer.Add(format.typeFlags);
+            buffer.Add(format.typeCode);
+            buffer.AddRange(BitConverter.GetBytes(format.typeId));
+        }
+        
+        public bool IsArray(out byte arrayRanks)
+        {
+            arrayRanks = 0;
+            if (typeFlags <= 3) return false;
+
+            if ((typeFlags & FLAG_ARRAY1) > 0) arrayRanks = 1;
+            if ((typeFlags & FLAG_ARRAY2) > 0) arrayRanks = 2;
+            if ((typeFlags & FLAG_ARRAY3) > 0) arrayRanks = 3;
+            if ((typeFlags & FLAG_ARRAY4) > 0) arrayRanks = 4;
+            if ((typeFlags & FLAG_ARRAY5) > 0) arrayRanks = 5;
+            return true;
+        }
+        public bool IsString() => typeCode == TypeCodes.STRING;
+        public bool IsStruct() => typeCode == TypeCodes.STRUCT;
+    }
+    
+    public static class HeapTypeFormatMethods
+    {
+        
+    }
+
     public static class OpCodes
     {
         /// <summary>
@@ -119,7 +178,10 @@ namespace FadeBasic.Virtual
         public const byte CAST = 9;
 
         /// <summary>
-        /// The length should be on the stack, and the result will be a memory address for the start of the reserved memory
+        /// The stack should contain the length of the requested allocation,
+        ///  AND, the type-byte encoding.
+        /// 
+        /// the result will be a memory address for the start of the reserved memory
         /// </summary>
         public const byte ALLOC = 10;
 
@@ -167,6 +229,12 @@ namespace FadeBasic.Virtual
         /// Exactly the same as push, but it does not push the type code aftewards
         /// </summary>
         public const byte PUSH_TYPELESS = 18;
+        
+        /// <summary>
+        /// Pushes a type-format byte array from INS onto the stack.
+        /// The type-format is used to help describe what is getting allocated into the heap. 
+        /// </summary>
+        public const byte PUSH_TYPE_FORMAT = 45;
 
         /// <summary>
         /// Does nothing. Used as a place holder for label instructions.

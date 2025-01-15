@@ -398,7 +398,7 @@ public static void {descriptor.MethodName}({nameof(VirtualMachine)} {VM})
                         var resultStrPtr = "__resultStrPtr";
                         var ptrIntBytes = "__ptrIntBytes";
                         sb.AppendLine($"{nameof(VmConverter)}.{nameof(VmConverter.FromStringSpan)}({result}, out var {resultSpan});");
-                        sb.AppendLine($"{VM}.{nameof(VirtualMachine.heap)}.{nameof(VirtualMachine.heap.Allocate)}({resultSpan}.Length, out var {resultStrPtr});");
+                        sb.AppendLine($"{VM}.{nameof(VirtualMachine.heap)}.{nameof(VirtualMachine.heap.AllocateString)}({resultSpan}.Length, out var {resultStrPtr});");
                         sb.AppendLine($"{VM}.{nameof(VirtualMachine.heap)}.{nameof(VirtualMachine.heap.WriteSpan)}({resultStrPtr}, {resultSpan}.Length, {resultSpan});");
                         sb.AppendLine($"var {ptrIntBytes} = {nameof(BitConverter)}.{nameof(BitConverter.GetBytes)}({resultStrPtr});");
                         sb.AppendLine($"{nameof(VmUtil)}.{nameof(VmUtil.PushSpan)}(ref {VM}.{nameof(VirtualMachine.stack)}, {ptrIntBytes}, {TypeCodes.STRING});");
