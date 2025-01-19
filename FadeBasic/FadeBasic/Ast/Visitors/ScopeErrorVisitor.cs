@@ -9,8 +9,14 @@ namespace FadeBasic.Ast.Visitors
 
         public static void AddScopeRelatedErrors(this ProgramNode program, ParseOptions options)
         {
-            if (options?.ignoreChecks ?? false) throw new NotSupportedException("take this out- it shouldnt be valid to ignore saftey checks");
-            
+            if (options?.ignoreChecks ?? false)
+            {
+                // at one point I thought this should throw an exception...
+                //  but then it turned out I thought it was handy for the REPL,
+                //  because we can inject custom hand-made parse nodes before running the function
+                return;
+            }
+
             var scope = program.scope = new Scope();
             foreach (var label in program.labels)
             {

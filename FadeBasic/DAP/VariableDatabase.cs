@@ -21,7 +21,6 @@ public class VariableDatabase
         public List<DebugVariable> Variables => dbgScope.variables;
     }
 
-    // private List<IEntry> scopes = new List<Entry>();
     private Dictionary<int, IEntry> idToEntryTable = new Dictionary<int, IEntry>();
     private Dictionary<int, Variable> idToVariableTable = new Dictionary<int, Variable>();
 
@@ -34,7 +33,7 @@ public class VariableDatabase
             frameId = frameId,
         };
         
-        idToEntryTable.Add(entry.VariableId, entry);
+        idToEntryTable[entry.VariableId] = entry;
         return new Scope
         {
             VariablesReference = entry.VariableId,

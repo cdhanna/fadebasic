@@ -10,6 +10,8 @@ using System.Runtime.InteropServices;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
+using FadeBasic.Ast;
+using FadeBasic.Ast.Visitors;
 using FadeBasic.Json;
 using FadeBasic.Virtual;
 
@@ -32,7 +34,8 @@ namespace FadeBasic.Launch
         
         public VirtualMachine _vm;
         private DebugData _dbg;
-        private LaunchOptions _options;
+        private readonly CommandCollection _commandCollection;
+        public readonly LaunchOptions _options;
 
         private bool requestedExit;
         private bool started;
@@ -77,10 +80,11 @@ namespace FadeBasic.Launch
 
         public bool IsPaused => pauseRequestedByMessageId > resumeRequestedByMessageId;
 
-        public DebugSession(VirtualMachine vm, DebugData dbg, LaunchOptions options=null)
+        public DebugSession(VirtualMachine vm, DebugData dbg, CommandCollection commandCollection=null, LaunchOptions options=null)
         {
             _options = options ?? LaunchOptions.DefaultOptions;
             _dbg = dbg;
+            _commandCollection = commandCollection;
             _vm = vm;
             instructionMap = new IndexCollection(_dbg.statementTokens);
 
@@ -134,8 +138,6 @@ namespace FadeBasic.Launch
         void RunServer(object state)
         {
             DebugServerStreamUtil.OpenServer2(_options.debugPort, outboundMessages, receivedMessages, _cts.Token);
-            logger.Log("SERVER IS DEAD!");
-            throw new Exception("uh oh server2 is dead");
         }
 
         void Ack(int originalId, DebugMessage responseMsg)
@@ -345,6 +347,14 @@ namespace FadeBasic.Launch
                             }
                         });
                         break;
+                    case DebugMessageType.REQUEST_EVAL:
+                        var evalRequest = JsonableExtensions.FromJson<EvalMessage>(message.RawJson);
+                        var evalResult = Eval(evalRequest.frameIndex, evalRequest.expression);
+                        Ack(evalRequest, new EvalResponse
+                        {
+                            result = evalResult
+                        });
+                        break;
                     case DebugMessageType.REQUEST_SCOPES:
                         var scopeRequest = JsonableExtensions.FromJson<DebugScopeRequest>(message.RawJson);
                         var scopeFrames = GetFrames2();
@@ -381,9 +391,204 @@ namespace FadeBasic.Launch
             }
         }
 
-        public List<DebugStackFrame> GetFrames()
+        public DebugEvalResult Eval(int frameId, string expression)
         {
-            return GetFramesFromVm(_vm, instructionMap, _dbg, logger);
+            // TODO: ignore the frame-id, and just assume everything is at frame-0...
+
+            const string SYNTHETIC_NAME = "fade________eval";
+            expression = SYNTHETIC_NAME + "=" + expression;
+            var globalVariableTable = new Dictionary<string, CompiledVariable>();
+            var localVariableTable = new Dictionary<string, CompiledVariable>();
+
+            logger.Log($"Evaluating frame=[{frameId}], expr=[{expression}]");
+            
+            var lexer = new Lexer();
+            var lexResults = lexer.TokenizeWithErrors(expression, _commandCollection);
+            if (lexResults.tokenErrors.Count > 0)
+            {
+                return DebugEvalResult.Failed("Unable to lex expression");
+                throw new NotImplementedException("lex error handling not supported yet");
+            }
+
+            /*
+             * To parse correctly, we need to mock out the existing context...
+             * - variables need to be declared with their full types
+             * - function names need to exist
+             * 
+             */
+            
+            var parser = new Parser(lexResults.stream, _commandCollection);
+            var node = parser.ParseProgram(new ParseOptions
+            {
+                ignoreChecks = true
+            });
+            if (node.statements.Count > 1)
+            {
+                return DebugEvalResult.Failed("only single declaration is allowed");
+            }
+            
+            // TODO: inject all known decls that are valid for this scope.
+            var stacks = GetFrames2();
+            var locals = variableDb.GetLocalVariablesForFrame(frameId);
+            var globals = variableDb.GetGlobalVariablesForFrame(frameId);
+            
+            void AddVariable(DebugVariable local, bool isGlobal)
+            {
+                var variable = variableDb.GetRuntimeVariable(local);
+
+                if (variable.typeCode == TypeCodes.STRUCT)
+                {
+                    throw new NotImplementedException("structs are a no go, friend");
+                }
+
+                if (variable.GetElementCount() > 0)
+                {
+                    throw new NotImplementedException("arrays are a no go, friend");
+                }
+
+                if (!TypeInfo.TryGetFromTypeCode(variable.typeCode, out var typeInfo))
+                {
+                    throw new InvalidOperationException($"unknown type code=[{variable.typeCode}] in eval function");
+                }
+
+                var compiledVariable = new CompiledVariable
+                {
+                    typeCode = variable.typeCode,
+                    name = local.name,
+                    registerAddress = (byte)variable.regAddr,
+                    byteSize = TypeCodes.GetByteSize(variable.typeCode),
+                    isGlobal = isGlobal
+                }; // TODO: support structs and arrays
+                if (isGlobal)
+                {
+                    globalVariableTable.Add(local.name, compiledVariable);
+                }
+                else
+                {
+                    localVariableTable.Add(local.name, compiledVariable);
+                }
+                
+                var decl = new DeclarationStatement(new Token
+                    {
+                        caseInsensitiveRaw = isGlobal ? "global" : "local"
+                    }, new VariableRefNode(new Token(), local.name),
+                    new TypeReferenceNode(typeInfo.type, new Token()));
+                
+                node.statements.Insert(0, decl);
+            }
+            
+           
+            
+            foreach (var global in globals.variables)
+            {
+                AddVariable(global, true);
+            }
+            foreach (var local in locals.variables)
+            {
+                AddVariable(local, false);
+            }
+            
+            
+            node.AddScopeRelatedErrors(new ParseOptions());
+
+            var finalStatement = (AssignmentStatement)node.statements.LastOrDefault(x => x is AssignmentStatement);
+            if (finalStatement == null)
+            {
+                return DebugEvalResult.Failed("only declarations are allowed");
+            }
+            finalStatement.variable.Errors.Clear(); // remove the cast related error
+            
+            var parseErrors = node.GetAllErrors();
+            if (parseErrors.Count > 0)
+            {
+                return DebugEvalResult.Failed($"{string.Join(",\n", parseErrors.Select(x => x.message))}");
+            }
+            
+            
+            /*
+             * when the compilation happens, any references to existing variables and functions
+             * need to get mapped into the current program space
+             */
+
+            var mergedVariableTable = new Dictionary<string, CompiledVariable>(globalVariableTable);
+            foreach (var kvp in localVariableTable)
+            {
+                mergedVariableTable[kvp.Key] = kvp.Value;
+            }
+
+            var compileScope = new CompileScope(mergedVariableTable);
+            compileScope.Create(SYNTHETIC_NAME, VmUtil.GetTypeCode(finalStatement.expression.ParsedType.type), false, regOffset:1);
+            var compiler = new Compiler(_commandCollection, new CompilerOptions
+            {
+                GenerateDebugData = true
+            }, givenGlobalScope: compileScope);
+            // only compile the last statement, because this only evaluates one statement at a time.
+            compiler.Compile(finalStatement);
+            
+            byte[] originalProgram = _vm.program;
+            var originalInstructionIndex = _vm.instructionIndex;
+            var originalState = _vm.state;
+            
+            
+            // make a backup of the entire scope state of the vm...
+            var originalScopeStack = FastStack<VirtualScope>.Copy(_vm.scopeStack);
+            var reverseIndex = _vm.scopeStack.Count - (frameId + 1);
+            var originalScopePtr = _vm.scopeStack.ptr;
+            var originalStack = _vm.stack;
+            var originalScope = _vm.scope;
+            
+            var fakeScopeStack = new FastStack<VirtualScope>(2);
+            fakeScopeStack.Push(_vm.globalScope);
+            if (_vm.scopeStack.Count > 1)
+            {
+                fakeScopeStack.Push(originalScopeStack.buffer[reverseIndex]);
+            }
+            _vm.scopeStack = fakeScopeStack;
+
+            var newProgram = new List<byte>();
+            newProgram.AddRange(_vm.program);
+            newProgram.AddRange(compiler.Program);
+            
+            _vm.instructionIndex = _vm.program.Length;
+            _vm.program = newProgram.ToArray();
+            _vm.stack = new FastStack<byte>(8);
+            _vm.state = new VirtualMachine.VmState
+            {
+            };
+            _vm.scope = _vm.scopeStack.buffer[_vm.scopeStack.ptr - 1];
+            while (_vm.instructionIndex < _vm.program.Length)
+            {
+                _vm.Execute2(1);
+            }
+
+            if (!compiler.scopeStack.Peek().TryGetVariable(SYNTHETIC_NAME, out var synth))
+            {
+                throw new NotSupportedException("no compiled synthetic");
+            }
+            
+            var runtimeSynth = new DebugRuntimeVariable(_vm, SYNTHETIC_NAME, synth.typeCode, _vm.dataRegisters[synth.registerAddress],
+                _vm.scopeStack.Count -  frameId, synth.registerAddress);
+
+            
+
+            _vm.instructionIndex = originalInstructionIndex;
+            _vm.program = originalProgram;
+            _vm.state = originalState;
+            _vm.scopeStack = originalScopeStack;
+            _vm.scopeStack.ptr = originalScopePtr;
+            _vm.stack = originalStack;
+            _vm.scope = originalScope;
+
+
+            var res = new DebugEvalResult
+            {
+                type = runtimeSynth.GetTypeName(),
+                value = runtimeSynth.GetValueDisplay()
+            };
+            // TODO: only set if there are children variables...
+            //res.id = variableDb.NextId();
+            
+            return res;
         }
 
         public List<DebugStackFrame> GetFrames2()
@@ -438,89 +643,6 @@ namespace FadeBasic.Launch
             return frames;
         }
 
-        public static List<DebugStackFrame> GetFramesFromVm(VirtualMachine vm, IndexCollection map, DebugData dbg, IDebugLogger logger)
-        {
-            
-            var locations = new List<JumpHistoryData>();
-            var frames = new List<DebugStackFrame>();
-
-            // the method stack is current-to-oldest sorted. 
-            for (var i = vm.methodStack.Count - 1; i >= 0; i--) 
-            {
-                locations.Add(vm.methodStack.buffer[i]);
-            }
-            
-
-            DebugStackFrame BuildFrameFromIndex(int stackPtr)
-            {
-                if (!map.TryFindClosestTokenBeforeIndex(stackPtr, out var token))
-                {
-                    logger?.Error($"no instruction for frame. ins=[{stackPtr}]");
-                    return null;
-                }
-
-                return BuildFrame(stackPtr, token);
-            }
-
-            DebugStackFrame BuildFrame(int stackPtr, DebugToken token)
-            {
-                string functionName = $"<root {token?.token?.raw}!>";
-                logger?.Debug($"stack ptr=[{stackPtr}] found token=[{token.Jsonify()}]");
-                if (dbg.insToFunction.TryGetValue(stackPtr, out var functionToken))
-                {
-                    functionName = functionToken.token.raw; // TODO: I think the names are backwards?
-                }
-                else
-                {
-                    var table = string.Join(",\n", dbg.insToFunction.Select(kvp => $"  [{kvp.Key}]->{kvp.Value.Jsonify()}"));
-                    logger.Info($"stacktrace failed to find function name for ptr=[{stackPtr}]\n{table}\n\n");
-                }
-                            
-                return new DebugStackFrame
-                {
-                    colNumber = token.token.charNumber,
-                    lineNumber = token.token.lineNumber,
-                    name = functionName
-                };
-
-            }
-            
-            foreach (var data in locations)
-            {
-                if (!map.TryFindClosestTokenBeforeIndex(data.toIns, out var token))
-                {
-                    logger?.Error($"no instruction for frame. ins=[{data.toIns}]");
-                    continue;
-                }
-
-                var frame = BuildFrame(data.toIns, token);
-                frames.Add(frame);
-            }
-
-            { // add the oldest-oldest thing, which is the top-level scope.
-                if (locations.Count == 0)
-                {
-                    // just use the current instruction index when there are no functions
-                    var frame = BuildFrameFromIndex(vm.instructionIndex);
-                    if (frame != null)
-                    {
-                        frames.Add(frame);
-                    }
-                }
-                else
-                {
-                    // or use the location the first function was at
-                    var frame = BuildFrameFromIndex(vm.methodStack.buffer[0].fromIns);
-                    if (frame != null)
-                    {
-                        frames.Add(frame);
-                    }
-                }
-            }
-
-            return frames;
-        }
-
         public void StartDebugging(int ops = 0)
         {
             var budget = ops;
@@ -550,7 +672,7 @@ namespace FadeBasic.Launch
                 var hasCurrentToken =
                     instructionMap.TryFindClosestTokenBeforeIndex(_vm.instructionIndex, out var currentToken);
                 
-                // logger.Log($"ins={_vm.instructionIndex}");
+                // logger.Log($"ins={_vm.instructionIndex} cts=[{hasCurrentToken}] ct=[{currentToken.token.Location}]");
                 if (hasCurrentToken)
                 {
                     // logger.Log($"_t= {currentToken.Jsonify()}");
@@ -721,6 +843,7 @@ namespace FadeBasic.Launch
         
         REQUEST_STACK_FRAMES,
         REQUEST_SCOPES,
+        REQUEST_EVAL,
         REQUEST_VARIABLE_EXPANSION,
         REQUEST_BREAKPOINTS
     }
@@ -751,6 +874,29 @@ namespace FadeBasic.Launch
         }
 
         public string RawJson { get; set; }
+    }
+
+    public class EvalMessage : DebugMessage
+    {
+        public int frameIndex;
+        public string expression;
+
+        public override void ProcessJson(IJsonOperation op)
+        {
+            base.ProcessJson(op);
+            op.IncludeField(nameof(frameIndex), ref frameIndex);
+            op.IncludeField(nameof(expression), ref expression);
+        }
+    }
+
+    public class EvalResponse : DebugMessage
+    {
+        public DebugEvalResult result;
+        public override void ProcessJson(IJsonOperation op)
+        {
+            base.ProcessJson(op);
+            op.IncludeField(nameof(result), ref result);
+        }
     }
 
     public class StepNextResponseMessage : DebugMessage

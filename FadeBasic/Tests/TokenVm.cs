@@ -2382,6 +2382,31 @@ endif
     
     
     [Test]
+    public void Declare_Global_ReferencedFromLocal()
+    {
+        var src = @"
+global x
+x = 4
+y = x
+";
+        Setup(src, out var compiler, out var prog);
+        
+        var vm = new VirtualMachine(prog);
+        vm.Execute2();
+
+        Assert.That(vm.dataRegisters[0], Is.EqualTo(4)); // register 0 is x, 
+        Assert.That(vm.typeRegisters[0], Is.EqualTo(TypeCodes.INT));
+        
+        Assert.That(vm.globalScope.dataRegisters[1], Is.EqualTo(4)); // register 1 is y, 
+        Assert.That(vm.globalScope.typeRegisters[1], Is.EqualTo(TypeCodes.INT));
+        
+        Assert.That(vm.dataRegisters[2], Is.EqualTo(0)); // register 2 should have nothing in it
+        Assert.That(vm.typeRegisters[2], Is.EqualTo(0));
+    }
+
+    
+    
+    [Test]
     public void Declare_InLoop()
     {
         var src = @"

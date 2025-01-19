@@ -191,6 +191,19 @@ public class JsonTests
 
         // Assert.That(x.insIndex, Is.EqualTo(y.insIndex));
     }
+
+    [Test]
+    public void QuotesInStringFields()
+    {
+        var obj = new DebugEvalResult
+        {
+            value = "an \"extra\" quote"
+        };
+        var json = obj.Jsonify();
+
+        var obj2= JsonableExtensions.FromJson<DebugEvalResult>(json);
+        Assert.That(obj.value, Is.EqualTo(obj2.value));
+    }
     
     [Test]
     public void Nested()

@@ -4,14 +4,6 @@ using FadeBasic.Launch;
 
 namespace FadeBasic.Virtual
 {
-    public class DebugRuntimeHeapVariable
-    {
-        public DebugRuntimeVariable rootVariable;
-        public string name;
-        public byte typeCode;
-        public int size;
-    }
-    
     public class DebugRuntimeVariable
     {
         public readonly string name;
@@ -203,9 +195,6 @@ namespace FadeBasic.Virtual
 
         private Dictionary<int, (DebugScope, DebugRuntimeVariable)> idToTopLevelVariable = new Dictionary<int, (DebugScope, DebugRuntimeVariable)>();
 
-        private Dictionary<int, (DebugScope, DebugRuntimeHeapVariable)> idToNestedVariable =
-            new Dictionary<int, (DebugScope, DebugRuntimeHeapVariable)>();
-
         private Dictionary<int, DebugScope> idToScope = new Dictionary<int, DebugScope>();
         
         
@@ -223,7 +212,6 @@ namespace FadeBasic.Virtual
             frameToLocals.Clear();
             frameToGlobals.Clear();
             idToTopLevelVariable.Clear();
-            idToNestedVariable.Clear();
             idToScope.Clear();
             // variables.Clear();
         }
@@ -232,7 +220,11 @@ namespace FadeBasic.Virtual
         {
             return _variableIdCounter++;
         }
-        
+
+        public DebugRuntimeVariable GetRuntimeVariable(Launch.DebugVariable variable)
+        {
+            return idToTopLevelVariable[variable.id].Item2;
+        }
         
         private Launch.DebugVariable CreateVariableView(DebugScope scope, DebugRuntimeVariable variable)
         {
@@ -295,12 +287,6 @@ namespace FadeBasic.Virtual
                 // the variable has already been expanded in the past, and the scope is available already.
                 return existingScope;
             } 
-            else if (idToNestedVariable.TryGetValue(variableRequestVariableId, out var nested))
-            {
-                // this a sub field of a sub field, like x.y.z. 
-                // in thise case, the memory is still relative to the root
-                throw new NotImplementedException("need to add support for nested structs");
-            }
             else if (idToTopLevelVariable.TryGetValue(variableRequestVariableId, out var top))
             {
                 // this is a top level variable. It could be a struct, or an array, or whatever... 
@@ -585,8 +571,6 @@ namespace FadeBasic.Virtual
                 
                 if (!global && index != -1 && i != index) continue;
                 var reverseIndex = vm.scopeStack.Count - (i + 1);
-                // var scope = vm.scopeStack.buffer[reverseIndex];
-
                 LookupVariablesFromScope(vm, results, dbg, reverseIndex, global);
             }
             

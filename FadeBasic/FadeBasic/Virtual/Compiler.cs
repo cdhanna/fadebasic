@@ -101,6 +101,26 @@ namespace FadeBasic.Virtual
         private Dictionary<string, CompiledArrayVariable> _arrayVarToReg =
             new Dictionary<string, CompiledArrayVariable>();
 
+        public CompileScope()
+        {
+            
+        }
+
+        public CompileScope(Dictionary<string, CompiledVariable> varToReg)
+        {
+            _varToReg = varToReg;
+            var highestAddress = -1;
+            foreach (var kvp in _varToReg)
+            {
+                if (kvp.Value.registerAddress > highestAddress)
+                {
+                    highestAddress = kvp.Value.registerAddress;
+                }
+            }
+
+            registerCount = highestAddress + 1;
+        }
+        
         public bool TryGetVariable(string name, out CompiledVariable variable)
         {
             return _varToReg.TryGetValue(name, out variable);
@@ -111,11 +131,11 @@ namespace FadeBasic.Virtual
             return _arrayVarToReg.TryGetValue(name, out arrayVariable);
         }
         
-        public CompiledVariable Create(string name, byte typeCode, bool isGlobal)
+        public CompiledVariable Create(string name, byte typeCode, bool isGlobal, byte regOffset=0)
         {
             var compileVar = new CompiledVariable
             {
-                registerAddress = (byte)(registerCount++),
+                registerAddress = (byte)(regOffset + registerCount++),
                 name = name,
                 typeCode = typeCode,
                 byteSize = TypeCodes.GetByteSize(typeCode),
@@ -145,9 +165,6 @@ namespace FadeBasic.Virtual
 
         public byte AllocateRegister()
         {
-            // registerCount++;
-
-            var x = (byte)registerCount;
             return (byte)(registerCount++);
         }
     }
@@ -214,10 +231,11 @@ namespace FadeBasic.Virtual
         public List<byte> Program => _buffer;
         // public int registerCount;
 
-        private CompileScope globalScope;
-        private Stack<CompileScope> scopeStack;
+        public CompileScope globalScope;
+        public Stack<CompileScope> scopeStack;
 
         private CompileScope scope => scopeStack.Peek();
+        
         
         // private Dictionary<string, CompiledVariable> _varToReg = new Dictionary<string, CompiledVariable>();
 
@@ -239,7 +257,7 @@ namespace FadeBasic.Virtual
         private Dictionary<string, int> _functionTable = new Dictionary<string, int>();
         
         
-        public Compiler(CommandCollection commands, CompilerOptions options=null)
+        public Compiler(CommandCollection commands, CompilerOptions options=null, CompileScope givenGlobalScope=null)
         {
             options ??= CompilerOptions.Default;
             if (options.GenerateDebugData)
@@ -259,7 +277,7 @@ namespace FadeBasic.Virtual
             };
 
             scopeStack = new Stack<CompileScope>();
-            globalScope = new CompileScope();
+            globalScope = givenGlobalScope ?? new CompileScope();
             scopeStack.Push(globalScope);
         }
 

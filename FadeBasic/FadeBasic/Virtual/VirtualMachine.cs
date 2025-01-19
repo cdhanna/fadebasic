@@ -46,7 +46,7 @@ namespace FadeBasic.Virtual
     
     public class VirtualMachine
     {
-        public readonly byte[] program;
+        public byte[] program; // TODO: this could be readonly, except for the REPL.
 
         public int instructionIndex;
 

@@ -59,11 +59,18 @@ public partial class FadeDebugAdapter
                 
                 var newVariable = new Variable
                 {
-                    // VariablesReference = variable.id,
                     Name = variable.name,
                     Type = variable.type,
                     Value = variable.value,
+                    PresentationHint = new VariablePresentationHint()
                 };
+
+                if (string.Equals("string", newVariable.Type, StringComparison.InvariantCultureIgnoreCase))
+                {
+                    newVariable.PresentationHint.Kind = VariablePresentationHint.KindValue.Data;
+                    newVariable.PresentationHint.Attributes = VariablePresentationHint.AttributesValue.RawString;
+                    newVariable.PresentationHint.Visibility = VariablePresentationHint.VisibilityValue.Public;
+                }
                 
                 // need to ask that we expand the variables...
                 if (variable.fieldCount > 0 || variable.elementCount > 0)
@@ -73,62 +80,13 @@ public partial class FadeDebugAdapter
                     {
                         subScopes[0].id = variableId;
                         db.AddScope(-1, subScopes[0]);
-                        // TODO: wait for the response from these messages before continuing, 
-                        //  because we need to tell our local cache what variable ids can be requested
-                        //  maybe use a ref int counter with Interlocked
                     });
                 }
-
-
+                
                 if (variable.fieldCount > 0) newVariable.NamedVariables = variable.fieldCount;
                 if (variable.elementCount > 0) newVariable.IndexedVariables = variable.elementCount;
                 
                 res.Variables.Add(db.AddVariable(variable, newVariable));
-                
-                
-                
-                // if (variable.fieldCount == 0 && variable.elementCount == 0)
-                // {
-                //     // this is a primitive, 
-                //     res.Variables.Add(db.AddVariable(variable, new Variable
-                //     {
-                //         Name = variable.name,
-                //         Type = variable.type,
-                //         Value = variable.value,
-                //     }));
-                // } else if (variable.elementCount > 0)
-                // {
-                //     res.Variables.Add(db.AddVariable(variable, new Variable
-                //     {
-                //         Name = variable.name,
-                //         Type = variable.type,
-                //         Value = variable.value,
-                //         IndexedVariables = variable.elementCount
-                //     }));
-                // }
-                // else if (variable.fieldCount > 0)
-                // {
-                //     // need to ask that we expand the variables...
-                //     _session.RequestVariableInfo(variable.id, (subScopes) =>
-                //     {
-                //         subScopes[0].id = variableId;
-                //         db.AddScope(-1, subScopes[0]);
-                //         // TODO: wait for the response from these messages before continuing, 
-                //         //  because we need to tell our local cache what variable ids can be requested
-                //         //  maybe use a ref int counter with Interlocked
-                //     });
-                //     
-                //     
-                //     // this is a struct, and we need to know more!
-                //     res.Variables.Add(db.AddVariable(variable, new Variable
-                //     {
-                //         VariablesReference = variable.id,
-                //         Name = variable.name,
-                //         Type = variable.type,
-                //         Value = variable.value,
-                //         NamedVariables = variable.fieldCount
-                //     }));
-                // }
                 
             }
         }

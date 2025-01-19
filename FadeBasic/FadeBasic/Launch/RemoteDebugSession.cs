@@ -35,11 +35,6 @@ namespace FadeBasic.Launch
 
         void RunClient(object state)
         {
-            // outboundMessages.Enqueue(new DebugMessage
-            // {
-            //     id = GetNextMessageId(),
-            //     type = DebugMessageType.PROTO_HELLO
-            // });
             Send(new DebugMessage
             {
                 id = GetNextMessageId(),
@@ -50,7 +45,6 @@ namespace FadeBasic.Launch
                 RemoteProcessId = detail.processId;
             });
             DebugServerStreamUtil.ConnectToServer2(_port, outboundMessages, inboundMessages, _cts.Token);
-            throw new Exception("client died");
         }
 
         void Listen(object state)
@@ -108,6 +102,8 @@ namespace FadeBasic.Launch
             outboundMessages.Enqueue(message);
         }
 
+        public void Cancel() => _cts.Cancel();
+
 
         public void SendTerminate(Action handler) => Send(new DebugMessage
         {
@@ -157,6 +153,21 @@ namespace FadeBasic.Launch
             handler(details);
         });
 
+        public void RequestEval(int frameIndex, string expression, Action<DebugEvalResult> handler)
+        {
+            Send(new EvalMessage
+            {
+                id = GetNextMessageId(),
+                type = DebugMessageType.REQUEST_EVAL,
+                frameIndex = frameIndex,
+                expression = expression
+            }, msg =>
+            {
+                var details = JsonableExtensions.FromJson<EvalResponse>(msg.RawJson);
+                handler?.Invoke(details.result);
+            });
+        }
+        
         public void RequestScopes(int frameIndex, Action<List<DebugScope>> handler)
         {
             Send(new DebugScopeRequest
@@ -268,6 +279,27 @@ namespace FadeBasic.Launch
             base.ProcessJson(op);
             op.IncludeField(nameof(variableId), ref variableId);
         }
+    }
+
+    public class DebugEvalResult : IJsonable
+    {
+        public string value;
+        public string type;
+        public int id;
+        
+        public void ProcessJson(IJsonOperation op)
+        {
+            op.IncludeField(nameof(id), ref id);
+            op.IncludeField(nameof(value), ref value);
+            op.IncludeField(nameof(type), ref type);
+        }
+
+        public static DebugEvalResult Failed(string message) => new DebugEvalResult
+        {
+            id = -1,
+            value = message,
+            type = ""
+        };
     }
 
     public class DebugStackFrame : IJsonable

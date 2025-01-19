@@ -68,6 +68,7 @@ namespace FadeBasic.Json
         public const char COMMA = ',';
         public const char QUOTE = '\"';
         public const char COLON = ':';
+        public const char ESCAPE = '\\';
     }
 
     public class JsonData
@@ -268,6 +269,7 @@ namespace FadeBasic.Json
                 ReadAndAssert(ref span, JsonConstants.QUOTE);
                 var found = false;
                 var start = index;
+                var requireEscapeRemoval = false;
                 while (!found)
                 {
                     if (!TryRead(ref span, out var curr))
@@ -275,13 +277,48 @@ namespace FadeBasic.Json
                         throw new NotImplementedException("end of stream unhandled - reading field");
                     }
 
-                    if (curr == JsonConstants.QUOTE)
+                    if (curr == JsonConstants.ESCAPE)
+                    {
+                        // skip!
+                        requireEscapeRemoval = true;
+                        if (!TryRead(ref span, out var next))
+                        {
+                            throw new NotImplementedException("end of stream unhandled - reading field");
+                        }
+                        else
+                        {
+                            if (next != JsonConstants.QUOTE)
+                            {
+                                throw new NotSupportedException(
+                                    "hit escape character, but found no quote. Add support for more escape chars");
+                            }
+                        }
+                    } else if (curr == JsonConstants.QUOTE)
                     {
                         found = true;
                     }
                 }
 
                 field = span.Slice(start, index - start - 1);
+                if (requireEscapeRemoval)
+                {
+                    var buffer = new StringBuilder();
+                    for (var i = 0; i < field.Length; i++)
+                    {
+                        var c = field[i];
+                        switch (c)
+                        {
+                            case JsonConstants.ESCAPE:
+                                // skip
+                                break;
+                            default:
+                                buffer.Append(c);
+                                break;
+                        }
+                    }
+
+                    field = buffer.ToString().AsSpan();
+                }
             }
             
             void ReadAndAssert(ref ReadOnlySpan<char> span, char next)
@@ -465,6 +502,7 @@ namespace FadeBasic.Json
             }
             
             _sb.Append(JsonConstants.QUOTE);
+            
             _sb.Append(name);
             _sb.Append(JsonConstants.QUOTE);
             _sb.Append(JsonConstants.COLON);
@@ -476,7 +514,21 @@ namespace FadeBasic.Json
             else
             {
                 _sb.Append(JsonConstants.QUOTE);
-                _sb.Append(fieldValue);
+                
+                // need to escape the string content...
+                for (var i = 0; i < fieldValue.Length; i++)
+                {
+                    var c = fieldValue[i];
+                    switch (c)
+                    {
+                        case '\"':
+                            _sb.Append("\\\"");
+                            break;
+                        default:
+                            _sb.Append(c);
+                            break;
+                    }
+                }
                 _sb.Append(JsonConstants.QUOTE);
             }
             

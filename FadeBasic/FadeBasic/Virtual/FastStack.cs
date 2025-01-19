@@ -12,6 +12,17 @@ namespace FadeBasic.Virtual
             buffer = new T[capacity];
             ptr = 0;
         }
+
+        public static FastStack<T> Copy(FastStack<T> original)
+        {
+            var copied = new T[original.buffer.Length];
+            Array.Copy(original.buffer, copied, copied.Length);
+            return new FastStack<T>
+            {
+                buffer = copied,
+                ptr = original.ptr
+            };
+        }
         
         public T Pop()
         {
