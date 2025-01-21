@@ -106,15 +106,32 @@ namespace FadeBasic.Virtual
             
         }
 
-        public CompileScope(Dictionary<string, CompiledVariable> varToReg)
+        public CompileScope(Dictionary<string, CompiledVariable> varToReg, Dictionary<string, CompiledArrayVariable> arrayVarToReg)
         {
             _varToReg = varToReg;
+            _arrayVarToReg = arrayVarToReg;
             var highestAddress = -1;
             foreach (var kvp in _varToReg)
             {
                 if (kvp.Value.registerAddress > highestAddress)
                 {
                     highestAddress = kvp.Value.registerAddress;
+                }
+            }
+            foreach (var kvp in _arrayVarToReg)
+            {
+                if (kvp.Value.registerAddress > highestAddress)
+                {
+                    highestAddress = kvp.Value.registerAddress;
+                }
+
+                foreach (var n in kvp.Value.rankSizeRegisterAddresses)
+                {
+                    if (n > highestAddress) highestAddress = n;
+                }
+                foreach (var n in kvp.Value.rankIndexScalerRegisterAddresses)
+                {
+                    if (n > highestAddress) highestAddress = n;
                 }
             }
 
@@ -179,13 +196,50 @@ namespace FadeBasic.Virtual
         };
     }
 
+    
     public class InternedData : IJsonable
     {
         public Dictionary<string, InternedType> types;
-        
+        public Dictionary<string, InternedFunction> functions = new Dictionary<string, InternedFunction>();
         public void ProcessJson(IJsonOperation op)
         {
             op.IncludeField(nameof(types), ref types);
+            op.IncludeField(nameof(functions), ref functions);
+        }
+    }
+
+    public class InternedFunction : IJsonable
+    {
+        public string name;
+        public int insIndex;
+        
+        public int typeCode;
+        public int typeId;
+        public List<InternedFunctionParameter> parameters = new List<InternedFunctionParameter>();
+        public void ProcessJson(IJsonOperation op)
+        {
+            op.IncludeField(nameof(name), ref name);
+            op.IncludeField(nameof(insIndex), ref insIndex);
+            op.IncludeField(nameof(typeCode), ref typeCode);
+            op.IncludeField(nameof(typeId), ref typeId);
+     
+            op.IncludeField(nameof(parameters), ref parameters);
+        }
+    }
+
+    public class InternedFunctionParameter : IJsonable
+    {
+        public string name;
+        public int index;
+        public int typeCode;
+        public int typeId;
+        
+        public void ProcessJson(IJsonOperation op)
+        {
+            op.IncludeField(nameof(name), ref name);
+            op.IncludeField(nameof(index), ref index);
+            op.IncludeField(nameof(typeCode), ref typeCode);
+            op.IncludeField(nameof(typeId), ref typeId);
         }
     }
 
@@ -236,12 +290,6 @@ namespace FadeBasic.Virtual
 
         private CompileScope scope => scopeStack.Peek();
         
-        
-        // private Dictionary<string, CompiledVariable> _varToReg = new Dictionary<string, CompiledVariable>();
-
-        // private Dictionary<string, CompiledArrayVariable> _arrayVarToReg =
-        //     new Dictionary<string, CompiledArrayVariable>();
-
         private Dictionary<string, CompiledType> _types = new Dictionary<string, CompiledType>();
         private Dictionary<int, CompiledType> _typeTable = new Dictionary<int, CompiledType>();
 
@@ -256,6 +304,7 @@ namespace FadeBasic.Virtual
         private List<FunctionCallReplacement> _functionCallReplacements = new List<FunctionCallReplacement>();
         private Dictionary<string, int> _functionTable = new Dictionary<string, int>();
         
+        private InternedData data = new InternedData();
         
         public Compiler(CommandCollection commands, CompilerOptions options=null, CompileScope givenGlobalScope=null)
         {
@@ -280,6 +329,18 @@ namespace FadeBasic.Virtual
             globalScope = givenGlobalScope ?? new CompileScope();
             scopeStack.Push(globalScope);
         }
+
+        public void AddType(CompiledType type)
+        {
+            _types.Add(type.typeName, type);
+            _typeTable.Add(type.typeId, type);
+        }
+
+        public void AddFunction(string functionName, int insIndex)
+        {
+            _functionTable.Add(functionName, insIndex);
+        }
+        
 
         public void Compile(ProgramNode program)
         {
@@ -323,6 +384,11 @@ namespace FadeBasic.Virtual
 
                 PushInternedData();
             }
+            CompileJumpReplacements();
+        }
+
+        public void CompileJumpReplacements()
+        {
             
             // replace all label instructions...
             foreach (var replacement in _labelReplacements)
@@ -360,7 +426,6 @@ namespace FadeBasic.Virtual
         public void PushInternedData()
         {
             // the type table will be the JSONified
-            var data = new InternedData();
             data.types = new Dictionary<string, InternedType>();
             foreach (var kvp in _types)
             {
@@ -538,8 +603,8 @@ namespace FadeBasic.Virtual
                 case SwitchStatement switchStatement:
                     Compile(switchStatement);
                     break;
-                case FunctionStatement functionStatement:
-                    Compile(functionStatement);
+                case FunctionStatement _:
+                    // functions should be compiled at the end... ignoring for now.
                     break;
                 case FunctionReturnStatement returnStatement:
                     Compile(returnStatement);
@@ -593,6 +658,27 @@ namespace FadeBasic.Virtual
             // functions are global
             var ptr = _buffer.Count;
             _functionTable[functionStatement.name] = ptr; // TODO: what about duplicate function names?
+
+            var internedFunction = new InternedFunction
+            {
+                name = functionStatement.name,
+                insIndex = ptr,
+            };
+            if (functionStatement.hasNoReturnExpression || functionStatement.ParsedType.type == VariableType.Void)
+            {
+                internedFunction.typeId = -1;
+            }
+            else
+            {
+                var tc = VmUtil.GetTypeCode(functionStatement.ParsedType.type);
+                internedFunction.typeCode = tc;
+                if (tc == TypeCodes.STRUCT)
+                {
+                    internedFunction.typeId = _types[functionStatement.ParsedType.structName].typeId;
+                }
+            }
+            
+            data.functions.Add(functionStatement.name, internedFunction);
             
             // at the insIndex, take note of the name for the debug data. Later, the index that has the 
             _dbg?.AddFunction(ptr, functionStatement.nameToken);
@@ -613,6 +699,20 @@ namespace FadeBasic.Virtual
                     scopeType = DeclarationScopeType.Local,
                     type = arg.type
                 };
+                var parameterTc = VmUtil.GetTypeCode(arg.type.variableType);
+                
+                var internedParameter = new InternedFunctionParameter
+                {
+                    name = fakeDecl.variable,
+                    index = i,
+                    typeCode = parameterTc
+                };
+                if (fakeDecl.type is StructTypeReferenceNode structType)
+                {
+                    internedParameter.typeId = _types[structType.variableNode.variableName].typeId;
+                }
+                
+                internedFunction.parameters.Add(internedParameter);
                 Compile(fakeDecl);
                 
                 // and now compile up the assignment

@@ -75,15 +75,30 @@ dim x(3,5) as vec
         Assert.That(variables.Count, Is.EqualTo(1));
     }
     
-    
-    [Test]
-    public async Task Exploration_Eval()
+    [TestCase("x = 4", "x+1", "5")]
+    [TestCase(@"
+x = 1
+function decoyFunction()
+endfunction
+function sampleFunc(x)
+endfunction x + 1
+", "sampleFunc(2) + x", "4")]
+    [TestCase(@"
+dim x(4,9)
+x(3,8) = 4
+", "x(3,8)+1", "5")]
+    [TestCase(@"
+type vec
+    x
+    y
+endtype
+dim vees(3) as vec
+v as vec
+v.x = 44
+vees(1) = v
+", "vees(1).x", "44")]
+    public async Task Exploration_Eval(string src, string eval, string expected)
     {
-        var src = @"
-global x
-x = 3
-
-";
         Compile(src, out _, out var compiler, out var vm);
         var dbg = compiler.DebugData;
         var session = new DebugSession(vm, dbg, TestCommands.CommandsForTesting, new LaunchOptions
@@ -91,11 +106,10 @@ x = 3
             debug = true, debugPort = 9999, debugWaitForConnection = false
         });
         session.StartDebugging();
-        
-
         await Task.Delay(50); // give some time for the program to finish executing... 
         
-        var res = session.Eval(0, "x");
+        var res = session.Eval(0, eval);
+        Assert.That(res.value, Is.EqualTo(expected));
     }
     
     [Test]

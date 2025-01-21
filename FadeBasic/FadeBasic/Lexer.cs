@@ -693,6 +693,8 @@ namespace FadeBasic
     [DebuggerDisplay("{raw} ({type}:{lineNumber}:{charNumber})")]
     public class Token : IJsonable
     {
+        public static readonly Token Blank = new Token();
+        
         public int lineNumber;
         public int charNumber;
         public string raw;

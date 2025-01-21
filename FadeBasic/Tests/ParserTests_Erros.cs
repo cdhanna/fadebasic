@@ -488,6 +488,24 @@ endfunction a*2
     
     
     [Test]
+    public void ParseError_TypeCheck_Function_ReturnTypeDoesNotMatch_2()
+    {
+        var input = @"
+`foo returns int, so cannot assign to string
+x = foo()
+
+function foo()
+endfunction ""hello""
+";
+        var parser = MakeParser(input);
+        var prog = parser.ParseProgram();
+        prog.AssertParseErrors(1);
+        var errors = prog.GetAllErrors();
+        Assert.That(errors[0].Display, Is.EqualTo($"[2:0] - {ErrorCodes.InvalidCast} | cannot convert string to int"));
+    }
+    
+    
+    [Test]
     public void ParseError_TypeCheck_Function_ReturnTypeDoesNotMatch_Void()
     {
         var input = @"

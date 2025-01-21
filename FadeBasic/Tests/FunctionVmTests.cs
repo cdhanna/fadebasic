@@ -17,7 +17,7 @@ Function Test()
 EndFunction
 
 ";
-        Setup(src, out _, out var prog);
+        Setup(src, out _, out var prog, ignoreParseCheck: true);
         _exprAst.AssertParseErrors(1);
         // var vm = new VirtualMachine(prog);
         // vm.Execute().MoveNext();
@@ -89,6 +89,9 @@ EndFunction a
         
         Assert.That(vm.dataRegisters[0], Is.EqualTo(3)); 
         Assert.That(vm.typeRegisters[0], Is.EqualTo(TypeCodes.INT));
+        
+        Assert.That(vm.internedData.functions["test"].typeId, Is.EqualTo(0));
+        Assert.That(vm.internedData.functions["test"].typeCode, Is.EqualTo(TypeCodes.INT));
     }
 
     
@@ -128,7 +131,7 @@ Function Test()
 a = y
 EndFunction a
 ";
-        Setup(src, out _, out var prog);
+        Setup(src, out _, out var prog, ignoreParseCheck: true);
         
         var vm = new VirtualMachine(prog);
         vm.Execute().MoveNext();
@@ -172,7 +175,7 @@ EndFunction a + ""hello""
         Setup(src, out _, out var prog);
         
         var vm = new VirtualMachine(prog);
-        vm.Execute().MoveNext();
+        vm.Execute2();
         
         vm.heap.Read((int)vm.dataRegisters[0], "worldhello".Length * 4, out var memory);
         var str = VmConverter.ToString(memory);
@@ -196,13 +199,17 @@ EndFunction a$
         Setup(src, out _, out var prog);
         
         var vm = new VirtualMachine(prog);
-        vm.Execute().MoveNext();
+        vm.Execute2();
         
         vm.heap.Read((int)vm.dataRegisters[0], "hello".Length * 4, out var memory);
         var str = VmConverter.ToString(memory);
         Assert.That(str, Is.EqualTo("hello"));
 
         Assert.That(vm.typeRegisters[0], Is.EqualTo(TypeCodes.STRING));
+        
+        
+        Assert.That(vm.internedData.functions["test"].typeId, Is.EqualTo(0));
+        Assert.That(vm.internedData.functions["test"].typeCode, Is.EqualTo(TypeCodes.STRING));
     }
 
     
@@ -527,6 +534,14 @@ EndFunction a + b
         
         Assert.That(vm.dataRegisters[0], Is.EqualTo(3));
         Assert.That(vm.typeRegisters[0], Is.EqualTo(TypeCodes.INT));
+        
+        
+        // parameters are in reverse order of index
+        Assert.That(vm.internedData.functions["test"].parameters[1].index, Is.EqualTo(0));
+        Assert.That(vm.internedData.functions["test"].parameters[1].name, Is.EqualTo("a"));
+        
+        Assert.That(vm.internedData.functions["test"].parameters[0].index, Is.EqualTo(1));
+        Assert.That(vm.internedData.functions["test"].parameters[0].name, Is.EqualTo("b"));
     }
 
     
@@ -712,7 +727,7 @@ Function Fib(a)
         ExitFunction 1
     ENDIF
     ExitFunction Fib(a - 1) + Fib(a - 2)
-EndFunction
+EndFunction 0
 ";
         Setup(src, out _, out var prog);
         

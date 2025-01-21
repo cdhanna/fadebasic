@@ -127,7 +127,7 @@ namespace FadeBasic.Virtual
         public VmState state = new VmState();
         public InternedData internedData;
         public Dictionary<int, InternedType> typeTable = new Dictionary<int, InternedType>();
-
+        
         void ReadInternedData()
         {
             var internedBytes =

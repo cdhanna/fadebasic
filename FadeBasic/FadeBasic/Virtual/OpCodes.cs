@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 using FadeBasic.Ast;
+using FadeBasic.Json;
 
 namespace FadeBasic.Virtual
 {
@@ -78,7 +79,7 @@ namespace FadeBasic.Virtual
     }
 
     [StructLayout(LayoutKind.Sequential)]
-    public struct HeapTypeFormat
+    public struct HeapTypeFormat : IJsonable
     {
         public const int SIZE = sizeof(int) + sizeof(byte) * 2;
         
@@ -125,6 +126,12 @@ namespace FadeBasic.Virtual
         }
         public bool IsString() => typeCode == TypeCodes.STRING;
         public bool IsStruct() => typeCode == TypeCodes.STRUCT;
+        public void ProcessJson(IJsonOperation op)
+        {
+            op.IncludeField(nameof(typeCode), ref typeCode);
+            op.IncludeField(nameof(typeId), ref typeId);
+            op.IncludeField(nameof(typeFlags), ref typeFlags);
+        }
     }
     
     public static class HeapTypeFormatMethods

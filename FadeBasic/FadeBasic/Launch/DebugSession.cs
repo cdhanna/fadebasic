@@ -399,6 +399,9 @@ namespace FadeBasic.Launch
             expression = SYNTHETIC_NAME + "=" + expression;
             var globalVariableTable = new Dictionary<string, CompiledVariable>();
             var localVariableTable = new Dictionary<string, CompiledVariable>();
+            
+            var globalArrayVariableTable = new Dictionary<string, CompiledArrayVariable>();
+            var localArrayVariableTable = new Dictionary<string, CompiledArrayVariable>();
 
             logger.Log($"Evaluating frame=[{frameId}], expr=[{expression}]");
             
@@ -432,49 +435,190 @@ namespace FadeBasic.Launch
             var locals = variableDb.GetLocalVariablesForFrame(frameId);
             var globals = variableDb.GetGlobalVariablesForFrame(frameId);
             
+           
+            
+            var types = new List<CompiledType>();
+            var idToTypeTable = new Dictionary<int, CompiledType>();
+            foreach (var kvp in _vm.typeTable) // TODO: Cache this between life-cycles... 
+            {
+                var internedType = kvp.Value;
+                var compileType = new CompiledType
+                {
+                    typeName = internedType.name,
+                    typeId = internedType.typeId,
+                    byteSize = internedType.byteSize,
+                    fields = new Dictionary<string, CompiledTypeMember>()
+                };
+                idToTypeTable[compileType.typeId] = compileType;
+                types.Add(compileType);
+
+            }
+
+            { // do a second pass to set all the field types...
+                foreach (var kvp in _vm.typeTable)
+                {
+                    var internedType = kvp.Value;
+                    var compiledType = idToTypeTable[internedType.typeId];
+                    var members = new List<TypeDefinitionMember>();
+
+                    foreach (var field in internedType.fields)
+                    {
+                        var fieldName = field.Key;
+                        var internedField = field.Value;
+                        ITypeReferenceNode fieldTypeNode = null;
+
+                        var compiledField = new CompiledTypeMember
+                        {
+                            Length = internedField.length,
+                            Offset = internedField.offset,
+                            TypeCode = internedField.typeCode
+                        };
+                        if (internedField.typeId > 0)
+                        {
+                            if (!idToTypeTable.TryGetValue(internedField.typeId, out var linkedType))
+                            {
+                                throw new NotSupportedException("invalid type linkage in watch");
+                            }
+                            else
+                            {
+                                compiledField.Type = linkedType;
+                                fieldTypeNode =
+                                    new StructTypeReferenceNode(new VariableRefNode(Token.Blank, linkedType.typeName));
+                            }
+                        }
+                        else
+                        {
+                            if (!VmUtil.TryGetVariableType(field.Value.typeCode, out var typeInfo))
+                            {
+                                throw new NotSupportedException(
+                                    "Unknown type in watch field, " + internedField.typeCode);
+                            }
+
+                            fieldTypeNode = new TypeReferenceNode(typeInfo, Token.Blank);
+                        }
+
+
+                        members.Add(new TypeDefinitionMember(Token.Blank, Token.Blank,
+                            new VariableRefNode(Token.Blank, field.Key), fieldTypeNode));
+                        
+                        compiledType.fields.Add(fieldName, compiledField);
+                    }
+                    
+                    
+                    var typeDef = new TypeDefinitionStatement(Token.Blank, Token.Blank,
+                        new VariableRefNode(Token.Blank, internedType.name), members);
+                    node.typeDefinitions.Add(typeDef);
+                }
+            }
+            
+            
+            
             void AddVariable(DebugVariable local, bool isGlobal)
             {
+                ITypeReferenceNode declType = null;
+                string structName = null;
                 var variable = variableDb.GetRuntimeVariable(local);
-
-                if (variable.typeCode == TypeCodes.STRUCT)
-                {
-                    throw new NotImplementedException("structs are a no go, friend");
-                }
-
-                if (variable.GetElementCount() > 0)
-                {
-                    throw new NotImplementedException("arrays are a no go, friend");
-                }
-
+                
+                var arrayLength = variable.GetElementCount(out var arrayRankCount, out var isArray);
+                // if (isArray) throw new NotImplementedException("handle arrays, kid!");
+                
                 if (!TypeInfo.TryGetFromTypeCode(variable.typeCode, out var typeInfo))
                 {
                     throw new InvalidOperationException($"unknown type code=[{variable.typeCode}] in eval function");
                 }
 
-                var compiledVariable = new CompiledVariable
+                var typeCode = variable.typeCode;
+                if (isArray)
                 {
-                    typeCode = variable.typeCode,
-                    name = local.name,
-                    registerAddress = (byte)variable.regAddr,
-                    byteSize = TypeCodes.GetByteSize(variable.typeCode),
-                    isGlobal = isGlobal
-                }; // TODO: support structs and arrays
-                if (isGlobal)
+                    typeCode = variable.allocation.format.typeCode;
+                }
+                
+                if (typeCode == TypeCodes.STRUCT )
                 {
-                    globalVariableTable.Add(local.name, compiledVariable);
+                    // structName = variable.GetTypeName();
+                    structName = idToTypeTable[variable.allocation.format.typeId].typeName;
+                    declType = new StructTypeReferenceNode(
+                        new VariableRefNode(new Token(), structName));
                 }
                 else
                 {
-                    localVariableTable.Add(local.name, compiledVariable);
+                    declType = new TypeReferenceNode(typeInfo.type, new Token());
                 }
-                
-                var decl = new DeclarationStatement(new Token
+
+                if (!isArray)
+                {
+                    var compiledVariable = new CompiledVariable
                     {
-                        caseInsensitiveRaw = isGlobal ? "global" : "local"
-                    }, new VariableRefNode(new Token(), local.name),
-                    new TypeReferenceNode(typeInfo.type, new Token()));
-                
-                node.statements.Insert(0, decl);
+                        typeCode = variable.typeCode,
+                        name = local.name,
+                        registerAddress = (byte)variable.regAddr,
+                        byteSize = TypeCodes.GetByteSize(variable.typeCode),
+                        structType = structName,
+                        isGlobal = isGlobal
+                    }; // TODO: support arrays
+                    if (isGlobal)
+                    {
+                        globalVariableTable.Add(local.name, compiledVariable);
+                    }
+                    else
+                    {
+                        localVariableTable.Add(local.name, compiledVariable);
+                    }
+
+
+                    var decl = new DeclarationStatement(new Token
+                        {
+                            caseInsensitiveRaw = isGlobal ? "global" : "local"
+                        }, new VariableRefNode(new Token(), local.name),
+                        declType);
+
+                    node.statements.Insert(0, decl);
+                }
+                else
+                {
+                    var elementSize = (int)TypeCodes.GetByteSize(typeCode);
+                    CompiledType structType = null;
+                    if (typeCode == TypeCodes.STRUCT)
+                    {
+                        structType = idToTypeTable[variable.allocation.format.typeId];
+                        elementSize = structType.byteSize;
+                    }
+
+                    var compiledArrayVariable = new CompiledArrayVariable
+                    {
+                        name = variable.name,
+                        typeCode = variable.typeCode,
+                        structType = structType,
+                        byteSize = elementSize,
+                        registerAddress = (byte)variable.regAddr,
+                        isGlobal = isGlobal,
+                        rankSizeRegisterAddresses = new byte[arrayRankCount],
+                        rankIndexScalerRegisterAddresses = new byte[arrayRankCount]
+                    };
+                    var rankExprs = new IExpressionNode[arrayRankCount];
+                    for (var i = 0; i < arrayRankCount; i++)
+                    {
+                        var rankStrideRegAddr = variable.regAddr + arrayRankCount * 2 - (i * 2) ;
+                        var rankSizeRegAddr = rankStrideRegAddr - 1;
+                        var rankSize = _vm.scopeStack.buffer[variable.scopeIndex]
+                            .dataRegisters[rankSizeRegAddr];
+                        var rankStride = _vm.scopeStack.buffer[variable.scopeIndex]
+                            .dataRegisters[rankStrideRegAddr];
+
+                        var revI = arrayRankCount - i - 1;
+                        compiledArrayVariable.rankSizeRegisterAddresses[i] = (byte)(rankSizeRegAddr);
+                        compiledArrayVariable.rankIndexScalerRegisterAddresses[i] = (byte)(rankStrideRegAddr);
+                        // variable.
+                        rankExprs[i] = new LiteralIntExpression(Token.Blank, (int)rankSize);
+                    }
+
+                    var decl = new DeclarationStatement(Token.Blank, new VariableRefNode(Token.Blank, local.name),
+                        declType, rankExprs);
+                    node.statements.Insert(0, decl);
+
+                    var selectedTable = isGlobal ? globalArrayVariableTable : localArrayVariableTable;
+                    selectedTable.Add(variable.name, compiledArrayVariable);
+                }
             }
             
            
@@ -487,9 +631,76 @@ namespace FadeBasic.Launch
             {
                 AddVariable(local, false);
             }
-            
-            
-            node.AddScopeRelatedErrors(new ParseOptions());
+
+            { // add in the functions
+                foreach (var kvp in _vm.internedData.functions)
+                {
+                    var funcName = kvp.Key;
+                    var func = kvp.Value;
+
+                    var statement = new FunctionStatement
+                    {
+                        name = funcName,
+                        nameToken = Token.Blank,
+                    };
+                    
+                    // foreach (var internedParam in func.parameters)
+                    for (var i = func.parameters.Count; i > 0 ; i --)
+                    {
+                        var internedParam = func.parameters[i - 1];
+                        
+                        ITypeReferenceNode t = null;
+                        if (internedParam.typeId > 0)
+                        {
+                            t = new StructTypeReferenceNode(new VariableRefNode(Token.Blank,
+                                _vm.typeTable[internedParam.typeId].name));
+                        }
+                        else
+                        {
+                            if (!VmUtil.TryGetVariableType(internedParam.typeCode, out var vt))
+                            {
+                                throw new NotSupportedException("invalid type code for function parameter");
+                            }
+                            t = new TypeReferenceNode(vt, Token.Blank);
+                        }
+
+                        var p = new ParameterNode(new VariableRefNode(Token.Blank, internedParam.name), t);
+                        statement.parameters.Add(p);
+
+                    }
+                    
+                    node.functions.Add(statement);
+                }
+            }
+
+
+            var knownFunctionTypes = _vm.internedData.functions.ToDictionary(kvp => kvp.Key, kvp =>
+            {
+                if (kvp.Value.typeId == -1)
+                {
+                    return TypeInfo.Void;
+                } 
+                else if (kvp.Value.typeId > 0)
+                {
+                    return new TypeInfo
+                    {
+                        structName = _vm.typeTable[kvp.Value.typeId].name,
+                        type = VariableType.Struct
+                    };
+                }
+                else if (VmUtil.TryGetVariableType(kvp.Value.typeCode, out var vt))
+                {
+                    return new TypeInfo
+                    {
+                        type = vt
+                    };
+                }
+                else
+                {
+                    throw new NotSupportedException("Unknown variable code for function");
+                }
+            });
+            node.AddScopeRelatedErrors(new ParseOptions(), knownFunctionTypes);
 
             var finalStatement = (AssignmentStatement)node.statements.LastOrDefault(x => x is AssignmentStatement);
             if (finalStatement == null)
@@ -501,7 +712,7 @@ namespace FadeBasic.Launch
             var parseErrors = node.GetAllErrors();
             if (parseErrors.Count > 0)
             {
-                return DebugEvalResult.Failed($"{string.Join(",\n", parseErrors.Select(x => x.message))}");
+                return DebugEvalResult.Failed($"{string.Join(",\n", parseErrors.Select(x => x.errorCode))}");
             }
             
             
@@ -511,24 +722,41 @@ namespace FadeBasic.Launch
              */
 
             var mergedVariableTable = new Dictionary<string, CompiledVariable>(globalVariableTable);
+            var mergedArrayTable = new Dictionary<string, CompiledArrayVariable>(globalArrayVariableTable);
             foreach (var kvp in localVariableTable)
             {
                 mergedVariableTable[kvp.Key] = kvp.Value;
             }
 
-            var compileScope = new CompileScope(mergedVariableTable);
+            foreach (var kvp in localArrayVariableTable)
+            {
+                mergedArrayTable[kvp.Key] = kvp.Value;
+            }
+
+            var compileScope = new CompileScope(mergedVariableTable, mergedArrayTable);
             compileScope.Create(SYNTHETIC_NAME, VmUtil.GetTypeCode(finalStatement.expression.ParsedType.type), false, regOffset:1);
             var compiler = new Compiler(_commandCollection, new CompilerOptions
             {
                 GenerateDebugData = true
             }, givenGlobalScope: compileScope);
+
+            foreach (var type in types)
+            {
+                compiler.AddType(type);
+            }
+
+            foreach (var func in _vm.internedData.functions)
+            {
+                compiler.AddFunction(func.Key, func.Value.insIndex);
+            }
+            
             // only compile the last statement, because this only evaluates one statement at a time.
             compiler.Compile(finalStatement);
+            compiler.CompileJumpReplacements();
             
             byte[] originalProgram = _vm.program;
             var originalInstructionIndex = _vm.instructionIndex;
             var originalState = _vm.state;
-            
             
             // make a backup of the entire scope state of the vm...
             var originalScopeStack = FastStack<VirtualScope>.Copy(_vm.scopeStack);

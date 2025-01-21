@@ -10,7 +10,7 @@ public partial class TokenVm
     private ProgramNode? _exprAst;
     public static DebugData SingletonDebugData;
 
-    void Setup(string src, out Compiler compiler, out List<byte> progam, int? expectedParseErrors=null, bool generaeteDebug=false)
+    void Setup(string src, out Compiler compiler, out List<byte> progam, int? expectedParseErrors=null, bool generaeteDebug=false, bool ignoreParseCheck=false)
     {
         var collection = TestCommands.CommandsForTesting;
         var lexer = new Lexer();
@@ -20,6 +20,10 @@ public partial class TokenVm
         if (expectedParseErrors.HasValue)
         {
             _exprAst.AssertParseErrors(expectedParseErrors.Value);
+        }
+        else if (!ignoreParseCheck)
+        {
+            _exprAst.AssertNoParseErrors();
         }
         
         compiler = new Compiler(collection, new CompilerOptions
@@ -2360,7 +2364,7 @@ endif
         var src = @$"
 {leftSide} = {rightSide}
 ";
-        Setup(src, out _, out var prog);
+        Setup(src, out _, out var prog, ignoreParseCheck: true);
 
         if (error != null)
         {
@@ -3383,7 +3387,7 @@ bread as toast
 bread.y.z = 3
 refDbl bread.y";
         
-        Setup(src, out var compiler, out var prog);
+        Setup(src, out var compiler, out var prog, ignoreParseCheck: true);
         _exprAst.AssertParseErrors(1);
         var errs = _exprAst.GetAllErrors();
         Assert.That(errs[0].errorCode, Is.EqualTo(ErrorCodes.InvalidCast));
@@ -3680,7 +3684,7 @@ y$ = x$(1)
     public void CallHost_StringArg_Backslash()
     {
         var src = "x = len(\"hel\\lo\")";
-        Setup(src, out var compiler, out var prog);
+        Setup(src, out var compiler, out var prog, ignoreParseCheck: true);
         var vm = new VirtualMachine(prog);
         vm.hostMethods = compiler.methodTable;
         vm.Execute2();

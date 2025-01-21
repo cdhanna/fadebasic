@@ -1,14 +1,15 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using FadeBasic.Virtual;
 
 namespace FadeBasic.Ast.Visitors
 {
     public static partial class ErrorVisitors
     {
 
-        public static void AddScopeRelatedErrors(this ProgramNode program, ParseOptions options)
-        {
+        public static void AddScopeRelatedErrors(this ProgramNode program, ParseOptions options, Dictionary<string, TypeInfo> knownFunctionTypes=null)
+        { 
             if (options?.ignoreChecks ?? false)
             {
                 // at one point I thought this should throw an exception...
@@ -47,11 +48,25 @@ namespace FadeBasic.Ast.Visitors
 
             var globalCtx = new EnsureTypeContext();
             
+            
+            if (knownFunctionTypes != null)
+            {
+                foreach (var kvp in knownFunctionTypes)
+                {
+                    scope.functionReturnTypeTable.Add(kvp.Key, new List<TypeInfo>{kvp.Value});
+                }
+            }
+            
             CheckStatements(program.statements, scope, globalCtx);
+
             foreach (var function in program.functions)
             {
-                if (scope.functionReturnTypeTable.ContainsKey(function.name)) continue; // already parsed. 
-                
+                if (scope.functionReturnTypeTable.ContainsKey(function.name))
+                {
+                    function.ParsedType = scope.functionReturnTypeTable[function.name][0];
+                    continue; // already parsed. 
+                }
+
                 scope.BeginFunction(function);
                 // var ctx = globalCtx.WithFunction(function);
                 var ctx = globalCtx;
@@ -59,6 +74,7 @@ namespace FadeBasic.Ast.Visitors
                 
                 // throw away the type, just call this to make sure the type is validated. 
                 var functionType = scope.GetFunctionTypeInfo(function, ctx);
+                function.ParsedType = functionType;
                 // if (functionType.unset)
                 // {
                 //     function.Errors.Add(new ParseError(function.startToken, ErrorCodes.UnknowableFunctionReturnType));
@@ -474,6 +490,12 @@ namespace FadeBasic.Ast.Visitors
                     break;
                 case CommandExpression commandExpr: // commandExprs have the ability to declare variables!
                     scope.AddCommand(commandExpr);
+
+                    if (commandExpr.command.returnType != TypeCodes.VOID && VmUtil.TryGetVariableType(commandExpr.command.returnType, out var tc))
+                    {
+                        commandExpr.ParsedType = TypeInfo.FromVariableType(tc);
+                    }
+                   
                     break;
                 case ArrayIndexReference arrayRef:
                     if (!scope.TryGetSymbol(arrayRef.variableName, out var arraySymbol) && arrayRef.variableName != "_")

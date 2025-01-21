@@ -59,6 +59,16 @@ public class JsonTests
         }
     }
 
+    class DictStringInt : IJsonable
+    {
+        public Dictionary<string, int> duds = new Dictionary<string, int>();
+
+        public void ProcessJson(IJsonOperation op)
+        {
+            op.IncludeField(nameof(duds), ref duds);
+        }
+    }
+
     [Test]
     public void DebugScopeTest()
     {
@@ -101,6 +111,23 @@ public class JsonTests
         var y = JsonableExtensions.FromJson<StringInt>(j);
         Assert.That(y.status, Is.EqualTo(x.status));
         Assert.That(y.reason, Is.EqualTo(x.reason));
+    }
+
+    [Test]
+    public void DictStringIntTest()
+    {
+        var x = new DictStringInt
+        {
+            duds = new Dictionary<string, int>
+            {
+                ["a"] = 1,
+                ["b"] = 2
+            }
+        };
+        var json = x.Jsonify();
+        var y = JsonableExtensions.FromJson<DictStringInt>(json);
+        Assert.That(x.duds["a"], Is.EqualTo(y.duds["a"]));
+        Assert.That(x.duds["b"], Is.EqualTo(y.duds["b"]));
     }
     
     [Test]

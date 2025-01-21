@@ -99,16 +99,19 @@ namespace FadeBasic.Virtual
         {
             return GetElementCount(out _);
         }
-
-        
-        
-        
         public int GetElementCount(out byte rankCount)
         {
+            return GetElementCount(out rankCount, out _);
+        }
+        public int GetElementCount(out byte rankCount, out bool isArray)
+        {
+            isArray = false;
             if (!allocation.format.IsArray(out rankCount))
             {
                 return 0;
             }
+
+            isArray = true;
             /*
              * If you know the register address of the base variable..
              * and we know the number of ranks in the array.

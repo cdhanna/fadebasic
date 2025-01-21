@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 
 namespace FadeBasic.Virtual
 {
@@ -21,6 +22,7 @@ namespace FadeBasic.Virtual
         HeapRef
     }
     
+    [DebuggerDisplay("{name} ret[{returnType}]")]
     public struct CommandInfo
     {
         public string name;

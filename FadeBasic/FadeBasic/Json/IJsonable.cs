@@ -25,6 +25,7 @@ namespace FadeBasic.Json
         void IncludeField(string name, ref string fieldValue);
         void IncludeField(string name, ref byte[] fieldValue);
         void IncludeField(string name, ref DebugMessageType fieldValue);
+        void IncludeField(string name, ref Dictionary<string, int> fieldValue);
         void IncludeField<T>(string name, ref T fieldValue) where T : IJsonable, new();
         void IncludeField<T>(string name, ref List<T> fieldValue) where T : IJsonable, new();
         void IncludeField<T>(string name, ref Dictionary<int, T> fieldValue) where T : IJsonable, new();
@@ -396,6 +397,18 @@ namespace FadeBasic.Json
             }
         }
 
+        public void IncludeField(string name, ref Dictionary<string, int> fieldValue)
+        {
+            if (_data.objects.TryGetValue(name, out var dict))
+            {
+                fieldValue = new Dictionary<string, int>();
+                foreach (var kvp in dict.ints)
+                {
+                    fieldValue[kvp.Key] = kvp.Value;
+                }
+            }
+        }
+
         public void IncludeField<T>(string name, ref T fieldValue) where T : IJsonable, new()
         {
             if (_data.objects.TryGetValue(name, out var subData))
@@ -563,6 +576,41 @@ namespace FadeBasic.Json
         {
             var val = (int)fieldValue;
             IncludePrim(name, ref val);
+        }
+
+        public void IncludeField(string name, ref Dictionary<string, int> fieldValue)
+        {
+            if (fieldCount > 0)
+            {
+                _sb.Append(JsonConstants.COMMA);
+            }
+
+            _sb.Append(JsonConstants.QUOTE);
+            _sb.Append(name);
+            _sb.Append(JsonConstants.QUOTE);
+            _sb.Append(JsonConstants.COLON);
+            _sb.Append(JsonConstants.OPEN_BRACKET);
+            var first = true;
+            foreach (var kvp in fieldValue)
+            {
+                if (!first)
+                {
+                    _sb.Append(JsonConstants.COMMA);
+                }
+                first = false;
+
+                _sb.Append(JsonConstants.QUOTE);
+                _sb.Append(kvp.Key);
+                _sb.Append(JsonConstants.QUOTE);
+                _sb.Append(JsonConstants.COLON);
+                
+                var val = kvp.Value;
+                _sb.Append(val);
+
+                // subOp.IncludeField(kvp.ToString(), ref val);
+            }
+            _sb.Append(JsonConstants.CLOSE_BRACKET);
+
         }
 
         public void IncludeField<T>(string name, ref T fieldValue) where T : IJsonable, new()
