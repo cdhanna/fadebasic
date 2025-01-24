@@ -231,6 +231,20 @@ public class JsonTests
         var obj2= JsonableExtensions.FromJson<DebugEvalResult>(json);
         Assert.That(obj.value, Is.EqualTo(obj2.value));
     }
+
+    [Test]
+    public void NestedNull()
+    {
+        var x = new DebugToken()
+        {
+            insIndex = 5,
+            token = null
+        };
+        var json = x.Jsonify();
+        var y = JsonableExtensions.FromJson<DebugToken>(json);
+        Assert.That(x.insIndex, Is.EqualTo(y.insIndex));
+        Assert.That(x.token, Is.EqualTo(y.token));
+    }
     
     [Test]
     public void Nested()

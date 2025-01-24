@@ -97,8 +97,51 @@ v as vec
 v.x = 44
 vees(1) = v
 ", "vees(1).x", "44")]
-    public async Task Exploration_Eval(string src, string eval, string expected)
+    [TestCase(@"
+type vec
+    x
+    y
+endtype
+a = 5
+v as vec
+v.x = 3
+v.y = 2
+", "v", "[vec]")]
+    [TestCase(@"
+type vec
+    x
+    y
+endtype
+type egg
+    a 
+    v as vec
+endtype
+n = 6
+v as vec
+v.x = 3
+v.y = 2
+`e as egg
+`e.a = 3
+`e.v = v
+", "n:v", "6:[vec]")]
+    [TestCase(@"
+dim x(3)
+x(1) = 4
+", "x", "(3)")]
+    [TestCase(@"
+type vec
+    x
+    y
+endtype
+dim x(3) as vec
+x(1).x = 4
+", "x", "(3)")]
+    public async Task Exploration_Eval(string src, string evalGroup, string expectedGroup)
     {
+        var evals = evalGroup.Split(":", StringSplitOptions.RemoveEmptyEntries);
+        var expects = expectedGroup.Split(":", StringSplitOptions.RemoveEmptyEntries);
+        if (evals.Length != expects.Length) throw new InvalidOperationException("bad test input");
+
         Compile(src, out _, out var compiler, out var vm);
         var dbg = compiler.DebugData;
         var session = new DebugSession(vm, dbg, TestCommands.CommandsForTesting, new LaunchOptions
@@ -107,9 +150,16 @@ vees(1) = v
         });
         session.StartDebugging();
         await Task.Delay(50); // give some time for the program to finish executing... 
-        
-        var res = session.Eval(0, eval);
-        Assert.That(res.value, Is.EqualTo(expected));
+
+        for (var i = 0; i < evals.Length; i++)
+        {
+            var eval = evals[i];
+            var expected = expects[i];
+            var res = session.Eval(0, eval);
+            Assert.That(res.value, Is.EqualTo(expected));
+
+        }
+
     }
     
     [Test]

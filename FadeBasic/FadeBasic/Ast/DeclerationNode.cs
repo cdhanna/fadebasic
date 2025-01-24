@@ -42,7 +42,7 @@ namespace FadeBasic.Ast
             {
                 typeNode = new TypeReferenceNode(symbol.typeInfo.type, assignmentStatement.expression.StartToken);
             }
-            return new DeclarationStatement
+            var decl = new DeclarationStatement
             {
                 variable = variableRef.variableName,
                 type = typeNode,
@@ -51,6 +51,9 @@ namespace FadeBasic.Ast
                 scopeType = DeclarationScopeType.Local,
                 DeclaredFromSymbol = symbol
             };
+            
+            
+            return decl;
         }
         
         public DeclarationStatement(Token startToken, VariableRefNode variableNode, IExpressionNode[] ranks)

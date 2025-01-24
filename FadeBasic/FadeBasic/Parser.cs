@@ -393,15 +393,19 @@ namespace FadeBasic
                             source = assignment
                         };
                         locals.Add(variableRef.variableName, symbol);
-                        
-                        // TODO: what if its an array?
 
-                        if (symbol.typeInfo.type == VariableType.Struct)
+                        var isArray = symbol.typeInfo.IsArray;
+                        var needsImplicitAssignment =
+                            symbol.typeInfo.type == VariableType.Struct || isArray;
+                        if (needsImplicitAssignment)
                         {
                             implicitDecl = DeclarationStatement.FromAssignment(variableRef, assignment, symbol);
+                            if (isArray)
+                            {
+                                // implicitDecl.
+                                // implicitDecl.scopeType = 
+                            }
                         }
-                        // implicitDecl = new DeclarationStatement(assignment.startToken, variableRef,
-                            // new TypeReferenceNode(symbol.typeInfo.type, assignment.expression.StartToken));
                     }
                     break;
                 case ArrayIndexReference indexRef: // a(1,2) = 1

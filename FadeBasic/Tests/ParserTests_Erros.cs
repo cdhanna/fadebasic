@@ -1176,7 +1176,23 @@ endtype
         Assert.That(errors.Count, Is.EqualTo(1));
         Assert.That(errors[0].Display, Is.EqualTo($"[1:0] - {ErrorCodes.TypeDefMissingName}"));
     }
-    
+
+    [Test]
+    public void Array_Assign_Implicit()
+    {
+        var input = @"
+dim x(3) as word
+y = x
+";
+        var parser = MakeParser(input);
+        var prog = parser.ParseProgram();
+        prog.AssertNoParseErrors();
+        
+        Assert.That(prog.statements.Count(), Is.EqualTo(3)); 
+        Assert.That(prog.statements[0], Is.AssignableTo<DeclarationStatement>()); 
+        Assert.That(prog.statements[1], Is.AssignableTo<DeclarationStatement>()); 
+        Assert.That(prog.statements[2], Is.AssignableTo<AssignmentStatement>()); 
+    }
     
     [Test]
     public void ParseError_TypeDef_AssignmentImplicit__NoErrors()

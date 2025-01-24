@@ -703,6 +703,13 @@ namespace FadeBasic.Launch
             node.AddScopeRelatedErrors(new ParseOptions(), knownFunctionTypes);
 
             var finalStatement = (AssignmentStatement)node.statements.LastOrDefault(x => x is AssignmentStatement);
+            var finalDeclare = (DeclarationStatement)node.statements.LastOrDefault(x => x is DeclarationStatement);
+
+            if (finalDeclare == null || finalDeclare.variable != SYNTHETIC_NAME)
+            {
+                finalDeclare = null;
+            }
+            
             if (finalStatement == null)
             {
                 return DebugEvalResult.Failed("only declarations are allowed");
@@ -734,7 +741,6 @@ namespace FadeBasic.Launch
             }
 
             var compileScope = new CompileScope(mergedVariableTable, mergedArrayTable);
-            compileScope.Create(SYNTHETIC_NAME, VmUtil.GetTypeCode(finalStatement.expression.ParsedType.type), false, regOffset:1);
             var compiler = new Compiler(_commandCollection, new CompilerOptions
             {
                 GenerateDebugData = true
@@ -751,6 +757,11 @@ namespace FadeBasic.Launch
             }
             
             // only compile the last statement, because this only evaluates one statement at a time.
+            if (finalDeclare != null)
+            {
+                compiler.Compile(finalDeclare);
+            }
+
             compiler.Compile(finalStatement);
             compiler.CompileJumpReplacements();
             
@@ -786,17 +797,35 @@ namespace FadeBasic.Launch
             _vm.scope = _vm.scopeStack.buffer[_vm.scopeStack.ptr - 1];
             while (_vm.instructionIndex < _vm.program.Length)
             {
-                _vm.Execute2(1);
+                // _vm.Execute2(1);
+                _vm.Execute2(_vm.program.Length - _vm.instructionIndex);
             }
 
+            
             if (!compiler.scopeStack.Peek().TryGetVariable(SYNTHETIC_NAME, out var synth))
             {
                 throw new NotSupportedException("no compiled synthetic");
             }
-            
-            var runtimeSynth = new DebugRuntimeVariable(_vm, SYNTHETIC_NAME, synth.typeCode, _vm.dataRegisters[synth.registerAddress],
-                _vm.scopeStack.Count -  frameId, synth.registerAddress);
 
+            
+            DebugRuntimeVariable runtimeSynth = null;
+            if (synth.typeCode == TypeCodes.STRUCT)
+            {
+                var ptr = _vm.dataRegisters[synth.registerAddress];
+                if (!_vm.heap.TryGetAllocation((int)ptr, out var alloc))
+                {
+                    return DebugEvalResult.Failed($"invalid heap, reg=[{synth.registerAddress}] data=[{ptr}] which is not a valid heap pointer");
+                }
+                runtimeSynth = new DebugRuntimeVariable(_vm, SYNTHETIC_NAME, synth.typeCode, _vm.dataRegisters[synth.registerAddress],
+                    ref alloc, _vm.scopeStack.Count -  frameId, synth.registerAddress);
+
+            }
+            else
+            {
+                runtimeSynth = new DebugRuntimeVariable(_vm, SYNTHETIC_NAME, synth.typeCode, _vm.dataRegisters[synth.registerAddress],
+                    _vm.scopeStack.Count -  frameId, synth.registerAddress);
+            }
+           
             
 
             _vm.instructionIndex = originalInstructionIndex;
@@ -806,19 +835,11 @@ namespace FadeBasic.Launch
             _vm.scopeStack.ptr = originalScopePtr;
             _vm.stack = originalStack;
             _vm.scope = originalScope;
-
-
-            var res = new DebugEvalResult
-            {
-                type = runtimeSynth.GetTypeName(),
-                value = runtimeSynth.GetValueDisplay()
-            };
-            // TODO: only set if there are children variables...
-            //res.id = variableDb.NextId();
             
+            var res = variableDb.AddWatchedExpression(runtimeSynth, synth);
             return res;
         }
-
+ 
         public List<DebugStackFrame> GetFrames2()
         {
             var frames = new List<DebugStackFrame>();

@@ -411,7 +411,7 @@ namespace FadeBasic.Json
 
         public void IncludeField<T>(string name, ref T fieldValue) where T : IJsonable, new()
         {
-            if (_data.objects.TryGetValue(name, out var subData))
+            if (_data.objects.TryGetValue(name, out var subData) && subData != null)
             {
                 var subOp = new JsonReadOp(subData);
                 fieldValue = new T();

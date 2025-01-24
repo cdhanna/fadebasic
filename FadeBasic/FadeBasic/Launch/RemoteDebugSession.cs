@@ -285,13 +285,20 @@ namespace FadeBasic.Launch
     {
         public string value;
         public string type;
+        public int fieldCount;
+        public int elementCount;
         public int id;
+
+        public DebugScope scope;
         
         public void ProcessJson(IJsonOperation op)
         {
             op.IncludeField(nameof(id), ref id);
             op.IncludeField(nameof(value), ref value);
             op.IncludeField(nameof(type), ref type);
+            op.IncludeField(nameof(fieldCount), ref fieldCount);
+            op.IncludeField(nameof(elementCount), ref elementCount);
+            op.IncludeField(nameof(scope), ref scope);
         }
 
         public static DebugEvalResult Failed(string message) => new DebugEvalResult

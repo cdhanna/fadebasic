@@ -1,3 +1,4 @@
+using FadeBasic.Launch;
 using Microsoft.VisualStudio.Shared.VSCodeDebugProtocol;
 using Microsoft.VisualStudio.Shared.VSCodeDebugProtocol.Messages;
 
@@ -23,8 +24,30 @@ public partial class FadeDebugAdapter
             res.Type = result.type;
             if (result.id > 0)
             {
-                res.VariablesReference = result.id;
+                res.VariablesReference = result.scope.id;
+                //
+                //
+                // var scope = new DebugScope
+                // {
+                //     scopeName = "watch",
+                //     id = result.id,
+                //     variables = new List<DebugVariable>
+                //     {
+                //         new DebugVariable
+                //         {
+                //             id = result.id,
+                //             name = expr,
+                //             value = result.value,
+                //             type = result.type,
+                //
+                //             elementCount = result.elementCount,
+                //             fieldCount = result.fieldCount,
+                //         }
+                //     }
+                // };
+                db.AddScope(-1, result.scope);
             }
+            
             //
             res.PresentationHint = new VariablePresentationHint
             {

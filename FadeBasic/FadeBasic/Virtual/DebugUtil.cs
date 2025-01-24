@@ -283,6 +283,11 @@ namespace FadeBasic.Virtual
             return GetVariablesForFrame(frameToLocals, frameIndex, "Locals", false);
         }
 
+        public void AddWatchedExpression()
+        {
+            
+        }
+
         public DebugScope Expand(int variableRequestVariableId)
         {
             if (idToScope.TryGetValue(variableRequestVariableId, out var existingScope))
@@ -518,6 +523,26 @@ namespace FadeBasic.Virtual
                 throw new InvalidOperationException("invalid variable id request given. ");
             }
             
+        }
+
+        public DebugEvalResult AddWatchedExpression(DebugRuntimeVariable runtimeSynth, CompiledVariable variable)
+        {
+            var res = new DebugEvalResult
+            {
+                type = runtimeSynth.GetTypeName(),
+                value = runtimeSynth.GetValueDisplay(),
+                fieldCount = runtimeSynth.GetFieldCount(),
+                elementCount = runtimeSynth.GetElementCount()
+            };
+            
+            if (res.fieldCount > 0 || res.elementCount > 0)
+            {
+                res.id = NextId();
+                idToTopLevelVariable.Add(res.id, (null, runtimeSynth));
+                var scope = Expand(res.id); // TODO: do a recursive expand.
+                res.scope = scope;
+            }
+            return res;
         }
     }
 

@@ -19,13 +19,14 @@ namespace FadeBasic.Ast
         public VariableType type;
         public string structName;
         public int rank; // when positive, its an array.
+        public IExpressionNode[] rankExpressions;
         public bool IsArray => rank > 0;
 
-        public static TypeInfo FromVariableType(VariableType variableType, int rank=0, string structName=null) => new TypeInfo
+        public static TypeInfo FromVariableType(VariableType variableType, IExpressionNode[] rankExpressions=null, string structName=null) => new TypeInfo
         {
             type = variableType,
             structName = structName,
-            rank = rank
+            rank = rankExpressions?.Length ?? 0,
         };
 
         public static bool TryGetFromTypeCode(int typeCode, out TypeInfo typeInfo)
