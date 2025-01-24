@@ -247,7 +247,7 @@ namespace FadeBasic.Ast.Visitors
                         {
                             decl.initializerExpression.EnsureVariablesAreDefined(scope, ctx);
                         }
-                        scope.AddDeclaration(decl);
+                        scope.AddDeclaration(decl, ctx);
 
                         if (decl.initializerExpression != null)
                         {
@@ -603,7 +603,18 @@ namespace FadeBasic.Ast.Visitors
                     }
 
                     arrayRef.DeclaredFromSymbol = arraySymbol;
-                    arrayRef.ApplyTypeFromSymbol(arraySymbol);
+                    if (arraySymbol != null)
+                    {
+                        arrayRef.ParsedType = new TypeInfo
+                        {
+                            type = arraySymbol.typeInfo.type,
+                            structName = arraySymbol.typeInfo.structName,
+                            rank = 0,
+                        };
+                    }
+
+                    // arrayRef.ApplyTypeFromSymbol(arraySymbol);
+                    // arraySymbol.typeInfo.
                     // arrayRef.ParsedType = arraySymbol.typeInfo; // TODO: this doesn't work if the program isn't complete. partial errors and whatnot
                     break;
                 case VariableRefNode variable:

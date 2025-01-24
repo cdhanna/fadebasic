@@ -1178,7 +1178,7 @@ endtype
     }
 
     [Test]
-    public void Array_Assign_Implicit()
+    public void ParseError_Array_Assign_Implicit()
     {
         var input = @"
 dim x(3) as word
@@ -1186,13 +1186,25 @@ y = x
 ";
         var parser = MakeParser(input);
         var prog = parser.ParseProgram();
-        prog.AssertNoParseErrors();
-        
-        Assert.That(prog.statements.Count(), Is.EqualTo(3)); 
-        Assert.That(prog.statements[0], Is.AssignableTo<DeclarationStatement>()); 
-        Assert.That(prog.statements[1], Is.AssignableTo<DeclarationStatement>()); 
-        Assert.That(prog.statements[2], Is.AssignableTo<AssignmentStatement>()); 
+        var errors = prog.GetAllErrors();
+        prog.AssertParseErrors(1);
+        Assert.That(errors[0].Display, Is.EqualTo($"[2:0] - {ErrorCodes.ImplicitArrayDeclaration}"));
+
     }
+    
+    
+    [Test]
+    public void ParseError_Array_Assign_NoErrors()
+    {
+        var input = @"
+dim x(3) as word
+y = x(1)
+";
+        var parser = MakeParser(input);
+        var prog = parser.ParseProgram();
+        prog.AssertNoParseErrors();
+    }
+
     
     [Test]
     public void ParseError_TypeDef_AssignmentImplicit__NoErrors()
@@ -2137,6 +2149,20 @@ x(2) = 1
 
         var errors = prog.GetAllErrors();
         prog.AssertNoParseErrors();
+    }
+    
+    [Test]
+    public void ParseError_Assignment_Array_IndexWrongType_HasError()
+    {
+        var input = @"
+DIM x(""bug"")
+";
+        var parser = MakeParser(input);
+        var prog = parser.ParseProgram();
+
+        var errors = prog.GetAllErrors();
+        prog.AssertParseErrors(1);
+        Assert.That(errors[0].Display, Is.EqualTo($"[1:6] - {ErrorCodes.ArrayRankMustBeInteger}"));
     }
 
     

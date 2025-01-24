@@ -1613,8 +1613,24 @@ namespace FadeBasic.Virtual
 
                 }
                 
+                
+                
                 // now, we need to allocate enough memory for the entire thing
-                PushTotalSizeOfArray(arrayVar);
+                AddPushInt(_buffer, 1);
+                
+                for (var i = 0; i < declaration.ranks.Length; i++)
+                {
+                    // _buffer.Add(OpCodes.LOAD);
+                    // _buffer.Add(arrayVar.rankSizeRegisterAddresses[i]); // store the length of the sub var on the register.
+                    PushLoad(_buffer, arrayVar.rankSizeRegisterAddresses[i], arrayVar.isGlobal);
+
+                    _buffer.Add(OpCodes.MUL);
+                }
+                
+                var sizeOfElement = arrayVar.byteSize;
+                AddPushInt(_buffer, sizeOfElement);
+                
+                _buffer.Add(OpCodes.MUL); // multiply the length by the size, to get the entire byte-size of the requested array
                 
                 // inject the type format.
                 var tf = new HeapTypeFormat
@@ -1650,27 +1666,6 @@ namespace FadeBasic.Virtual
                 };
                 Compile(fakeAssignment);
             }
-        }
-
-        void PushTotalSizeOfArray(CompiledArrayVariable arrayVar)
-        {
-            // now, we need to allocate enough memory for the entire thing
-            AddPushInt(_buffer, 1);
-                
-            for (var i = 0; i < arrayVar.rankSizeRegisterAddresses.Length; i++)
-            {
-                // _buffer.Add(OpCodes.LOAD);
-                // _buffer.Add(arrayVar.rankSizeRegisterAddresses[i]); // store the length of the sub var on the register.
-                PushLoad(_buffer, arrayVar.rankSizeRegisterAddresses[i], arrayVar.isGlobal);
-
-                _buffer.Add(OpCodes.MUL);
-            }
-                
-            var sizeOfElement = arrayVar.byteSize;
-            AddPushInt(_buffer, sizeOfElement);
-                
-            _buffer.Add(OpCodes.MUL); // multiply the length by the size, to get the entire byte-size of the requested array
-
         }
 
         public void PushAddress(ArrayIndexReference arrayRefNode)
@@ -1803,11 +1798,8 @@ namespace FadeBasic.Virtual
                     
                     if (!scope.TryGetVariable(variableRefNode.variableName, out var compiledVar))
                     {
-                        if (!scope.TryGetArray(variableRefNode.variableName, out var compiledArrayVariable))
-                        {
-                            var tc = VmUtil.GetTypeCode(variableRefNode.DefaultTypeByName);
-                            compiledVar = scope.Create(variableRefNode.variableName, tc, false);
-                        }
+                        var tc = VmUtil.GetTypeCode(variableRefNode.DefaultTypeByName);
+                        compiledVar = scope.Create(variableRefNode.variableName, tc, false);
                     }
             
                     // wait wait, if the rhs is a pointer, and the lhs is a struct, then we actually need to COPY the pointer data...
@@ -2187,20 +2179,6 @@ namespace FadeBasic.Virtual
                         default:
                             throw new NotImplementedException("Cannot eval left based nested struct pointer");
                     }
-                    break;
-                case VariableRefNode variableRefArray when scope.TryGetArray(variableRefArray.variableName, out var compiledArrayVar):
-                    // oh, this is an array, which means we should COPY the entire array to a new allocation
-                    PushTotalSizeOfArray(compiledArrayVar);
-                    
-                    PushLoad(_buffer, compiledArrayVar.registerAddress, compiledArrayVar.isGlobal);
-                    CastToInt();
-                        
-                    // read, it'll find the ptr, size, and then place the data onto the stack
-                    _buffer.Add(OpCodes.READ);
-                    
-                    // we need to inject the type-code back into the stack, since it doesn't exist in heap
-                    _buffer.Add(OpCodes.BPUSH);
-                    _buffer.Add(compiledArrayVar.typeCode);
                     break;
                 case VariableRefNode variableRef:
                     // emit the read from register

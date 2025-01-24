@@ -1913,30 +1913,6 @@ dim x(4) as word
         Assert.That(vm.heap.Cursor, Is.EqualTo(8));
     }
     
-    
-    [Test]
-    public void Array_Create_Implicit()
-    {
-        var src = @"
-dim x(4) as word
-` this line should equal...
-`  dim y(4) as word
-`  and then copy the content from x into the y pointer. 
-y = x 
-x(1) = 3
-";
-        Setup(src, out _, out var prog);
-        
-        var vm = new VirtualMachine(prog);
-        vm.Execute2();
-        
-        Assert.That(vm.dataRegisters[0], Is.EqualTo(0));
-        Assert.That(vm.typeRegisters[0], Is.EqualTo(TypeCodes.INT));
-        Assert.That(vm.dataRegisters[3], Is.EqualTo(8));
-        Assert.That(vm.typeRegisters[3], Is.EqualTo(TypeCodes.INT));
-
-        Assert.That(vm.heap.Cursor, Is.EqualTo(8 * 2));
-    }
 
     
 //     [Test]

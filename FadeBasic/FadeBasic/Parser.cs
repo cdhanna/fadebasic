@@ -376,6 +376,7 @@ namespace FadeBasic
                     }
                     else // no symbol exists, so this is a defacto local variable
                     {
+                        
                         var defaultTypeInfo = new TypeInfo
                         {
                             type = variableRef.DefaultTypeByName,
@@ -402,8 +403,8 @@ namespace FadeBasic
                             implicitDecl = DeclarationStatement.FromAssignment(variableRef, assignment, symbol);
                             if (isArray)
                             {
-                                // implicitDecl.
-                                // implicitDecl.scopeType = 
+                                implicitDecl = null;
+                                assignment.Errors.Add(new ParseError(assignment.variable, ErrorCodes.ImplicitArrayDeclaration));
                             }
                         }
                     }
@@ -462,7 +463,7 @@ namespace FadeBasic
         //     }
         // }
         
-        public void AddDeclaration(DeclarationStatement declStatement)
+        public void AddDeclaration(DeclarationStatement declStatement, EnsureTypeContext ctx)
         {
             
             var table = GetVariables(declStatement.scopeType);
@@ -478,11 +479,26 @@ namespace FadeBasic
             switch (declStatement.type)
             {
                 case TypeReferenceNode typeReference:
+
+                    if (declStatement.ranks != null)
+                    {
+                        for (var i = 0; i < declStatement.ranks.Length; i++)
+                        {
+                            var rankExpr = declStatement.ranks[i];
+                            if (rankExpr == null) continue;
+                            rankExpr.EnsureVariablesAreDefined(this, ctx);
+                            if (rankExpr.ParsedType.type != VariableType.Integer)
+                            {
+                                rankExpr.Errors.Add(new ParseError(rankExpr, ErrorCodes.ArrayRankMustBeInteger));
+                            }
+                        }
+                    }
+                    
                     var symbol = new Symbol
                     {
                         text = declStatement.variable,
                         typeInfo = TypeInfo.FromVariableType(typeReference.variableType,
-                            rank: declStatement.ranks?.Length ?? 0,
+                            rankExpressions: declStatement.ranks,
                             structName: null),
                         source = declStatement
                     };
@@ -499,7 +515,7 @@ namespace FadeBasic
                     {
                         text = declStatement.variable,
                         typeInfo = TypeInfo.FromVariableType(structTypeReference.variableType,
-                            rank: declStatement.ranks?.Length ?? 0,
+                            rankExpressions: declStatement.ranks,
                             structName: structTypeReference.variableNode.variableName),
                         source = declStatement
                     };

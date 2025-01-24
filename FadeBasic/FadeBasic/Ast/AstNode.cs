@@ -27,6 +27,7 @@ namespace FadeBasic.Ast
             type = variableType,
             structName = structName,
             rank = rankExpressions?.Length ?? 0,
+            rankExpressions = rankExpressions
         };
 
         public static bool TryGetFromTypeCode(int typeCode, out TypeInfo typeInfo)

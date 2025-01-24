@@ -124,11 +124,11 @@ v.y = 2
 `e.a = 3
 `e.v = v
 ", "n:v", "6:[vec]")]
-    [TestCase(@"
+    [TestCase(@"`simple array case
 dim x(3)
 x(1) = 4
 ", "x", "(3)")]
-    [TestCase(@"
+    [TestCase(@"`struct array case
 type vec
     x
     y
@@ -182,7 +182,7 @@ dan.x = 5
 
         var variables = DebugUtil.LookupVariables(vm, dbg, global: false);
 
-        Assert.That(variables.Count, Is.EqualTo(1));
+        Assert.That(variables.Count, Is.EqualTo(2));
     }
 
     

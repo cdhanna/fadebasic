@@ -717,10 +717,43 @@ namespace FadeBasic.Launch
             finalStatement.variable.Errors.Clear(); // remove the cast related error
             
             var parseErrors = node.GetAllErrors();
+            Launch.DebugVariable match = null;
+            DebugEvalResult quickResult = null;
+            if (finalStatement.expression is VariableRefNode rhs)
+            {
+                match = locals.variables.FirstOrDefault(x => x.name == rhs.variableName);
+                if (match == null)
+                {
+                    match = globals.variables.FirstOrDefault(x => x.name == rhs.variableName);
+                }
+            }
+            if (match != null)
+            {
+                quickResult = new DebugEvalResult
+                {
+                    value = match.value,
+                    type = match.type,
+                    fieldCount = match.fieldCount,
+                    elementCount = match.elementCount,
+                    id = match.id,
+                };
+                if (quickResult.fieldCount > 0 || quickResult.elementCount > 0)
+                {
+                    quickResult.scope = variableDb.Expand(match.id);
+                }
+            }
+
             if (parseErrors.Count > 0)
             {
+                if (parseErrors[0].errorCode.code == ErrorCodes.ImplicitArrayDeclaration.code)
+                {
+                    if (quickResult != null) return quickResult;
+                }
+                
                 return DebugEvalResult.Failed($"{string.Join(",\n", parseErrors.Select(x => x.errorCode))}");
             }
+
+            if (quickResult != null) return quickResult;
             
             
             /*

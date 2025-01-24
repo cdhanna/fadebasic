@@ -180,7 +180,9 @@ namespace FadeBasic
         public static readonly ErrorCode ArrayCardinalityMismatch = "[0208] Incorrect number of index expressions";
         public static readonly ErrorCode FunctionAlreadyDeclared = "[0209] Functions do not support overloads";
         public static readonly ErrorCode UnknownType = "[0210] Type is not defined";
-        
+        public static readonly ErrorCode ArrayRankMustBeInteger = "[0211] Array rank expression must be an integer";
+        public static readonly ErrorCode ImplicitArrayDeclaration = "[0212] Implicit array declarations are not allowed";
+    
         // 300 series represents type issues
         public static readonly ErrorCode SymbolAlreadyDeclared = "[0300] Symbol already declared";
         public static readonly ErrorCode InvalidCast = "[0301] Expression cannot be cast to given type";
