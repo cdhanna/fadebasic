@@ -162,6 +162,46 @@ x(1).x = 4
 
     }
     
+    [TestCase(@"`basic case
+x = 5
+", "x", "8", "8", 3, new int[]{})]
+    [TestCase(@"`accessor
+type vec
+    x
+    y
+endtype
+v as vec
+v.x = 5
+", "v.x", "8", "8", 5, new int[]{3})]
+    public async Task Exploration_Expr(string src, string lhs, string rhs, string expected, int variableId, int[] idsToExpand)
+    {
+        
+        Compile(src, out _, out var compiler, out var vm);
+        var dbg = compiler.DebugData;
+        var session = new DebugSession(vm, dbg, TestCommands.CommandsForTesting, new LaunchOptions
+        {
+            debug = true, debugPort = 9999, debugWaitForConnection = false
+        });
+        session.StartDebugging();
+        await Task.Delay(50); // give some time for the program to finish executing... 
+        
+        session.GetScopes(new DebugScopeRequest
+        {
+            frameIndex = 0
+        });
+        foreach (var id in idsToExpand)
+        {
+            session.variableDb.Expand(id);
+        }
+        
+        var res = session.Eval(0, rhs, variableId);
+        
+
+        
+        Assert.That(res.value, Is.EqualTo(expected));
+    }
+
+    
     [Test]
     public void Exploration_Variables_Structs()
     {

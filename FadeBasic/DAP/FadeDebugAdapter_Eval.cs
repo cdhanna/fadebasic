@@ -6,9 +6,46 @@ namespace DAP;
 
 public partial class FadeDebugAdapter
 {
+    // protected override void HandleSetVariableRequestAsync(IRequestResponder<SetVariableArguments, SetVariableResponse> responder)
+    // {
+    //     var res = new SetExpressionResponse();
+    //     var args = responder.Arguments;
+    //     _session.RequestSetVariable(args.VariablesReference, args.Name, args.Value, msg =>
+    //     {
+    //         responder.SetError(new ProtocolException("Unable to acquiesce your request!"));
+    //     });
+    //
+    // }
+
     protected override void HandleSetExpressionRequestAsync(IRequestResponder<SetExpressionArguments, SetExpressionResponse> responder)
     {
-        throw new NotImplementedException("not yet!");
+        var res = new SetExpressionResponse();
+        var args = responder.Arguments;
+
+        if (!int.TryParse(args.Expression, out var variableId))
+        {
+            _logger.Log($"unable to set expression because expr=[{args.Expression}] must be a variable id");
+            responder.SetError(new ProtocolException("Invalid expression, must be a variable id"));
+        }
+        
+        _session.RequestSetVariable(variableId, args.FrameId.GetValueOrDefault(), args.Value, msg =>
+        {
+            _logger.Log("set val but who knows ");
+            res.Type = msg.type;
+            res.Value = msg.value;
+            res.IndexedVariables = msg.elementCount;
+            res.NamedVariables = msg.fieldCount;
+            
+            if (msg.fieldCount > 0 || msg.elementCount > 0)
+            {
+                res.VariablesReference = msg.id;
+            }
+            responder.SetResponse(res);
+            // responder.SetError(new ProtocolException("Unable to acquiesce your request!"));
+        });
+        
+        // responder.SetResponse(res);
+        // throw new NotImplementedException("not yet!");
     }
 
     protected override void HandleEvaluateRequestAsync(IRequestResponder<EvaluateArguments, EvaluateResponse> responder)
@@ -25,26 +62,6 @@ public partial class FadeDebugAdapter
             if (result.id > 0)
             {
                 res.VariablesReference = result.scope.id;
-                //
-                //
-                // var scope = new DebugScope
-                // {
-                //     scopeName = "watch",
-                //     id = result.id,
-                //     variables = new List<DebugVariable>
-                //     {
-                //         new DebugVariable
-                //         {
-                //             id = result.id,
-                //             name = expr,
-                //             value = result.value,
-                //             type = result.type,
-                //
-                //             elementCount = result.elementCount,
-                //             fieldCount = result.fieldCount,
-                //         }
-                //     }
-                // };
                 db.AddScope(-1, result.scope);
             }
             

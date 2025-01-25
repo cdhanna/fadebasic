@@ -355,28 +355,23 @@ namespace FadeBasic.Launch
                             result = evalResult
                         });
                         break;
+                    case DebugMessageType.REQUEST_SET_VAR:
+                        var setVarRequest = JsonableExtensions.FromJson<SetVariableMessage>(message.RawJson);
+                        var exprResult = Eval(setVarRequest.frameId, setVarRequest.rhs, setVarRequest.variableId);
+                        
+                        // now that we have the result, we need to assign it to the given value... 
+                        // variableDb.ResetValue(setVarRequest.variableId, exprResult);
+
+                        // throw new NotImplementedException();
+                        Ack(setVarRequest, new EvalResponse
+                        {
+                            result = exprResult
+                        });
+                        break;
                     case DebugMessageType.REQUEST_SCOPES:
                         var scopeRequest = JsonableExtensions.FromJson<DebugScopeRequest>(message.RawJson);
-                        var scopeFrames = GetFrames2();
-                        var frameIndex = scopeRequest.frameIndex;
-                        logger.Debug($"got stack frame request with frame-id=[{frameIndex}] frame-count=[{scopeFrames.Count}] scope-stack=[{_vm.scopeStack.Count}] dbg-count=[{_dbg.insToVariable.Count}]");
-                        if (frameIndex < 0 || frameIndex >= scopeFrames.Count)
-                        {
-                            logger.Error($"scope request failed because frame-index=[{frameIndex}] was out of bounds of max=[{scopeFrames.Count}]");
-                        }
-
-                        var global = variableDb.GetGlobalVariablesForFrame(frameIndex);
-                        var local = variableDb.GetLocalVariablesForFrame(frameIndex);
-
-                        Ack(message, new ScopesMessage
-                        {
-                            scopes = new List<DebugScope>
-                            {
-                                global,
-                                local
-                            }
-                        });
-                        
+                        var scopeResult = GetScopes(scopeRequest);
+                        Ack(message, scopeResult);
                         break;
                     case DebugMessageType.REQUEST_STACK_FRAMES:
                         var frames = GetFrames2();
@@ -391,22 +386,47 @@ namespace FadeBasic.Launch
             }
         }
 
-        public DebugEvalResult Eval(int frameId, string expression)
+        public ScopesMessage GetScopes(DebugScopeRequest scopeRequest)
+        {
+            var scopeFrames = GetFrames2();
+            var frameIndex = scopeRequest.frameIndex;
+            logger.Debug($"got stack frame request with frame-id=[{frameIndex}] frame-count=[{scopeFrames.Count}] scope-stack=[{_vm.scopeStack.Count}] dbg-count=[{_dbg.insToVariable.Count}]");
+            if (frameIndex < 0 || frameIndex >= scopeFrames.Count)
+            {
+                logger.Error($"scope request failed because frame-index=[{frameIndex}] was out of bounds of max=[{scopeFrames.Count}]");
+            }
+
+            var global = variableDb.GetGlobalVariablesForFrame(frameIndex);
+            var local = variableDb.GetLocalVariablesForFrame(frameIndex);
+
+            return new ScopesMessage
+            {
+                scopes = new List<DebugScope>
+                {
+                    global,
+                    local
+                }
+            };
+        }
+
+        public DebugEvalResult Eval(int frameId, string rightHandExpression, int overwriteVariableId=-1)
         {
             // TODO: ignore the frame-id, and just assume everything is at frame-0...
 
-            const string SYNTHETIC_NAME = "fade________eval";
-            expression = SYNTHETIC_NAME + "=" + expression;
+            const string SYNTHETIC_NAME2 = "fade________eval";
+            
+            rightHandExpression = SYNTHETIC_NAME2 + "=" + rightHandExpression;
+            
             var globalVariableTable = new Dictionary<string, CompiledVariable>();
             var localVariableTable = new Dictionary<string, CompiledVariable>();
             
             var globalArrayVariableTable = new Dictionary<string, CompiledArrayVariable>();
             var localArrayVariableTable = new Dictionary<string, CompiledArrayVariable>();
 
-            logger.Log($"Evaluating frame=[{frameId}], expr=[{expression}]");
+            logger.Log($"Evaluating frame=[{frameId}], expr=[{rightHandExpression}]");
             
             var lexer = new Lexer();
-            var lexResults = lexer.TokenizeWithErrors(expression, _commandCollection);
+            var lexResults = lexer.TokenizeWithErrors(rightHandExpression, _commandCollection);
             if (lexResults.tokenErrors.Count > 0)
             {
                 return DebugEvalResult.Failed("Unable to lex expression");
@@ -705,7 +725,7 @@ namespace FadeBasic.Launch
             var finalStatement = (AssignmentStatement)node.statements.LastOrDefault(x => x is AssignmentStatement);
             var finalDeclare = (DeclarationStatement)node.statements.LastOrDefault(x => x is DeclarationStatement);
 
-            if (finalDeclare == null || finalDeclare.variable != SYNTHETIC_NAME)
+            if (finalDeclare == null || finalDeclare.variable != SYNTHETIC_NAME2)
             {
                 finalDeclare = null;
             }
@@ -833,33 +853,41 @@ namespace FadeBasic.Launch
                 // _vm.Execute2(1);
                 _vm.Execute2(_vm.program.Length - _vm.instructionIndex);
             }
-
             
-            if (!compiler.scopeStack.Peek().TryGetVariable(SYNTHETIC_NAME, out var synth))
+            DebugEvalResult result = null;
+            
+
+            if (!compiler.scopeStack.Peek().TryGetVariable(SYNTHETIC_NAME2, out var synth))
             {
                 throw new NotSupportedException("no compiled synthetic");
             }
 
-            
+
             DebugRuntimeVariable runtimeSynth = null;
             if (synth.typeCode == TypeCodes.STRUCT)
             {
                 var ptr = _vm.dataRegisters[synth.registerAddress];
                 if (!_vm.heap.TryGetAllocation((int)ptr, out var alloc))
                 {
-                    return DebugEvalResult.Failed($"invalid heap, reg=[{synth.registerAddress}] data=[{ptr}] which is not a valid heap pointer");
+                    return DebugEvalResult.Failed(
+                        $"invalid heap, reg=[{synth.registerAddress}] data=[{ptr}] which is not a valid heap pointer");
                 }
-                runtimeSynth = new DebugRuntimeVariable(_vm, SYNTHETIC_NAME, synth.typeCode, _vm.dataRegisters[synth.registerAddress],
-                    ref alloc, _vm.scopeStack.Count -  frameId, synth.registerAddress);
+
+                runtimeSynth = new DebugRuntimeVariable(_vm, SYNTHETIC_NAME2, synth.typeCode,
+                    _vm.dataRegisters[synth.registerAddress],
+                    ref alloc, _vm.scopeStack.Count - frameId, synth.registerAddress);
 
             }
             else
             {
-                runtimeSynth = new DebugRuntimeVariable(_vm, SYNTHETIC_NAME, synth.typeCode, _vm.dataRegisters[synth.registerAddress],
-                    _vm.scopeStack.Count -  frameId, synth.registerAddress);
+                runtimeSynth = new DebugRuntimeVariable(_vm, SYNTHETIC_NAME2, synth.typeCode,
+                    _vm.dataRegisters[synth.registerAddress],
+                    _vm.scopeStack.Count - frameId, synth.registerAddress);
             }
-           
-            
+
+            result = variableDb.AddWatchedExpression(runtimeSynth, synth);
+            var srcScope = _vm.scopeStack.buffer[runtimeSynth.scopeIndex];
+            var srcRaw = _vm.dataRegisters[runtimeSynth.regAddr];
 
             _vm.instructionIndex = originalInstructionIndex;
             _vm.program = originalProgram;
@@ -869,8 +897,46 @@ namespace FadeBasic.Launch
             _vm.stack = originalStack;
             _vm.scope = originalScope;
             
-            var res = variableDb.AddWatchedExpression(runtimeSynth, synth);
-            return res;
+            
+            if (overwriteVariableId > -1)
+            {
+                /*
+                 * find the thing with the variable id.
+                 * it may be a top level primitive
+                 * it may be a heap pointer 
+                 * or, it may be a nested field? 
+                 */
+                
+                
+                if (!variableDb.TryGetRuntimeVariable(overwriteVariableId, out var overwriteVar))
+                {
+                    
+                    
+                    throw new NotSupportedException("Cannot overwrite variable that does not exist yet. Expand first");
+                }
+                //
+                // // to copy a simple variable...
+                var targetScope = _vm.scopeStack.buffer[overwriteVar.scopeIndex];
+                //
+                targetScope.dataRegisters[overwriteVar.regAddr] = srcRaw;
+                overwriteVar.rawValue = targetScope.dataRegisters[overwriteVar.regAddr];
+                //
+                result.id = overwriteVariableId;
+                // result.type = overwriteVar.GetTypeName();
+                // result.value = overwriteVar.GetValueDisplay();
+                // result.fieldCount = overwriteVar.GetFieldCount();
+                // result.elementCount = overwriteVar.GetElementCount();
+                // if (result.elementCount > 0 || result.fieldCount > 0)
+                // {
+                //     result.scope = variableDb.Expand(overwriteVariableId);
+                // }
+                // else
+                // {
+                //     result.scope = null;
+                // }
+            }
+            
+            return result;
         }
  
         public List<DebugStackFrame> GetFrames2()
@@ -1126,6 +1192,7 @@ namespace FadeBasic.Launch
         REQUEST_STACK_FRAMES,
         REQUEST_SCOPES,
         REQUEST_EVAL,
+        REQUEST_SET_VAR,
         REQUEST_VARIABLE_EXPANSION,
         REQUEST_BREAKPOINTS
     }
@@ -1171,6 +1238,20 @@ namespace FadeBasic.Launch
         }
     }
 
+    public class SetVariableMessage : DebugMessage
+    {
+        public int variableId;
+        public int frameId;
+        public string rhs;
+        public override void ProcessJson(IJsonOperation op)
+        {
+            base.ProcessJson(op);
+            op.IncludeField(nameof(variableId), ref variableId);
+            op.IncludeField(nameof(frameId), ref frameId);
+            op.IncludeField(nameof(rhs), ref rhs);
+        }
+    }
+
     public class EvalResponse : DebugMessage
     {
         public DebugEvalResult result;
@@ -1209,11 +1290,13 @@ namespace FadeBasic.Launch
     {
         public int id;
         public string scopeName;
+        public string evalName;
         public List<DebugVariable> variables = new List<DebugVariable>();
         public void ProcessJson(IJsonOperation op)
         {
             op.IncludeField(nameof(id), ref id);
             op.IncludeField(nameof(scopeName), ref scopeName);
+            op.IncludeField(nameof(evalName), ref evalName);
             op.IncludeField(nameof(variables), ref variables);
         }
     }
@@ -1224,6 +1307,7 @@ namespace FadeBasic.Launch
         public string name;
         public string type;
         public string value;
+        public string evalName;
 
         public int fieldCount;
         public int elementCount;
@@ -1234,6 +1318,7 @@ namespace FadeBasic.Launch
             op.IncludeField(nameof(name), ref name);
             op.IncludeField(nameof(type), ref type);
             op.IncludeField(nameof(value), ref value);
+            op.IncludeField(nameof(evalName), ref evalName);
             op.IncludeField(nameof(fieldCount), ref fieldCount);
             op.IncludeField(nameof(elementCount), ref elementCount);
         }

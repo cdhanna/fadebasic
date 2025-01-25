@@ -62,8 +62,10 @@ public partial class FadeDebugAdapter
                     Name = variable.name,
                     Type = variable.type,
                     Value = variable.value,
+                    EvaluateName = variable.id.ToString(),
                     PresentationHint = new VariablePresentationHint()
                 };
+                
 
                 if (string.Equals("string", newVariable.Type, StringComparison.InvariantCultureIgnoreCase))
                 {

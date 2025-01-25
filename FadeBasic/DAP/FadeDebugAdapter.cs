@@ -44,14 +44,15 @@ public partial class FadeDebugAdapter : DebugAdapterBase
 
     protected override InitializeResponse HandleInitializeRequest(InitializeArguments arguments)
     {
+        
         var res = new InitializeResponse
         {
             SupportsConfigurationDoneRequest = true,
-            
+            SupportsSetExpression = true,
+            SupportsSetVariable = false,
+            // SupportsReadMemoryRequest = true,
         };
         _logger.Log($"VARIABLE_SUPPORT=[{arguments.SupportsVariableType}]");
-        var canRunInTerminal = arguments.SupportsRunInTerminalRequest;
-        
         return res;
     }
 
