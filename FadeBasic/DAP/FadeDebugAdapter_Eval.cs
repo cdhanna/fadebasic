@@ -17,6 +17,7 @@ public partial class FadeDebugAdapter
     //
     // }
 
+    private int errorCount;
     protected override void HandleSetExpressionRequestAsync(IRequestResponder<SetExpressionArguments, SetExpressionResponse> responder)
     {
         var res = new SetExpressionResponse();
@@ -30,6 +31,11 @@ public partial class FadeDebugAdapter
         
         _session.RequestSetVariable(variableId, args.FrameId.GetValueOrDefault(), args.Value, msg =>
         {
+            if (msg.id < 0)
+            {
+                responder.SetError(new ProtocolException(msg.value, ++errorCount, msg.value, showUser:true ));
+                return;
+            }
             _logger.Log("set val but who knows ");
             res.Type = msg.type;
             res.Value = msg.value;
@@ -39,6 +45,7 @@ public partial class FadeDebugAdapter
             if (msg.fieldCount > 0 || msg.elementCount > 0)
             {
                 res.VariablesReference = msg.id;
+                db.AddScope(-1, msg.scope);
             }
             responder.SetResponse(res);
             // responder.SetError(new ProtocolException("Unable to acquiesce your request!"));
@@ -59,7 +66,7 @@ public partial class FadeDebugAdapter
         {
             res.Result = result.value;
             res.Type = result.type;
-            if (result.id > 0)
+            if (result.fieldCount > 0 || result.elementCount > 0)
             {
                 res.VariablesReference = result.scope.id;
                 db.AddScope(-1, result.scope);

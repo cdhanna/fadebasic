@@ -75,6 +75,7 @@ dim x(3,5) as vec
         Assert.That(variables.Count, Is.EqualTo(1));
     }
     
+    [TestCase("x# = 4.2", "x#+1", "5.2")]
     [TestCase("x = 4", "x+1", "5")]
     [TestCase(@"
 x = 1
@@ -165,6 +166,9 @@ x(1).x = 4
     [TestCase(@"`basic case
 x = 5
 ", "x", "8", "8", 3, new int[]{})]
+    [TestCase(@"`basic float
+x# = 5.2
+", "x#", "8.3", "8.3", 3, new int[]{})]
     [TestCase(@"`accessor
 type vec
     x
@@ -173,6 +177,16 @@ endtype
 v as vec
 v.x = 5
 ", "v.x", "8", "8", 5, new int[]{3})]
+    [TestCase(@"`replace struct
+type vec
+    x
+    y
+endtype
+v as vec
+v2 as vec
+v.x = 5
+v2.x = 10
+", "v", "v2", "[vec]", 3, new int[]{})]
     public async Task Exploration_Expr(string src, string lhs, string rhs, string expected, int variableId, int[] idsToExpand)
     {
         

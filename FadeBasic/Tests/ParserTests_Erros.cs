@@ -524,6 +524,38 @@ endfunction
 
     
     [Test]
+    public void ParseError_TypeCheck_Function_ReturnTypeDoesNotMatch_Void_PassToCommand()
+    {
+        var input = @"
+`foo returns nothing, and cannot be passed to an argument
+print foo()
+
+function foo()
+endfunction
+";
+        var parser = MakeParser(input);
+        var prog = parser.ParseProgram();
+        prog.AssertParseErrors(1);
+        var errors = prog.GetAllErrors();
+        Assert.That(errors[0].Display, Is.EqualTo($"[2:6,2:10] - {ErrorCodes.InvalidCast} | cannot convert void to any"));
+    }
+
+    
+    [Test]
+    public void ParseError_TypeCheck_Function_ReturnTypeDoesNotMatch_StrToCommand()
+    {
+        var input = @"
+x = rnd(""toast"")
+";
+        var parser = MakeParser(input);
+        var prog = parser.ParseProgram();
+        prog.AssertParseErrors(1);
+        var errors = prog.GetAllErrors();
+        Assert.That(errors[0].Display, Is.EqualTo($"[1:8] - {ErrorCodes.InvalidCast} | cannot convert string to int"));
+    }
+
+    
+    [Test]
     public void ParseError_TypeCheck_Function_ReturnTypeDoesMatch()
     {
         var input = @"
@@ -605,6 +637,16 @@ endfunction
     [TestCase(null, "x#", "3", null)]
     [TestCase(null, "x$", "3", "cannot convert int to string")]
     [TestCase(null, "x$", "3.2", "cannot convert float to string")]
+    [TestCase(@"DIM arr(3)
+x =3", "arr", "x", "cannot assign to array")]
+    [TestCase(@"DIM arr(3)
+x =3", "arr(1)", "x", null)]
+    [TestCase(@"DIM arr(3)", "arr(1)", @"""toast""", "cannot convert string to int")]
+    [TestCase(@"
+TYPE egg
+ENDTYPE
+DIM arr(3) as egg
+", "arr(1)", @"5", "cannot convert int to egg")]
     public void ParseError_TypeCheck_SimpleAssigns(string setup, string leftSide, string rightSide, string error)
     {
         var input = @$"
@@ -621,8 +663,10 @@ endfunction
         {
             prog.AssertParseErrors(1);
             var errors = prog.GetAllErrors();
-            Assert.That(errors[0].Display.Substring("[1:0]".Length),
-                Is.EqualTo($" - {ErrorCodes.InvalidCast} | {error}"));
+
+            var expected = $" - {ErrorCodes.InvalidCast} | {error}";
+            Assert.That(errors[0].Display.EndsWith(expected), $"error does not match expected. actual=[{errors[0].Display}] expected=[{expected}]");
+            
         }
     }
     
@@ -741,6 +785,98 @@ x = y.
         Assert.That(errors[0].Display, Is.EqualTo($"[2:4] - {ErrorCodes.ExpressionIsNotAStruct}"));
         Assert.That(errors[1].Display, Is.EqualTo($"[2:5] - {ErrorCodes.VariableReferenceMissing}"));
     }
+
+
+    [Test]
+    public void ParseError_Goto_CanWork()
+    {
+        var input = @"
+goto lbl
+lbl: 
+";
+        var parser = MakeParser(input);
+        var prog = parser.ParseProgram();
+
+        prog.AssertNoParseErrors();
+    }
+
+    
+    [Test]
+    public void ParseError_Goto_InsideFunction()
+    {
+        var input = @"
+
+function aFunc()
+    goto lbl
+    lbl:
+endfunction
+";
+        var parser = MakeParser(input);
+        var prog = parser.ParseProgram();
+
+        var errors = prog.GetAllErrors();
+        prog.AssertNoParseErrors();
+        
+    }
+
+    
+    [Test]
+    public void ParseError_Goto_BetweenScopes_IntoFunction()
+    {
+        var input = @"
+goto lbl
+function aFunc()
+    lbl: 
+endfunction
+";
+        var parser = MakeParser(input);
+        var prog = parser.ParseProgram();
+
+        var errors = prog.GetAllErrors();
+        prog.AssertParseErrors(1);
+        Assert.That(errors[0].Display, Is.EqualTo($"[1:0,1:5] - {ErrorCodes.TraverseLabelBetweenScopes}"));
+
+    }
+    
+    
+    [Test]
+    public void ParseError_Goto_BetweenScopes_OutOfFunction()
+    {
+        var input = @"
+lbl:
+function aFunc()
+    goto lbl
+endfunction
+";
+        var parser = MakeParser(input);
+        var prog = parser.ParseProgram();
+
+        var errors = prog.GetAllErrors();
+        prog.AssertParseErrors(1);
+        Assert.That(errors[0].Display, Is.EqualTo($"[3:4,3:9] - {ErrorCodes.TraverseLabelBetweenScopes}"));
+
+    }
+    
+    
+    [Test]
+    public void ParseError_Goto_BetweenScopes_BetweenFunctions()
+    {
+        var input = @"
+function bFunc()
+    lbl:
+endfunction
+function aFunc()
+    goto lbl
+endfunction
+";
+        var parser = MakeParser(input);
+        var prog = parser.ParseProgram();
+
+        var errors = prog.GetAllErrors();
+        prog.AssertParseErrors(1);
+        Assert.That(errors[0].Display, Is.EqualTo($"[5:4,5:9] - {ErrorCodes.TraverseLabelBetweenScopes}"));
+    }
+
 
     
     [Test]
@@ -1278,6 +1414,41 @@ fish.y = 1
     
     
     [Test]
+    public void ParseError_TypeDef_InsideFunction()
+    {
+        var input = @"
+function aFunc()
+    type vec
+    endtype
+endfunction
+";
+        var parser = MakeParser(input);
+        var prog = parser.ParseProgram();
+
+        var errors = prog.GetAllErrors();
+        prog.AssertParseErrors(1);
+        Assert.That(errors[0].Display, Is.EqualTo($"[2:9] - {ErrorCodes.TypeMustBeTopLevel}"));
+    }
+    
+    
+    [Test]
+    public void ParseError_TypeDef_InsideTypeDef()
+    {
+        var input = @"
+type outer
+    type vec
+    endtype
+endtype
+";
+        var parser = MakeParser(input);
+        var prog = parser.ParseProgram();
+
+        var errors = prog.GetAllErrors();
+        prog.AssertParseErrors(2);
+    }
+
+    
+    [Test]
     public void ParseError_TypeDef_FieldDeclaredTwice()
     {
         var input = @"
@@ -1383,6 +1554,36 @@ ENDTYPE
         Assert.That(errors[1].Display, Is.EqualTo($"[4:5] - {ErrorCodes.StructFieldsRecursive}"));
     }
     
+    
+    [Test]
+    public void ParseError_TypeDef_RecursiveChain_3()
+    {
+        var input = @"
+remstart
+
+a -> dep
+b -> a
+b -> dep
+
+remend
+
+TYPE dep
+    x
+ENDTYPE
+TYPE a 
+    d as dep
+ENDTYPE
+TYPE b
+    d as dep
+    a as a
+ENDTYPE
+";
+        var parser = MakeParser(input);
+        var prog = parser.ParseProgram();
+
+        prog.AssertNoParseErrors();
+    }
+
     
     [Test]
     public void ParseError_TypeDef_RecursiveChain2_Casing()

@@ -349,11 +349,24 @@ namespace FadeBasic.Launch
                         break;
                     case DebugMessageType.REQUEST_EVAL:
                         var evalRequest = JsonableExtensions.FromJson<EvalMessage>(message.RawJson);
-                        var evalResult = Eval(evalRequest.frameIndex, evalRequest.expression);
-                        Ack(evalRequest, new EvalResponse
+                        logger.Info($"doing eval. {evalRequest.expression}");
+                        try
                         {
-                            result = evalResult
-                        });
+                            var evalResult = Eval(evalRequest.frameIndex, evalRequest.expression);
+                            logger.Info($"did eval id=[{evalResult.id}] value=[{evalResult.value}]");
+
+                            var retMsg = new EvalResponse
+                            {
+                                result = evalResult
+                            };
+                            logger.Info($"Return eval msg=[{retMsg.Jsonify()}]");
+                            Ack(evalRequest, retMsg);
+                        }
+                        catch (Exception ex)
+                        {
+                            logger.Error("OH NO SOMETHING BROKE!: " + ex.Message);
+                        }
+
                         break;
                     case DebugMessageType.REQUEST_SET_VAR:
                         var setVarRequest = JsonableExtensions.FromJson<SetVariableMessage>(message.RawJson);
@@ -450,12 +463,8 @@ namespace FadeBasic.Launch
                 return DebugEvalResult.Failed("only single declaration is allowed");
             }
             
-            // TODO: inject all known decls that are valid for this scope.
-            var stacks = GetFrames2();
             var locals = variableDb.GetLocalVariablesForFrame(frameId);
             var globals = variableDb.GetGlobalVariablesForFrame(frameId);
-            
-           
             
             var types = new List<CompiledType>();
             var idToTypeTable = new Dictionary<int, CompiledType>();
@@ -728,6 +737,13 @@ namespace FadeBasic.Launch
             if (finalDeclare == null || finalDeclare.variable != SYNTHETIC_NAME2)
             {
                 finalDeclare = null;
+                // TypeInfo.FromVariableType()
+                finalDeclare = new DeclarationStatement(new Token
+                    {
+                        caseInsensitiveRaw = "local"
+                    }, new VariableRefNode(Token.Blank, SYNTHETIC_NAME2),
+                    new TypeReferenceNode(finalStatement.expression.ParsedType.type, Token.Blank));
+                node.statements.Insert(node.statements.Count - 1, finalDeclare);
             }
             
             if (finalStatement == null)
@@ -757,6 +773,7 @@ namespace FadeBasic.Launch
                     elementCount = match.elementCount,
                     id = match.id,
                 };
+                
                 if (quickResult.fieldCount > 0 || quickResult.elementCount > 0)
                 {
                     quickResult.scope = variableDb.Expand(match.id);
@@ -773,7 +790,17 @@ namespace FadeBasic.Launch
                 return DebugEvalResult.Failed($"{string.Join(",\n", parseErrors.Select(x => x.errorCode))}");
             }
 
-            if (quickResult != null) return quickResult;
+            if (quickResult != null)
+            {
+                if (overwriteVariableId > 0)
+                {
+                    if (!variableDb.TrySetValue(overwriteVariableId, quickResult.id, out var setErr))
+                    {
+                        return DebugEvalResult.Failed(setErr);
+                    }
+                }
+                return quickResult;
+            }
             
             
             /*
@@ -900,40 +927,10 @@ namespace FadeBasic.Launch
             
             if (overwriteVariableId > -1)
             {
-                /*
-                 * find the thing with the variable id.
-                 * it may be a top level primitive
-                 * it may be a heap pointer 
-                 * or, it may be a nested field? 
-                 */
-                
-                
-                if (!variableDb.TryGetRuntimeVariable(overwriteVariableId, out var overwriteVar))
+                if (!variableDb.TrySetValue(overwriteVariableId, runtimeSynth, out var setErr))
                 {
-                    
-                    
-                    throw new NotSupportedException("Cannot overwrite variable that does not exist yet. Expand first");
+                    return DebugEvalResult.Failed(setErr);
                 }
-                //
-                // // to copy a simple variable...
-                var targetScope = _vm.scopeStack.buffer[overwriteVar.scopeIndex];
-                //
-                targetScope.dataRegisters[overwriteVar.regAddr] = srcRaw;
-                overwriteVar.rawValue = targetScope.dataRegisters[overwriteVar.regAddr];
-                //
-                result.id = overwriteVariableId;
-                // result.type = overwriteVar.GetTypeName();
-                // result.value = overwriteVar.GetValueDisplay();
-                // result.fieldCount = overwriteVar.GetFieldCount();
-                // result.elementCount = overwriteVar.GetElementCount();
-                // if (result.elementCount > 0 || result.fieldCount > 0)
-                // {
-                //     result.scope = variableDb.Expand(overwriteVariableId);
-                // }
-                // else
-                // {
-                //     result.scope = null;
-                // }
             }
             
             return result;
@@ -1311,6 +1308,9 @@ namespace FadeBasic.Launch
 
         public int fieldCount;
         public int elementCount;
+
+        // json ignored on purpose. 
+        public DebugRuntimeVariable runtimeVariable;
         
         public void ProcessJson(IJsonOperation op)
         {

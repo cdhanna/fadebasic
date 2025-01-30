@@ -13,6 +13,7 @@ namespace FadeBasic.Ast
         String,
         Boolean,
         Struct,
-        Void
+        Void,
+        Any
     }
 }

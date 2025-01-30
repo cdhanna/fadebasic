@@ -65,11 +65,12 @@ namespace FadeBasic
 
         // public HashSet<string> labels = new HashSet<string>();
         public Dictionary<string, Symbol> labelTable = new Dictionary<string, Symbol>();
+        public Dictionary<string, string> labelDeclTable = new Dictionary<string, string>(); // label -> function name
         public Dictionary<string, SymbolTable> typeNameToTypeMembers = new Dictionary<string, SymbolTable>();
         public Dictionary<string, TypeDefinitionStatement> typeNameToDecl = new Dictionary<string, TypeDefinitionStatement>();
         public SymbolTable globalVariables = new SymbolTable();
         public Stack<SymbolTable> localVariables = new Stack<SymbolTable>();
-
+        public Stack<string> currentFunctionName = new Stack<string>();
         public Dictionary<string, Symbol> functionSymbolTable = new Dictionary<string, Symbol>();
         public Dictionary<string, FunctionStatement> functionTable = new Dictionary<string, FunctionStatement>();
         public Dictionary<string, List<TypeInfo>> functionReturnTypeTable = new Dictionary<string, List<TypeInfo>>();
@@ -117,6 +118,7 @@ namespace FadeBasic
         // private HashSet<FunctionStatement> _begunFunctions = new HashSet<FunctionStatement>();
         public bool BeginFunction(FunctionStatement function)
         {
+            currentFunctionName.Push(function.name);
             // if (_begunFunctions.Contains(function))
             // {
             //     return false;
@@ -151,11 +153,13 @@ namespace FadeBasic
         public void EndFunction()
         {
             localVariables.Pop();
+            currentFunctionName.Pop();
         }
 
-        public void AddLabel(LabelDeclarationNode labelDecl)
+        public string GetCurrentFunctionName() => currentFunctionName.Count > 0 ? currentFunctionName.Peek() : null;
+
+        public void AddLabel(string funcName, LabelDeclarationNode labelDecl)
         {
-            
             if (labelTable.ContainsKey(labelDecl.label))
             {
                 labelDecl.Errors.Add(new ParseError(labelDecl, ErrorCodes.SymbolAlreadyDeclared));
@@ -168,6 +172,7 @@ namespace FadeBasic
                     source = labelDecl,
                     typeInfo = TypeInfo.Void
                 };
+                labelDeclTable[labelDecl.label] = funcName;
             }
         }
 
@@ -215,6 +220,11 @@ namespace FadeBasic
         public void EnforceTypeAssignment(IAstNode node, TypeInfo rightSide, TypeInfo leftSide, bool softLeft, out TypeInfo foundType)
         {
             foundType = rightSide;
+
+            if (leftSide.IsArray)
+            {
+                node.Errors.Add(new ParseError(node, ErrorCodes.InvalidCast, $"cannot assign to array"));
+            }
 
             if (!rightSide.unset && rightSide.type == VariableType.Void)
             {
@@ -412,6 +422,21 @@ namespace FadeBasic
                 case ArrayIndexReference indexRef: // a(1,2) = 1
                     // it isn't possible to assign an array without declaring it first- 
                     //  which means no new scopes need to be added.
+                    if (TryGetSymbol(indexRef.variableName, out var existingArrSymbol))
+                    {
+
+                        var nonArrayVersion = new TypeInfo
+                        {
+                            structName = existingArrSymbol.typeInfo.structName,
+                            type = existingArrSymbol.typeInfo.type,
+                        };
+                        
+                        EnforceTypeAssignment(indexRef, assignment.expression.ParsedType, nonArrayVersion, false, out _);
+                        indexRef.DeclaredFromSymbol = existingArrSymbol;
+                    }
+                    // EnforceTypeAssignment(variableRef, rightType, defaultTypeInfo, true, out var foundType);
+
+
                     break;
                 case DeReference deRef: // *x = 3
                     // it isn't possible to de-ref a vairable without declaring it first- 
@@ -627,12 +652,44 @@ namespace FadeBasic
             return labelTable.TryGetValue(label, out symbol);
         }
 
-        public void AddCommand(CommandExpression commandExpr) =>
-            AddCommand(commandExpr.command, commandExpr.args, commandExpr.argMap);
-        
-        public void AddCommand(CommandInfo command, List<IExpressionNode> args, List<int> argMap)
-        {
+        public void AddCommand(CommandExpression commandExpr, EnsureTypeContext ctx) =>
+            AddCommand(commandExpr.command, commandExpr.args, commandExpr.argMap, ctx);
 
+        public void ValidateCommandArgs(CommandInfo command, List<IExpressionNode> args, List<int> argMap,
+            EnsureTypeContext ctx)
+        {
+            for (var argIndex = 0; argIndex < args.Count; argIndex++)
+            {
+                var arg = args[argIndex];
+                var descriptor = command.args[argMap[argIndex]];
+                            
+                            
+                arg.EnsureVariablesAreDefined(this, ctx);
+
+                if (TypeInfo.TryGetFromTypeCode(descriptor.typeCode, out var guessType))
+                {
+                    this.EnforceTypeAssignment(arg, arg.ParsedType, guessType, false, out _);
+                } else if (descriptor.typeCode == TypeCodes.ANY)
+                {
+                    // this is sort of hack, to pass the lhs AS the same type as the arg...
+                    //  but since its ANYTHING, then it may as well be the same?
+                    var impliedLhs = arg.ParsedType;
+                    var prevCount = arg.Errors.Count;
+                    this.EnforceTypeAssignment(arg, arg.ParsedType, impliedLhs, false,  out _);
+                    if (prevCount != arg.Errors.Count)
+                    {
+                        // sneaky way to know that a new error has been added, and we are going to hack the display...
+                        var err = arg.Errors[arg.Errors.Count - 1];
+                        var replace = ParseErrorExtensions.ConvertTypeInfoToName(arg.ParsedType);
+                        err.message = err.message.Substring(0, err.message.Length - replace.Length ) + "any";
+                    }
+                }
+                
+            }
+        }
+        
+        public void AddCommand(CommandInfo command, List<IExpressionNode> args, List<int> argMap, EnsureTypeContext ctx)
+        {
             for (var i = 0; i < args.Count; i++)
             {
                 var argExpr = args[i];
@@ -652,10 +709,13 @@ namespace FadeBasic
                 {
                     case CommandExpression commandExpr:
                         // recursive call could explode given highly nested call stack. 
-                        AddCommand(commandExpr.command, commandExpr.args, commandExpr.argMap);
+                        AddCommand(commandExpr.command, commandExpr.args, commandExpr.argMap, ctx);
                         break;
                 }
             }
+            
+            ValidateCommandArgs(command, args, argMap, ctx);
+
         }
 
         public void SetFunctionType(FunctionStatement function, IExpressionNode returnExpr)
@@ -752,7 +812,7 @@ namespace FadeBasic
 
             while (!_stream.IsEof)
             {
-                var statement = ParseStatement();
+                var statement = ParseStatement(program.statements);
                 switch (statement)
                 {
                     case FunctionStatement functionStatement:
@@ -1330,8 +1390,11 @@ namespace FadeBasic
             return argExpressions;
         }
 
-
-        private IStatementNode ParseStatement(bool consumeEndOfStatement=true)
+        private IStatementNode ParseStatement2(bool consumeEndOfStatement = true)
+        {
+            return ParseStatement(null, consumeEndOfStatement);
+        }
+        private IStatementNode ParseStatement(List<IStatementNode> statementGroup, bool consumeEndOfStatement=true)
         {
             IStatementNode Inner()
             {
@@ -1502,6 +1565,11 @@ namespace FadeBasic
                     case LexemType.KeywordType:
                         return ParseTypeDefinition(token);
                         
+                        break;
+                    case LexemType.ArgSplitter when multiLineAssignment:
+                        multiLineAssignment = false;
+                        var hopefullyAnAssignment = ParseStatement();
+                        return hopefullyAnAssignment;
                         break;
                     default:
                         _stream.AdvanceUntil(LexemType.EndStatement);
@@ -2000,6 +2068,7 @@ namespace FadeBasic
             
             // now we need to parse all the statements
             var statements = new List<IStatementNode>();
+            var labels = new List<LabelDeclarationNode>();
             looking = true;
             bool hasNoReturnExpression = false;
             while (looking)
@@ -2038,7 +2107,14 @@ namespace FadeBasic
                         break;
                     default:
                         var member = ParseStatement();
-                        statements.Add(member);
+                        if (member is LabelDeclarationNode lbl)
+                        {
+                            labels.Add(lbl);
+                        }
+                        else
+                        {
+                            statements.Add(member);
+                        }
                         break; 
                 }
             }
@@ -2050,6 +2126,7 @@ namespace FadeBasic
                 Errors = errors,
                 statements = statements,
                 parameters = parameters,
+                labels = labels,
                 name = nameToken.caseInsensitiveRaw,
                 startToken = functionToken,
                 endToken = _stream.Current,

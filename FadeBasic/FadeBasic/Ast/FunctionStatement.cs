@@ -66,6 +66,7 @@ namespace FadeBasic.Ast
         public Token nameToken;
         public List<ParameterNode> parameters = new List<ParameterNode>();
         public List<IStatementNode> statements = new List<IStatementNode>();
+        public List<LabelDeclarationNode> labels = new List<LabelDeclarationNode>();
         public bool hasNoReturnExpression;
 
         public FunctionStatement()

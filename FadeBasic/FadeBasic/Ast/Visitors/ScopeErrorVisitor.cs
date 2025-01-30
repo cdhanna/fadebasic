@@ -21,7 +21,7 @@ namespace FadeBasic.Ast.Visitors
             var scope = program.scope = new Scope();
             foreach (var label in program.labels)
             {
-                scope.AddLabel(label.node);
+                scope.AddLabel(null, label.node);
             }
 
             foreach (var type in program.typeDefinitions)
@@ -32,6 +32,10 @@ namespace FadeBasic.Ast.Visitors
             
             foreach (var function in program.functions)
             {
+                foreach (var label in function.labels)
+                {
+                    scope.AddLabel(function.name, label);
+                }
                 scope.DeclareFunction(function);
             }
 
@@ -165,23 +169,22 @@ namespace FadeBasic.Ast.Visitors
                     // return; // already done!
                 }
                 
-                var seen = new HashSet<string>();
-               
-                var toExplore = new Queue<string>();
+                // var seen = new HashSet<string>();
+                var toExplore = new Stack<(string, HashSet<string>)>();
                 //toExplore.Enqueue(node);
                 
                 foreach (var next in graph[node])
                 {
-                    toExplore.Enqueue(next);
+                    toExplore.Push((next, new HashSet<string>{}));
                 }
 
                 while (toExplore.Count > 0)
                 {
-                    var curr = toExplore.Dequeue();
+                    var (curr, callStack) = toExplore.Pop();
 
                     refCounter[curr] += 1;
                     
-                    if (seen.Contains(curr))
+                    if (callStack.Contains(curr))
                     {
                         // ASYNC REF FOUND!
                         var source = scope.typeNameToDecl[curr];
@@ -190,12 +193,15 @@ namespace FadeBasic.Ast.Visitors
                         continue;
                     }
 
-                    seen.Add(curr);
+                    // seen.Add(curr);
+                    // var nextStack = new HashSet<string>(callStack);
+                    callStack.Add(curr);
+
                     processed.Add(curr);
                     
                     foreach (var next in graph[curr])
                     {
-                        toExplore.Enqueue(next);
+                        toExplore.Push((next, callStack));
                     }
                 }
             }
@@ -211,36 +217,9 @@ namespace FadeBasic.Ast.Visitors
                 switch (statement)
                 {
                     case CommandStatement commandStatement:
-                        scope.AddCommand(commandStatement.command, commandStatement.args, commandStatement.argMap);
-                        // commandStatement.args.CheckExpressions(scope);
+                        scope.AddCommand(commandStatement.command, commandStatement.args, commandStatement.argMap, ctx);
                         
-                        // check that all parameters make sense...
-                        for (var argIndex = 0; argIndex < commandStatement.args.Count; argIndex++)
-                        {
-                            var arg = commandStatement.args[argIndex];
-                            var descriptor = commandStatement.command.args[commandStatement.argMap[argIndex]];
-                            
-                            
-                            arg.EnsureVariablesAreDefined(scope, ctx);
-
-                            if (TypeInfo.TryGetFromTypeCode(descriptor.typeCode, out var guessType))
-                            {
-                                scope.EnforceTypeAssignment(arg, arg.ParsedType, guessType, false, out _);
-                            }
-                            
-                            // get type info for 
-                            
-                        }
                         break;
-                    // case FunctionReturnStatement returnStatement:
-                        // returnStatement.returnExpression.EnsureVariablesAreDefined(scope);
-                        // scope.EndFunction();
-                        // break;
-                    // case FunctionStatement functionStatement:
-                        // scope.BeginFunction(functionStatement);
-                        // CheckStatements(functionStatement.statements, scope);
-                        // scope.EndFunction();
-                        // break;
                     case DeclarationStatement decl:
 
                         if (decl.initializerExpression != null)
@@ -334,6 +313,9 @@ namespace FadeBasic.Ast.Visitors
                     case FunctionStatement _:
                     case FunctionReturnStatement _:
                         break;
+                    case TypeDefinitionStatement invalidTypeStatement:
+                        invalidTypeStatement.Errors.Add(new ParseError(invalidTypeStatement.name, ErrorCodes.TypeMustBeTopLevel));
+                        break;
                     default:
                         throw new NotImplementedException($"cannot check statement for scope errors - {statement.GetType().Name} {statement}");
                         // break;
@@ -347,6 +329,16 @@ namespace FadeBasic.Ast.Visitors
             if (!scope.TryGetLabel(label, out var labelSymbol) && label != "_")
             {
                 node.Errors.Add(new ParseError(node.StartToken, ErrorCodes.UnknownLabel, label));
+            }
+            else if (label != "_")
+            {
+                var currFuncName = scope.GetCurrentFunctionName();
+                var declFuncName = scope.labelDeclTable[label];
+
+                if (!string.Equals(currFuncName, declFuncName, StringComparison.InvariantCulture))
+                {
+                    node.Errors.Add(new ParseError(node, ErrorCodes.TraverseLabelBetweenScopes));
+                }
             }
 
             node.DeclaredFromSymbol = labelSymbol;
@@ -489,7 +481,7 @@ namespace FadeBasic.Ast.Visitors
                     structRef.EnsureStructField(scope, ctx);
                     break;
                 case CommandExpression commandExpr: // commandExprs have the ability to declare variables!
-                    scope.AddCommand(commandExpr);
+                    scope.AddCommand(commandExpr, ctx);
 
                     if (commandExpr.command.returnType != TypeCodes.VOID && VmUtil.TryGetVariableType(commandExpr.command.returnType, out var tc))
                     {

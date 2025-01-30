@@ -64,22 +64,23 @@ namespace FadeBasic
             [VariableType.Struct] = "type",
             [VariableType.Void] = "void",
         };
+        public static string ConvertTypeInfoToName(TypeInfo t)
+        {
+            if (t.type == VariableType.Struct)
+            {
+                return t.structName;
+            }
+            else
+            {
+                return variableToDisplayMap[t.type];
+            }
+        }
         public static void AddTypeError(this List<ParseError> errors, IAstNode node, TypeInfo from, TypeInfo toType)
         {
-            string Convert(TypeInfo t)
-            {
-                if (t.type == VariableType.Struct)
-                {
-                    return t.structName;
-                }
-                else
-                {
-                    return variableToDisplayMap[t.type];
-                }
-            }
+            
 
-            var fromDisplay = Convert(from);
-            var toDisplay = Convert(toType);
+            var fromDisplay = ConvertTypeInfoToName(from);
+            var toDisplay = ConvertTypeInfoToName(toType);
             
             errors.Add(new ParseError(node, ErrorCodes.InvalidCast, $"cannot convert {fromDisplay} to {toDisplay}"));
         }
@@ -167,7 +168,9 @@ namespace FadeBasic
         public static readonly ErrorCode CommandNoOverloadFound = "[0147] No overload for command";
         public static readonly ErrorCode FunctionCannotUseCommandName = "[0148] function name is already a reserved command";
         public static readonly ErrorCode FunctionParameterCardinalityMismatch = "[0149] function has incorrect number of parameters";
-        
+        public static readonly ErrorCode TraverseLabelBetweenScopes = "[0150] Cannot go to a label in a different scope";
+        public static readonly ErrorCode TypeMustBeTopLevel = "[0151] Type declaration cannot be nested";
+
         // 200 series represents post-parse issues
         public static readonly ErrorCode InvalidReference = "[0200] Invalid reference";
         public static readonly ErrorCode UnknownLabel = "[0201] Unknown label";

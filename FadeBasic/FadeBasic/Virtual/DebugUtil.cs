@@ -199,6 +199,7 @@ namespace FadeBasic.Virtual
         private Dictionary<int, (DebugScope, DebugRuntimeVariable)> idToTopLevelVariable = new Dictionary<int, (DebugScope, DebugRuntimeVariable)>();
 
         private Dictionary<int, DebugScope> idToScope = new Dictionary<int, DebugScope>();
+        private Dictionary<int, Launch.DebugVariable> idToVariable = new Dictionary<int, Launch.DebugVariable>();
 
         private Dictionary<string, int> evalNameToId = new Dictionary<string, int>();
         
@@ -230,6 +231,7 @@ namespace FadeBasic.Virtual
             idToTopLevelVariable.Clear();
             idToScope.Clear();
             evalNameToId.Clear();
+            idToVariable.Clear();
             // variables.Clear();
         }
 
@@ -288,6 +290,7 @@ namespace FadeBasic.Virtual
             foreach (var kvp in dict)
             {
                 var v = CreateVariableView(scope, kvp.Value);
+                idToVariable[v.id] = v;
                 scope.variables.Add(v);
             }
 
@@ -500,7 +503,8 @@ namespace FadeBasic.Virtual
                                         name = fieldName,
                                         fieldCount = fieldType.fields.Count,
                                         type = v.GetTypeName(),
-                                        value = v.GetValueDisplay()
+                                        value = v.GetValueDisplay(),
+                                        runtimeVariable = v
                                     };
 
                                     idToTopLevelVariable.Add(fieldVariable.id, (parentScope, v));
@@ -524,10 +528,11 @@ namespace FadeBasic.Virtual
                                         VmUtil.ConvertValueToDisplayString(field.typeCode, _vm, ref fieldSpan);
                                     
                                     subScope.variables.Add(subVariable);
-                                    
-                                    // var v2 = new DebugRuntimeVariable(_vm, fieldName, field.typeCode, variable.rawValue + (ulong)field.offset, ref alloc, 
-                                    //     variable.scopeIndex,
-                                    //     variable.regAddr);
+                                    idToVariable[subVariable.id] = subVariable;
+                                    var v2 = new DebugRuntimeVariable(_vm, subVariable.evalName, field.typeCode, variable.rawValue + (ulong)field.offset, ref alloc, 
+                                        variable.scopeIndex,
+                                        variable.regAddr);
+                                    subVariable.runtimeVariable = v2;
                                     // idToTopLevelVariable[subVariable.id] = (subScope, v2);
                                     break;
                             }
@@ -570,73 +575,80 @@ namespace FadeBasic.Virtual
             return res;
         }
 
-        public DebugEvalResult ResetVariableByEvalname(string evalName)
+
+        public bool TrySetValue(int variableId, int valueId, out string error)
         {
-            // var lex = new Lexer();
-            // var lexRes = lex.TokenizeWithErrors(evalName + " = 0");
-            // var parser = new Parser(lexRes.stream, new CommandCollection());
-            // var prog = parser.ParseProgram(new ParseOptions
-            // {
-            //     ignoreChecks = true
-            // });
-            //
-            // idto
-            if (!evalNameToId.TryGetValue(evalName, out var id))
+            if (idToTopLevelVariable.TryGetValue(valueId, out var tuple))
             {
-                throw new NotSupportedException($"no variable exists for the given eval name=[{evalName}]");
-            }
-            
-            if (!idToTopLevelVariable.TryGetValue(id, out var tuple))
+                return TrySetValue(variableId, tuple.Item2, out error);
+            } else if (idToVariable.TryGetValue(valueId, out var dbgVar) && dbgVar.runtimeVariable != null)
             {
-                throw new NotSupportedException($"no variable exists from evalName=[{evalName}] with found id=[{id}]");
+                return TrySetValue(variableId, dbgVar.runtimeVariable, out error);
             }
-
-            // foreach (var kvp in idToTopLevelVariable)
-            // {
-                // var tuple = kvp.Value;
-                // var id = kvp.Key;
-
-                var variable = tuple.Item2;
-                // variable.rawValue = variable.vm.scopeStack.buffer[variable.scopeIndex].dataRegisters[variable.regAddr];
-
-                var alloc = variable.allocation;
-                var resetVariable = new DebugRuntimeVariable(
-                    variable.vm,
-                    variable.name,
-                    variable.typeCode,
-                    variable.vm.scopeStack.buffer[variable.scopeIndex].dataRegisters[variable.regAddr],
-                    ref alloc,
-                    variable.scopeIndex,
-                    variable.regAddr
-                );
-
-                idToTopLevelVariable[id] = (tuple.Item1, resetVariable);
-
-                var res = new DebugEvalResult
-                {
-                    type = resetVariable.GetTypeName(),
-                    value = resetVariable.GetValueDisplay(),
-                    fieldCount = resetVariable.GetFieldCount(),
-                    elementCount = resetVariable.GetElementCount()
-                };
-
-                // just re-assign the raw value? 
-                if (res.fieldCount > 0 || res.elementCount > 0)
-                {
-                    res.id = id;
-                    // idToTopLevelVariable.Add(res.id, (null, resetVariable));
-                    var scope = Expand(id); // TODO: do a recursive expand.
-                    res.scope = scope;
-                }
-
-            // }
-
-            return res;
+            else
+            {
+                throw new NotImplementedException();
+            }
         }
-
-        public void ResetValue(int variableId, DebugEvalResult exprResult)
+        public bool TrySetValue(int variableId, DebugRuntimeVariable value, out string error)
         {
+            error = "";
             // the job here is to find the given variable id... 
+            if (!idToVariable.TryGetValue(variableId, out var debugVar))
+            {
+                throw new NotSupportedException("no variable for given id");
+            }
+
+            var runtimeVar = debugVar.runtimeVariable;
+            var isTop = false;
+            
+            if (runtimeVar == null && idToTopLevelVariable.TryGetValue(variableId, out var tuple))
+            {
+                runtimeVar = tuple.Item2;
+                isTop = true;
+            }
+
+            if (runtimeVar == null)
+            {
+                throw new NotSupportedException("no runtime variable for given id");
+            }
+
+            if (runtimeVar.typeCode != value.typeCode)
+            {
+                error = "types do not match";
+                return false;
+            }
+
+            if (isTop && runtimeVar.typeCode != TypeCodes.STRUCT)
+            {
+                // take the reg value from the new variable, and jam it into the old one. 
+                _vm.scopeStack.buffer[runtimeVar.scopeIndex].dataRegisters[runtimeVar.regAddr] = value.rawValue;
+            }
+            else
+            {
+                // in this case, we need to copy memory into the heap at the given location...
+                var destinationPointer = runtimeVar.allocation.ptr;
+                var destinationLength = runtimeVar.allocation.length;
+                
+                // TODO: the value could be heap or stack...
+
+                byte[] bytes;
+                if (value.typeCode == TypeCodes.STRUCT)
+                {
+                    _vm.heap.Read(value.allocation.ptr, value.allocation.length, out bytes);
+                }
+                else
+                {
+                    bytes = BitConverter.GetBytes(value.rawValue);
+                }
+                
+                
+                
+                _vm.heap.Write(destinationPointer, destinationLength, bytes);
+                
+            }
+
+            return true;
         }
     }
 

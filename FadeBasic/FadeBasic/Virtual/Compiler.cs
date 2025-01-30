@@ -716,10 +716,6 @@ namespace FadeBasic.Virtual
                 Compile(fakeDecl);
                 
                 // and now compile up the assignment
-                // var a = new AssignmentStatement();
-                // Compile(a);
-                _buffer.Add(OpCodes.BREAKPOINT);
-
                 _buffer.Add(OpCodes.CAST);
 
                 var tc = VmUtil.GetTypeCode(arg.type.variableType);
@@ -730,7 +726,7 @@ namespace FadeBasic.Virtual
             
             
             
-            
+            _buffer.Add(OpCodes.BREAKPOINT);
             // compile all the statements...
             foreach (var statement in functionStatement.statements)
             {
@@ -2133,8 +2129,7 @@ namespace FadeBasic.Virtual
                             AddPushInt(_buffer, readOffset);
                             
                             // push the ptr of the variable, and cast it to an int for easy math
-                            _buffer.Add(OpCodes.LOAD);
-                            _buffer.Add(typeCompiledVar.registerAddress);
+                            PushLoad(_buffer, typeCompiledVar.registerAddress, typeCompiledVar.isGlobal);
                             _buffer.Add(OpCodes.CAST);
                             _buffer.Add(TypeCodes.INT);
                             

@@ -20,6 +20,12 @@ public partial class TokenVm
         if (expectedParseErrors.HasValue)
         {
             _exprAst.AssertParseErrors(expectedParseErrors.Value);
+            if (expectedParseErrors > 0)
+            {
+                compiler = null;
+                progam = new List<byte>();
+                return;
+            }
         }
         else if (!ignoreParseCheck)
         {

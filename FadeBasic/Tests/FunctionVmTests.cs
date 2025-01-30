@@ -1,3 +1,5 @@
+using FadeBasic;
+using FadeBasic.Ast;
 using FadeBasic.Virtual;
 
 namespace Tests;
@@ -43,13 +45,8 @@ EndFunction a
 Function Death()
 Endfunction
 ";
-        Setup(src, out _, out var prog);
-        
-        var vm = new VirtualMachine(prog);
-        vm.Execute().MoveNext();
-        
-        Assert.That(vm.dataRegisters[0], Is.EqualTo(3)); 
-        Assert.That(vm.typeRegisters[0], Is.EqualTo(TypeCodes.INT));
+        Setup(src, out _, out var prog, expectedParseErrors:1);
+        Assert.That(_exprAst.GetAllErrors()[0].errorCode, Is.EqualTo(ErrorCodes.TraverseLabelBetweenScopes));
     }
     
     [Test]
@@ -117,6 +114,59 @@ EndFunction a
         Assert.That(vm.typeRegisters[1], Is.EqualTo(TypeCodes.INT));
     }
     
+    
+    [Test]
+    public void Function_Global_AccessStruct()
+    {
+        var src = @"
+TYPE egg
+    x
+ENDTYPE
+
+GLOBAL albert AS egg ` declare as global, so it can be used in function
+albert.x = 42
+
+z = Test() ` put the result onto a variable so we can validate it
+
+END
+Function Test()
+EndFunction albert.x ` just access the global value
+";
+        Setup(src, out _, out var prog);
+        
+        var vm = new VirtualMachine(prog);
+        vm.Execute().MoveNext();
+        
+        Assert.That(vm.dataRegisters[1], Is.EqualTo(42)); 
+        Assert.That(vm.typeRegisters[1], Is.EqualTo(TypeCodes.INT));
+    }
+    
+    
+    [Test]
+    public void Function_Global_AccessStruct_WithRandoArray()
+    {
+        var src = @"
+TYPE egg
+    x
+ENDTYPE
+DIM randoArr(3) as egg ` for some reason this messes things up maybe?
+GLOBAL albert AS egg ` declare as global, so it can be used in function
+albert.x = 42
+z = 1
+z = Test() ` put the result onto a variable so we can validate it
+
+END
+Function Test()
+EndFunction albert.x ` just access the global value
+";
+        Setup(src, out _, out var prog);
+        
+        var vm = new VirtualMachine(prog);
+        vm.Execute().MoveNext();
+        
+        Assert.That(vm.dataRegisters[4], Is.EqualTo(42)); 
+        Assert.That(vm.typeRegisters[4], Is.EqualTo(TypeCodes.INT));
+    }
     
     [Test]
     public void Function_Local()
