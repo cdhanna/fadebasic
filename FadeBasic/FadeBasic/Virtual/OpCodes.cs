@@ -133,11 +133,6 @@ namespace FadeBasic.Virtual
             op.IncludeField(nameof(typeFlags), ref typeFlags);
         }
     }
-    
-    public static class HeapTypeFormatMethods
-    {
-        
-    }
 
     public static class OpCodes
     {
@@ -315,6 +310,15 @@ namespace FadeBasic.Virtual
         /// Exactly the same as <see cref="STORE"/>, but always pulls from the global scope
         /// </summary>
         public const byte STORE_GLOBAL = 44;
+
+        /// <summary>
+        /// Pops a number off the stack,
+        /// then pops a ceiling value off the stack
+        /// then if the number is less than 0, or greater than the ceiling,
+        ///  a runtime error is thrown
+        /// otherwise, the original number is placed back on the stack. 
+        /// </summary>
+        public const byte BOUNDS_CHECK = 46;
 
     }
 }

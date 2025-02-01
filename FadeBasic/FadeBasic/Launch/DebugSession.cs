@@ -86,6 +86,8 @@ namespace FadeBasic.Launch
             _dbg = dbg;
             _commandCollection = commandCollection;
             _vm = vm;
+            _vm.shouldThrowRuntimeException = false;
+            
             instructionMap = new IndexCollection(_dbg.statementTokens);
 
             if (!string.IsNullOrEmpty(options?.debugLogPath))
@@ -174,6 +176,16 @@ namespace FadeBasic.Launch
                 type = DebugMessageType.REV_REQUEST_BREAKPOINT
             };
             outboundMessages.Enqueue(message);
+        }
+
+        void SendRuntimeErrorMessage(string message)
+        {
+            outboundMessages.Enqueue(new ExplodedMessage()
+            {
+                id = GetNextMessageId(),
+                message = message,
+                type = DebugMessageType.REV_REQUEST_EXPLODE
+            });
         }
 
         void SendExitedMessage()
@@ -875,9 +887,11 @@ namespace FadeBasic.Launch
             {
             };
             _vm.scope = _vm.scopeStack.buffer[_vm.scopeStack.ptr - 1];
+
+            var originalError = _vm.error;
+            _vm.error = default;
             while (_vm.instructionIndex < _vm.program.Length)
             {
-                // _vm.Execute2(1);
                 _vm.Execute2(_vm.program.Length - _vm.instructionIndex);
             }
             
@@ -923,7 +937,7 @@ namespace FadeBasic.Launch
             _vm.scopeStack.ptr = originalScopePtr;
             _vm.stack = originalStack;
             _vm.scope = originalScope;
-            
+            _vm.error = originalError;
             
             if (overwriteVariableId > -1)
             {
@@ -1049,10 +1063,23 @@ namespace FadeBasic.Launch
                 
                 if (!IsPaused)
                 {
+                    // handle the case where we exploded
+                    if (_vm.error.type != VirtualRuntimeErrorType.NONE)
+                    {
+                        logger.Error("Due to runtime exception, breaking out of exection");
+                        break;
+                    }
                     _vm.Execute2(1);
+                    if (_vm.error.type != VirtualRuntimeErrorType.NONE)
+                    {
+                        logger.Error($"Hit a runtime exception! message=[{_vm.error.message}]");
+                        pauseRequestedByMessageId = resumeRequestedByMessageId + 1; // hack to pause the program.
+                        SendRuntimeErrorMessage(_vm.error.message);
+                    }
                 }
                 else
                 {
+                   
                     // handle the step-next case
                     if (stepNextMessage != null)
                     {
@@ -1178,6 +1205,7 @@ namespace FadeBasic.Launch
         
         REV_REQUEST_BREAKPOINT,
         REV_REQUEST_EXITED,
+        REV_REQUEST_EXPLODE,
         
         REQUEST_PAUSE,
         REQUEST_PLAY,
@@ -1220,6 +1248,16 @@ namespace FadeBasic.Launch
         }
 
         public string RawJson { get; set; }
+    }
+
+    public class ExplodedMessage : DebugMessage
+    {
+        public string message;
+        public override void ProcessJson(IJsonOperation op)
+        {
+            base.ProcessJson(op);
+            op.IncludeField(nameof(message), ref message);
+        }
     }
 
     public class EvalMessage : DebugMessage

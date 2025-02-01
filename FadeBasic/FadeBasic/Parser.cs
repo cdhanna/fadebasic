@@ -1390,14 +1390,16 @@ namespace FadeBasic
             return argExpressions;
         }
 
-        private IStatementNode ParseStatement2(bool consumeEndOfStatement = true)
-        {
-            return ParseStatement(null, consumeEndOfStatement);
-        }
         private IStatementNode ParseStatement(List<IStatementNode> statementGroup, bool consumeEndOfStatement=true)
         {
             IStatementNode Inner()
             {
+                IStatementNode lastStatement = null;
+                if (statementGroup != null && statementGroup.Count > 0)
+                {
+                    lastStatement = statementGroup[statementGroup.Count - 1];
+                }
+                
                 var token = _stream.Advance();
                 IStatementNode subStatement = null;
                 switch (token.type)
@@ -1566,11 +1568,47 @@ namespace FadeBasic
                         return ParseTypeDefinition(token);
                         
                         break;
-                    case LexemType.ArgSplitter when multiLineAssignment:
-                        multiLineAssignment = false;
-                        var hopefullyAnAssignment = ParseStatement();
+                    case LexemType.ArgSplitter when lastStatement is AssignmentStatement lastAssign:
+                        var hopefullyAnAssignment = ParseStatement(statementGroup);
+                        if (!(hopefullyAnAssignment is AssignmentStatement))
+                        {                                    
+                            hopefullyAnAssignment.Errors.Add(new ParseError(hopefullyAnAssignment, ErrorCodes.MultiLineAssignmentCannotInferType));
+                        }
                         return hopefullyAnAssignment;
-                        break;
+                    case LexemType.ArgSplitter when lastStatement is DeclarationStatement lastDeclare:
+                        hopefullyAnAssignment = ParseStatement(statementGroup);
+                        if (hopefullyAnAssignment is AssignmentStatement declAssign)
+                        {
+                            // convert this into a declaration!
+
+                            if (declAssign.variable is VariableRefNode declRef)
+                            {
+                                if (declRef.DefaultTypeByName != lastDeclare.type.variableType)
+                                {
+                                    hopefullyAnAssignment.Errors.Add(new ParseError(hopefullyAnAssignment, ErrorCodes.MultiLineDeclareCannotInferType));
+                                    return hopefullyAnAssignment;
+                                    
+                                }
+                                var fakeDecl = new DeclarationStatement(
+                                    lastDeclare.scopeType == DeclarationScopeType.Global ? Token.Global : Token.Local, declRef, lastDeclare.type
+                                );
+                                fakeDecl.initializerExpression = declAssign.expression;
+                                return fakeDecl;
+                            }
+                            else
+                            {
+                                hopefullyAnAssignment.Errors.Add(new ParseError(hopefullyAnAssignment, ErrorCodes.MultiLineDeclareInvalidVariable));
+                                return hopefullyAnAssignment;
+                            }
+                            
+
+                        } else if (!(hopefullyAnAssignment is DeclarationStatement))
+                        {
+                            
+                            hopefullyAnAssignment.Errors.Add(new ParseError(hopefullyAnAssignment, ErrorCodes.MultiLineDeclareCannotInferType));
+
+                        }
+                        return hopefullyAnAssignment;
                     default:
                         _stream.AdvanceUntil(LexemType.EndStatement);
                         return new NoOpStatement
@@ -1597,8 +1635,6 @@ namespace FadeBasic
             }
 
             var result = Inner();
-
-            
             
             switch (_stream.Peek.type)
             {
@@ -2101,12 +2137,12 @@ namespace FadeBasic
                         looking = false;
                         break;
                     case LexemType.KeywordFunction:
-                        var illegalFunctionMember = ParseStatement();
+                        var illegalFunctionMember = ParseStatement(statements);
                         statements.Add(illegalFunctionMember);
                         illegalFunctionMember.Errors.Add(new ParseError(nextToken, ErrorCodes.FunctionDefinedInsideFunction));
                         break;
                     default:
-                        var member = ParseStatement();
+                        var member = ParseStatement(statements);
                         if (member is LabelDeclarationNode lbl)
                         {
                             labels.Add(lbl);
@@ -2241,7 +2277,7 @@ namespace FadeBasic
                         break;
                         
                     default:
-                        var member = ParseStatement();
+                        var member = ParseStatement(statements);
                         statements.Add(member);
                         break; 
                 }
@@ -2288,7 +2324,7 @@ namespace FadeBasic
                         break;
                         
                     default:
-                        var member = ParseStatement();
+                        var member = ParseStatement(statements);
                         statements.Add(member);
                         break; 
                 }
@@ -2376,7 +2412,7 @@ namespace FadeBasic
                         looking = false;
                         break;
                     default:
-                        var member = ParseStatement();
+                        var member = ParseStatement(statements);
                         statements.Add(member);
                         break; 
                 }
@@ -2411,7 +2447,7 @@ namespace FadeBasic
                         looking = false;
                         break;
                     default:
-                        var member = ParseStatement();
+                        var member = ParseStatement(statements);
                         statements.Add(member);
                         break; 
                 }
@@ -2450,7 +2486,7 @@ namespace FadeBasic
                         looking = false;
                         break;
                     default:
-                        var member = ParseStatement();
+                        var member = ParseStatement(statements);
                         statements.Add(member);
                         break; 
                 }
@@ -2497,7 +2533,7 @@ namespace FadeBasic
                         looking = false;
                         break;
                     default:
-                        var member = ParseStatement();
+                        var member = ParseStatement(statements);
                         statements.Add(member);
                         break; 
                 }
@@ -2561,7 +2597,7 @@ namespace FadeBasic
                                 statements = negativeStatements;
                                 break;
                             default:
-                                var member = ParseStatement(consumeEndOfStatement: false);
+                                var member = ParseStatement(statements, consumeEndOfStatement: false);
                                 statements.Add(member);
                                 break; 
                         }
@@ -2594,7 +2630,7 @@ namespace FadeBasic
                                 statements = negativeStatements;
                                 break;
                             default:
-                                var member = ParseStatement();
+                                var member = ParseStatement(statements);
                                 statements.Add(member);
                                 break; 
                         }
@@ -2716,8 +2752,13 @@ namespace FadeBasic
                         _stream.Advance();
                         lookingForMembers = false;
                         break;
-                    default:
+                    case LexemType.ArgSplitter:
+                        _stream.Advance();
                         var member = ParseTypeMember();
+                        members.Add(member);
+                        break;
+                    default:
+                        member = ParseTypeMember();
                         members.Add(member);
                         break;
                 }

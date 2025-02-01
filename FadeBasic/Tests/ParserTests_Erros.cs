@@ -2405,6 +2405,21 @@ x(2) = 1
     }
     
     [Test]
+    public void ParseError_Assignment_Array_CardinalityError_MissingExpr2()
+    {
+        var input = @"
+DIM x(3,2)
+n = x(2)
+";
+        var parser = MakeParser(input);
+        var prog = parser.ParseProgram();
+
+        var errors = prog.GetAllErrors();
+        prog.AssertParseErrors(1);
+        Assert.That(errors[0].Display, Is.EqualTo($"[2:4,2:7] - {ErrorCodes.ArrayCardinalityMismatch}"));
+    }
+    
+    [Test]
     public void ParseError_Assignment_Array_CardinalityError_ExtraExpr()
     {
         var input = @"

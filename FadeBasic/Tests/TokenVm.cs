@@ -1646,26 +1646,6 @@ y = x(1)
 
     }
     
-    
-    [Test]
-    public void Array_LengthCheck()
-    {
-        var src = @"
-dim x(12,3,50) as word
-x(0) = 4
-";
-        Setup(src, out var compiler, out var prog);
-        
-        var vm = new VirtualMachine(prog);
-        vm.Execute2();
-        // Assert.That(vm.heap.Cursor, Is.EqualTo(4));
-
-        // Assert.That(vm.dataRegisters[0], Is.EqualTo(0));
-        // Assert.That(vm.typeRegisters[0], Is.EqualTo(TypeCodes.INT));
-        // Assert.That(vm.dataRegisters[3 /* dim register offset */], Is.EqualTo(140));
-        // Assert.That(vm.typeRegisters[3 /* dim register offset */], Is.EqualTo(TypeCodes.INT)); // int, because y is not declared as a byte, so it is an int by default
-
-    }
 
     [Test]
     public void Array_Math()
@@ -2477,6 +2457,60 @@ next
         Assert.That(vm.typeRegisters[0], Is.EqualTo(TypeCodes.INT));
     }
     
+    
+    [Test]
+    public void Exception_DivideByZero()
+    {
+        var src = @"x = 50 / 0";
+        Setup(src, out _, out var prog);
+        
+        var vm = new VirtualMachine(prog);
+        var ex = Assert.Throws<VirtualRuntimeException>(() =>
+        {
+            vm.Execute2();
+        });
+        Assert.That(ex.Error.type, Is.EqualTo(VirtualRuntimeErrorType.DIVIDE_BY_ZERO));
+    }
+    
+    
+    [TestCase(@"
+DIM x(5)
+n = x(6)")]
+    [TestCase(@"
+DIM x(5)
+n = x(5)")]
+    [TestCase(@"
+DIM x(5)
+n = x(-1)")]
+    [TestCase(@"
+DIM x(5)
+n = x(4)", false)]
+    [TestCase(@"
+DIM x(5,2)
+n = x(6, 1)")]
+    [TestCase(@"
+DIM x(5,2)
+n = x(3, 2)")]
+    [TestCase(@"
+DIM x(5,2)
+n = x(3, 1)", false)]
+    public void Exception_AccessOutOfBounds(string src, bool isError=true)
+    {
+        Setup(src, out _, out var prog);
+        
+        var vm = new VirtualMachine(prog);
+
+        if (isError)
+        {
+            var ex = Assert.Throws<VirtualRuntimeException>(() => { vm.Execute2(); });
+            Assert.That(ex.Error.type, Is.EqualTo(VirtualRuntimeErrorType.INVALID_ADDRESS));
+        }
+        else
+        {
+            vm.Execute2();
+        }
+    }
+
     
     [Test]
     public void Math_Ints_Mod()

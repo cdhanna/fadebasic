@@ -170,6 +170,9 @@ namespace FadeBasic
         public static readonly ErrorCode FunctionParameterCardinalityMismatch = "[0149] function has incorrect number of parameters";
         public static readonly ErrorCode TraverseLabelBetweenScopes = "[0150] Cannot go to a label in a different scope";
         public static readonly ErrorCode TypeMustBeTopLevel = "[0151] Type declaration cannot be nested";
+        public static readonly ErrorCode MultiLineDeclareCannotInferType = "[0152] Multi-line declaration cannot infer type of declaration";
+        public static readonly ErrorCode MultiLineDeclareInvalidVariable = "[0153] Multi-line declaration must have a valid left hand side";
+        public static readonly ErrorCode MultiLineAssignmentCannotInferType = "[0153] Multi-line assignment has invalid statement";
 
         // 200 series represents post-parse issues
         public static readonly ErrorCode InvalidReference = "[0200] Invalid reference";

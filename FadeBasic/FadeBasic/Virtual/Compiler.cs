@@ -1674,23 +1674,22 @@ namespace FadeBasic.Virtual
 
             var sizeOfElement = compiledArrayVar.byteSize;
 
-   
-            // load the size up
-            // _buffer.Add(OpCodes.PUSH); // push the length
-            // _buffer.Add(TypeCodes.INT);
-            // _buffer.Add(0);
-            // _buffer.Add(0);
-            // _buffer.Add(0);
-            // _buffer.Add(sizeOfElement);
-
             for (var i = 0; i < arrayRefNode.rankExpressions.Count; i++)
             {
-                // _buffer.Add(OpCodes.LOAD); // load the multiplier factor for the term
-                // _buffer.Add(compiledArrayVar.rankIndexScalerRegisterAddresses[i]);
+                // load the multiplier factor for the term
                 PushLoad(_buffer, compiledArrayVar.rankIndexScalerRegisterAddresses[i], compiledArrayVar.isGlobal);
                 var expr = arrayRefNode.rankExpressions[i];
                 Compile(expr); // load the expression index
-
+                
+                // duplicate the actual number so it can be used later in the math
+                _buffer.Add(OpCodes.DUPE);
+                
+                // load up the max size for this rank of the array, 
+                PushLoad(_buffer, compiledArrayVar.rankSizeRegisterAddresses[i], compiledArrayVar.isGlobal);
+                
+                // this will pull off the max-rank, then the dupe'd index value
+                _buffer.Add(OpCodes.BOUNDS_CHECK);
+                
                 _buffer.Add(OpCodes.MUL);
 
                 if (i > 0)
@@ -1701,19 +1700,11 @@ namespace FadeBasic.Virtual
 
             // get the size of the element onto the stack
             AddPushInt(_buffer, sizeOfElement);
-            // _buffer.Add(OpCodes.PUSH); // push the length
-            // _buffer.Add(TypeCodes.INT);
-            // _buffer.Add(0);
-            // _buffer.Add(0);
-            // _buffer.Add(0);
-            // _buffer.Add(sizeOfElement);
-
+            
             // multiply the size of the element, and the index, to get the offset into the memory
             _buffer.Add(OpCodes.MUL);
 
             // load the array's ptr onto the stack, this is for the math of the offset
-            // _buffer.Add(OpCodes.LOAD);
-            // _buffer.Add(compiledArrayVar.registerAddress);
             PushLoad(_buffer, compiledArrayVar.registerAddress, compiledArrayVar.isGlobal);
 
 

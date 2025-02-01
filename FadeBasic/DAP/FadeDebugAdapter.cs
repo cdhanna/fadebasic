@@ -112,6 +112,17 @@ public partial class FadeDebugAdapter : DebugAdapterBase
             Protocol.SendEvent(new TerminatedEvent());
         };
 
+        _session.RuntimeException = (error) =>
+        {
+            _logger.Log($"Received runtime exception message=[{error}]");
+            Protocol.SendEvent(new StoppedEvent(StoppedEvent.ReasonValue.Exception)
+            {
+                Text = "Fatal Exception",
+                Description = error,
+                AllThreadsStopped = true,
+            });
+        };
+
         // as soon as this event is sent- debugger info will appear. 
         Protocol.SendEvent(new InitializedEvent());
         

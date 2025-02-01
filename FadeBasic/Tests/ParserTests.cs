@@ -22,9 +22,15 @@ public static class ParserTestUtil
         prog.AssertParseErrors(0);
         // Assert.That(prog.GetAllErrors().Count, Is.EqualTo(0), "parse errors: " + string.Join("\n", prog.GetAllErrors().Select(x => x.Display)));
     }
+
     public static void AssertParseErrors(this ProgramNode prog, int count)
     {
-        Assert.That(prog.GetAllErrors().Count, Is.EqualTo(count), "parse errors: " + string.Join("\n", prog.GetAllErrors().Select(x => x.Display)));
+        AssertParseErrors(prog, count, out _);
+    }
+    public static void AssertParseErrors(this ProgramNode prog, int count, out List<ParseError> errors)
+    {
+        errors = prog.GetAllErrors();
+        Assert.That(errors.Count, Is.EqualTo(count), "parse errors: " + string.Join("\n", prog.GetAllErrors().Select(x => x.Display)));
     }
 }
 public partial class ParserTests
@@ -558,12 +564,12 @@ x += 1
     }
     
     
-    [Test]
-    public void Assign_MultipleOnOneLine()
+    [TestCase("x=3,y=2")]
+    [TestCase(@"
+x=3,
+y=2")]
+    public void Assign_MultipleOnOneLine(string input)
     {
-        var input = @"
-x=3,y=2
-";
         var parser = MakeParser(input);
         var prog = parser.ParseProgram();
         prog.AssertNoParseErrors();
@@ -584,7 +590,8 @@ global x as integer, x = 1
 ";
         var parser = MakeParser(input);
         var prog = parser.ParseProgram();
-        prog.AssertParseErrors(1);
+        prog.AssertParseErrors(1, out var errors);
+        Assert.That(errors[0].errorCode, Is.EqualTo(ErrorCodes.SymbolAlreadyDeclared));
     }
 
     
@@ -1090,15 +1097,18 @@ endtype";
 )".ReplaceLineEndings("")));
     }
 
-    
-    [Test]
-    public void Type_AnonField()
-    {
-        var input = @"
+    [TestCase("type egg x,y endtype")]
+    [TestCase(@"
+type egg
+x,y
+endtype")]
+    [TestCase(@"
 type egg
 x
 y
-endtype";
+endtype")]
+    public void Type_AnonField(string input)
+    {
         var parser = MakeParser(input);
         var prog = parser.ParseProgram();
         prog.AssertNoParseErrors();
@@ -1764,6 +1774,114 @@ x = a.b + len(a.c)
         Assert.That(decl.type.variableType, Is.EqualTo(VariableType.Integer));
         var code = prog.ToString();
         Assert.That(code, Is.EqualTo("((decl local,x,(integer),(3)))"));
+    }
+    
+    
+    [Test]
+    public void DeclAssign_Multi_Integer()
+    {
+        var input = "x AS WORD = 3, y AS WORD = 4";
+        var parser = MakeParser(input);
+        var prog = parser.ParseProgram();
+        prog.AssertNoParseErrors();
+        var code = prog.ToString();
+        Assert.That(code, Is.EqualTo("(" +
+                                     "(decl local,x,(word),(3))," +
+                                     "(decl local,y,(word),(4))" +
+                                     ")".ReplaceLineEndings("")));
+    }
+    
+    [Test]
+    public void DeclAssign_Multi_Integer_DiffTypes()
+    {
+        var input = "x AS WORD = 3, y AS integer = 4";
+        var parser = MakeParser(input);
+        var prog = parser.ParseProgram();
+        prog.AssertNoParseErrors();
+        var code = prog.ToString();
+        Assert.That(code, Is.EqualTo("(" +
+                                     "(decl local,x,(word),(3))," +
+                                     "(decl local,y,(integer),(4))" +
+                                     ")".ReplaceLineEndings("")));
+    }
+    
+    
+    [Test]
+    public void DeclAssign_Multi_Integer_DiffTypes_ErrorWhenDefaultTypeDoesNotMatch()
+    {
+        var input = "x AS WORD = 3, y$ = \"toast\"";
+        var parser = MakeParser(input);
+        var prog = parser.ParseProgram();
+        prog.AssertParseErrors(1, out var errors);
+        Assert.That(errors[0].errorCode, Is.EqualTo(ErrorCodes.MultiLineDeclareCannotInferType));
+    }
+    
+    [Test]
+    public void DeclAssign_Multi_Integer_DiffTypes2()
+    {
+        var input = "x AS WORD = 3, y$ as string = \"toast\"";
+        var parser = MakeParser(input);
+        var prog = parser.ParseProgram();
+        prog.AssertNoParseErrors();
+        var code = prog.ToString();
+        Assert.That(code, Is.EqualTo("(" +
+                                     "(decl local,x,(word),(3))," +
+                                     "(decl local,y$,(string),(\"toast\"))" +
+                                     ")".ReplaceLineEndings("")));
+    }
+    
+    
+    [Test]
+    public void DeclAssign_Multi_Structs()
+    {
+        var input = @"
+TYPE vec
+    x
+    y
+ENDTYPE
+v as vec, b as vec
+";
+        var parser = MakeParser(input);
+        var prog = parser.ParseProgram();
+        prog.AssertNoParseErrors();
+        prog.typeDefinitions.Clear(); // HACK for test clarity.
+        var code = prog.ToString();
+        Assert.That(code, Is.EqualTo("(" +
+                                     "(decl local,v,(typeRef vec))," +
+                                     "(decl local,b,(typeRef vec))" +
+                                     ")".ReplaceLineEndings("")));
+    }
+    
+    [Test]
+    public void DeclAssign_Multi_Structs2()
+    {
+        var input = @"
+TYPE vec
+    x
+    y
+ENDTYPE
+v as vec, b
+";
+        var parser = MakeParser(input);
+        var prog = parser.ParseProgram();
+        prog.typeDefinitions.Clear(); // HACK for test clarity.
+        prog.AssertParseErrors(2, out var errors);
+        Assert.That(errors[0].errorCode, Is.EqualTo(ErrorCodes.MultiLineDeclareCannotInferType));
+    }
+    
+    
+    [Test]
+    public void DeclAssign_Multi_FailCaseForArrays()
+    {
+        var input = @"
+DIM x(10)
+y as integer, x(1) = 8
+";
+        var parser = MakeParser(input);
+        var prog = parser.ParseProgram();
+        prog.typeDefinitions.Clear(); // HACK for test clarity.
+        prog.AssertParseErrors(1, out var errors);
+        Assert.That(errors[0].errorCode, Is.EqualTo(ErrorCodes.MultiLineDeclareInvalidVariable));
     }
     
     [Test]

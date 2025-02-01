@@ -26,6 +26,7 @@ namespace FadeBasic.Launch
 
         public Action HitBreakpointCallback;
         public Action Exited;
+        public Action<string> RuntimeException;
         
         public RemoteDebugSession(int port)
         {
@@ -66,6 +67,10 @@ namespace FadeBasic.Launch
                                 break;
                             case DebugMessageType.REV_REQUEST_EXITED:
                                 Exited?.Invoke();
+                                break;
+                            case DebugMessageType.REV_REQUEST_EXPLODE:
+                                var detail = JsonableExtensions.FromJson<ExplodedMessage>(message.RawJson);
+                                RuntimeException?.Invoke(detail.message);
                                 break;
                         }
                         

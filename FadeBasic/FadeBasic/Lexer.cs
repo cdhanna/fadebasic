@@ -694,6 +694,8 @@ namespace FadeBasic
     public class Token : IJsonable
     {
         public static readonly Token Blank = new Token();
+        public static readonly Token Local = new Token{caseInsensitiveRaw = "local", raw = "local"};
+        public static readonly Token Global = new Token{caseInsensitiveRaw = "global", raw = "global"};
         
         public int lineNumber;
         public int charNumber;

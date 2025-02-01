@@ -597,6 +597,13 @@ namespace FadeBasic.Ast.Visitors
                     arrayRef.DeclaredFromSymbol = arraySymbol;
                     if (arraySymbol != null)
                     {
+                        if (arraySymbol.typeInfo.IsArray && arrayRef.rankExpressions.Count != arraySymbol.typeInfo.rank)
+                        {
+                            if (arrayRef.Errors.All(x => x.errorCode.code != ErrorCodes.VariableIndexMissingCloseParen.code))
+                            {
+                                arrayRef.Errors.Add(new ParseError(arrayRef, ErrorCodes.ArrayCardinalityMismatch));
+                            }
+                        }
                         arrayRef.ParsedType = new TypeInfo
                         {
                             type = arraySymbol.typeInfo.type,

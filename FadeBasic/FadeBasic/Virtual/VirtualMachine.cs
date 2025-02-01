@@ -43,6 +43,20 @@ namespace FadeBasic.Virtual
         public int toIns;
     }
 
+    public struct VirtualRuntimeError
+    {
+        public VirtualRuntimeErrorType type;
+        public int insIndex;
+        public string message;
+    }
+
+    public enum VirtualRuntimeErrorType
+    {
+        NONE,
+        DIVIDE_BY_ZERO,
+        INVALID_ADDRESS,
+        EXPLODE
+    }
     
     public class VirtualMachine
     {
@@ -63,11 +77,13 @@ namespace FadeBasic.Virtual
         public VirtualScope scope;
 
         public IDebugLogger logger;
+        public VirtualRuntimeError error = new VirtualRuntimeError();
 
         public ulong[] dataRegisters => scope.dataRegisters; // TODO: optimize to remove method call Peek()
         public byte[] typeRegisters => scope.typeRegisters;
 
         public int internedDataInstructionIndex;
+        public bool shouldThrowRuntimeException;
 
         public VirtualMachine(IEnumerable<byte> program) : this(program.ToArray())
         {
@@ -75,6 +91,7 @@ namespace FadeBasic.Virtual
         public VirtualMachine(byte[] program)
         {
             this.program = program;
+            shouldThrowRuntimeException = true;
             globalScope = scope = new VirtualScope(256);
             // scope = new VirtualScope(256);
             scopeStack = new FastStack<VirtualScope>(16);
@@ -173,7 +190,8 @@ namespace FadeBasic.Virtual
                 for (var i = 0; 
                      (instructionBatchCount == 0 || i < instructionBatchCount)
                         && instructionIndex < program.Length 
-                        && !isSuspendRequested; 
+                        && !isSuspendRequested
+                        && error.type == VirtualRuntimeErrorType.NONE; 
                      i += incrementer)
                 {
                     var ins = Advance();
@@ -337,7 +355,16 @@ namespace FadeBasic.Virtual
                             break;
                         case OpCodes.DIVIDE:
                             VmUtil.ReadTwoValues(ref stack, out vTypeCode, out aSpan, out bSpan);
-                            VmUtil.Divide(vTypeCode, aSpan, bSpan, out cSpan);
+                            VmUtil.Divide(vTypeCode, aSpan, bSpan, out cSpan, out var isDivideByZero);
+                            if (isDivideByZero)
+                            {
+                                TriggerRuntimeError(new VirtualRuntimeError
+                                {
+                                    insIndex = instructionIndex,
+                                    type = VirtualRuntimeErrorType.DIVIDE_BY_ZERO,
+                                    message = $"divide-by-zero. ins=[{instructionIndex}] type-code=[{vTypeCode}], numerator-value=[{VmUtil.ConvertValueToDisplayString(vTypeCode, this, ref bSpan)}] numerator-bytes=[{string.Join(",", bSpan.ToArray())}]"
+                                });
+                            }
                             VmUtil.PushSpan(ref stack, cSpan, vTypeCode);
                             break;
                         case OpCodes.MOD:
@@ -447,6 +474,20 @@ namespace FadeBasic.Virtual
                         case OpCodes.WRITE_PTR:
                             VmUtil.WriteToHeap(ref stack, ref heap, true);
                             break;
+                        case OpCodes.BOUNDS_CHECK:
+                            VmUtil.ReadAsInt(ref stack, out var ceilingValue);
+                            VmUtil.ReadAsInt(ref stack, out var indexValue);
+                            if (indexValue < 0 || indexValue >= ceilingValue)
+                            {
+                                TriggerRuntimeError(new VirtualRuntimeError
+                                {
+                                    insIndex = instructionIndex,
+                                    type = VirtualRuntimeErrorType.INVALID_ADDRESS,
+                                    message = $"invalid-address. ins=[{instructionIndex}] index=[{indexValue}] min=[0] max=[{ceilingValue}]"
+                                });
+                            }
+                            
+                            break;
                         case OpCodes.READ:
                             
                             VmUtil.ReadAsInt(ref stack, out var readPtr);
@@ -472,8 +513,11 @@ namespace FadeBasic.Virtual
                             break;
                         
                         case OpCodes.EXPLODE:
-                            throw new Exception("Kaboom");
-                        
+                            TriggerRuntimeError(new VirtualRuntimeError
+                            {
+                                type = VirtualRuntimeErrorType.EXPLODE
+                            });
+                            break;
                         case OpCodes.BREAKPOINT:
                             break;
                         default:
@@ -489,6 +533,25 @@ namespace FadeBasic.Virtual
             }
             
 
-        }   
+        }
+
+        void TriggerRuntimeError(VirtualRuntimeError error)
+        {
+            this.error = error;
+            if (shouldThrowRuntimeException)
+            {
+                throw new VirtualRuntimeException(error);
+            }
+        }
+    }
+
+    public class VirtualRuntimeException : Exception
+    {
+        public VirtualRuntimeError Error { get; }
+
+        public VirtualRuntimeException(VirtualRuntimeError error) : base(error.message)
+        {
+            Error = error;
+        }
     }
 }

@@ -729,33 +729,55 @@ namespace FadeBasic.Virtual
 
         
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        public static void Divide(byte aTypeCode, ReadOnlySpan<byte> aSpan, ReadOnlySpan<byte> bSpan, out ReadOnlySpan<byte> c)
+        public static void Divide(byte aTypeCode, ReadOnlySpan<byte> aSpan, ReadOnlySpan<byte> bSpan, out ReadOnlySpan<byte> c, out bool isDivideByZero)
         {
             byte[] a = aSpan.ToArray();
             byte[] b = bSpan.ToArray();
+            c = a;
+            isDivideByZero = false;
             switch (aTypeCode)
             {
                 case TypeCodes.BYTE:
                     byte aByte = a[0];
                     byte bByte = b[0];
+                    if (aByte == 0)
+                    {
+                        isDivideByZero = true;
+                        return;
+                    }
                     byte sumByte = (byte)(bByte / aByte);
                     c = new byte[] { sumByte };
                     break;
                 case TypeCodes.WORD:
                     short aShort = BitConverter.ToInt16(a, 0);
                     short bShort = BitConverter.ToInt16(b, 0);
+                    if (aShort == 0)
+                    {
+                        isDivideByZero = true;
+                        return;
+                    }
                     short sumShort = (short)(bShort / aShort);
                     c = BitConverter.GetBytes(sumShort);
                     break;
                 case TypeCodes.INT:
                     int aInt = BitConverter.ToInt32(a, 0);
                     int bInt = BitConverter.ToInt32(b, 0);
+                    if (aInt == 0)
+                    {
+                        isDivideByZero = true;
+                        return;
+                    }
                     int sumInt = (int)(bInt / aInt);
                     c = BitConverter.GetBytes(sumInt);
                     break;
                 case TypeCodes.REAL:
                     float aReal = BitConverter.ToSingle(a, 0);
                     float bReal = BitConverter.ToSingle(b, 0);
+                    if (aReal == 0)
+                    {
+                        isDivideByZero = true;
+                        return;
+                    }
                     float sumReal = (bReal / aReal);
                     c = BitConverter.GetBytes(sumReal);
                     break;
