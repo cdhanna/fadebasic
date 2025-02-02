@@ -27,7 +27,9 @@ namespace FadeBasic.Virtual
 
         private Dictionary<int, Stack<int>> _lengthToPtrs;// = new Dictionary<int, Stack<int>>();
 
-        
+        private Dictionary<int, int> _ptrToRefCount;
+
+        public int Allocations => _allocations.Count;
         
         public VmHeap(int initialCapacity)
         {
@@ -35,6 +37,7 @@ namespace FadeBasic.Virtual
             _cursor = 0;
             _allocations = new Dictionary<int, VmAllocation>();
             _lengthToPtrs = new Dictionary<int, Stack<int>>();
+            _ptrToRefCount = new Dictionary<int, int>();
         }
 
         public void Write(int ptr, int length, byte[] data)
@@ -107,23 +110,23 @@ namespace FadeBasic.Virtual
         public void Allocate(ref HeapTypeFormat format, int size, out int ptr)
         {
             
+            // If there is something with the exact size we need, grab it!
+            if (_lengthToPtrs.TryGetValue(size, out var availablePtrs) && availablePtrs.Count > 0)
+            {
+                ptr = availablePtrs.Pop();
+                _allocations[ptr] = new VmAllocation
+                {
+                    length = size,
+                    format = format,
+                    ptr = ptr
+                };
+                return;
+            }
+            
             if (_cursor + size >= memory.Length)
             {
                 
-                // If there is something with the exact size we need, grab it!
-                if (_lengthToPtrs.TryGetValue(size, out var availablePtrs))
-                {
-                    throw new NotImplementedException(
-                        "this is untested code. When you see this, check the code and remove this exception...");
-                    ptr = availablePtrs.Pop();
-                    _allocations[ptr] = new VmAllocation
-                    {
-                        length = size,
-                        format = format,
-                        ptr = ptr
-                    };
-                    return;
-                }
+                
 
                 while (_cursor + size >= memory.Length)
                 {
@@ -168,6 +171,60 @@ namespace FadeBasic.Virtual
         public bool TryGetAllocation(int ptr, out VmAllocation allocation)
         {
             return _allocations.TryGetValue(ptr, out allocation);
+        }
+
+        public void IncrementRefCount(ulong ptr)
+        {
+            var key = (int)ptr;
+            if (_ptrToRefCount.TryGetValue(key, out var refCount))
+            {
+                _ptrToRefCount[key] = refCount + 1;
+            }
+            else
+            {
+                _ptrToRefCount[key] = 1;
+            }
+        }
+
+        public void Sweep()
+        {
+            foreach (var allocation in _allocations)
+            {
+                if (_ptrToRefCount.TryGetValue(allocation.Key, out var refCount))
+                {
+                    if (refCount <= 0)
+                    {
+                        Free(allocation.Key);
+                    }
+                }
+            }
+            // foreach (var kvp in _ptrToRefCount)
+            // {
+            //     if (kvp.Value <= 0 && _allocations.try)
+            //     {
+            //         Free(kvp.Key);
+            //     }
+            // }
+        }
+        
+        public void TryDecrementRefCount(ulong ptr)
+        {
+            var key = (int)ptr;
+
+            if (_ptrToRefCount.TryGetValue(key, out var refCount))
+            {
+                _ptrToRefCount[key] = refCount - 1;
+
+                if (refCount == 1) 
+                {
+                    // the reference can be free'd
+                    // Free(key);
+                }
+            }
+            else
+            {
+                // ?
+            }
         }
     }
 }

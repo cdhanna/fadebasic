@@ -17,6 +17,18 @@ namespace FadeBasic.Virtual
     
     public struct VirtualScope
     {
+        public const byte FLAG_GLOBAL = 1;
+        public const byte FLAG_PTR = 2;
+
+        public static bool IsGlobal(byte flags)
+        {
+            return (flags & FLAG_GLOBAL) > 0;
+        }
+        public static bool IsPtr(byte flags)
+        {
+            return (flags & FLAG_PTR) > 0;
+        }
+        
         // parallel arrays with dataReg
         public ulong[] dataRegisters;
         
@@ -26,14 +38,14 @@ namespace FadeBasic.Virtual
         public byte[] typeRegisters;
         
         public int[] insIndexes;
-        public byte[] globalFlag;
+        public byte[] flags;
         
         public VirtualScope(int initialCapacity)
         {
             dataRegisters = new ulong[initialCapacity];
             typeRegisters = new byte[initialCapacity];
             insIndexes = new int[initialCapacity];
-            globalFlag = new byte[initialCapacity];
+            flags = new byte[initialCapacity];
         }
     }
 
@@ -216,8 +228,28 @@ namespace FadeBasic.Virtual
                             scope = newScope;
                             break;
                         case OpCodes.POP_SCOPE:
+
+                            
+                            { // clear all references from scope...
+                                var vScope = scopeStack.Peek();
+                                for (var scopeIndex = 0;
+                                     scopeIndex < vScope.insIndexes.Length;
+                                     scopeIndex++)
+                                {
+                                    // var isPtr = vScope.typeRegisters[scopeIndex] == TypeCodes.STRUCT ||
+                                    //             vScope.typeRegisters[scopeIndex] == TypeCodes.STRING;
+                                    var isPtr = VirtualScope.IsPtr(vScope.flags[scopeIndex]);
+                                    var ptr = vScope.dataRegisters[scopeIndex];
+                                    if (isPtr && vScope.insIndexes[scopeIndex] > 0)
+                                    {
+                                        
+                                        heap.TryDecrementRefCount(ptr);
+                                    }
+                                }
+                            }
+
                             scopeStack.Pop();
-                            scope = scopeStack.buffer[scopeStack.ptr -1];
+                            scope = scopeStack.buffer[scopeStack.ptr - 1];
                             break;
                         case OpCodes.JUMP_TABLE:
                             VmUtil.ReadAsInt(ref stack, out var tableSize);
@@ -402,33 +434,97 @@ namespace FadeBasic.Virtual
                             // read a register location, which is always 1 byte.
                             addr = Advance();
                             VmUtil.ReadSpanAsUInt(ref stack, out data);
+
+                            // 
+                            // TODO: need to check if this is an array somehow... 
+                            //       but, the compiler baked away that info... 
+                            // 
                             
+                            // arrays have a special access pattern, 
+                            // because there are TWO store operations
+                            // this could work, but it is a lot of branching for most cases... Unless the operation is SUPER fast :( 
+                            
+                           
+                            //
+                            // var isPointer = typeCode == TypeCodes.STRING || typeCode == TypeCodes.STRUCT;
+                            // if (isPointer)
+                            // {
+                            //     // checking for zero here is a way of checking if the  
+                            //     //  register was ever used before. Otherwise, it will
+                            //     //  clear the zero-th pointer. 
+                            //     if (scope.insIndexes[addr] > 0)
+                            //     {
+                            //         heap.TryDecrementRefCount(scope.dataRegisters[addr]);
+                            //     }
+                            // }
                             scope.dataRegisters[addr] = data;
                             scope.typeRegisters[addr] = typeCode;
                             scope.insIndexes[addr] = instructionIndex - 1; // minus one because the instruction has already been advanced. 
-                            globalScope.globalFlag[addr] = 0;
-
+                            globalScope.flags[addr] = 0;
+                            
                             /*
-                             * given we know the instruction address,
-                             * we could look that instruction up in the DebugData
-                             *  and if it exists, attach a variable name to this scope.
-                             *
-                             * however, from a perf standpoint, I don't want to do that universally unless we
-                             * are in a DEBUG mode. problematically, since this is dotnet runtime, there is no
-                             * way to have a perfect #compiler symbol thing for runtime.
-                             *
-                             * a compromise would be to store only the variable's declaration address, and the
-                             * debug data and server could use that LATER to re-assemble the information.
+                             * if the thing we are storing is a pointer, then that is important,
+                             * and we should keep track of it.
+                             * 
                              */
+                            // if (isPointer)
+                            // {
+                            //     heap.IncrementRefCount(data);
+                            //     
+                            //     // TODO: this is not a very good balance of efficiency... 
+                            //     //       the sweeping is costly, and maybe it makes sense to
+                            //     //       do it only every now and then, not on EVERY assign
+                            //     heap.Sweep(); 
+                            // }
 
+                            break;
+                        case OpCodes.STORE_PTR:
+
+                            // read a register location, which is always 1 byte.
+                            addr = Advance();
+                            VmUtil.ReadSpanAsUInt(ref stack, out data);
+
+                            if (scope.insIndexes[addr] > 0)
+                            {
+                                heap.TryDecrementRefCount(scope.dataRegisters[addr]);
+                            }
+                        
+                            scope.dataRegisters[addr] = data;
+                            scope.typeRegisters[addr] = typeCode;
+                            scope.insIndexes[addr] = instructionIndex - 1; // minus one because the instruction has already been advanced. 
+                            scope.flags[addr] = VirtualScope.FLAG_PTR;
+                            
+                            heap.IncrementRefCount(data);
+                            heap.Sweep(); 
+                            
+                            break;
+                        case OpCodes.STORE_PTR_GLOBAL:
+
+                            // read a register location, which is always 1 byte.
+                            addr = Advance();
+                            VmUtil.ReadSpanAsUInt(ref stack, out data);
+
+                            if (globalScope.insIndexes[addr] > 0)
+                            {
+                                heap.TryDecrementRefCount(globalScope.dataRegisters[addr]);
+                            }
+                        
+                            globalScope.dataRegisters[addr] = data;
+                            globalScope.typeRegisters[addr] = typeCode;
+                            globalScope.insIndexes[addr] = instructionIndex - 1; // minus one because the instruction has already been advanced. 
+                            globalScope.flags[addr] = VirtualScope.FLAG_PTR | VirtualScope.FLAG_GLOBAL;
+                            
+                            heap.IncrementRefCount(data);
+                            heap.Sweep(); 
+                            
                             break;
                         case OpCodes.STORE_GLOBAL:
                             addr = Advance();
                             VmUtil.ReadSpanAsUInt(ref stack, out data);
                             globalScope.dataRegisters[addr] = data;
                             globalScope.typeRegisters[addr] = typeCode;
-                            globalScope.globalFlag[addr] = 1;
-                            scope.insIndexes[addr] = instructionIndex - 1; // minus one because the instruction has already been advanced. 
+                            globalScope.flags[addr] = VirtualScope.FLAG_GLOBAL;
+                            globalScope.insIndexes[addr] = instructionIndex - 1; // minus one because the instruction has already been advanced. 
 
                             break;
                         case OpCodes.LOAD:

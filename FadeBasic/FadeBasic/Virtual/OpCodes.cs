@@ -320,5 +320,15 @@ namespace FadeBasic.Virtual
         /// </summary>
         public const byte BOUNDS_CHECK = 46;
 
+        /// <summary>
+        /// Similar to <see cref="STORE"/>, but the assumption is that the VALUE is
+        /// a pointer, and therefor it will be tracked
+        /// </summary>
+        public const byte STORE_PTR = 47;
+
+        /// <summary>
+        /// The intersection of <see cref="STORE_PTR"/> and <see cref="STORE_GLOBAL"/>
+        /// </summary>
+        public const byte STORE_PTR_GLOBAL = 48;
     }
 }

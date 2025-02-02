@@ -666,7 +666,8 @@ namespace FadeBasic.Virtual
                     continue;
                 }
 
-                var isVariableGlobal = scope.globalFlag[scopeIndex] == 1;
+
+                var isVariableGlobal = VirtualScope.IsGlobal(scope.flags[scopeIndex]);
                 if (global && !isVariableGlobal) continue; 
                 if (!global && isVariableGlobal) continue;
 

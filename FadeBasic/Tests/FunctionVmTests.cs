@@ -416,7 +416,7 @@ cards(2).suit = 5
 cards(2).value = 8
 
 x$ = Test(2)
-
+print x$
 END
 Function Test(index)
     ct as cardType
@@ -426,9 +426,11 @@ Function Test(index)
     
 EndFunction returnValue$
 ";
-        Setup(src, out _, out var prog);
+        Setup(src, out var compiler, out var prog);
         
         var vm = new VirtualMachine(prog);
+        vm.hostMethods = compiler.methodTable;
+
         vm.Execute().MoveNext();
 
         // at this point, the pointer to the right heap is getting lost???

@@ -1530,9 +1530,8 @@ namespace FadeBasic.Virtual
                             _buffer.Add(TypeCodes.STRUCT);
                             
                             // the ptr will be stored in the register for this variable
-                            // _buffer.Add(OpCodes.STORE);
-                            // _buffer.Add(compiledVar.registerAddress);
-                            PushStore(_buffer, compiledVar.registerAddress, compiledVar.isGlobal);
+                            PushStorePtr(_buffer, compiledVar.registerAddress, compiledVar.isGlobal);
+                            // PushStore(_buffer, compiledVar.registerAddress, compiledVar.isGlobal);
                             _dbg?.AddVariable(_buffer.Count - 1, compiledVar);
 
                             break;
@@ -1641,7 +1640,7 @@ namespace FadeBasic.Virtual
                 
                 // _buffer.Add(OpCodes.STORE);
                 // _buffer.Add(arrayVar.registerAddress);
-                PushStore(_buffer, arrayVar.registerAddress, arrayVar.isGlobal);
+                PushStorePtr(_buffer, arrayVar.registerAddress, arrayVar.isGlobal);
                 _dbg?.AddVariable(_buffer.Count - 1, arrayVar);
 
             }
@@ -1711,6 +1710,12 @@ namespace FadeBasic.Virtual
             // add the offset to the original pointer to get the write location
             _buffer.Add(OpCodes.ADD);
 
+        }
+
+        static void PushStorePtr(List<byte> buffer, byte regAddr, bool isGlobal)
+        {
+            buffer.Add(isGlobal ? OpCodes.STORE_PTR_GLOBAL : OpCodes.STORE_PTR);
+            buffer.Add(regAddr);
         }
 
         static void PushStore(List<byte> buffer, byte registerAddress, bool isGlobal)
@@ -1828,7 +1833,14 @@ namespace FadeBasic.Virtual
                     // store the value of the expression&cast in the desired register.
                     // _buffer.Add(OpCodes.STORE);
                     // _buffer.Add(compiledVar.registerAddress);
-                    PushStore(_buffer, compiledVar.registerAddress, compiledVar.isGlobal);
+                    if (compiledVar.typeCode == TypeCodes.STRING)
+                    {
+                        PushStorePtr(_buffer, compiledVar.registerAddress, compiledVar.isGlobal);
+                    }
+                    else
+                    {
+                        PushStore(_buffer, compiledVar.registerAddress, compiledVar.isGlobal);
+                    }
                     _dbg?.AddVariable(_buffer.Count - 1, compiledVar);
                     break;
                 case StructFieldReference fieldReferenceNode:
