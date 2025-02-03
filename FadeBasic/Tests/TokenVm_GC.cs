@@ -11,18 +11,18 @@ x$ = ""toast""
 for n = 1 to 5
     x$ = x$ + x$
 next n
-", 1)]
+", 2)]
     [TestCase(
         @"
 x$ = ""toast""
 x$ = ""frank""
-", 1)]
+", 2)]
     [TestCase(
         @"
 x$ = ""toast""
 x$ = ""frank""
 x$ = ""billy""
-", 1)]
+", 3)]
     [TestCase(
         @"
 type vec
@@ -49,7 +49,7 @@ test()
 function test()
     z$ = ""toast""
 endfunction
-", 0)]
+", 1)]
     [TestCase(@"
 type vec
     x
@@ -71,6 +71,12 @@ FUNCTION localArr()
     LOCAL DIM x(10)
 ENDFUNCTION
 ", 0)]
+    [TestCase(@"
+blargh(""toast"")
+FUNCTION blargh(x$)
+    print x$
+ENDFUNCTION
+", 1)]
     public void GC_Simple(string src, int allocationCount)
     {
         Setup(src, out var compiler, out var prog);
@@ -103,7 +109,6 @@ y$ = ""toast""
         var yPtr = vm.dataRegisters[1];
         Assert.That(xPtr, Is.EqualTo(0));
         Assert.That(yPtr, Is.EqualTo(xPtr));
-        // vm.heap.Sweep();
     }
 
 }

@@ -24,6 +24,7 @@ namespace FadeBasic.Json
         void IncludeField(string name, ref bool fieldValue);
         void IncludeField(string name, ref string fieldValue);
         void IncludeField(string name, ref byte[] fieldValue);
+        void IncludeField(string name, ref int[] fieldValue);
         void IncludeField(string name, ref DebugMessageType fieldValue);
         void IncludeField(string name, ref Dictionary<string, int> fieldValue);
         void IncludeField<T>(string name, ref T fieldValue) where T : IJsonable, new();
@@ -373,6 +374,22 @@ namespace FadeBasic.Json
             _data.strings.TryGetValue(name, out fieldValue);
         }
 
+        public void IncludeField(string name, ref int[] fieldValue)
+        {
+            if (!_data.numberArrays.TryGetValue(name, out var numbers))
+            {
+                fieldValue = Array.Empty<int>();
+            }
+            else
+            {
+                fieldValue = new int[numbers.Count];
+                for (var i = 0; i < numbers.Count; i++)
+                {
+                    fieldValue[i] = numbers[i];
+                }
+            }
+        }
+        
         public void IncludeField(string name, ref byte[] fieldValue)
         {
             if (!_data.numberArrays.TryGetValue(name, out var numbers))
@@ -548,6 +565,31 @@ namespace FadeBasic.Json
             fieldCount++;
         }
 
+        
+        public void IncludeField(string name, ref int[] fieldValue)
+        {
+            if (fieldCount > 0)
+            {
+                _sb.Append(JsonConstants.COMMA);
+            }
+            _sb.Append(JsonConstants.QUOTE);
+            _sb.Append(name);
+            _sb.Append(JsonConstants.QUOTE);
+            _sb.Append(JsonConstants.COLON);
+            _sb.Append(JsonConstants.OPEN_ARRAY);
+            for (var i = 0; i < fieldValue.Length; i++)
+            {
+                if (i > 0)
+                {
+                    _sb.Append(JsonConstants.COMMA);
+                }
+                _sb.Append(fieldValue[i]);
+
+            }
+            _sb.Append(JsonConstants.CLOSE_ARRAY);
+            fieldCount++;
+        }
+        
         public void IncludeField(string name, ref byte[] fieldValue)
         {
             if (fieldCount > 0)

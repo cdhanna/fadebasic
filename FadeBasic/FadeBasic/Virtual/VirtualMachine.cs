@@ -159,6 +159,7 @@ namespace FadeBasic.Virtual
         
         void ReadInternedData()
         {
+            
             var internedBytes =
                 program.AsSpan(internedDataInstructionIndex, program.Length - internedDataInstructionIndex);
             
@@ -175,6 +176,38 @@ namespace FadeBasic.Virtual
             foreach (var kvp in internedData.types)
             {
                 typeTable[kvp.Value.typeId] = kvp.Value;
+            }
+
+            foreach (var str in internedData.strings)
+            {
+                var size = str.value.Length * TypeCodes.GetByteSize(TypeCodes.INT);
+                heap.AllocateString(size, out var ptr);
+                
+                // this interned string should never be free'd, because we don't know when it will need to be accessed. 
+                heap.IncrementRefCount((ulong)ptr); 
+                var span = new byte[size];
+                for (var i = 0; i < str.value.Length; i++)
+                {
+                    var data = (uint)str.value[i];
+                    var bytes = BitConverter.GetBytes(data);
+                    span[i * 4 + 0] = bytes[0];
+                    span[i * 4 + 1] = bytes[1];
+                    span[i * 4 + 2] = bytes[2];
+                    span[i * 4 + 3] = bytes[3];
+                }
+
+                heap.Write(ptr, size, span);
+
+                var ptrBytes = BitConverter.GetBytes(ptr);
+                foreach (var index in str.indexReferences)
+                {
+                    // replace the ptr starting at index with the actual assigned ptr
+                    // start at 2 to handle type-code
+                    program[index + 2] = ptrBytes[0];
+                    program[index + 3] = ptrBytes[1];
+                    program[index + 4] = ptrBytes[2];
+                    program[index + 5] = ptrBytes[3];
+                }
             }
         }
 

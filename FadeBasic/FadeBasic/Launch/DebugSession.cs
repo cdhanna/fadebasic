@@ -835,7 +835,8 @@ namespace FadeBasic.Launch
             var compileScope = new CompileScope(mergedVariableTable, mergedArrayTable);
             var compiler = new Compiler(_commandCollection, new CompilerOptions
             {
-                GenerateDebugData = true
+                GenerateDebugData = true,
+                InternStrings = false
             }, givenGlobalScope: compileScope);
 
             foreach (var type in types)

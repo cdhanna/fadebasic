@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Runtime.CompilerServices;
 using System.Text;
 using FadeBasic.Ast;
@@ -189,10 +190,12 @@ namespace FadeBasic.Virtual
     public class CompilerOptions
     {
         public bool GenerateDebugData = false;
+        public bool InternStrings = true;
 
         public static readonly CompilerOptions Default = new CompilerOptions
         {
-            GenerateDebugData = false
+            GenerateDebugData = false,
+            InternStrings = true
         };
     }
 
@@ -201,10 +204,24 @@ namespace FadeBasic.Virtual
     {
         public Dictionary<string, InternedType> types;
         public Dictionary<string, InternedFunction> functions = new Dictionary<string, InternedFunction>();
+        public List<InternedString> strings = new List<InternedString>();
         public void ProcessJson(IJsonOperation op)
         {
             op.IncludeField(nameof(types), ref types);
             op.IncludeField(nameof(functions), ref functions);
+            op.IncludeField(nameof(strings), ref strings);
+        }
+    }
+    
+    public class InternedString : IJsonable
+    {
+        public string value;
+        public int[] indexReferences;
+        
+        public void ProcessJson(IJsonOperation op)
+        {
+            op.IncludeField(nameof(value), ref value);
+            op.IncludeField(nameof(indexReferences), ref indexReferences);
         }
     }
 
@@ -306,10 +323,17 @@ namespace FadeBasic.Virtual
         
         private InternedData data = new InternedData();
         
+        public Dictionary<string, HashSet<int>> stringToCallingInstructionIndexes =
+            new Dictionary<string, HashSet<int>>();
+
+        private CompilerOptions _options;
+
+
         public Compiler(CommandCollection commands, CompilerOptions options=null, CompileScope givenGlobalScope=null)
         {
-            options ??= CompilerOptions.Default;
-            if (options.GenerateDebugData)
+            _options = options;
+            _options ??= CompilerOptions.Default;
+            if (_options.GenerateDebugData)
             {
                 _dbg = new DebugData();
             }
@@ -373,7 +397,6 @@ namespace FadeBasic.Virtual
             }
 
             { // handle interned data
-
                 { // replace the jump ptr at index=0 to tell us where the data lives. 
                     var internLocationBytes = BitConverter.GetBytes(_buffer.Count);
                     for (var i = 0; i < internLocationBytes.Length; i++)
@@ -425,6 +448,20 @@ namespace FadeBasic.Virtual
 
         public void PushInternedData()
         {
+
+            { // handle the strings
+                data.strings = new List<InternedString>();
+                foreach (var kvp in stringToCallingInstructionIndexes)
+                {
+                    var internedString = new InternedString
+                    {
+                        value = kvp.Key,
+                        indexReferences = kvp.Value.ToArray()
+                    };
+                    data.strings.Add(internedString);
+                }
+            }
+            
             // the type table will be the JSONified
             data.types = new Dictionary<string, InternedType>();
             foreach (var kvp in _types)
@@ -2033,31 +2070,50 @@ namespace FadeBasic.Virtual
                     });
                     break;
                 case LiteralStringExpression literalString:
-                    
                     // allocate some memory for a string...
                     var str = literalString.value;
                     var strSize = str.Length * TypeCodes.GetByteSize(TypeCodes.INT);
-                    
-                    // push the string data...
-                    // for (var i = str.Length - 1; i >= 0; i--)
-                    for (var i = 0 ; i < str.Length; i ++)
+
+                    if (_options.InternStrings)
                     {
-                        var c = (uint)str[i];
-                        AddPushUInt(_buffer, c, includeTypeCode:false);
+                        if (!stringToCallingInstructionIndexes.TryGetValue(str, out var indexes))
+                        {
+                            // capture this string as something that we need to intern... 
+                            stringToCallingInstructionIndexes[str] = indexes = new HashSet<int>();
+                        }
+
+                        // take note that this index needs to be mapped back to the original string.
+                        indexes.Add(_buffer.Count);
+                    
+                        // push a fake pointer onto the stack... The value gets replaced 
+                        //  at RUNTIME as the machine is allocating the interned strings. 
+                        // AddPushUInt(_buffer, int.MaxValue, includeTypeCode: false);
+                        AddPushInt(_buffer, int.MaxValue);
+                    }
+                    else
+                    {
+                        // push the string data...
+                        for (var i = 0 ; i < str.Length; i ++)
+                        {
+                            // push the string into the interned data, and then remember the pointer to that. 
+                            var c = (uint)str[i];
+                            AddPushUInt(_buffer, c, includeTypeCode:false);
+                        }
+                        
+                        AddPushInt(_buffer, strSize); // SIZE, <Data>
+                        
+                        // this one will get used by the Write call
+                        _buffer.Add(OpCodes.DUPE); // SIZE, SIZE, <Data>
+                        
+                        // add in the type-format
+                        AddPushTypeFormat(_buffer, ref HeapTypeFormat.STRING_FORMAT);
+                        
+                        // allocate a ptr to the stack
+                        _buffer.Add(OpCodes.ALLOC); // PTR, SIZE, <Data>
+                        
+                        _buffer.Add(OpCodes.WRITE_PTR); // consume the ptr, then the length, then the data
                     }
                     
-                    AddPushInt(_buffer, strSize); // SIZE, <Data>
-                    
-                    // this one will get used by the Write call
-                    _buffer.Add(OpCodes.DUPE); // SIZE, SIZE, <Data>
-
-                    // add in the type-format
-                    AddPushTypeFormat(_buffer, ref HeapTypeFormat.STRING_FORMAT);
-                    
-                    // allocate a ptr to the stack
-                    _buffer.Add(OpCodes.ALLOC); // PTR, SIZE, <Data>
-                    
-                    _buffer.Add(OpCodes.WRITE_PTR); // consume the ptr, then the length, then the data
                     
                     _buffer.Add(OpCodes.CAST);
                     _buffer.Add(TypeCodes.STRING);
