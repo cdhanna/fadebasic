@@ -91,6 +91,12 @@ namespace FadeBasic
         OpLte,
         OpEqual,
         OpNotEqual,
+        OpBitwiseLeftShift,
+        OpBitwiseRightShift,
+        OpBitwiseAnd,
+        OpBitwiseOr,
+        OpBitwiseNot,
+        OpBitwiseXor,
         ParenOpen,
         ParenClose,
         LiteralReal,
@@ -100,6 +106,10 @@ namespace FadeBasic
         VariableReal,
         VariableString,
         CommandWord,
+        
+        LiteralBinary,
+        LiteralHex,
+        LiteralOctal,
         
         Constant
     }
@@ -111,6 +121,7 @@ namespace FadeBasic
         public List<Token> combinedTokens; // tokens and comments.
         public TokenStream stream;
         public List<LexerError> tokenErrors;
+        public List<Token> macroTokens = new List<Token>();
 
         public LexerResults()
         {
@@ -175,6 +186,12 @@ namespace FadeBasic
             new Lexem(LexemType.OpMod, new Regex("^mod")),
             new Lexem(LexemType.OpPower, new Regex("^\\^")),
             new Lexem(LexemType.OpEqual, new Regex("^=")),
+            new Lexem(LexemType.OpBitwiseAnd, new Regex("^&&")),
+            new Lexem(LexemType.OpBitwiseOr, new Regex("^\\|\\|")),
+            new Lexem(LexemType.OpBitwiseNot, new Regex("^\\.\\.")),
+            new Lexem(LexemType.OpBitwiseLeftShift, new Regex("^<<")),
+            new Lexem(LexemType.OpBitwiseRightShift, new Regex("^>>")),
+            new Lexem(LexemType.OpBitwiseXor, new Regex("^~~")),
             new Lexem(-3, LexemType.OpNotEqual, new Regex("^<>")),
             new Lexem(LexemType.KeywordAnd, new Regex("^and")),
             new Lexem(LexemType.KeywordOr, new Regex("^or")),
@@ -245,6 +262,11 @@ namespace FadeBasic
             new Lexem(-2, LexemType.LiteralReal, new Regex("^((\\d+\\.(\\d*))|(\\.\\d+))")),
             new Lexem(LexemType.LiteralInt, new Regex("^\\d+")),
             
+            // literal symbols
+            new Lexem(-3, LexemType.LiteralBinary, new Regex("^%(0|1)+")),
+            new Lexem(-3, LexemType.LiteralHex, new Regex("^0x([A-F]|[a-f]|[0-9])+")),
+            new Lexem(-3, LexemType.LiteralOctal, new Regex("^0c([0-7])+")),
+            
             // special parsing will be needed for strings...
             LexemString,
             
@@ -271,6 +293,7 @@ namespace FadeBasic
             var tokens = new List<Token>();
             var comments = new List<Token>();
             var combined = new List<Token>();
+            var macroTokens = new List<Token>();
 
             void AddToken(Token t)
             {
@@ -539,19 +562,21 @@ namespace FadeBasic
                                 var toRemove = bestMatches[0].Groups[1].Value;
                                 var toAdd = bestMatches[0].Groups[2].Value;
 
-                                constantTable[toRemove] = toAdd;
+                                macroTokens.Add(bestToken);
+                                constantTable[toRemove.ToLowerInvariant()] = toAdd;
                                 // var prefix = line.Substring(0, charNumber);
                                 // var suffix = line.Substring(charNumber + toRemove.Length);
                                 //
                                 // var replacementLine = prefix + toAdd + suffix;
                                 break;
                             case LexemType.VariableGeneral
-                                when constantTable.TryGetValue(bestToken.raw, out var replacement):
+                                when constantTable.TryGetValue(bestToken.caseInsensitiveRaw, out var replacement):
                                 var prefix = line.Substring(0, charNumber);
                                 var suffix = line.Substring(charNumber + bestToken.Length);
 
                                 var replacementLine = prefix + replacement + suffix;
                                 line = replacementLine;
+                                macroTokens.Add(bestToken);
                                 continue;
                                 break;
                             default:
@@ -637,7 +662,8 @@ namespace FadeBasic
                 comments = comments,
                 combinedTokens = combined,
                 stream = new TokenStream(tokens, errors),
-                tokenErrors = errors
+                tokenErrors = errors,
+                macroTokens = macroTokens
             };
         }
 

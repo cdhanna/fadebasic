@@ -164,6 +164,15 @@ namespace FadeBasic.Virtual
         public const byte OR = 33;
         public const byte NOT = 34;
         
+        public const byte BITWISE_OR = 49;
+        public const byte BITWISE_AND = 50;
+        public const byte BITWISE_XOR = 51;
+        public const byte BITWISE_NOT = 52;
+        public const byte BITWISE_LEFTSHIFT = 53;
+        public const byte BITWISE_RIGHTSHIFT = 54;
+        
+        
+        
         /// <summary>
         /// the next byte in the INS is the Address, and then it expects to find a value in the stack
         /// </summary>

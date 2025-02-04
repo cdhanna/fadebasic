@@ -63,6 +63,20 @@ public class SemanticTokenHandler : SemanticTokensHandlerBase
             
             var emptyMods = Array.Empty<SemanticTokenModifier>();
 
+            
+            // it is important that macro tokens GO FIRST; the LSP takes the first value for each spot. 
+            // TODO: this is still a little flakey
+            foreach (var token in unit.lexerResults.macroTokens)
+            {
+                if (token.raw == null) continue;
+                var location = unit.sourceMap.GetOriginalLocation(token.lineNumber, token.charNumber);
+                if (location.fileName != identifier.TextDocument.Uri.GetFileSystemPath())
+                {
+                    continue;
+                }
+                builder.Push(location.startLine, location.startChar, token.Length, SemanticTokenType.Macro, emptyMods);
+            }
+            
             foreach (var token in unit.lexerResults.combinedTokens)
             {
                 if (token.raw == null) continue;
@@ -84,6 +98,7 @@ public class SemanticTokenHandler : SemanticTokensHandlerBase
                 }
                 builder.Push(location.startLine, location.startChar, token.Length, tokenType, emptyMods);
             }
+
 
         }
         catch (Exception ex)
@@ -112,7 +127,8 @@ public class SemanticTokenHandler : SemanticTokensHandlerBase
                 return SemanticTokenType.Function;
             
             
-            
+            case LexemType.Constant:
+                return SemanticTokenType.Macro;
             case LexemType.VariableString:
             case LexemType.VariableReal:
             case LexemType.VariableGeneral:
@@ -181,6 +197,9 @@ public class SemanticTokenHandler : SemanticTokensHandlerBase
             case LexemType.OpNotEqual:
                 return SemanticTokenType.Operator;
             case LexemType.LiteralInt:
+            case LexemType.LiteralBinary:
+            case LexemType.LiteralOctal:
+            case LexemType.LiteralHex:
             case LexemType.LiteralReal:
                 return SemanticTokenType.Number;
             case LexemType.LiteralString:

@@ -282,6 +282,31 @@ y = x
         var parser = MakeParser(input);
         var prog = parser.ParseProgram();
         
+        prog.AssertNoParseErrors();
+        Assert.That(prog.statements.Count, Is.EqualTo(1));
+        var code = prog.ToString();
+        Console.WriteLine(code);
+        Assert.That(code, Is.EqualTo(@"(
+(= (ref y),(1))
+)".ReplaceLineEndings("")));
+    }
+    
+    
+    [TestCase("ONE", "ONE")]
+    [TestCase("ONE", "one")]
+    [TestCase("one", "ONE")]
+    [TestCase("one", "one")]
+    [TestCase("oNe", "OnE")]
+    public void Constant_LiteralInt_Casing(string macro, string usage)
+    {
+        var input = $@"
+#constant {macro} 1
+y = {usage} 
+";
+        var parser = MakeParser(input);
+        var prog = parser.ParseProgram();
+        
+        prog.AssertNoParseErrors();
         Assert.That(prog.statements.Count, Is.EqualTo(1));
         var code = prog.ToString();
         Console.WriteLine(code);

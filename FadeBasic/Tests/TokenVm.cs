@@ -2434,6 +2434,28 @@ next
     }
     
     [Test]
+    public void Math_Bytes_XOR()
+    {
+        var src = @"
+x as byte = %10001000
+y as byte = %11001100
+z as byte = x ~~ y
+";
+        Setup(src, out _, out var prog);
+        
+        var vm = new VirtualMachine(prog);
+        vm.Execute2();
+        Assert.That(vm.dataRegisters[0], Is.EqualTo(0b_1000_1000));
+        Assert.That(vm.typeRegisters[0], Is.EqualTo(TypeCodes.BYTE));
+        
+        Assert.That(vm.dataRegisters[1], Is.EqualTo(0b_1100_1100));
+        Assert.That(vm.typeRegisters[1], Is.EqualTo(TypeCodes.BYTE));
+        
+        Assert.That(vm.dataRegisters[2], Is.EqualTo(0b_1000_1000 ^ 0b_1100_1100));
+        Assert.That(vm.typeRegisters[2], Is.EqualTo(TypeCodes.BYTE));
+    }
+    
+    [Test]
     public void Math_IntFloats_And()
     {
         var src = @"x = 1.0 AND 2.0";
@@ -2554,6 +2576,67 @@ n = x(3, 1)", false)]
         vm.Execute2();
         Assert.That(vm.dataRegisters[0], Is.EqualTo(expected ? 1 : 0));
         Assert.That(vm.typeRegisters[0], Is.EqualTo(TypeCodes.INT));
+    }
+    
+    [TestCase("%01 || %10", 3)]
+    [TestCase("%01 || %00", 1)]
+    [TestCase("%00 || %10", 2)]
+    [TestCase("%1 .. %10", ~1)]
+    [TestCase("%0 .. %01", ~0)]
+    [TestCase("%1 .. %10", ~1)]
+    [TestCase("%0 .. %10", ~0)]
+    [TestCase("%1 .. %0", ~1)]
+    [TestCase("%0 .. %0", ~0)]
+    [TestCase("..%0", ~0)]
+    [TestCase("..%1", ~1)]
+    [TestCase("%01 && %10", 0)]
+    [TestCase("%11 && %10", 2)]
+    [TestCase("%10 && %11", 2)]
+    [TestCase("%10 ~~ %11", 1)]
+    [TestCase("%11 ~~ %11", 0)]
+    [TestCase("%10 ~~ %01", 3)]
+    [TestCase("1 << 1", 1 << 1)]
+    [TestCase("1 << 3", 1 << 3)]
+    [TestCase("5 << 2", 5 << 2)]
+    [TestCase("1 >> 1", 1 >> 1)]
+    [TestCase("1 >> 3", 1 >> 3)]
+    [TestCase("5 >> 2", 5 >> 2)]
+    [TestCase("128 >> 2", 128 >> 2)]
+    public void Math_IntsBitwiseSimple(string expr, int expected)
+    {
+        var src = @$"x = {expr}";
+        Setup(src, out _, out var prog);
+        
+        var vm = new VirtualMachine(prog);
+        vm.Execute2();
+        Assert.That(VmUtil.ConvertToInt(vm.dataRegisters[0]), Is.EqualTo(expected));
+        Assert.That(vm.typeRegisters[0], Is.EqualTo(TypeCodes.INT));
+    }
+    
+    [Test]
+    public void Math_NegativeSignFlip()
+    {
+        var src = @$"
+x = 3
+x -= 8
+x += 1
+y$ = str$(x)
+";
+        Setup(src, out var compiler, out var prog);
+        
+        var vm = new VirtualMachine(prog);
+        vm.hostMethods = compiler.methodTable;
+
+        vm.Execute2();
+        Assert.That(VmUtil.ConvertToInt(vm.dataRegisters[0]), Is.EqualTo(-4));
+        Assert.That(vm.typeRegisters[0], Is.EqualTo(TypeCodes.INT));
+        
+        Assert.That(vm.dataRegisters[1], Is.EqualTo(0)); // the ptr to the string in memory
+        Assert.That(vm.typeRegisters[1], Is.EqualTo(TypeCodes.STRING));
+
+        vm.heap.Read(0, "-4".Length * 4, out var memory);
+        var str = VmConverter.ToString(memory);
+        Assert.That(str, Is.EqualTo("-4"));
     }
     
     [Test]

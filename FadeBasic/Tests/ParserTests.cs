@@ -1251,6 +1251,75 @@ x = 2
     }
 
     
+    
+    [TestCase("1", "1")]
+    [TestCase("101", "5")]
+    [TestCase("01000001", "65")]
+    public void Literal_Binary_1(string bin, string expected)
+    {
+        var input = @$"
+x = %{bin}
+";
+        var parser = MakeParser(input);
+        _lexerResults.AssertNoLexErrors();
+        var prog = parser.ParseProgram();
+        prog.AssertNoParseErrors();
+
+        Assert.That(prog.statements.Count, Is.EqualTo(1));
+        Assert.That(prog.ToString(), Is.EqualTo($@"(
+(= (ref x),({expected}))
+)".ReplaceLineEndings("")));
+    }
+
+    [TestCase("1", "1")]
+    [TestCase("B", "11")]
+    [TestCase("41", "65")]
+    public void Literal_Hex_1(string bin, string expected)
+    {
+        for (var x = 0; x < 2; x++)
+        {
+            var xValue = x == 0 ? 'x' : 'X';
+            var input = @$"
+x = 0{xValue}{bin}
+";
+            var parser = MakeParser(input);
+            _lexerResults.AssertNoLexErrors();
+            var prog = parser.ParseProgram();
+            prog.AssertNoParseErrors();
+
+            Assert.That(prog.statements.Count, Is.EqualTo(1));
+            Assert.That(prog.ToString(), Is.EqualTo($@"(
+(= (ref x),({expected}))
+)".ReplaceLineEndings("")));
+        }
+    }
+    
+    
+    [TestCase("1", "1")]
+    [TestCase("7", "7")]
+    [TestCase("17", "15")]
+    [TestCase("101", "65")]
+    public void Literal_Octal_1(string bin, string expected)
+    {
+        for (var x = 0; x < 2; x++)
+        {
+            var xValue = x == 0 ? 'c' : 'C';
+            var input = @$"
+x = 0{xValue}{bin}
+";
+            var parser = MakeParser(input);
+            _lexerResults.AssertNoLexErrors();
+            var prog = parser.ParseProgram();
+            prog.AssertNoParseErrors();
+
+            Assert.That(prog.statements.Count, Is.EqualTo(1));
+            Assert.That(prog.ToString(), Is.EqualTo($@"(
+(= (ref x),({expected}))
+)".ReplaceLineEndings("")));
+        }
+    }
+    
+    
     [Test]
     public void Assign()
     {

@@ -2225,6 +2225,32 @@ x as word
 
     
     [Test]
+    public void ParseError_BadBinary_Number()
+    {
+        var input = @"
+x = %3
+";
+        var parser = MakeParser(input);
+        var prog = parser.ParseProgram();
+
+        prog.AssertParseErrors(1, out var errors);
+        Assert.That(errors[0].Display, Is.EqualTo($"[1:2] - {ErrorCodes.ExpressionMissing}"));
+    }
+    
+    [Test]
+    public void ParseError_BadBinary_Token()
+    {
+        var input = @"
+x = %for
+";
+        var parser = MakeParser(input);
+        var prog = parser.ParseProgram();
+
+        prog.AssertParseErrors(1, out var errors);
+        Assert.That(errors[0].Display, Is.EqualTo($"[1:2] - {ErrorCodes.ExpressionMissing}"));
+    }
+    
+    [Test]
     public void ParseError_VariableDecl_Unknown()
     {
         var input = @"

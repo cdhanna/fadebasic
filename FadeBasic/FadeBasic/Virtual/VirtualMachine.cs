@@ -407,6 +407,36 @@ namespace FadeBasic.Virtual
                                 VmUtil.PushSpan(ref stack, aBytes, typeCode);
                             }
                             break;
+                        case OpCodes.BITWISE_AND:
+                            VmUtil.ReadTwoValues(ref stack, out vTypeCode, out aSpan, out bSpan);
+                            VmUtil.BitwiseAnd(ref heap, vTypeCode, aSpan, bSpan, out cSpan);
+                            VmUtil.PushSpan(ref stack, cSpan, vTypeCode);
+                            break;
+                        case OpCodes.BITWISE_OR:
+                            VmUtil.ReadTwoValues(ref stack, out vTypeCode, out aSpan, out bSpan);
+                            VmUtil.BitwiseOr(ref heap, vTypeCode, aSpan, bSpan, out cSpan);
+                            VmUtil.PushSpan(ref stack, cSpan, vTypeCode);
+                            break;
+                        case OpCodes.BITWISE_XOR:
+                            VmUtil.ReadTwoValues(ref stack, out vTypeCode, out aSpan, out bSpan);
+                            VmUtil.BitwiseXor(ref heap, vTypeCode, aSpan, bSpan, out cSpan);
+                            VmUtil.PushSpan(ref stack, cSpan, vTypeCode);
+                            break;
+                        case OpCodes.BITWISE_LEFTSHIFT:
+                            VmUtil.ReadTwoValues(ref stack, out vTypeCode, out aSpan, out bSpan);
+                            VmUtil.BitwiseLeftShift(ref heap, vTypeCode, aSpan, bSpan, out cSpan);
+                            VmUtil.PushSpan(ref stack, cSpan, vTypeCode);
+                            break;
+                        case OpCodes.BITWISE_RIGHTSHIFT:
+                            VmUtil.ReadTwoValues(ref stack, out vTypeCode, out aSpan, out bSpan);
+                            VmUtil.BitwiseRightShift(ref heap, vTypeCode, aSpan, bSpan, out cSpan);
+                            VmUtil.PushSpan(ref stack, cSpan, vTypeCode);
+                            break;
+                        case OpCodes.BITWISE_NOT:
+                            VmUtil.ReadSpan(ref stack, out typeCode, out aSpan);
+                            VmUtil.BitwiseNot(ref heap, vTypeCode, aSpan, out cSpan);
+                            VmUtil.PushSpan(ref stack, cSpan, vTypeCode);
+                            break;
                         case OpCodes.ADD:
                             VmUtil.ReadTwoValues(ref stack, out vTypeCode, out aSpan, out bSpan);
                             VmUtil.Add(ref heap, vTypeCode, aSpan, bSpan, out cSpan);

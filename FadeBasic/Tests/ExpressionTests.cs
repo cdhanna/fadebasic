@@ -75,6 +75,13 @@ public class ExpressionTests
     [TestCase("NOT 3 AND NOT 2 AND 1", "(and (! (3)),(and (! (2)),(1)))")]
     [TestCase("NOT (NOT 3>2 AND 3>5)", "(! (and (! (?> (3),(2))),(?> (3),(5))))")]
     [TestCase("NOT 3>2 AND 0", "(and (! (?> (3),(2))),(0))")]
+    [TestCase("1 << 1", "(<< (1),(1))")]
+    [TestCase("1 >> 3", "(>> (1),(3))")]
+    [TestCase("42 && 28", "(&& (42),(28))")]
+    [TestCase("42 || 28", "(|| (42),(28))")]
+    [TestCase("42 ~~ 28", "(~~ (42),(28))")]
+    [TestCase("42 .. 28", "(.. (42),(28))")]
+    [TestCase("..3", "(.. (3))")]
     public void GeneralExpression(string src, string expected)
     {
         

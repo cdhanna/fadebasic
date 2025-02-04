@@ -2834,6 +2834,18 @@ namespace FadeBasic
                 case LexemType.OpMod:
                 case LexemType.OpPower:
                     return 40;
+                
+                case LexemType.OpBitwiseLeftShift:
+                case LexemType.OpBitwiseRightShift:
+                    return 50;
+                case LexemType.OpBitwiseXor:
+                    return 53;
+                case LexemType.OpBitwiseOr:
+                    return 54;
+                case LexemType.OpBitwiseAnd:
+                    return 55;
+                case LexemType.OpBitwiseNot:
+                    return 56;
            
                 default:
                     throw new ParserException("Invalid lexem type for op order", token);
@@ -2847,6 +2859,9 @@ namespace FadeBasic
                 case LexemType.OpMinus:
                 case LexemType.OpGt:
                 case LexemType.OpLt:
+                case LexemType.OpBitwiseLeftShift:
+                case LexemType.OpBitwiseRightShift:
+                case LexemType.OpBitwiseNot:
                     return false;
                 case LexemType.OpPlus:
                 case LexemType.OpMultiply:
@@ -2854,6 +2869,9 @@ namespace FadeBasic
                 case LexemType.OpNotEqual:
                 case LexemType.KeywordAnd:
                 case LexemType.KeywordOr:
+                case LexemType.OpBitwiseOr:
+                case LexemType.OpBitwiseAnd:
+                case LexemType.OpBitwiseXor:
                     return true;
                 default:
                     throw new ParserException("Invalid lexem type for op assoc", token);
@@ -2878,6 +2896,12 @@ namespace FadeBasic
                 case LexemType.OpMod:
                 case LexemType.KeywordAnd:
                 case LexemType.KeywordOr:
+                case LexemType.OpBitwiseAnd:
+                case LexemType.OpBitwiseOr:
+                case LexemType.OpBitwiseNot:
+                case LexemType.OpBitwiseXor:
+                case LexemType.OpBitwiseLeftShift:
+                case LexemType.OpBitwiseRightShift:
                     return true;
                 default:
                     return false;
@@ -2939,6 +2963,9 @@ namespace FadeBasic
         {
             switch (token.type)
             {
+                case LexemType.LiteralBinary:
+                case LexemType.LiteralHex:
+                case LexemType.LiteralOctal:
                 case LexemType.LiteralInt:
                     return new LiteralIntExpression(token);
                 case LexemType.LiteralReal:
@@ -2966,6 +2993,9 @@ namespace FadeBasic
                 {
                     case LexemType.LiteralInt:
                     case LexemType.LiteralReal:
+                    case LexemType.LiteralBinary:
+                    case LexemType.LiteralHex:
+                    case LexemType.LiteralOctal:
                     case LexemType.LiteralString:
                         literals.Add(ParseLiteral(_stream.Advance()));
                         break;
@@ -3079,6 +3109,9 @@ namespace FadeBasic
                     outputExpression = ParseVariableReference(token);
                     break;
                 case LexemType.LiteralInt:
+                case LexemType.LiteralBinary:
+                case LexemType.LiteralOctal:
+                case LexemType.LiteralHex:
                 case LexemType.LiteralReal:
                 case LexemType.LiteralString:
                     _stream.Advance();
@@ -3096,6 +3129,14 @@ namespace FadeBasic
 
                     var negateExpr = ParseWikiTerm();
                     outputExpression = new UnaryOperationExpression(UnaryOperationType.Negate, negateExpr, token, _stream.Current);
+                    break;
+                case LexemType.OpBitwiseNot:
+                    _stream.Advance();
+
+                    var bpeek = _stream.Peek;
+                    var bnotExpr = ParseWikiExpression();
+                    
+                    outputExpression = new UnaryOperationExpression(UnaryOperationType.BitwiseNot, bnotExpr, token, _stream.Current);
                     break;
                 case LexemType.KeywordNot:
                     _stream.Advance();

@@ -2280,6 +2280,9 @@ namespace FadeBasic.Virtual
                             AddPushInt(_buffer, -1);
                             _buffer.Add(OpCodes.MUL);
                             break;
+                        case UnaryOperationType.BitwiseNot:
+                            _buffer.Add(OpCodes.BITWISE_NOT);
+                            break;
                         default:
                             throw new Exception("Compiler: unsupported unary operaton " + unary.operationType);
                     }
@@ -2333,8 +2336,18 @@ namespace FadeBasic.Virtual
                             _buffer.Add(OpCodes.JUMP_ZERO);
                             break;
                     }
-                    
-                    Compile(op.rhs);
+
+                    switch (op.operationType)
+                    {
+                        // in DarkBasic, the not operator required a RHS even though it was ignored. 
+                        //  for parity's sake, I'll allow it and just never compile the RHS for
+                        //  bitwise nots. 
+                        case OperationType.Bitwise_Not:
+                            break;
+                        default:
+                            Compile(op.rhs);
+                            break;
+                    }
 
                     switch (op.operationType)
                     {
@@ -2386,6 +2399,24 @@ namespace FadeBasic.Virtual
                             // push '1' onto the stack
                             AddPushInt(_buffer, 1);
                             _buffer.Add(OpCodes.GTE);
+                            break;
+                        case OperationType.Bitwise_And:
+                            _buffer.Add(OpCodes.BITWISE_AND);
+                            break;
+                        case OperationType.Bitwise_Or:
+                            _buffer.Add(OpCodes.BITWISE_OR);
+                            break;
+                        case OperationType.Bitwise_Xor:
+                            _buffer.Add(OpCodes.BITWISE_XOR);
+                            break;
+                        case OperationType.Bitwise_Not:
+                            _buffer.Add(OpCodes.BITWISE_NOT);
+                            break;
+                        case OperationType.Bitwise_LeftShift:
+                            _buffer.Add(OpCodes.BITWISE_LEFTSHIFT);
+                            break;
+                        case OperationType.Bitwise_RightShift:
+                            _buffer.Add(OpCodes.BITWISE_RIGHTSHIFT);
                             break;
                         default:
                             throw new NotImplementedException("unknown compiled op code: " + op.operationType);

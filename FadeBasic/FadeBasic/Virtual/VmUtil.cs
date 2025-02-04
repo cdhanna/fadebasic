@@ -100,6 +100,12 @@ namespace FadeBasic.Virtual
             }
         }
 
+        public static int ConvertToInt(ulong rawValue)
+        {
+            var outputRegisterBytes = BitConverter.GetBytes(rawValue);
+            int output = BitConverter.ToInt32(outputRegisterBytes, 0);
+            return output;
+        }
         public static float ConvertToFloat(ulong rawValue)
         {
             var outputRegisterBytes = BitConverter.GetBytes(rawValue);
@@ -821,6 +827,165 @@ namespace FadeBasic.Virtual
                     throw new Exception("Unsupported mod operation");
             }
         }
+
+        public static void Nand(ref VmHeap heap, byte aTypeCode, ReadOnlySpan<byte> aSpan, ReadOnlySpan<byte> bSpan,
+            out ReadOnlySpan<byte> c)
+        {
+            byte[] a = aSpan.ToArray();
+            byte[] b = bSpan.ToArray();
+            switch (aTypeCode)
+            {
+                case TypeCodes.INT:
+                    int aInt = BitConverter.ToInt32(a, 0);
+                    int bInt = BitConverter.ToInt32(b, 0);
+                    int result = ~(aInt & bInt);
+                    c = BitConverter.GetBytes(result);
+                    break;
+                default:
+                    throw new Exception($"Unsupported NAND operation typecode=[{aTypeCode}]");
+            }
+        }
+        
+        public static void BitwiseAnd(
+            ref VmHeap heap, 
+            byte aTypeCode, 
+            ReadOnlySpan<byte> aSpan, 
+            ReadOnlySpan<byte> bSpan,
+            out ReadOnlySpan<byte> c)
+        {
+            byte[] a = aSpan.ToArray();
+            byte[] b = bSpan.ToArray();
+            switch (aTypeCode)
+            {
+                case TypeCodes.INT:
+                    int aInt = BitConverter.ToInt32(a, 0);
+                    int bInt = BitConverter.ToInt32(b, 0);
+                    int result = (aInt & bInt);
+                    c = BitConverter.GetBytes(result);
+                    break;
+                default:
+                    throw new Exception($"Unsupported Bitwise AND operation typecode=[{aTypeCode}]");
+            }
+        }
+        
+        public static void BitwiseOr(
+            ref VmHeap heap, 
+            byte aTypeCode, 
+            ReadOnlySpan<byte> aSpan, 
+            ReadOnlySpan<byte> bSpan,
+            out ReadOnlySpan<byte> c)
+        {
+            byte[] a = aSpan.ToArray();
+            byte[] b = bSpan.ToArray();
+            switch (aTypeCode)
+            {
+                case TypeCodes.INT:
+                    int aInt = BitConverter.ToInt32(a, 0);
+                    int bInt = BitConverter.ToInt32(b, 0);
+                    int result = (aInt | bInt);
+                    c = BitConverter.GetBytes(result);
+                    break;
+                default:
+                    throw new Exception($"Unsupported Bitwise Or operation typecode=[{aTypeCode}]");
+            }
+        }
+        
+        public static void BitwiseXor(
+            ref VmHeap heap, 
+            byte aTypeCode, 
+            ReadOnlySpan<byte> aSpan, 
+            ReadOnlySpan<byte> bSpan,
+            out ReadOnlySpan<byte> c)
+        {
+            byte[] a = aSpan.ToArray();
+            byte[] b = bSpan.ToArray();
+            int aInt = 0;
+            int bInt = 0;
+            int result = 0;
+            switch (aTypeCode)
+            {
+                case TypeCodes.BYTE:
+                    aInt = a[0];
+                    bInt = b[0];
+                    result = (aInt ^ bInt);
+                    c = new ReadOnlySpan<byte>(new byte[] { (byte) result});
+                    break;
+                case TypeCodes.INT:
+                    aInt = BitConverter.ToInt32(a, 0);
+                    bInt = BitConverter.ToInt32(b, 0);
+                    result = (aInt ^ bInt);
+                    c = BitConverter.GetBytes(result);
+                    break;
+                default:
+                    throw new Exception($"Unsupported Bitwise XOR operation typecode=[{aTypeCode}]");
+            }
+        }
+        
+        
+        public static void BitwiseLeftShift(
+            ref VmHeap heap, 
+            byte aTypeCode, 
+            ReadOnlySpan<byte> aSpan, 
+            ReadOnlySpan<byte> bSpan,
+            out ReadOnlySpan<byte> c)
+        {
+            byte[] a = aSpan.ToArray();
+            byte[] b = bSpan.ToArray();
+            switch (aTypeCode)
+            {
+                case TypeCodes.INT:
+                    int aInt = BitConverter.ToInt32(a, 0);
+                    int bInt = BitConverter.ToInt32(b, 0);
+                    int result = (bInt << aInt);
+                    c = BitConverter.GetBytes(result);
+                    break;
+                default:
+                    throw new Exception($"Unsupported Bitwise Leftshift operation typecode=[{aTypeCode}]");
+            }
+        }
+        
+        public static void BitwiseRightShift(
+            ref VmHeap heap, 
+            byte aTypeCode, 
+            ReadOnlySpan<byte> aSpan, 
+            ReadOnlySpan<byte> bSpan,
+            out ReadOnlySpan<byte> c)
+        {
+            byte[] a = aSpan.ToArray();
+            byte[] b = bSpan.ToArray();
+            switch (aTypeCode)
+            {
+                case TypeCodes.INT:
+                    int aInt = BitConverter.ToInt32(a, 0);
+                    int bInt = BitConverter.ToInt32(b, 0);
+                    int result = (bInt >> aInt);
+                    c = BitConverter.GetBytes(result);
+                    break;
+                default:
+                    throw new Exception($"Unsupported Bitwise Rightshift operation typecode=[{aTypeCode}]");
+            }
+        }
+
+        
+        public static void BitwiseNot(
+            ref VmHeap heap, 
+            byte aTypeCode, 
+            ReadOnlySpan<byte> aSpan, 
+            out ReadOnlySpan<byte> c)
+        {
+            byte[] a = aSpan.ToArray();
+            switch (aTypeCode)
+            {
+                case TypeCodes.INT:
+                    int aInt = BitConverter.ToInt32(a, 0);
+                    int result = ~aInt;
+                    c = BitConverter.GetBytes(result);
+                    break;
+                default:
+                    throw new Exception($"Unsupported Bitwise NOT operation typecode=[{aTypeCode}]");
+            }
+        }
+        
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public static void Add(ref VmHeap heap, byte aTypeCode, ReadOnlySpan<byte> aSpan, ReadOnlySpan<byte> bSpan, out ReadOnlySpan<byte> c)
         {
