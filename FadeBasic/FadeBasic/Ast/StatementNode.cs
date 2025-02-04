@@ -168,6 +168,11 @@ namespace FadeBasic.Ast
         public List<IExpressionNode> args = new List<IExpressionNode>();
         public List<int> argMap = new List<int>();
 
+        public CommandStatement()
+        {
+            
+        }
+        
         protected override string GetString()
         {
             var argString = string.Join(",", args.Select(x => x.ToString()));
@@ -181,7 +186,6 @@ namespace FadeBasic.Ast
         public override IEnumerable<IAstVisitable> IterateChildNodes()
         {
             foreach (var arg in args) yield return arg;
-
         }
     }
 

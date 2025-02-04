@@ -7,6 +7,7 @@ using System.Threading.Tasks;
 using FadeBasic;
 using FadeBasic.ApplicationSupport.Project;
 using FadeBasic.Ast;
+using FadeBasic.Json;
 using FadeBasic.Virtual;
 using LSP.Services;
 using Microsoft.Extensions.Logging;
@@ -188,13 +189,15 @@ public class HoverHandler : HoverHandlerBase
         unit.program.Visit(x =>
         {
             var isMatch = x.StartToken == token || x.EndToken == token;
-            if (isMatch)
+            var isInvalidNode = x is ProgramNode;
+            if (isMatch && !isInvalidNode)
             {
                 referencedNodes.Add(x);
             }
         });
 
-        var markdown = $"test [this]({request.TextDocument.Uri.ToString()}#L2%2C4)";
+        // var markdown = $"test [this]({request.TextDocument.Uri.ToString()}#L2%2C4)";
+        var markdown = "";
         if (referencedNodes.Count == 0)
         {
             markdown = "no known node";

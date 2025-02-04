@@ -241,7 +241,7 @@ namespace FadeBasic.Ast.Visitors
                         assignment.expression.EnsureVariablesAreDefined(scope, ctx);
 
                         // and THEN register LHS of the assignemnt (otherwise you can get self-referential stuff)
-                        scope.AddAssignment(assignment, out var implicitDecl);
+                        scope.AddAssignment(assignment, ctx, out var implicitDecl);
                         if (implicitDecl != null)
                         {
                             statements.Insert(i, implicitDecl);
@@ -252,7 +252,7 @@ namespace FadeBasic.Ast.Visitors
                                 fieldRef.EnsureStructField(scope, ctx);
                                 break;
                             case ArrayIndexReference indexRef:
-                                indexRef.EnsureArrayReferenceIsValid(scope);
+                                indexRef.EnsureArrayReferenceIsValid(scope, ctx);
                                 break;
                             default:
                                 break;
@@ -410,7 +410,7 @@ namespace FadeBasic.Ast.Visitors
                     }
                     else
                     {
-                        indexRef.EnsureArrayReferenceIsValid(scope);
+                        indexRef.EnsureArrayReferenceIsValid(scope, ctx);
                     }
 
                     foreach (var rankExpr in indexRef.rankExpressions)
@@ -444,7 +444,7 @@ namespace FadeBasic.Ast.Visitors
 
         }
 
-        static void EnsureArrayReferenceIsValid(this ArrayIndexReference indexRef, Scope scope)
+        static void EnsureArrayReferenceIsValid(this ArrayIndexReference indexRef, Scope scope, EnsureTypeContext ctx)
         {
             if (!scope.TryGetSymbol(indexRef.variableName, out var arraySymbol))
             {
@@ -458,10 +458,14 @@ namespace FadeBasic.Ast.Visitors
                 return;
             }
             var rankMatch = arraySymbol.typeInfo.rank == indexRef.rankExpressions.Count;
+            // foreach (var rankExpr in indexRef.rankExpressions)
+            // {
+            //     rankExpr.EnsureVariablesAreDefined(scope, ctx);
+            // }
             if (!rankMatch)
             {
                 indexRef.Errors.Add(new ParseError(indexRef, ErrorCodes.ArrayCardinalityMismatch));
-            }
+            } 
         }
 
 
@@ -611,7 +615,14 @@ namespace FadeBasic.Ast.Visitors
                             rank = 0,
                         };
                     }
-
+                    foreach (var rankExpr in arrayRef.rankExpressions)
+                    {
+                        rankExpr.EnsureVariablesAreDefined(scope, ctx);
+                        if (rankExpr.ParsedType.type != VariableType.Integer)
+                        {
+                            rankExpr.Errors.Add(new ParseError(rankExpr, ErrorCodes.ArrayRankMustBeInteger));
+                        }
+                    }
                     // arrayRef.ApplyTypeFromSymbol(arraySymbol);
                     // arraySymbol.typeInfo.
                     // arrayRef.ParsedType = arraySymbol.typeInfo; // TODO: this doesn't work if the program isn't complete. partial errors and whatnot

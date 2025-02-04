@@ -1395,7 +1395,8 @@ namespace FadeBasic.Launch
     
     public class DebugServerStreamUtil
     {
-        public const int MAX_MESSAGE_LENGTH = 1024 * 8; // 8kb.
+        // public const int MAX_MESSAGE_LENGTH = 1024 * 8; // 8kb.
+        public const int MAX_MESSAGE_LENGTH = 1024 * 32; // 32kb.
 
         public static void Send<T>(Socket socket, T message)
             where T : IJsonable

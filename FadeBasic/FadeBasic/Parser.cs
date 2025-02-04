@@ -363,7 +363,8 @@ namespace FadeBasic
             }
         }
 
-        public void AddAssignment(AssignmentStatement assignment, out DeclarationStatement implicitDecl)
+        public void AddAssignment(AssignmentStatement assignment, EnsureTypeContext ctx,
+            out DeclarationStatement implicitDecl)
         {
             implicitDecl = null;
             /*
@@ -430,6 +431,15 @@ namespace FadeBasic
                             structName = existingArrSymbol.typeInfo.structName,
                             type = existingArrSymbol.typeInfo.type,
                         };
+
+                        foreach (var arg in indexRef.rankExpressions)
+                        {
+                            arg.EnsureVariablesAreDefined(this, ctx);
+                            if (arg.ParsedType.type != VariableType.Integer)
+                            {
+                                arg.Errors.Add(new ParseError(arg, ErrorCodes.ArrayRankMustBeInteger));
+                            }
+                        }
                         
                         EnforceTypeAssignment(indexRef, assignment.expression.ParsedType, nonArrayVersion, false, out _);
                         indexRef.DeclaredFromSymbol = existingArrSymbol;
@@ -1284,112 +1294,6 @@ namespace FadeBasic
 
         }
 
-        private List<IExpressionNode> ParseCommandArgs(Token token, CommandInfo command)
-        {
-            var argExpressions = new List<IExpressionNode>();
-
-            bool isOpenParen = _stream.Peek.type == LexemType.ParenOpen;
-            if (isOpenParen)
-            {
-                // discard
-                _stream.Advance();
-            }
-
-            void EnsureCloseParen()
-            {
-                if (isOpenParen)
-                {
-                    if (_stream.Advance().type != LexemType.ParenClose)
-                    {
-                        throw new ParserException("Expected to find close paren for command if there is an open paren",
-                            token, _stream.Current);
-                    }
-                }
-            }
-
-            var parsedCount = 0;
-            
-            for (var i = 0; i < command.args.Length; i++)
-            {
-                
-                var argDescriptor = command.args[i];
-                if (argDescriptor.isVmArg) continue;
-                
-                if (argDescriptor.isParams)
-                {
-                    // this must be the last named param, and we read until the end!
-                    // nothing is allowed to pass by reference, on a params
-                    var huntingForMoreArgs = true;
-                    while (huntingForMoreArgs)
-                    {
-                        if (TryParseExpression(out var expr))
-                        {
-                            argExpressions.Add(expr);
-                            // if the next token is a comma, we can keep going!
-                           
-                        }
-                        else if (_stream.Peek.type == LexemType.ArgSplitter)
-                        {
-                            _stream.Advance(); // discard the arg-splitter
-                        }
-                        else
-                        {
-                            huntingForMoreArgs = false;
-                        }
-                    }
-
-                    EnsureCloseParen();
-                    return argExpressions;
-                }
-                
-                if (parsedCount > 0)
-                {
-                    // expect an arg separator
-                    var commaToken = _stream.Peek;
-                    if (commaToken.type != LexemType.ArgSplitter)
-                    {
-                        if (argDescriptor.isOptional)
-                        {
-                            EnsureCloseParen();
-                            return argExpressions;
-                        }
-                        throw new ParserException("Expected a comma to separate args", commaToken);
-                    }
-
-                    _stream.Advance(); // discard the ,
-                }
-                
-                
-                // TODO: check for optional or arity?
-                if (argDescriptor.isRef)
-                {
-                    var variableReference = ParseVariableReference();
-                    argExpressions.Add(new AddressExpression(variableReference, token));
-                }
-                else
-                {
-                    if (TryParseExpression(out var argExpr))
-                    {
-                        argExpressions.Add(argExpr);
-                    } else if (!argDescriptor.isOptional)
-                    {
-                        throw new ParserException("Required arg, but found none", token, _stream.Current);
-                    }
-                }
-                // else if (!argDescriptor.isOptional)
-                // {
-                //     var argExpr = ParseWikiExpression();
-                //     argExpressions.Add(argExpr);
-                // }
-
-                parsedCount++;
-
-            }
-
-            EnsureCloseParen();
-            return argExpressions;
-        }
-
         private IStatementNode ParseStatement(List<IStatementNode> statementGroup, bool consumeEndOfStatement=true)
         {
             IStatementNode Inner()
@@ -1556,11 +1460,12 @@ namespace FadeBasic
                         var commandStatement = new CommandStatement
                         {
                             startToken = token,
-                            endToken = _stream.Current,
+                            endToken = GetLastToken(token, commandArgs),
                             command = command,
                             args = commandArgs,
                             argMap = argMap,
                         };
+                       
                         commandStatement.Errors.AddRange(errors);
                         return commandStatement;
 
@@ -3053,11 +2958,12 @@ namespace FadeBasic
                     outputExpression = new CommandExpression()
                     {
                         startToken = token,
-                        endToken = _stream.Current,
+                        endToken = GetLastToken(token, argExpressions),
                         command = command,
                         args = argExpressions,
                         argMap = argMap
                     };
+                    // outputExpression.EndToken
                     outputExpression.Errors.AddRange(errors);
                     
                     break;
@@ -3179,6 +3085,13 @@ namespace FadeBasic
 
             return outputExpression != null;
         }
-        
+
+        static Token GetLastToken<T>(Token defaultToken, List<T> subList)
+            where T : IAstNode
+        {
+            if (subList?.Count > 0) return subList[subList.Count - 1].EndToken;
+            return defaultToken;
+        }
     }
+    
 }

@@ -2391,6 +2391,43 @@ DIM x(""bug"")
         prog.AssertParseErrors(1);
         Assert.That(errors[0].Display, Is.EqualTo($"[1:6] - {ErrorCodes.ArrayRankMustBeInteger}"));
     }
+    
+    
+    [TestCase("foo$")]
+    [TestCase(@"""toast""")]
+    public void ParseError_Assignment_Array_IndexWrongType_HasError2(string accessor)
+    {
+        var input = $@"
+foo$ = ""bug""
+DIM x(5)
+y = x({accessor})
+";
+        var parser = MakeParser(input);
+        var prog = parser.ParseProgram();
+
+        var errors = prog.GetAllErrors();
+        prog.AssertParseErrors(1);
+        Assert.That(errors[0].Display, Is.EqualTo($"[3:6] - {ErrorCodes.ArrayRankMustBeInteger}"));
+    }
+
+    
+    
+    [TestCase("foo$")]
+    [TestCase(@"""toast""")]
+    public void ParseError_Assignment_Array_IndexWrongType_HasError3(string accessor)
+    {
+        var input = $@"
+foo$ = ""bug""
+DIM x(5)
+x({accessor}) = 3
+";
+        var parser = MakeParser(input);
+        var prog = parser.ParseProgram();
+
+        var errors = prog.GetAllErrors();
+        prog.AssertParseErrors(1);
+        Assert.That(errors[0].Display, Is.EqualTo($"[3:2] - {ErrorCodes.ArrayRankMustBeInteger}"));
+    }
 
     
     [Test]

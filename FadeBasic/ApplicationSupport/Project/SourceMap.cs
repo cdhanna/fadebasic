@@ -42,6 +42,7 @@ public class SourceMap
         
     }
 
+
     public SourceRange GetOriginalRange(TokenRange range)
     {
         var startLocation = GetOriginalLocation(range.start.lineNumber, range.start.charNumber);

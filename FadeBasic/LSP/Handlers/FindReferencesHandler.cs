@@ -59,19 +59,60 @@ public class FindReferencesHandler : ReferencesHandlerBase
         {
             return null; // no token found
         }
+        
+        // use the token to resolve the variable
 
         var referencedNodes = new List<IAstNode>();
         // var x = unit.program.scope.functionTable;
         unit.program.Visit(x =>
         {
-            var isMatch = x.StartToken == token || x.EndToken == token;
+            bool isMatch = false;
+            if (x is VariableRefNode or DeclarationStatement or ArrayIndexReference)
+            {
+                isMatch = x.StartToken == token || x.EndToken == token;
+               
+            } else if (x is FunctionStatement funcStatement)
+            {
+                isMatch = x.StartToken == token || funcStatement.nameToken == token;
+            }
+            
             if (isMatch)
             {
                 referencedNodes.Add(x);
             }
         });
 
-        locations = referencedNodes.Select(x =>
+        if (referencedNodes.Count == 0)
+        {
+            return null;
+            
+        }
+        var expr = referencedNodes[0];
+        
+        // if the user clicked on a reference to the root; this resolves it. 
+        if (expr.DeclaredFromSymbol != null)
+        {
+            expr = expr.DeclaredFromSymbol.source;
+        }
+
+        var discoveredNodes = new List<IAstNode>
+        {
+            // the declaration counts as a reference
+            expr
+        };
+        unit.program.Visit(x =>
+        {
+            if (x.DeclaredFromSymbol != null)
+            {
+                if (x.DeclaredFromSymbol.source == expr)
+                {
+                    discoveredNodes.Add(x);
+                }
+            }
+        });
+        
+        
+        locations = discoveredNodes.Select(x =>
         {
             var source = unit.sourceMap.GetOriginalLocation(x.StartToken);
             return new Location
