@@ -729,6 +729,7 @@ namespace FadeBasic
         public string caseInsensitiveRaw;
         
         public int Length => caseInsensitiveRaw?.Length ?? 0;
+        public int EndCharNumber => charNumber + Length;
         public LexemType type => lexem?.type ?? LexemType.EOF;
         public string Location => $"{lineNumber}:{charNumber}";
         public TokenFlags flags = TokenFlags.None;

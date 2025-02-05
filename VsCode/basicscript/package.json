@@ -1,0 +1,116 @@
+{
+  "name": "fadebasic",
+  "displayName": "fadeBasic",
+  "description": "",
+  "version": "0.0.1",
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "activationEvents": [
+    "onLanguage:fadeBasic",
+    "onDebug"
+  ],
+  "main": "./out/extension.js",
+  "contributes": {
+    "languages": [
+      {
+        "id": "fadeBasic",
+        "extensions": [
+          ".fbasic",
+          ".fb"
+        ],
+        "configuration": "./language.configuration.json"
+      },
+      {
+        "id": "fadeProject"
+      }
+    ],
+    "breakpoints": [
+      {
+        "language": "fadeBasic"
+      }
+    ],
+    "debuggers": [
+      {
+        "type": "fadeBasicDebugger",
+        "label": "Fade Basic Debug",
+        "program": "/Users/chrishanna/Documents/Github/dby/FadeBasic/DAP/bin/Debug/net8.0/DAP",
+        "languages": ["fadeBasic"],
+        "configurationAttributes": {
+          "launch": {
+            "required": ["program"],
+            "properties": {
+              "program": {
+                "type": "string",
+                "description": "Absolute path to a project file.",
+                "default": "none"
+              },
+              "waitForDebugger": {
+                "type": "boolean",
+                "description": "forces the DAP to wait for a debugger attachment",
+                "default": false
+              },
+              "debuggerLogPath": {
+                "type": "string",
+                "description": "when provided, the debug session will overwrite logs to this file. These logs are internal debug logs of the debug session, not the STDOUT from the actual Fade Application",
+                "default": ""
+              },
+              "dapLogPath": {
+                "type": "string",
+                "description": "when provided, the DAP session will overwrite logs to this file. These logs are internal debug logs of the dap program, not the STDOUT from the actual Fade Application",
+                "default": ""
+              }
+            }
+          }
+        }
+      }
+    ],
+    "configuration": [
+      {
+        "title": "Fade Format Settings",
+        "order": 1,
+        "properties": {
+          "conf.language.fade.formatCasing": {
+            "scope": "window",
+            "type": "string",
+            "enum": ["upper", "lower", "ignore"],
+            "markdownEnumDescriptions": [
+              "All keywords will be upper cased when formatting the document.",
+              "All keywords will be lower cased when formatting the document.",
+              "The casing of keywords will be ignored during formatting."
+            ],
+            "enumItemLabels": ["Uppercase Keywords", "Lowercase Keywords", "Ignore casing"],
+            "default": "upper",
+            "markdownDescription": "The _fade_ language has lots of keywords, and idiomatically, they should be upper cased. However, this setting allows the control of the casing during formatting."
+          }
+        }
+      }
+    ]
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run compile",
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./",
+    "pretest": "npm run compile && npm run lint",
+    "lint": "eslint src --ext ts",
+    "test": "vscode-test"
+  },
+  "dependencies": {
+    "vscode-languageclient": "^9.0.1",
+    "vscode-languageserver-protocol": "^3.17.5"
+  },
+  "devDependencies": {
+    "@types/vscode": "^1.85.0",
+    "@types/mocha": "^10.0.6",
+    "@types/node": "18.x",
+    "@typescript-eslint/eslint-plugin": "^6.15.0",
+    "@typescript-eslint/parser": "^6.15.0",
+    "eslint": "^8.56.0",
+    "typescript": "^5.3.3",
+    "@vscode/test-cli": "^0.0.4",
+    "@vscode/test-electron": "^2.3.8"
+  }
+}

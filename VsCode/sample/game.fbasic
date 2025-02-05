@@ -1,0 +1,80 @@
+` TODO: accidentally accessing array that isn't defined, but is a local variable causes no parse erro
+
+hide cursor
+
+global width = console width()
+global height = console height()
+global size = width * height
+dim cells(size)
+dim neighborCounts(size)
+
+init()
+do 
+    sim()
+    draw()
+    wait ms 60
+loop
+
+end
+
+function getIndex(x, y)
+endfunction y * width + x
+
+function init()
+    for i = 0 to size- 1
+        cells(i) = rnd(10) > 6
+    next
+endfunction
+
+function sim()
+    countNeighbors()
+
+    for i = 0 to size - 1
+        count = neighborCounts(i)
+        cell = cells(i)
+        if cell = 1
+            if count = 2 OR count = 3
+                ` stay alive
+            else 
+                ` kill cell
+                cells(i) = 0
+            endif
+        else 
+            if count = 3
+                ` jump alive
+                cells(i) = 1
+            endif
+        endif
+    next 
+endfunction
+
+function countNeighbors()
+    for i = 0 to size - 1
+        count = 0
+
+        ` TODO: small bug about wrapping from right-edge to left-edge... 
+        if i - 1 > 0 AND cells(i-1) = 1 then inc count `left 
+        if i + 1 < size -1 AND cells(i + 1) = 1 then inc count `right
+        if i - width > 0 AND cells(i - width) = 1 then inc count `top
+        if i - width-1 > 0 AND cells(i - (width-1)) = 1 then inc count `top-left
+        if i - width+1 > 0 AND cells(i - (width+1)) = 1 then inc count `top-right
+        if i + width < size-1 AND cells(i + width) = 1 then inc count `low
+        if i + (width-1) < size-1 AND cells(i + (width-1)) = 1 then inc count `low-left
+        if i + width+1 < size-1 AND cells(i + width+1) = 1 then inc count `low-right
+
+        neighborCounts(i) = count
+    next
+endfunction
+
+function draw()
+    cls
+    for x = 0 to width - 1
+        for y = 0 to height - 1
+            set cursor x, y
+            index = getIndex(x, y)
+            cell = cells(index)
+            
+            if (cell = 1) then write "."
+        next
+    next
+endfunction

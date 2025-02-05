@@ -1,0 +1,258 @@
+` TODO: I noticed that I cannot pass a struct ref directly to a function (inc something.x)
+` TODO: I noticed that I cannot return a struct from a function, but I can input one?
+
+hide cursor
+type vector
+    x as integer
+    y as integer
+endtype
+
+black = rgb(0,0,0)
+background = rgb(0, 0, 128)
+foreground = rgb(255, 255, 255)
+
+` the total size of the screen width
+global xMax as integer = console width() 
+
+remstart
+    the total height of the screen
+remend
+global yMax as integer = console height() 
+global xMin as integer = 0
+global yMin as integer = 0
+
+
+global maxSize as integer = xMax * yMax
+global tailLength as integer = 5
+
+global maxInputLength as integer = 1000
+dim queuedInputs(maxInputLength) as vector
+global queuedInputLength as integer
+global inputPtr as integer
+
+dim playerTail(maxSize) as vector
+global playerPosition as vector
+global playerDirection as vector
+playerDirection.x = 1
+
+global foodLength as integer
+global maxFood as integer = 100
+dim food(maxFood) as vector
+
+spawnFood()
+spawnFood()
+spawnFood()
+
+playerPosition.x = xMax / 2
+playerPosition.y = yMax / 2
+for n = 0 to tailLength - 1
+    playerTail(n).x = playerPosition.x - n
+    playerTail(n).y = playerPosition.y
+next
+
+goto title
+
+` toast
+title:
+cls background
+ink console black, background
+set cursor xMax/2-10,yMax/2
+print "It is snake time!!!"
+wait key
+goto mainGame
+
+gameOver:
+set cursor xMax/2-8, yMax / 2
+ink console black, rgb(255, 0, 0)
+print "game over!"
+wait key
+end
+
+mainGame:
+
+yRate = 0
+xRate = 0
+isGameOver = 0
+do
+    if (isGameOver)
+        goto gameOver
+    endif
+
+    cls background
+    ink console foreground, background
+    
+    
+    if upKey()
+        addInput(0, -1)
+    endif
+    if downKey() 
+        addInput(0, 1)
+    endif
+    if rightKey() 
+        addInput(1, 0)
+    endif
+    if leftKey() 
+        addInput(-1, 0)
+    endif
+
+    if queuedInputLength > 0
+        move = queuedInputs(0)
+    
+
+        isKillMove = 0
+        tailProtection = 3
+        for n = 0 to tailProtection
+            if move.x + playerPosition.x = playerTail(n).x and move.y + playerPosition.y = playerTail(n).y
+                isKillMove = 1
+            endif
+        next n
+        if isKillMove = 0
+            downShiftInputs()
+            playerDirection.x = move.x
+            playerDirection.y = move.y
+        endif
+    endif
+
+
+    if xRate = 0 then playerPosition.x = playerPosition.x + playerDirection.x
+    if yRate = 0 then playerPosition.y = playerPosition.y + playerDirection.y
+
+    `is the player hitting a wall?
+    if (playerPosition.x <= xMin or playerPosition.x >= xMax -1 or playerPosition.y <= yMin or playerPosition.y >= yMax - 1) then isGameOver = 1
+    
+    if (playerDirection.y = 0 and xRate = 0) or (playerDirection.x = 0 and yRate = 0)
+        ` shift the tail down
+        for n = tailLength - 1 to 1 step - 1
+            playerTail(n) = playerTail(n - 1)
+            if playerPosition.x = playerTail(n).x and playerPosition.y = playerTail(n).y
+                isGameOver = 1
+            endif
+        next n
+
+        ` add the new data
+        playerTail(0) = playerPosition
+    endif
+
+    for n = 0 to tailLength - 1
+        spot = playerTail(n)
+        draw("*", spot.x, spot.y) `draw tail
+    next
+
+    if playerDirection.x = 0 then inc yRate
+    if playerDirection.y = 0 then inc xRate
+
+    if yRate = 10 then yRate = 0 `magic numbers to make horizontal/vertical speed feel good
+    if xRate = 6 then xRate = 0
+
+    for n = 0 to foodLength - 1
+        f = food(n)
+
+        if playerPosition.x = f.x and playerPosition.y = f.y
+            resapwnFood(n)
+            spawnFood()
+            tailLength = tailLength + 1
+        endif
+
+        draw("F", food(n).x, food(n).y)
+    next n
+
+
+    box("^", xMin, yMax, xMax, yMax) `bottom wall
+    box("-", xMin, yMin, xMax, yMin) `top wall
+    box("|", xMin, yMin, xMin, yMax) ` left wall
+    box("|", xMax, yMin, xMax, yMax) ` right wall
+
+    draw("%", playerPosition.x, playerPosition.y)
+
+    draw("/", xMin, yMin) `top left corner
+    draw("/", xMax, yMax) `bottom right corner
+
+    draw("\\", xMin, yMax)
+    draw("\\", xMax, yMin)
+    `TODO: cannot use \ symbol in string for some reason
+
+    wait ms 12
+loop
+end 
+
+remstart
+### Respawn
+Check [this](out)
+remend
+function resapwnFood(n)
+    food(n).x = 1 + rnd(xMax-2)
+    food(n).y = 1 + rnd(yMax-2)
+endfunction
+
+remstart
+### SpawnFood
+add food to the game 
+
+```
+var x = 3
+```
+remend
+function spawnFood()
+    resapwnFood(foodLength)
+    foodLength = foodLength + 1
+endfunction
+
+function downShiftInputs()
+    for n = 1 to queuedInputLength - 1
+        queuedInputs(n - 1) = queuedInputs(n)
+    next
+    ` TODO: I should be able to INC this variable, but it doesn't work?
+    queuedInputLength = queuedInputLength - 1
+endfunction
+
+remstart
+    queue an input in the `x` and `y` direction.
+    
+    The inputs are queued and processed at a given rate that helps prevent the user from 
+    accidentally submitting a move that would immediate kill the player
+remend
+function addInput(x, y)
+
+    if queuedInputLength > maxInputLength
+        exitfunction
+    endif
+
+    ` we have more input!
+    queuedInputLength = queuedInputLength + 1
+
+    `shift all data down to make room for the new input
+    for n = queuedInputLength - 1 to 1 step - 1
+        if n > 1
+            queuedInputs(n) = queuedInputs(n - 1)
+        endif
+    next n
+
+    ` add the new data
+    queuedInputs(0).x = x
+    queuedInputs(0).y = y
+
+endfunction
+
+remstart
+    write the given `fill$` at position `x0` and `y0`
+remend
+function draw(fill$, x0, y0)
+    set cursor x0, y0
+    write fill$
+endfunction
+
+function box(fill$, x0, y0, x1, y1)
+    for x = x0 to x1 - 1
+        for y = y0 to y1 - 1
+            set cursor x, y
+            write fill$
+        next
+    next x
+endfunction
+
+remstart
+tuna$ AS STRING = multBy2(1)
+FUNCTION multBy2(a)
+    b = a * 2
+ENDFUNCTION b
+remend

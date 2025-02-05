@@ -1,0 +1,52 @@
+CLS
+
+width = CONSOLE WIDTH()
+height = CONSOLE HEIGHT()
+
+GLOBAL size
+IF width < height THEN size = width ELSE size = height
+
+GLOBAL cellCount = size * size
+DIM pieces(cellCount)
+
+PRINT size
+
+initBoard()
+n = pieces(1)
+drawBoard()
+
+FUNCTION drawBoard()
+    FOR x = 0 TO size - 1
+        FOR y = 0 TO size - 1
+SET CURSOR x, y
+index = getIndex(x, y)
+value = pieces(index)
+TEXT$ = getPieceText(value)
+WRITE TEXT$
+NEXT
+NEXT
+ENDFUNCTION
+
+FUNCTION getIndex(x, y)
+ENDFUNCTION x + y * size
+
+FUNCTION getPieceText(value)
+SELECT value
+CASE 0
+EXITFUNCTION "."
+ENDCASE
+CASE 1
+EXITFUNCTION "A"
+ENDCASE
+CASE 2
+EXITFUNCTION "B"
+ENDCASE
+ENDSELECT
+ENDFUNCTION "?"
+
+FUNCTION initBoard()
+FOR x = 0 TO cellCount - 1
+IF RND(100)> 90 THEN pieces(x)= 1
+IF RND(100)> 95 THEN pieces(x)= 2
+NEXT
+ENDFUNCTION

@@ -1,0 +1,23 @@
+{
+    "comments": {
+        "lineComment": "`",
+        "blockComment": [ "remstart", "remend" ]
+    },
+    "brackets": [
+        ["(", ")"]
+    ],
+    "autoClosingPairs": [
+        { "open": "(", "close": ")" },
+        { "open": "\"", "close": "\"", "notIn": ["string"] },
+    ],
+    "surroundingPairs": [
+        ["(", ")"],
+        ["\"", "\""]
+    ],
+    "onEnterRules": [
+        {
+            "beforeText": "^\\s*(?:for|if).*?:\\s*$",
+            "action": { "indent": "indent" }
+        }
+    ]
+}

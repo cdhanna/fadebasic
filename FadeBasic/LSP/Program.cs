@@ -51,6 +51,7 @@ public static class Program
                     options
                         .WithInput(pipeClient.UsePipeReader())
                         .WithOutput(pipeClient.UsePipeWriter())
+                        .WithConfigurationSection("conf.language.fade")
                         .ConfigureLogging(
                             x => x
                                 .AddSerilog(Log.Logger)
@@ -84,6 +85,8 @@ public static class Program
                         .WithHandler<TextDocumentSyncHandler>()
                         .WithHandler<ProjectTextDocumentSyncHandler>()
                         .WithHandler<FormattingHandler>()
+                        .WithHandler<FormattingWhenTypingHandler>()
+                        .WithHandler<FormattingRangeHandler>()
                         .WithHandler<GotoDefinitionHandler>()
                         .WithHandler<FindReferencesHandler>()
                         .WithHandler<HoverHandler>()

@@ -1,0 +1,78 @@
+red = rgb(255, 0, 0)
+green = rgb(0, 255, 0)
+black = rgb(0,0,0)
+darkblue = rgb(0,0,128)
+
+background = green
+foreground = red
+
+global xMax as integer
+global yMax as integer
+global xMin as integer
+global yMin as integer
+
+xMax = console width() - 1
+xMin = 10
+yMax = console height() - 1
+yMin = 1
+
+xDelta = 1
+ink console foreground, background
+
+type vector
+    x as float
+    y as float
+endtype
+
+type object 
+    pos as vector
+    vel as vector
+    speed as float
+endtype
+
+player as object
+
+player.pos.x = xMax / 2
+player.pos.y = yMax / 2
+
+do
+    cls background
+
+    if rightKey()
+        player.vel.x = 1
+    endif
+    if leftKey()
+        player.vel.x = -1
+    endif
+    if downKey()
+        player.vel.y = 1
+    endif
+    if upKey()
+        player.vel.y = -1
+    endif
+
+    player.pos.x = player.pos.x + player.vel.x
+    player.pos.y = player.pos.y + player.vel.y * .5
+
+    player.vel.x = player.vel.x * .8
+    player.vel.y = player.vel.y * .8
+
+    ink console red, background
+    box("X", player.pos.x, player.pos.y, player.pos.x + 2, player.pos.y + 2)
+
+    ink console black, background
+    box(".", xMin, yMax, xMax - 1, yMax)
+    box(".", xMin, 0, xMax - 1, 0)
+
+    wait ms 60
+loop
+
+
+function box(fill$, x0, y0, x1, y1)
+    for x = x0 to x1 - 1
+        for y = y0 to y1 - 1
+            set cursor x, y
+            write fill$
+        next
+    next x
+endfunction
