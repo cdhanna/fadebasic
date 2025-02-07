@@ -104,7 +104,7 @@ export async function activate(context: vscode.ExtensionContext) {
 		args: [
 			lspPath
 		],
-		transport: TransportKind.pipe
+		transport: TransportKind.stdio
 	}
 	logMessage('fade LSP config', config)
 	

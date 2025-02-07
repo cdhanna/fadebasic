@@ -22,8 +22,10 @@ public static class Program
         {
             var connectionCts = new CancellationTokenSource();
             var pipeAddr = "";
+            var isStdio = false; // doesn't DO anything yet.
             foreach (var t in args)
             {
+                if (t.StartsWith("--stdio")) isStdio = true;
                 if (!t.StartsWith("--pipe=")) continue;
 
                 pipeAddr = t.Substring("--pipe=".Length);
@@ -33,7 +35,7 @@ public static class Program
             Log.Logger = new LoggerConfiguration()
                 .Enrich.FromLogContext()
                 .WriteTo.File("log.txt", rollingInterval: RollingInterval.Day)
-                .WriteTo.Console()
+                // .WriteTo.Console()
                 .MinimumLevel.Information()
                 .CreateLogger();
 
@@ -43,16 +45,21 @@ public static class Program
                 Log.Logger.Information($" arg {i}=[{args[i]}]");
             }
 
-            var pipeClient = new NamedPipeClientStream(pipeAddr);
-            Log.Logger.Information(" created pipe client");
-            try
+            NamedPipeClientStream pipeClient = null;
+
+            if (!string.IsNullOrEmpty(pipeAddr))
             {
-                await pipeClient.ConnectAsync(TimeSpan.FromSeconds(10), connectionCts.Token);
-            }
-            catch (Exception ex)
-            {
-                Log.Logger.Error($"failed to connect to pipe in time. message=[{ex.Message}]");
-                throw;
+                pipeClient = new NamedPipeClientStream(pipeAddr);
+                Log.Logger.Information(" created pipe client");
+                try
+                {
+                    await pipeClient.ConnectAsync(TimeSpan.FromSeconds(10), connectionCts.Token);
+                }
+                catch (Exception ex)
+                {
+                    Log.Logger.Error($"failed to connect to pipe in time. message=[{ex.Message}]");
+                    throw;
+                }
             }
 
             Log.Logger.Information(" connected.");
@@ -69,9 +76,22 @@ public static class Program
                             Log.Logger.Information("ERROR YO!!!!" + ex.GetType().Name + " : " + ex.Message +
                                                    " :: " + ex.StackTrace);
                         };
+                        if (pipeClient != null)
+                        {
+                            options = options
+                                .WithInput(pipeClient.UsePipeReader())
+                                .WithOutput(pipeClient.UsePipeWriter());
+                        }
+                        else
+                        {
+                            options = options
+                                .WithInput(Console.OpenStandardInput())
+                                .WithOutput(Console.OpenStandardOutput());
+                        }
+
                         options
-                            .WithInput(pipeClient.UsePipeReader())
-                            .WithOutput(pipeClient.UsePipeWriter())
+                                
+                            
                             .WithConfigurationSection("conf.language.fade")
                             .ConfigureLogging(
                                 x => x
