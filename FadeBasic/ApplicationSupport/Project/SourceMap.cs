@@ -87,7 +87,7 @@ public class SourceMap
         }
 
         
-        throw new NotSupportedException("given range was not found in sourcemap");
+        throw new NotSupportedException($"given range was not found in sourcemap. line=[{lineNumber}] char=[{charNumber}] fileRange-count=[{fileRanges.Count}]");
 
     }
 

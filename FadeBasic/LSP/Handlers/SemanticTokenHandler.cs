@@ -116,7 +116,7 @@ public class SemanticTokenHandler : SemanticTokensHandlerBase
             {
                 _logger.LogError(sourceMap.fullSource);
                 _logger.LogError("File Ranges");
-                _logger.LogError(string.Join(",", sourceMap.fileRanges.Select((name, range) => $"[{name}] -> {range}")));
+                _logger.LogError(string.Join(",", sourceMap.fileRanges.Select(kvp => $"[{kvp.Item1}] -> {kvp.Item2}")));
                 
                 _logger.LogError("File To Ranges");
                 _logger.LogError(string.Join(",", sourceMap._fileToRange.Select(kvp => $"[{kvp.Key}] -> {kvp.Value}")));
