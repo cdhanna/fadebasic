@@ -22,8 +22,8 @@ public struct SourceLocation
 public class SourceMap
 {
     public List<(string, Range)> fileRanges = new List<(string, Range)>();
-    private Dictionary<string, Range> _fileToRange = new Dictionary<string, Range>();
-    private Dictionary<int, List<Token>> _lineToTokens = new Dictionary<int, List<Token>>();
+    public Dictionary<string, Range> _fileToRange = new Dictionary<string, Range>();
+    public Dictionary<int, List<Token>> _lineToTokens = new Dictionary<int, List<Token>>();
     public string fullSource;
     
     public SourceMap()
@@ -86,6 +86,7 @@ public class SourceMap
             }
         }
 
+        
         throw new NotSupportedException("given range was not found in sourcemap");
 
     }

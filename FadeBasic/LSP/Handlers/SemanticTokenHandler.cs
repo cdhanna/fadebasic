@@ -1,8 +1,11 @@
 using System;
 using System.IO;
+using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using FadeBasic;
+using FadeBasic.ApplicationSupport.Project;
+using FadeBasic.Json;
 using LSP.Services;
 using Microsoft.Extensions.Logging;
 using OmniSharp.Extensions.LanguageServer.Protocol;
@@ -51,6 +54,7 @@ public class SemanticTokenHandler : SemanticTokensHandlerBase
     protected override async Task Tokenize(SemanticTokensBuilder builder, ITextDocumentIdentifierParams identifier,
         CancellationToken cancellationToken)
     {
+        SourceMap sourceMap = null;
         try
         {
             if (!_compiler.TryGetProjectsFromSource(identifier.TextDocument.Uri, out var units))
@@ -60,7 +64,7 @@ public class SemanticTokenHandler : SemanticTokensHandlerBase
             }
 
             var unit = units[0]; // TODO: how should a project be tokenized if it belongs to more than 1 project? 
-            
+            sourceMap = unit.sourceMap;
             var emptyMods = Array.Empty<SemanticTokenModifier>();
 
             
@@ -103,7 +107,23 @@ public class SemanticTokenHandler : SemanticTokensHandlerBase
         }
         catch (Exception ex)
         {
-            _logger.LogError("TOKEN ERR " + ex.Message);
+            _logger.LogError($"TOKEN ERR type=[{ex.GetType().Name}] message=[{ex.Message}] stack=[{ex.StackTrace}]" );
+            if (sourceMap == null)
+            {
+                _logger.LogError(" No source map exists");
+            }
+            else
+            {
+                _logger.LogError(sourceMap.fullSource);
+                _logger.LogError("File Ranges");
+                _logger.LogError(string.Join(",", sourceMap.fileRanges.Select((name, range) => $"[{name}] -> {range}")));
+                
+                _logger.LogError("File To Ranges");
+                _logger.LogError(string.Join(",", sourceMap._fileToRange.Select(kvp => $"[{kvp.Key}] -> {kvp.Value}")));
+                
+                _logger.LogError("Line To TOkens");
+                _logger.LogError(string.Join(",", sourceMap._lineToTokens.Select(kvp => $"[{kvp.Key}] -> {string.Join("|", kvp.Value.Select(t => t.Jsonify()))}")));
+            }
         }
         finally
         {
