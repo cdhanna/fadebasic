@@ -1,6 +1,7 @@
 // The module 'vscode' contains the VS Code extensibility API
 // Import the module and reference it with the alias vscode in your code below
 import * as vscode from 'vscode';
+import * as util from 'util';
 import { workspace, DebugAdapterDescriptorFactory, ProviderResult, DebugConfigurationProvider} from 'vscode';
 import {
 	Executable,
@@ -11,6 +12,14 @@ import {
 	Trace
 } from 'vscode-languageclient/node';
 let client: LanguageClient;
+let outputChannel: vscode.OutputChannel;
+
+function logMessage(...args: any[]) {
+    if (outputChannel) {
+        const message = util.format(...args); // Formats like console.log
+        outputChannel.appendLine(message);
+    }
+}
 
 // This method is called when your extension is activated
 // Your extension is activated the very first time the command is executed
@@ -18,7 +27,13 @@ export async function activate(context: vscode.ExtensionContext) {
 
 	// Use the console to output diagnostic information (console.log) and errors (console.error)
 	// This line of code will only be executed once when your extension is activated
-	console.log('starting fade basic extensions...')
+	
+	outputChannel = vscode.window.createOutputChannel("FadeBasic Logs");
+    context.subscriptions.push(outputChannel);
+
+    outputChannel.appendLine("FadeBasic extension activated.");
+	
+	logMessage('starting fade basic extensions...')
 	var workspaceConfig = vscode.workspace.getConfiguration('conf.language.fade');
 
 
@@ -26,7 +41,7 @@ export async function activate(context: vscode.ExtensionContext) {
 	var lspPath : string = vscode.Uri.joinPath(context.extensionUri, 'out', 'tools', 'LSP.dll').fsPath
 	var dapPath : string = vscode.Uri.joinPath(context.extensionUri, 'out', 'tools', 'DAP.dll').fsPath
 
-	console.log(`Fade Basic extension is running. dotnetPath=[${dotnetPath}] lspPath=[${lspPath}] dapPath=[${dapPath}]`);
+	logMessage(`Fade Basic extension is running. dotnetPath=[${dotnetPath}] lspPath=[${lspPath}] dapPath=[${dapPath}]`);
 
 
 	vscode.workspace.onDidChangeConfiguration(event => {
@@ -52,26 +67,26 @@ export async function activate(context: vscode.ExtensionContext) {
 	
 	context.subscriptions.push(vscode.commands.registerCommand('extension.fadeBasic.getProgramName', async config => {
 		
-		console.log('picking name', config)
+		logMessage('picking name', config)
 		var path = config["program"];
 		var possibleFiles = (await vscode.workspace.findFiles("*.csproj")).map(u => vscode.workspace.asRelativePath(u));
 		var fileUris = await possibleFiles;
 		
-		console.log('found files', fileUris)
+		logMessage('found files', fileUris)
 		if (fileUris.length == 1){
-			console.log('using automatic resolution')
+			logMessage('using automatic resolution')
 			return fileUris[0];
 		}
 
 		var res = vscode.window.showQuickPick(fileUris, {
 			canPickMany: false
 		});
-		console.log('picked', res)
+		logMessage('picked', res)
 		return res;
 	
 	}));
 
-	console.log('Registered DAP')
+	logMessage('Registered DAP')
 	// let path = '/Users/chrishanna/Documents/Github/dby/DarkBasicYo/LSP/bin/Debug/net7.0/LSP.dll'
 	
 	// let config: Executable = {
@@ -91,7 +106,7 @@ export async function activate(context: vscode.ExtensionContext) {
 		],
 		transport: TransportKind.pipe
 	}
-	console.log('fade LSP config', config)
+	logMessage('fade LSP config', config)
 	
 	const serverOptions: ServerOptions = {
 		run: config, debug: config
@@ -124,20 +139,21 @@ export async function activate(context: vscode.ExtensionContext) {
 	client.registerProposedFeatures();
     client.setTrace(Trace.Off);
 	if (client.isRunning()){
-		console.log('service is already running');
+		logMessage('service is already running');
 		
 	} else {
+		logMessage('starting LSP');
 		await client.start();
-
+		logMessage('started LSP');
 	}
 }
 
 // This method is called when your extension is deactivated
 export async function deactivate() {
-	console.log('extension is shutting down');
+	logMessage('extension is shutting down');
 	await client.stop()
 	await client.dispose()
-	console.log('extension has shut down');
+	logMessage('extension has shut down');
 }
 
 class FadeBasicDebugger implements DebugAdapterDescriptorFactory
@@ -172,7 +188,7 @@ class FadeBasicDebugger implements DebugAdapterDescriptorFactory
 		executable = new vscode.DebugAdapterExecutable(this.dotnetPath, [this.dapPath], {
 			env: env
 		});
-		console.log('starting fade debugger', this.dotnetPath, _session.configuration)
+		logMessage('starting fade debugger', this.dotnetPath, _session.configuration)
 		return executable;
 	}
 }
