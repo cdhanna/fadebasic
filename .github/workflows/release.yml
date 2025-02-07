@@ -25,11 +25,11 @@ on:
 
 run-name: Release
 jobs:
-  nuget:
+  release:
     timeout-minutes: 10
     runs-on: ubuntu-latest
     concurrency:
-      group: release-nuget
+      group: release
       cancel-in-progress: true
     steps:
     
@@ -49,7 +49,8 @@ jobs:
         run: npm install -g @vscode/vsce
 
       - name: Run Build Script
-        run: sh ./FadeBasic/install.sh ${{ github.event.inputs.majorNumber }}.${{ github.event.inputs.minorNumber }}.${{ github.event.inputs.patchNumber }} 1 ${{ secrets.NUGET_HOST }} ${{ secrets.NUGET_API_KEY }}
+        working-directory: ./FadeBasic
+        run: sh ./install.sh ${{ github.event.inputs.majorNumber }}.${{ github.event.inputs.minorNumber }}.${{ github.event.inputs.patchNumber }} 1 ${{ secrets.NUGET_HOST }} ${{ secrets.NUGET_API_KEY }}
     
       - name: Run VsCode Scripts
         working-directory: ./VsCode/basicscript
