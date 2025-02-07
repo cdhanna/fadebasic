@@ -12,6 +12,7 @@ namespace FadeBasic.Launch
     public class RemoteDebugSession
     {
         private readonly int _port;
+        private readonly Action<string> _logger;
 
         private ConcurrentQueue<DebugMessage> outboundMessages = new ConcurrentQueue<DebugMessage>();
         private ConcurrentQueue<DebugMessage> inboundMessages = new ConcurrentQueue<DebugMessage>();
@@ -28,9 +29,11 @@ namespace FadeBasic.Launch
         public Action Exited;
         public Action<string> RuntimeException;
         
-        public RemoteDebugSession(int port)
+        public RemoteDebugSession(int port, Action<string> logger=null)
         {
+            
             _port = port;
+            _logger = logger ?? (_ => { });
             _cts = new CancellationTokenSource();
         }
 
@@ -45,6 +48,7 @@ namespace FadeBasic.Launch
                 var detail = JsonableExtensions.FromJson<HelloResponseMessage>(result.RawJson);
                 RemoteProcessId = detail.processId;
             });
+            _logger($"connecting to debug session now at port=[{_port}]");
             DebugServerStreamUtil.ConnectToServer2(_port, outboundMessages, inboundMessages, _cts.Token);
         }
 
@@ -54,6 +58,7 @@ namespace FadeBasic.Launch
             {
                 while (inboundMessages.TryDequeue(out var message))
                 {
+                    _logger($"got raw message=[{message.RawJson}]");
 
                     if (message.id < 0)
                     {

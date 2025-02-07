@@ -96,7 +96,7 @@ public partial class FadeDebugAdapter : DebugAdapterBase
             startReq.Env[LaunchOptions.ENV_DEBUG_LOG_PATH] = _debuggerLogPath;
         }
         
-        _session = new RemoteDebugSession(port);
+        _session = new RemoteDebugSession(port, _logger.Log);
 
         _session.HitBreakpointCallback = () =>
         {
