@@ -61,8 +61,8 @@ public class DocumentService
             content = File.ReadAllText(file);
             SetSourceDocument(uri, content);
         }
-
-        return content.Split(Environment.NewLine);
+        
+        return content.SplitNewLines();
     }
 
     public void Populate(DocumentUri rootUri)

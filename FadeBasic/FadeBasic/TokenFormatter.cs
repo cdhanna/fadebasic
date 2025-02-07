@@ -38,8 +38,8 @@ namespace FadeBasic
     {
         public static string ApplyEdits(string src, List<TokenFormatEdit> edits)
         {
-            var lines = src.Split(new string[]{Environment.NewLine}, StringSplitOptions.None);
-            
+            // var lines = src.Split(new string[]{Environment.NewLine}, StringSplitOptions.None);
+            var lines = src.SplitNewLines();
             // apply the edits backwards so that they don't interfere with the indexes of other edits. 
             for (var i = edits.Count - 1 ; i >= 0; i --)
             {

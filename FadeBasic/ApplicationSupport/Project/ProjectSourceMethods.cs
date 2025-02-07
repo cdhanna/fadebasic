@@ -8,7 +8,7 @@ public static class ProjectSourceMethods
     {
         if (reader == null)
         {
-            reader = File.ReadAllLines;
+            reader = (path) => File.ReadAllText(path).SplitNewLines();
         }
         
         var sb = new StringBuilder();
