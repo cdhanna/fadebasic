@@ -15,10 +15,6 @@ OUTPUT_FOLDER="bin/artifacts_${SEM_VER}"
 # the actual command fragment for the nuget push command. If a parameter is provided, prepend "--api-key", otherwise, empty string so that no api key is given to nuget.
 NUGET_KEY_STR=${PACKAGE_SOURCE_API_KEY:+"--api-key $PACKAGE_SOURCE_API_KEY"}
 
-# the cache location is where the old nuget packages are stored on your machine. We need to delete them for local projects to update.
-CACHE_LOCATION=$(dotnet nuget locals global-packages -l)
-CACHE_LOCATION=${CACHE_LOCATION:17}
-
 echo "cleaning old output folders..."
 sudo rm -rf $OUTPUT_FOLDER
 
@@ -42,14 +38,7 @@ sudo dotnet pack ./FadeBuildTasks $PACK_ARGS
 sudo dotnet build ./LSP -o ../VsCode/basicscript/out/tools
 sudo dotnet build ./DAP -o ../VsCode/basicscript/out/tools
 
-# remove packages we don't actually want...
-#rm -f $OUTPUT_FOLDER/Benchmarks.*
-#rm -f $OUTPUT_FOLDER/LSP.*
-
 # install nuget packages to source
 echo "pushing packages to nuget source, ${PACKAGE_SOURCE}"
 sudo dotnet nuget push $OUTPUT_FOLDER/*.$BUILD_NUMBER.nupkg --source $PACKAGE_SOURCE $NUGET_KEY_STR
 
-# clear cache
-#echo "removing nuget cache files"
-#rm -rf $CACHE_LOCATION/fadebasic.core/$SEM_VER || true
