@@ -23,7 +23,7 @@ on:
         required: true
         default: 0
 
-run-name: Release
+run-name:  Release ${{ inputs.majorSemver }}.${{ inputs.minorSemver }}.${{ inputs.patchSemver }} by @${{ github.actor }}
 jobs:
   release:
     timeout-minutes: 10
@@ -50,12 +50,12 @@ jobs:
 
       - name: Run Build Script
         working-directory: ./FadeBasic
-        run: sh ./install.sh ${{ github.event.inputs.majorNumber }}.${{ github.event.inputs.minorNumber }}.${{ github.event.inputs.patchNumber }} 1 ${{ secrets.NUGET_HOST }} ${{ secrets.NUGET_API_KEY }}
+        run: sh ./install.sh "${{ inputs.majorNumber }}.${{ inputs.minorNumber }}.${{ inputs.patchNumber }}" 1 ${{ secrets.NUGET_HOST }} ${{ secrets.NUGET_API_KEY }}
     
       - name: Run VsCode Scripts
         working-directory: ./VsCode/basicscript
         run: |
           npm install
-          npm version ${{ github.event.inputs.majorNumber }}.${{ github.event.inputs.minorNumber }}.${{ github.event.inputs.patchNumber }}
+          npm version "${{ inputs.majorNumber }}.${{ inputs.minorNumber }}.${{ inputs.patchNumber }}"
           vsce publish -p ${{ secrets.VS_CODE_AZURE_PAT }}
 
