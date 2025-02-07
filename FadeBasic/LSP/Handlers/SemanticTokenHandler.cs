@@ -116,10 +116,10 @@ public class SemanticTokenHandler : SemanticTokensHandlerBase
             {
                 _logger.LogError(sourceMap.fullSource);
                 _logger.LogError("File Ranges");
-                _logger.LogError(string.Join(",", sourceMap.fileRanges.Select(kvp => $"[{kvp.Item1}] -> {kvp.Item2}")));
+                _logger.LogError(string.Join(",", sourceMap.fileRanges.Select(kvp => $"[{kvp.Item1}] -> {kvp.Item2.Start} to {kvp.Item2.End}")));
                 
                 _logger.LogError("File To Ranges");
-                _logger.LogError(string.Join(",", sourceMap._fileToRange.Select(kvp => $"[{kvp.Key}] -> {kvp.Value}")));
+                _logger.LogError(string.Join(",", sourceMap._fileToRange.Select(kvp => $"[{kvp.Key}] -> {kvp.Value.Start} to {kvp.Value.End}")));
                 
                 _logger.LogError("Line To TOkens");
                 _logger.LogError(string.Join(",", sourceMap._lineToTokens.Select(kvp => $"[{kvp.Key}] -> {string.Join("|", kvp.Value.Select(t => t.Jsonify()))}")));

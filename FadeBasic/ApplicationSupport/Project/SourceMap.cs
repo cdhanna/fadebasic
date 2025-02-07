@@ -87,7 +87,13 @@ public class SourceMap
         }
 
         
-        throw new NotSupportedException($"given range was not found in sourcemap. line=[{lineNumber}] char=[{charNumber}] fileRange-count=[{fileRanges.Count}]");
+        throw new NotSupportedException($@"given range was not found in sourcemap. 
+line=[{lineNumber}] char=[{charNumber}] fileRange-count=[{fileRanges.Count}]
+
+file-ranges=[{string.Join(",",fileRanges.Select(kvp => $"({kvp.Item2.Start},{kvp.Item2.End})"))}]
+full-source=[{fullSource}]
+
+");
 
     }
 
