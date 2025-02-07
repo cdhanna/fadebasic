@@ -189,7 +189,7 @@ namespace FadeBasic.Lib.Standard
         [FadeBasicCommand("console width")]
         public static int ConsoleWidth()
         {
-            return Console.LargestWindowWidth;
+            return Console.WindowWidth;
         }
         
         /// <summary>
@@ -199,7 +199,7 @@ namespace FadeBasic.Lib.Standard
         [FadeBasicCommand("console height")]
         public static int ConsoleHeight()
         {
-            return Console.LargestWindowHeight;
+            return Console.WindowHeight;
         }
     }
 }
