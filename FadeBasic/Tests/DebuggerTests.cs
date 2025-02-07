@@ -312,7 +312,7 @@ b2 = 2
         session.StartServer();
         
         session.StartDebugging(2);
-        Assert.That(session.InstructionPointer, Is.EqualTo(0),
+        Assert.That(session.InstructionPointer, Is.EqualTo(4),
             "because the client has not connected yet, the program should not have run at all, even through there was budget");
         
         var remote = new RemoteDebugSession(port);
@@ -321,11 +321,11 @@ b2 = 2
         await Task.Delay(100); // fluff time for the connection to happen...
         
         session.StartDebugging(1);
-        Assert.That(session.InstructionPointer, Is.EqualTo(0),
+        Assert.That(session.InstructionPointer, Is.EqualTo(4),
             "Exactly 1 op will let the debugger attach, but the program counter has no budget left");
         
         session.StartDebugging(2);
-        Assert.That(session.InstructionPointer, Is.EqualTo(8),
+        Assert.That(session.InstructionPointer, Is.EqualTo(12),
             "I happen to know that 2 is a magical number of budget to yield 8 as an instruction index...");
 
         
@@ -340,7 +340,7 @@ b2 = 2
             await Task.Delay(100); // fluff time for the ack to emit
 
             Assert.That(receivedConf, Is.True);
-            Assert.That(session.InstructionPointer, Is.EqualTo(8),
+            Assert.That(session.InstructionPointer, Is.EqualTo(12),
                 "The debugger should be paused, so the insptr should not have moved from last time.");
         }
         
@@ -362,7 +362,7 @@ b2 = 2
             session.StartDebugging(2); // read the message (1 op for the read, and 1 op to move the debugger forward)
             await Task.Delay(100); // fluff time for the ack to emit
             Assert.That(receivedConf, Is.True);
-            Assert.That(session.InstructionPointer, Is.EqualTo(16),
+            Assert.That(session.InstructionPointer, Is.EqualTo(20),
                 "The debugger should be paused, so the insptr should not have moved from last time.");
         }
 

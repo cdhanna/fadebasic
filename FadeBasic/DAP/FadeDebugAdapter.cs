@@ -80,7 +80,7 @@ public partial class FadeDebugAdapter : DebugAdapterBase
         var port = LaunchUtil.FreeTcpPort();
         var startReq = new RunInTerminalRequest(path, new List<string>
         {
-            "dotnet", "run", _fileName, "-p:FadeBasicDebug=true"
+            DAPEnv.DotnetPath, "run", "--project", _fileName, "-p:FadeBasicDebug=true"
         });
         
         startReq.Kind = RunInTerminalArguments.KindValue.Integrated;
@@ -90,8 +90,11 @@ public partial class FadeDebugAdapter : DebugAdapterBase
         {
             [LaunchOptions.ENV_ENABLE_DEBUG] = "true",
             [LaunchOptions.ENV_DEBUG_PORT] = port,
-            [LaunchOptions.ENV_DEBUG_LOG_PATH] = _debuggerLogPath
         };
+        if (!string.IsNullOrEmpty(_debuggerLogPath))
+        {
+            startReq.Env[LaunchOptions.ENV_DEBUG_LOG_PATH] = _debuggerLogPath;
+        }
         
         _session = new RemoteDebugSession(port);
 

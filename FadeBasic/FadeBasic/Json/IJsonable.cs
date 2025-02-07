@@ -289,10 +289,14 @@ namespace FadeBasic.Json
                         }
                         else
                         {
-                            if (next != JsonConstants.QUOTE)
+                            switch (next)
                             {
-                                throw new NotSupportedException(
-                                    "hit escape character, but found no quote. Add support for more escape chars");
+                                case JsonConstants.QUOTE:
+                                case JsonConstants.ESCAPE:
+                                    break;
+                                default:
+                                    throw new NotSupportedException(
+                                        "hit escape character, but found no character that requires escaping. Add support for more escape chars");
                             }
                         }
                     } else if (curr == JsonConstants.QUOTE)
@@ -310,7 +314,23 @@ namespace FadeBasic.Json
                         var c = field[i];
                         switch (c)
                         {
+                            // case JsonConstants.QUOTE:
                             case JsonConstants.ESCAPE:
+                                // peek at the next character... 
+                                //
+                                if (i + 1 < field.Length)
+                                {
+                                    var peek = field[i + 1];
+                                    switch (peek)
+                                    {
+                                        // skip certain characters? 
+                                        case JsonConstants.ESCAPE:
+                                            buffer.Append(c);
+                                            i++;
+                                            break;
+                                    }
+                                }
+                                
                                 // skip
                                 break;
                             default:
@@ -554,6 +574,13 @@ namespace FadeBasic.Json
                         case '\"':
                             _sb.Append("\\\"");
                             break;
+                        case '\\':
+                            // if (i + 1 < fieldValue.Length)
+                            // {
+                            //     // if (fieldValue)
+                            // }
+                            _sb.Append("\\\\");
+                            break;
                         default:
                             _sb.Append(c);
                             break;
@@ -652,6 +679,7 @@ namespace FadeBasic.Json
                 // subOp.IncludeField(kvp.ToString(), ref val);
             }
             _sb.Append(JsonConstants.CLOSE_BRACKET);
+            fieldCount++;
 
         }
 
@@ -709,6 +737,8 @@ namespace FadeBasic.Json
                 }
             }
             _sb.Append(JsonConstants.CLOSE_ARRAY);
+            fieldCount++;
+
         }
 
         public void IncludeField<T>(string name, ref Dictionary<int, T> fieldValue) where T : IJsonable, new()
@@ -743,6 +773,7 @@ namespace FadeBasic.Json
                 // subOp.IncludeField(kvp.ToString(), ref val);
             }
             _sb.Append(JsonConstants.CLOSE_BRACKET);
+            fieldCount++;
 
             
         }
@@ -779,6 +810,7 @@ namespace FadeBasic.Json
                 // subOp.IncludeField(kvp.ToString(), ref val);
             }
             _sb.Append(JsonConstants.CLOSE_BRACKET);
+            fieldCount++;
 
         }
     }

@@ -220,6 +220,12 @@ namespace FadeBasic.Virtual
         /// Reads a value from the stack, and does nothing with it.
         /// </summary>
         public const byte DISCARD = 15;
+        
+        /// <summary>
+        /// Similar to <see cref="DISCARD"/>, but reads a type-code,
+        ///  and then discards the amount of bytes equal to the size of the given type
+        /// </summary>
+        public const byte DISCARD_TYPED = 55;
 
         /// <summary>
         /// Reads a ptr value from the stack, and that ptr is used as a heap address. The result on the stack is the length (in bytes) of the allocation on the heap

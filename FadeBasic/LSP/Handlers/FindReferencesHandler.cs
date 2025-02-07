@@ -67,7 +67,7 @@ public class FindReferencesHandler : ReferencesHandlerBase
         unit.program.Visit(x =>
         {
             bool isMatch = false;
-            if (x is VariableRefNode or DeclarationStatement or ArrayIndexReference)
+            if (x is VariableRefNode or DeclarationStatement or ArrayIndexReference or LabelDeclarationNode or GoSubStatement or GotoStatement)
             {
                 isMatch = x.StartToken == token || x.EndToken == token;
                

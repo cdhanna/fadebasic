@@ -194,6 +194,7 @@ namespace FadeBasic
         public static readonly ErrorCode InvalidCast = "[0301] Expression cannot be cast to given type";
         public static readonly ErrorCode AmbiguousFunctionReturnType = "[0302] Function has ambiguous return type";
         public static readonly ErrorCode UnknowableFunctionReturnType = "[0303] Function has no inferable return type";
+        public static readonly ErrorCode InvalidFunctionReturnType = "[0304] Functions cannot return arrays";
     }
 
     public struct ErrorCode

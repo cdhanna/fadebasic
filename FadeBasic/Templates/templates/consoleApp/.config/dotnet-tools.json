@@ -3,7 +3,7 @@
   "isRoot": true,
   "tools": {
     "fadebasic-cli": {
-      "version": "0.13.11.6",
+      "version": "0.13.12.274",
       "commands": [
         "fade"
       ]

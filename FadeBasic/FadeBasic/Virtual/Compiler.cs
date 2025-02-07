@@ -2045,9 +2045,11 @@ namespace FadeBasic.Virtual
         public void Compile(ExpressionStatement statement)
         {
             Compile(statement.expression);
+            
+            
             // nothing happens with the expression, because it isn't being assigned to anything...
             // but we don't know how big the result of the previous expression was... 
-            // _buffer.Add(OpCodes.DISCARD);
+            _buffer.Add(OpCodes.DISCARD_TYPED);
             
             //
             
@@ -2076,6 +2078,7 @@ namespace FadeBasic.Virtual
 
                     if (_options.InternStrings)
                     {
+                        
                         if (!stringToCallingInstructionIndexes.TryGetValue(str, out var indexes))
                         {
                             // capture this string as something that we need to intern... 

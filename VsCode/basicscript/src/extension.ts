@@ -1,8 +1,7 @@
 // The module 'vscode' contains the VS Code extensibility API
 // Import the module and reference it with the alias vscode in your code below
 import * as vscode from 'vscode';
-import { workspace, ExtensionContext, DebugAdapterDescriptorFactory, ProviderResult} from 'vscode';
-import { ConfigurationFeature } from 'vscode-languageclient/lib/common/configuration';
+import { workspace, DebugAdapterDescriptorFactory, ProviderResult, DebugConfigurationProvider} from 'vscode';
 import {
 	Executable,
 	LanguageClient,
@@ -19,23 +18,77 @@ export async function activate(context: vscode.ExtensionContext) {
 
 	// Use the console to output diagnostic information (console.log) and errors (console.error)
 	// This line of code will only be executed once when your extension is activated
-	console.log('Congratulations, your extension "basicscript" is now active!');
+	var workspaceConfig = vscode.workspace.getConfiguration('conf.language.fade');
 
+
+	var dotnetPath: string = workspaceConfig.get('dotnetPath') || 'dotnet';
+	var lspPath : string = vscode.Uri.joinPath(context.extensionUri, 'out', 'tools', 'LSP.dll').fsPath
+	var dapPath : string = vscode.Uri.joinPath(context.extensionUri, 'out', 'tools', 'DAP.dll').fsPath
+
+	console.log(`Fade Basic extension is running. dotnetPath=[${dotnetPath}] lspPath=[${lspPath}] dapPath=[${dapPath}]`);
+
+
+	vscode.workspace.onDidChangeConfiguration(event => {
+		if (event.affectsConfiguration('conf.language.fade.dotnetPath')) {
+			vscode.window
+				.showInformationMessage("This change requires a restart.", "Restart Now")
+				.then(selection => {
+					if (selection === "Restart Now") {
+					vscode.commands.executeCommand("workbench.action.reloadWindow");
+					}
+				});
+		}
+	});
 	// register the DAP similar to the sample, https://github.com/microsoft/vscode-mock-debug/blob/main/src/extension.ts
-	vscode.debug.registerDebugAdapterDescriptorFactory("fadeBasicDebugger", new FadeBasicDebugger())
 	
+	//  the DAP program must be set in the package.json
+	// "program": "/Users/chrishanna/Documents/Github/dby/FadeBasic/DAP/bin/Debug/net8.0/DAP",
+	
+	var dap = new FadeBasicDebugger(dotnetPath, dapPath);
+	
+	vscode.debug.registerDebugAdapterDescriptorFactory("fadeBasicDebugger", dap)
+
+	
+	context.subscriptions.push(vscode.commands.registerCommand('extension.fadeBasic.getProgramName', async config => {
+		
+		console.log('picking name', config)
+		var path = config["program"];
+		var possibleFiles = (await vscode.workspace.findFiles("*.csproj")).map(u => vscode.workspace.asRelativePath(u));
+		var fileUris = await possibleFiles;
+		
+		console.log('found files', fileUris)
+		if (fileUris.length == 1){
+			console.log('using automatic resolution')
+			return fileUris[0];
+		}
+
+		var res = vscode.window.showQuickPick(fileUris, {
+			canPickMany: false
+		});
+		console.log('picked', res)
+		return res;
+	
+	}));
+
 	console.log('Registered DAP')
 	// let path = '/Users/chrishanna/Documents/Github/dby/DarkBasicYo/LSP/bin/Debug/net7.0/LSP.dll'
 	
+	// let config: Executable = {
+	// 	command: '/usr/local/share/dotnet/dotnet',
+	// 	args: [
+	// 		'run',
+	// 		'--project',
+	// 		'/Users/chrishanna/Documents/Github/dby/FadeBasic/LSP'
+	// 	],
+	// 	transport: TransportKind.pipe
+	// }
+		
 	let config: Executable = {
-		command: '/usr/local/share/dotnet/dotnet',
+		command: dotnetPath,
 		args: [
-			'run',
-			'--project',
-			'/Users/chrishanna/Documents/Github/dby/FadeBasic/LSP'
+			lspPath
 		],
 		transport: TransportKind.pipe
-
 	}
 
 	// config.args = [path];
@@ -87,23 +140,39 @@ export async function deactivate() {
 	console.log('extension has shut down');
 }
 
-class FadeBasicDebugger implements DebugAdapterDescriptorFactory 
+class FadeBasicDebugger implements DebugAdapterDescriptorFactory
 {
+	dotnetPath: string;
+	dapPath: string;
+
+	constructor(dotnetPath: string, dapPath: string){
+		this.dotnetPath = dotnetPath;
+		this.dapPath = dapPath;
+	}
+
 	createDebugAdapterDescriptor(_session: vscode.DebugSession, executable: vscode.DebugAdapterExecutable): ProviderResult<vscode.DebugAdapterDescriptor> {
-		
+	
 		var waitForDebugger = _session.configuration.waitForDebugger ?? false;
 		var program = _session.configuration.program;
 		var debuggerLogPath = _session.configuration.debuggerLogPath ?? "";
 		var dapLogPath = _session.configuration.dapLogPath ?? "";
-		executable = new vscode.DebugAdapterExecutable(executable.command, [], {
-			env: {
-				"FADE_PROGRAM": program,
-				"FADE_WAIT_FOR_DEBUG": waitForDebugger,
-				"FADE_DEBUGGER_LOG_PATH": debuggerLogPath,
-				"FADE_DAP_LOG_PATH": dapLogPath
-			}
+
+		var env: any = {
+			"FADE_PROGRAM": program,
+			"FADE_WAIT_FOR_DEBUG": waitForDebugger,
+			"FADE_DOTNET_PATH": this.dotnetPath
+		}
+		if (debuggerLogPath){
+			env["FADE_DEBUGGER_LOG_PATH"] = debuggerLogPath
+		}
+		if (dapLogPath){
+			env["FADE_DAP_LOG_PATH"] = dapLogPath
+		}
+
+		executable = new vscode.DebugAdapterExecutable(this.dotnetPath, [this.dapPath], {
+			env: env
 		});
-		console.log('starting fade debugger', _session.configuration)
+		console.log('starting fade debugger', this.dotnetPath, _session.configuration)
 		return executable;
 	}
 }

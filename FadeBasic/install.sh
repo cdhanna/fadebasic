@@ -38,6 +38,10 @@ sudo dotnet pack ./CommandSourceGenerator $PACK_ARGS
 sudo dotnet pack ./Templates $PACK_ARGS
 sudo dotnet pack ./FadeBuildTasks $PACK_ARGS
 
+# build the LSP and DAP and store it in the associated vscode extension folder
+sudo dotnet build ./LSP -o ../VsCode/basicscript/out/tools
+sudo dotnet build ./DAP -o ../VsCode/basicscript/out/tools
+
 # remove packages we don't actually want...
 #rm -f $OUTPUT_FOLDER/Benchmarks.*
 #rm -f $OUTPUT_FOLDER/LSP.*

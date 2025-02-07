@@ -1,4 +1,5 @@
 using FadeBasic.Virtual;
+using Microsoft.VisualStudio.TestPlatform.Utilities;
 
 namespace Tests;
 
@@ -91,12 +92,14 @@ ENDFUNCTION
     }
 
 
-    [Test]
-    public void String_Interning()
+    [TestCase("toast", "toast")]
+    [TestCase("/", "/")]
+    [TestCase("\\\\", "\\")]
+    public void String_Interning(string str, string expected)
     {
-        var src = @"
-x$ = ""toast""
-y$ = ""toast""
+        var src = $@"
+x$ = ""{str}""
+y$ = ""{str}""
 ";
         Setup(src, out var compiler, out var prog);
         
@@ -109,6 +112,11 @@ y$ = ""toast""
         var yPtr = vm.dataRegisters[1];
         Assert.That(xPtr, Is.EqualTo(0));
         Assert.That(yPtr, Is.EqualTo(xPtr));
+        
+        vm.heap.Read((int)xPtr, expected.Length * 4, out var memory);
+        var actual = VmConverter.ToString(memory);
+        Assert.That(actual, Is.EqualTo(expected));
+
     }
 
 }

@@ -325,31 +325,25 @@ namespace FadeBasic
             }
             foreach (var exit in returnStatements)
             {
-                // if (processingReturns.Contains(exit))
+              
+            
+                // make a ctx _per_ return expression, so each expression thread get its own
+                //  ability to create its own loops
+                var subCtx = ctx.WithFunction(function);
+                if (exit.returnExpression == null)
                 {
-                    // we have already started looking at this return type
+                    SetFunctionType(function, TypeInfo.Void, function, exit.startToken);
                 }
-                // else
+                else
                 {
-                    // processingReturns.Add(exit);
+                    exit.returnExpression.EnsureVariablesAreDefined(this, subCtx);
 
-                    // make a ctx _per_ return expression, so each expression thread get its own
-                    //  ability to create its own loops
-                    var subCtx = ctx.WithFunction(function);
-                    if (exit.returnExpression == null)
+                    if (!subCtx.HasLoop && !exit.returnExpression.ParsedType.unset)
                     {
-                        SetFunctionType(function, TypeInfo.Void, function, exit.startToken);
-                    }
-                    else
-                    {
-                        exit.returnExpression.EnsureVariablesAreDefined(this, subCtx);
-
-                        if (!subCtx.HasLoop && !exit.returnExpression.ParsedType.unset)
-                        {
-                            SetFunctionType(function, exit.returnExpression);
-                        }
+                        SetFunctionType(function, exit.returnExpression);
                     }
                 }
+                
             }
 
             if (functionReturnTypeTable.TryGetValue(function.name, out var types))
@@ -735,16 +729,20 @@ namespace FadeBasic
         }
         public void SetFunctionType(FunctionStatement function, TypeInfo type, IAstNode srcNode, Token token=null)
         {
+           
+            
             if (!functionReturnTypeTable.TryGetValue(function.name, out var types))
             {
                 functionReturnTypeTable[function.name] = new List<TypeInfo>
                 {
                     type
                 };
+                if (type.IsArray)
+                {
+                    srcNode.Errors.Add(new ParseError(srcNode, ErrorCodes.InvalidFunctionReturnType));
+                }
                 return;
             }
-
-            // TODO: functions cannot return arrays.
             
             for (var i = 0; i < types.Count; i++)
             {

@@ -521,6 +521,39 @@ endfunction
         var errors = prog.GetAllErrors();
         Assert.That(errors[0].Display, Is.EqualTo($"[2:0] - {ErrorCodes.InvalidCast} | cannot convert void to int"));
     }
+    
+    
+    [Test]
+    public void ParseError_TypeCheck_Function_ReturnIsDropped_ShouldBeOkay()
+    {
+        var input = @"
+`foo returns a value, but noting listens for it; which should be okay.
+foo()
+function foo()
+endfunction 3
+";
+        var parser = MakeParser(input);
+        var prog = parser.ParseProgram();
+        prog.AssertNoParseErrors();
+        
+    }
+
+    
+    [Test]
+    public void ParseError_TypeCheck_Function_ReturnTypeCannotBeArray()
+    {
+        var input = @"
+foo()
+
+function foo()
+    DIM n(3)
+endfunction n
+";
+        var parser = MakeParser(input);
+        var prog = parser.ParseProgram();
+        prog.AssertParseErrors(1, out var errors);
+        Assert.That(errors[0].Display, Is.EqualTo($"[5:12] - {ErrorCodes.InvalidFunctionReturnType}"));
+    }
 
     
     [Test]
@@ -670,6 +703,101 @@ DIM arr(3) as egg
         }
     }
     
+    #region AI generated tests
+    [TestCase("x as integer = 42", null)]
+    [TestCase("x as integer = 42.5", null)] // Allowed, with precision loss
+    [TestCase("x as float = 42", null)]
+    [TestCase("x as float = 42.5", null)]
+    [TestCase("x as float = \"hello\"", "cannot convert string to float")]
+    [TestCase("x as string = 42", "cannot convert int to string")]
+    [TestCase("x$ as string = 42", "cannot convert int to string")]
+    [TestCase("x$ as string = \"hello\"", null)]
+    public void AI_ParseError_TypeCheck_BasicAssignments(string assign, string error)
+    {
+        var input = @$"{assign}";
+        var parser = MakeParser(input);
+        var prog = parser.ParseProgram();
+        if (string.IsNullOrEmpty(error))
+        {
+            prog.AssertNoParseErrors();
+        }
+        else
+        {
+            prog.AssertParseErrors(1);
+            var errors = prog.GetAllErrors();
+            Assert.That(errors[0].CombinedMessage,
+                Is.EqualTo($"{ErrorCodes.InvalidCast} | {error}"));
+        }
+    }
+
+    [TestCase("x as integer\ny as integer\nx = y + 1", false)]
+    [TestCase("x as integer\ny as float\nx = y + 1", false)] // Allowed, with precision loss
+    [TestCase("x as float\ny as integer\nx = y + 1", false)]
+    [TestCase("x$ as string\ny$ as string\nx$ = y$ + 1", true)]
+    [TestCase("x$ as string\ny$ as string\nx$ = y$ + \"world\"", false)]
+    public void AI_ParseError_TypeCheck_OperationAssignments(string assign, bool error)
+    {
+        var input = @$"{assign}";
+        var parser = MakeParser(input);
+        var prog = parser.ParseProgram();
+        if (!error)
+        {
+            prog.AssertNoParseErrors();
+        }
+        else
+        {
+            prog.AssertParseErrors(1);
+            var errors = prog.GetAllErrors();
+            Assert.IsTrue(errors[0].CombinedMessage.EndsWith(ErrorCodes.InvalidCast.message));
+            // ($"{ErrorCodes.InvalidCast} | {error}"));
+        }
+    }
+
+    [TestCase("x as float\ny as integer\nx = y", null)]
+    [TestCase("x as integer\ny as float\nx = y", null)] // Allowed, with precision loss
+    [TestCase("x as string\ny as integer\nx = y", "cannot convert int to string")]
+    [TestCase("x as integer\ny as string\nx = y", "cannot convert string to int")]
+    public void AI_ParseError_TypeCheck_ImplicitConversion(string assign, string error)
+    {
+        var input = @$"{assign}";
+        var parser = MakeParser(input);
+        var prog = parser.ParseProgram();
+        if (string.IsNullOrEmpty(error))
+        {
+            prog.AssertNoParseErrors();
+        }
+        else
+        {
+            prog.AssertParseErrors(1);
+            var errors = prog.GetAllErrors();
+            Assert.That(errors[0].CombinedMessage,
+                Is.EqualTo($"{ErrorCodes.InvalidCast} | {error}"));
+        }
+    }
+
+    [TestCase("dim arr(10) as integer\narr(0) = 42", null)]
+    [TestCase("dim arr(10) as integer\narr(0) = 42.5", null)] // Allowed, with precision loss
+    [TestCase("dim arr(10) as string\narr(0) = 42", "cannot convert int to string")]
+    [TestCase("dim arr(10) as float\narr(0) = 42.5", null)]
+    [TestCase("dim arr(10) as float\narr(0) = \"hello\"", "cannot convert string to float")]
+    public void AI_ParseError_TypeCheck_ArrayAssignments(string assign, string error)
+    {
+        var input = @$"{assign}";
+        var parser = MakeParser(input);
+        var prog = parser.ParseProgram();
+        if (string.IsNullOrEmpty(error))
+        {
+            prog.AssertNoParseErrors();
+        }
+        else
+        {
+            prog.AssertParseErrors(1);
+            var errors = prog.GetAllErrors();
+            Assert.That(errors[0].CombinedMessage,
+                Is.EqualTo($"{ErrorCodes.InvalidCast} | {error}"));
+        }
+    }
+    #endregion
     
     [TestCase("y = x",  null)] // this one is interesting, because by it COULD just as easily be an error; but its a conceit in the language to make it easier to type things out.
     [TestCase("y$ = x",  "cannot convert egg to string")]
@@ -679,9 +807,6 @@ DIM arr(3) as egg
     [TestCase("y# = x.z",  null)]
     [TestCase("type egg2\n z\nendtype\ny as egg2\ny=x",  "cannot convert egg to egg2")]
     [TestCase("type egg2\n z\nendtype\ny as egg2 = x",  "cannot convert egg to egg2")]
-    // [TestCase(null, "x as integer", @"x = ""toast""",  "cannot convert string to int")]
-    // [TestCase(null, "x as float", @"x = ""toast""",  "cannot convert string to float")]
-    // [TestCase(null, "x$ as string", @"x$ = 1",  "cannot convert int to string")]
     public void ParseError_TypeCheck_IntToType(string assign, string error)
     {
         var input = @$"

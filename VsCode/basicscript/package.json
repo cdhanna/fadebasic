@@ -1,17 +1,29 @@
 {
   "name": "fadebasic",
-  "displayName": "fadeBasic",
-  "description": "",
+  "displayName": "Fade Basic",
+  "description": "The official extension for Fade Basic. ",
+  "publisher": "BrewedInk",
+  "author": {
+    "name": "Chris Hanna",
+    "url": "https://brewed.ink"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/cdhanna/fadebasic"
+  },
   "version": "0.0.1",
   "engines": {
     "vscode": "^1.85.0"
   },
   "categories": [
-    "Other"
+    "Programming Languages",
+    "Debuggers",
+    "Formatters"
   ],
   "activationEvents": [
     "onLanguage:fadeBasic",
-    "onDebug"
+    "onDebug",
+    "onCommand:extension.fadeBasic.getProgramName"
   ],
   "main": "./out/extension.js",
   "contributes": {
@@ -23,9 +35,6 @@
           ".fb"
         ],
         "configuration": "./language.configuration.json"
-      },
-      {
-        "id": "fadeProject"
       }
     ],
     "breakpoints": [
@@ -37,11 +46,37 @@
       {
         "type": "fadeBasicDebugger",
         "label": "Fade Basic Debug",
-        "program": "/Users/chrishanna/Documents/Github/dby/FadeBasic/DAP/bin/Debug/net8.0/DAP",
-        "languages": ["fadeBasic"],
+        "languages": [
+          "fadeBasic"
+        ],
+        "initialConfigurations": [
+          {
+            "type": "fadeBasicDebugger",
+            "request": "launch",
+            "name": "Ask for file name",
+            "program": "${workspaceFolder}/${command:AskForProgramName}"
+          }
+        ],
+        "configurationSnippets": [
+          {
+            "label": "Fade Debugger",
+            "description": "A new configuration for debugging a Fade Basic program",
+            "body": {
+              "name": "Fade Debug",
+              "type": "fadeBasicDebugger",
+              "request": "launch",
+              "program": "^\"\\${workspaceFolder}/\\${command:AskForProgramName}\""
+            }
+          }
+        ],
+        "variables": {
+          "AskForProgramName": "extension.fadeBasic.getProgramName"
+        },
         "configurationAttributes": {
           "launch": {
-            "required": ["program"],
+            "required": [
+              "program"
+            ],
             "properties": {
               "program": {
                 "type": "string",
@@ -70,19 +105,40 @@
     ],
     "configuration": [
       {
-        "title": "Fade Format Settings",
+        "title": "Fade Runtime Settings",
         "order": 1,
+        "properties": {
+          "conf.language.fade.dotnetPath": {
+            "scope": "window",
+            "type": "string",
+            "default": "dotnet",
+            "requiresRestart": true,
+            "markdownDescription": "_Fade_ runs inside dotnet, and dotnet is required to be installed on your machine. This setting is the path to the dotnet executable you would like to use."
+          }
+        }
+      },
+      {
+        "title": "Fade Format Settings",
+        "order": 2,
         "properties": {
           "conf.language.fade.formatCasing": {
             "scope": "window",
             "type": "string",
-            "enum": ["upper", "lower", "ignore"],
+            "enum": [
+              "upper",
+              "lower",
+              "ignore"
+            ],
             "markdownEnumDescriptions": [
               "All keywords will be upper cased when formatting the document.",
               "All keywords will be lower cased when formatting the document.",
               "The casing of keywords will be ignored during formatting."
             ],
-            "enumItemLabels": ["Uppercase Keywords", "Lowercase Keywords", "Ignore casing"],
+            "enumItemLabels": [
+              "Uppercase Keywords",
+              "Lowercase Keywords",
+              "Ignore casing"
+            ],
             "default": "upper",
             "markdownDescription": "The _fade_ language has lots of keywords, and idiomatically, they should be upper cased. However, this setting allows the control of the casing during formatting."
           }
@@ -91,26 +147,29 @@
     ]
   },
   "scripts": {
-    "vscode:prepublish": "npm run compile",
+    "vscode:prepublish": "npm run package",
     "compile": "tsc -p ./",
     "watch": "tsc -watch -p ./",
     "pretest": "npm run compile && npm run lint",
     "lint": "eslint src --ext ts",
-    "test": "vscode-test"
+    "test": "vscode-test",
+    "check-types": "tsc --noEmit",
+    "package": "npm run check-types && node esbuild.js --production"
   },
   "dependencies": {
     "vscode-languageclient": "^9.0.1",
     "vscode-languageserver-protocol": "^3.17.5"
   },
   "devDependencies": {
-    "@types/vscode": "^1.85.0",
     "@types/mocha": "^10.0.6",
     "@types/node": "18.x",
+    "@types/vscode": "^1.85.0",
     "@typescript-eslint/eslint-plugin": "^6.15.0",
     "@typescript-eslint/parser": "^6.15.0",
-    "eslint": "^8.56.0",
-    "typescript": "^5.3.3",
     "@vscode/test-cli": "^0.0.4",
-    "@vscode/test-electron": "^2.3.8"
+    "@vscode/test-electron": "^2.3.8",
+    "esbuild": "^0.24.2",
+    "eslint": "^8.56.0",
+    "typescript": "^5.3.3"
   }
 }

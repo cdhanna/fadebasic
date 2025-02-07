@@ -68,6 +68,18 @@ public class JsonTests
             op.IncludeField(nameof(duds), ref duds);
         }
     }
+    
+    class DoubleDict : IJsonable
+    {
+        public Dictionary<string, Dud> beeps = new Dictionary<string, Dud>();
+        public Dictionary<string, Dud> boops = new Dictionary<string, Dud>();
+
+        public void ProcessJson(IJsonOperation op)
+        {
+            op.IncludeField(nameof(beeps), ref beeps);
+            op.IncludeField(nameof(boops), ref boops);
+        }
+    }
 
     [Test]
     public void DebugScopeTest()
@@ -111,6 +123,22 @@ public class JsonTests
         var y = JsonableExtensions.FromJson<StringInt>(j);
         Assert.That(y.status, Is.EqualTo(x.status));
         Assert.That(y.reason, Is.EqualTo(x.reason));
+    }
+    
+    
+    [Test]
+    public void DoubleDictTest_Empty()
+    {
+        var x = new DoubleDict()
+        {
+            beeps = new Dictionary<string, Dud>(),
+            boops = new Dictionary<string, Dud>()
+        };
+        var j = x.Jsonify();
+        var y = JsonableExtensions.FromJson<DoubleDict>(j);
+        
+        // there should be at least a comma in there...
+        Assert.That(j.Contains(","), $"the json needs at least one field separator.\n{j}");
     }
 
     [Test]
@@ -219,18 +247,22 @@ public class JsonTests
         // Assert.That(x.insIndex, Is.EqualTo(y.insIndex));
     }
 
-    [Test]
-    public void QuotesInStringFields()
+    [TestCase("an \"extra\" quote")]
+    [TestCase("an \\ slash")]
+    [TestCase("an end \\\\")]
+    [TestCase("an end \\")]
+    public void RandomStringSituations(string str)
     {
         var obj = new DebugEvalResult
         {
-            value = "an \"extra\" quote"
+            value = str
         };
         var json = obj.Jsonify();
 
         var obj2= JsonableExtensions.FromJson<DebugEvalResult>(json);
         Assert.That(obj.value, Is.EqualTo(obj2.value));
     }
+    
 
     [Test]
     public void NestedNull()
@@ -244,6 +276,28 @@ public class JsonTests
         var y = JsonableExtensions.FromJson<DebugToken>(json);
         Assert.That(x.insIndex, Is.EqualTo(y.insIndex));
         Assert.That(x.token, Is.EqualTo(y.token));
+    }
+
+    [Test]
+    public void Interned()
+    {
+        var interned = new InternedData
+        {
+            types = new Dictionary<string, InternedType>(),
+            functions = new Dictionary<string, InternedFunction>(),
+            strings = new List<InternedString>
+            {
+                new InternedString
+                {
+                    value = "\\",
+                    indexReferences = new int[] { 3, 53 }
+                }
+            }
+        };
+        
+        var json = interned.Jsonify();
+        var obj = JsonableExtensions.FromJson<InternedData>(json);
+        Assert.That(interned.strings[0].value, Is.EqualTo(obj.strings[0].value));
     }
     
     [Test]

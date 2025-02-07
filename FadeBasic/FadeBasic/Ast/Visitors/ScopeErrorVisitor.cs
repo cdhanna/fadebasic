@@ -480,6 +480,7 @@ namespace FadeBasic.Ast.Visitors
                     break;
                 case UnaryOperationExpression unaryOpExpr:
                     unaryOpExpr.rhs.EnsureVariablesAreDefined(scope, ctx);
+                    unaryOpExpr.ParsedType = unaryOpExpr.rhs.ParsedType;
                     break;
                 case StructFieldReference structRef:
                     structRef.EnsureStructField(scope, ctx);

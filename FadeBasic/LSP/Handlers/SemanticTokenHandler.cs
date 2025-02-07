@@ -164,6 +164,7 @@ public class SemanticTokenHandler : SemanticTokensHandlerBase
             case LexemType.KeywordDeclareArray:
             case LexemType.KeywordUnDeclareArray:
             case LexemType.CommandWord:
+            case LexemType.KeywordReturn:
             case LexemType.KeywordEndCase:
                 return SemanticTokenType.Keyword;
                 
@@ -195,6 +196,12 @@ public class SemanticTokenHandler : SemanticTokensHandlerBase
             case LexemType.OpMultiply:
             case LexemType.OpPower:
             case LexemType.OpNotEqual:
+            case LexemType.OpBitwiseAnd:
+            case LexemType.OpBitwiseNot:
+            case LexemType.OpBitwiseOr:
+            case LexemType.OpBitwiseXor:
+            case LexemType.OpBitwiseLeftShift:
+            case LexemType.OpBitwiseRightShift:
                 return SemanticTokenType.Operator;
             case LexemType.LiteralInt:
             case LexemType.LiteralBinary:

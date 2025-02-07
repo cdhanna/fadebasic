@@ -749,6 +749,27 @@ EndFunction a
         
         Assert.That(vm.dataRegisters[0], Is.EqualTo(10)); 
         Assert.That(vm.typeRegisters[0], Is.EqualTo(TypeCodes.INT));
+        Assert.That(vm.stack.ptr, Is.EqualTo(0));
+
+    }
+    
+   
+    [Test]
+    public void Function_UnusedReturnValue()
+    {
+        var src = @"
+Test(1)
+
+Function Test(a)
+    ` the value a will be put onto the stack due to the return, but nothing takes it off?
+EndFunction a
+";
+        Setup(src, out _, out var prog);
+        
+        var vm = new VirtualMachine(prog);
+        vm.Execute().MoveNext();
+        
+        Assert.That(vm.stack.ptr, Is.EqualTo(0));
     }
 
     

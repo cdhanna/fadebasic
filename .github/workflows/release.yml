@@ -1,0 +1,60 @@
+name: Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      commit:
+        type: string
+        description: Commit hash to deploy
+        default: main
+      majorSemver:
+        type: number
+        description: minor number in semver 
+        required: true
+        default: 0
+      minorSemver:
+        type: number
+        description: minor number in semver 
+        required: true
+        default: 0
+      patchSemver:
+        type: number
+        description: patch number in semver 
+        required: true
+        default: 0
+
+run-name: Release
+jobs:
+  nuget:
+    timeout-minutes: 10
+    runs-on: ubuntu-latest
+    concurrency:
+      group: release-nuget
+      cancel-in-progress: true
+    steps:
+    
+      - uses: actions/checkout@v4
+        with: 
+          ref: ${{ github.event.inputs.commit }}
+
+      - uses: actions/setup-dotnet@v3
+        with:
+          dotnet-version: 9.0.x
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.x'
+
+      - name: Setup VSCE
+        run: npm install -g @vscode/vsce
+
+      - name: Run Build Script
+        run: sh ./FadeBasic/install.sh ${{ github.event.inputs.majorNumber }}.${{ github.event.inputs.minorNumber }}.${{ github.event.inputs.patchNumber }} 1 ${{ secrets.NUGET_HOST }} ${{ secrets.NUGET_API_KEY }}
+    
+      - name: Run VsCode Scripts
+        working-directory: ./VsCode/basicscript
+        run: |
+          npm install
+          npm version ${{ github.event.inputs.majorNumber }}.${{ github.event.inputs.minorNumber }}.${{ github.event.inputs.patchNumber }}
+          vsce publish -p ${{ secrets.VS_CODE_AZURE_PAT }}
+

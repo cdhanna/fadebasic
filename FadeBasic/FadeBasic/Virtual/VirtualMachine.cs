@@ -627,6 +627,15 @@ namespace FadeBasic.Virtual
                         case OpCodes.DISCARD:
                             stack.Pop();
                             break;
+                        case OpCodes.DISCARD_TYPED:
+                            // use an if-statement, because the compiler doesn't know (care)
+                            //  if a function was a void-function or a value-function
+                            //  and will always stick the DISCARD on anyway (sheesh)
+                            if (stack.ptr > 0)
+                            {
+                                VmUtil.ReadSpan(ref stack, out _, out _);
+                            }
+                            break;
                         case OpCodes.WRITE:
                             VmUtil.WriteToHeap(ref stack, ref heap, false);
                             break;

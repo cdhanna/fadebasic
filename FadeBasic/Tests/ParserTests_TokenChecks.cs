@@ -69,5 +69,38 @@ endfunction
         
         Assert.That(rankExpr.DeclaredFromSymbol, Is.Not.Null);
     }
+    
+    
+    [Test]
+    public void TokenCheck_Gosub()
+    {
+        var input = @"
+gosub beep
+beep:
+return
+";
+        var parser = MakeParser(input);
+        var prog = parser.ParseProgram();
+        prog.AssertNoParseErrors();
+
+        var gosub = prog.statements[0] as GoSubStatement;
+        Assert.That(gosub.DeclaredFromSymbol, Is.Not.Null);
+    }
+    
+    [Test]
+    public void TokenCheck_Goto()
+    {
+        var input = @"
+goto beep
+beep:
+return
+";
+        var parser = MakeParser(input);
+        var prog = parser.ParseProgram();
+        prog.AssertNoParseErrors();
+
+        var gosub = prog.statements[0] as GotoStatement;
+        Assert.That(gosub.DeclaredFromSymbol, Is.Not.Null);
+    }
 
 }
