@@ -33,6 +33,8 @@ public static class Program
             .MinimumLevel.Information()
             .CreateLogger();
         
+        Log.Logger.Information($"connecting... pipeAddr=[{pipeAddr}]");
+        
         var pipeClient = new NamedPipeClientStream(pipeAddr);
         await pipeClient.ConnectAsync();
         

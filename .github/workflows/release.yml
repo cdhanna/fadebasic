@@ -45,9 +45,6 @@ jobs:
         with:
           node-version: '22.x'
 
-      - name: Setup VSCE
-        run: npm install -g @vscode/vsce
-
       - name: Run Build Script
         working-directory: ./FadeBasic
         run: sh ./install.sh ${{ inputs.majorSemver }}.${{ inputs.minorSemver }}.${{ inputs.patchSemver }} 1 ${{ secrets.NUGET_HOST }} ${{ secrets.NUGET_API_KEY }}
@@ -57,5 +54,5 @@ jobs:
         run: |
           npm install
           npm version ${{ inputs.majorSemver }}.${{ inputs.minorSemver }}.${{ inputs.patchSemver }}
-          vsce publish -p ${{ secrets.VS_CODE_AZURE_PAT }}
+          npx vsce publish -p ${{ secrets.VS_CODE_AZURE_PAT }}
 
