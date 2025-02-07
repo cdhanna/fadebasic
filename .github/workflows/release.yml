@@ -52,6 +52,7 @@ jobs:
       - name: Run VsCode Scripts
         working-directory: ./VsCode/basicscript
         run: |
+          sudo chmod -R 777 out
           npm install
           npm version ${{ inputs.majorSemver }}.${{ inputs.minorSemver }}.${{ inputs.patchSemver }}
           npx vsce publish -p ${{ secrets.VS_CODE_AZURE_PAT }}
