@@ -48,7 +48,9 @@ jobs:
       - name: Run Build Script
         working-directory: ./FadeBasic
         run: sh ./install.sh ${{ inputs.majorSemver }}.${{ inputs.minorSemver }}.${{ inputs.patchSemver }} 1 ${{ secrets.NUGET_HOST }} ${{ secrets.NUGET_API_KEY }}
-    
+        env:
+          FADE_NUGET_DRYRUN: true
+
       - name: Run VsCode Scripts
         working-directory: ./VsCode/basicscript
         run: |
