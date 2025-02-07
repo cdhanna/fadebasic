@@ -50,12 +50,12 @@ jobs:
 
       - name: Run Build Script
         working-directory: ./FadeBasic
-        run: sh ./install.sh "${{ inputs.majorNumber }}.${{ inputs.minorNumber }}.${{ inputs.patchNumber }}" 1 ${{ secrets.NUGET_HOST }} ${{ secrets.NUGET_API_KEY }}
+        run: sh ./install.sh ${{ inputs.majorSemver }}.${{ inputs.minorSemver }}.${{ inputs.patchSemver }} 1 ${{ secrets.NUGET_HOST }} ${{ secrets.NUGET_API_KEY }}
     
       - name: Run VsCode Scripts
         working-directory: ./VsCode/basicscript
         run: |
           npm install
-          npm version "${{ inputs.majorNumber }}.${{ inputs.minorNumber }}.${{ inputs.patchNumber }}"
+          npm version ${{ inputs.majorSemver }}.${{ inputs.minorSemver }}.${{ inputs.patchSemver }}
           vsce publish -p ${{ secrets.VS_CODE_AZURE_PAT }}
 
