@@ -43,10 +43,6 @@
             <FadeProjects Include="templates/**/*.csproj" />
         </ItemGroup>
     
-        <ItemGroup>
-            <FadeToolManifests Include="**\.config\dotnet-tools.json" />
-        </ItemGroup>
-
         <Message Importance="high" Text="Printing stuff"/>
         <Message Importance="high" Text="%(FadeProjects.Identity)"/>
         <!-- Csproj nuget versions -->
@@ -55,15 +51,6 @@
                 Query="Project/ItemGroup/PackageReference[starts-with(@Include, &quot;Fade&quot;)]/@Version"
                 Value="$(Version)" />
 
-        <!-- Dotnet tools -->
-        <JsonPoke
-                JsonInputPath="%(FadeToolManifests.Identity)"
-                JPath="tools.fadebasic-cli.version"
-                JValue="$(Version)" />
-<!--        <JsonPoke-->
-<!--                JsonInputPath="%(FadeToolManifests.Identity)"-->
-<!--                JPath="tools.cli"-->
-<!--                JValue="fadebasic.cli" />-->
     </Target>
 
 </Project>

@@ -1432,7 +1432,7 @@ namespace FadeBasic.Launch
             CancellationToken cancellationToken)
             where T : IJsonable, IHasRawBytes, new()
         {
-            var ip = new IPEndPoint(IPAddress.Any, port);
+            var ip = new IPEndPoint(IPAddress.Loopback, port);
 
             var socket = new Socket(ip.AddressFamily, SocketType.Stream, ProtocolType.Tcp);
 

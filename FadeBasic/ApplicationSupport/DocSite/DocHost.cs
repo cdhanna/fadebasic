@@ -93,7 +93,7 @@ public class DocHost
     {
         // Define the HTTP listener
         HttpListener listener = new HttpListener();
-        var url = $"http://*:{Port}/";
+        var url = $"http://localhost:{Port}/";
         listener.Prefixes.Add(url); // Set the URL prefix
         listener.Start();
 
