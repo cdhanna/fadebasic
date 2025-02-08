@@ -47,12 +47,14 @@ public partial class FadeDebugAdapter : DebugAdapterBase
         
         var res = new InitializeResponse
         {
+            
             SupportsConfigurationDoneRequest = true,
             SupportsSetExpression = true,
             SupportsSetVariable = false,
             // SupportsReadMemoryRequest = true,
         };
-        _logger.Log($"VARIABLE_SUPPORT=[{arguments.SupportsVariableType}]");
+        
+        _logger.Log($"LINES_AT_ONE=[{arguments.LinesStartAt1}] COLS_AT_ONE=[{arguments.ColumnsStartAt1}] VARIABLE_SUPPORT=[{arguments.SupportsVariableType}]");
         return res;
     }
 

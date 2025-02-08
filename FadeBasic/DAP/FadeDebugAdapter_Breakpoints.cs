@@ -19,7 +19,7 @@ public partial class FadeDebugAdapter
                    out var token, strict: false))
            {
                _logger.Log($"Couldn't find breakpoint location for bp {requestedBreakpoint.Line}:{requestedBreakpoint.Column}");
-              
+              _logger.Log($"line to tokens {_sourceMap._lineToTokens.Select(kvp => kvp.Key + " -> " + string.Join(",", kvp.Value.Select(t => t.type)))}");
            }
            else
            {
