@@ -37,7 +37,7 @@ public class SourceMap
         this.fileRanges = fileRanges;
         foreach (var elem in fileRanges)
         {
-            _fileToRange[elem.Item1] = elem.Item2;
+            _fileToRange[elem.Item1.ConvertToForwardSlashPath()] = elem.Item2;
         }
         
     }
@@ -105,9 +105,10 @@ full-source=[{fullSource}]
     {
         error = null;
         foundToken = null;
+        file = file.ConvertToForwardSlashPath();
         if (!_fileToRange.TryGetValue(file, out var fileRange))
         {
-            error = $"given file=[{file}] is not included in source map";
+            error = $"given file=[{file}] is not included in source map. available files=[{string.Join(",", _fileToRange.Keys)}]";
             if (!strict) return false;
             throw new ArgumentOutOfRangeException(nameof(file), error);
         }
