@@ -75,6 +75,15 @@ public partial class FadeDebugAdapter : DebugAdapterBase
         _sourceMap = _project.CreateSourceMap();
         var source = _sourceMap.fullSource;
         var lexerResults = lexer.TokenizeWithErrors(source, projectInfo.collection);
+        
+        _logger.Log($"Lexer error count=[{lexerResults.tokenErrors.Count}]");
+        foreach (var err in lexerResults.tokenErrors)
+        {
+            _logger.Log($"[TOKEN ERROR] {err.Display}");
+        }
+        _logger.Log($"Lexer token count=[{lexerResults.tokens.Count}]");
+        _logger.Log($"Found source code: \n{source}");
+        
         _sourceMap.ProvideTokens(lexerResults);
         
         // at this point, we can actually kick off the process. 
