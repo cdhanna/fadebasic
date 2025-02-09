@@ -97,13 +97,19 @@ full-source=[{fullSource}]
 
     }
 
-    public bool GetMappedPosition(string file, int lineNumber, int charNumber, out Token foundToken, bool strict=true)
+    public bool GetMappedPosition(string file, int lineNumber, int charNumber, out Token foundToken, bool strict = true)
     {
+        return GetMappedPosition(file, lineNumber, charNumber, out foundToken, out _, strict);
+    }
+    public bool GetMappedPosition(string file, int lineNumber, int charNumber, out Token foundToken, out string error, bool strict=true)
+    {
+        error = null;
         foundToken = null;
         if (!_fileToRange.TryGetValue(file, out var fileRange))
         {
+            error = $"given file=[{file}] is not included in source map";
             if (!strict) return false;
-            throw new ArgumentOutOfRangeException(nameof(file), $"given file=[{file}] is not included in source map");
+            throw new ArgumentOutOfRangeException(nameof(file), error);
         }
 
         var startLine = fileRange.Start.Value;
@@ -111,8 +117,9 @@ full-source=[{fullSource}]
         var line = startLine + lineNumber;
         if (!_lineToTokens.TryGetValue(line, out var tokens))
         {
+            error = $"given line=[{line}] do no map to an existing tokens";
             if (!strict) return false;
-            throw new InvalidOperationException($"given line=[{line}] do no map to an existing tokens");
+            throw new InvalidOperationException(error);
         }
         
         // need to find the token that contains the given char number. 
@@ -130,7 +137,12 @@ full-source=[{fullSource}]
             }
         }
 
-        return foundToken != null;
+        var found = foundToken != null;
+        if (!found)
+        {
+            error = "no found token.";
+        }
+        return found;
     }
 
     public void ProvideTokens(LexerResults lexResults)
