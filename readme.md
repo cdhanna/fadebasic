@@ -2,7 +2,7 @@
 
 _Fade's actually Dotnet embeddable_ 
 
-** This project is still in active development, and the documentation is not complete **
+**This project is still in active development, and the documentation is not complete**
 
 _Fade Basic_ is a dialect of BASIC inspired by my personal love for [Dark Basic Pro](https://www.reddit.com/r/DarkBasicDev/). I am still working on the documentation. 
 

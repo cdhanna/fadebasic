@@ -53,7 +53,7 @@
           {
             "type": "fadeBasicDebugger",
             "request": "launch",
-            "name": "Ask for file name",
+            "name": "Fade Debug",
             "program": "${workspaceFolder}/${command:AskForProgramName}"
           }
         ],
