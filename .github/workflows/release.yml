@@ -9,7 +9,7 @@ on:
         default: main
       majorSemver:
         type: number
-        description: minor number in semver 
+        description: major number in semver 
         required: true
         default: 0
       minorSemver:
