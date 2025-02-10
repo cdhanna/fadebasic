@@ -11,10 +11,8 @@
         <Description>Fade's actually dotnet embeddable Basic. </Description>
         <Authors>Chris Hanna</Authors>
         <ProjectUrl>https://fadebasic.com</ProjectUrl>
-
-        <!-- <RepositoryUrl>TODO: fill in github </RepositoryUrl>-->
-        <!-- I am not ready to open-source this yet, but when I do, I intend to use Unlicense -->
-        <!-- <PackageLicenseExpression>Unlicense</PackageLicenseExpression>-->
+        <RepositoryUrl>https://github.com/cdhanna/fadebasic</RepositoryUrl>
+        <PackageLicenseExpression>MIT</PackageLicenseExpression>
     </PropertyGroup>
 
     
