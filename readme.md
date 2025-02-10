@@ -12,9 +12,9 @@ NEXT n
 
 ----
 
-_Fade Basic_ is a dialect of BASIC inspired by my personal love for [Dark Basic Pro](https://www.reddit.com/r/DarkBasicDev/). My father downloaded _Dark Basic_ sometime circa 2003 and showed a then-kid version of me how to program a FOR-LOOP. That moment sparked a life long obsession with programming and game development. I wanted to create something that kindled the same joy for programming that _Dark Basic_ did all those years ago. I created _Fade Basic_ for myself, to fuel my inner nostalgia for a by-gon era of my own life. And I figured I'd share it, because I think it is cool. 
+_Fade Basic_ is a dialect of BASIC inspired by my personal love for [Dark Basic Pro](https://www.reddit.com/r/DarkBasicDev/). My father downloaded _Dark Basic_ sometime circa 2003 and showed a then-kid version of me how to program a FOR-LOOP. That moment sparked a life long obsession with programming and game development. I wanted to create something that kindled the same joy for programming that _Dark Basic_ did all those years ago. I created _Fade Basic_ for myself, to fuel my inner nostalgia for a bygone era of my own life. And I figured I'd share it, because I think it is cool. 
 
-_Fade_ is a scripting language for dotnet. _Fade_ code runs inside a dotnet process. It is debuggable. It uses zero Reflection. The _Fade_ code gets compiled into a custom byte-code, and then that byte-code is interpreted by a custom state machine. The language has [almost](https://github.com/cdhanna/fadebasic/blob/main/FadeBasic/FadeBasic/FadeBasic.csproj#L22) no dependencies, which means it can run wherever dotnet can run. For now, I have been focusing on stand-alone applications that bootstrap a _Fade_ script as their primary execution, but it is possible to embed _Fade_ scripts into any dotnet compatible program, such as Godot, Unity, an ASP.NET Server, or a custom program. 
+_Fade_ is a scripting language for dotnet. _Fade_ code runs inside a dotnet process. It is debuggable. It does not use Reflection. The _Fade_ code gets compiled into a custom byte-code, and then that byte-code is interpreted by a custom state machine. The language has [almost](https://github.com/cdhanna/fadebasic/blob/main/FadeBasic/FadeBasic/FadeBasic.csproj#L22) no dependencies, which means it can run wherever dotnet can run. For now, I have been focusing on stand-alone applications that bootstrap a _Fade_ script as their primary execution, but it is possible to embed _Fade_ scripts into any dotnet compatible program, such as Godot, Unity, an ASP.NET Server, or a custom program. 
 
 This project is under active development and is only available in a preview-capacity. 
 
@@ -69,7 +69,7 @@ Before you can get started,
     ```
 
 > [!CAUTION]
-> Unfortunately there is a [known issue](https://github.com/cdhanna/fadebasic/issues/1) for first time setup where the syntax highlighting doesn't work until you reboot _Visual Studio Code_. 
+> Due to a [known issue](https://github.com/cdhanna/fadebasic/issues/1), Syntax Highlighting will not work until you restart _Visual Studio Code_. 
 
 4. Click on the run and debug tab in _Visual Studio Code_, and select the big blue _Run and Debug_ button. You shouldn't need to specify any new launch configuration, because one should appear automatically. The `.vscode/launch.json` file should look like the following, 
     ```jsonc
@@ -108,7 +108,7 @@ Now that you have _Fade_ running locally, you should check out the full language
 
 ## Contact and Help
 
-_Fade Basic_ is un active development. As such, I am sure there are many bugs I don't know about yet. If you find one of them, please tell me about it! 
+_Fade Basic_ is in active development. As such, I am sure there are many bugs I don't know about yet. If you find one of them, please tell me about it! 
 Feel free to join the [Discord](https://discord.gg/d7Q5EuQc), or post a Github Issue. 
 
 ## License  
