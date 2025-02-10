@@ -1,4 +1,6 @@
-# Fade Basic ![alt text](https://github.com/cdhanna/fadebasic/blob/main/images/ghost_lee.png?raw=true)
+<img src="https://github.com/cdhanna/fadebasic/blob/main/images/ghost_lee.png?raw=true" width="100" alt="The ghost of Lee">
+
+# Fade Basic 
 
 _Fade's actually Dotnet embeddable_ 
 
