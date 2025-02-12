@@ -378,7 +378,48 @@ endfunction a$
         var prog = parser.ParseProgram();
         prog.AssertNoParseErrors();
     }
+    
+    
+    
+ 
+    public void ParseError_ExitWithoutLoop()
+    {
+        string src = @"exit";
+        var parser = MakeParser(src);
+        var prog = parser.ParseProgram();
+        prog.AssertParseErrors(1);
+        var errors = prog.GetAllErrors();
 
+        Assert.That(errors[0].Display, Is.EqualTo($"[2:0] - {ErrorCodes.UnknowableFunctionReturnType}"));
+    }
+    
+    public void ParseError_Exit_Works()
+    {
+        string src = @"do
+exit
+loop";
+        var parser = MakeParser(src);
+        var prog = parser.ParseProgram();
+        prog.AssertNoParseErrors();
+    }
+
+    
+    [TestCase("\"toast\"")]
+    public void ParseError_Conditionals_Errors(string expr)
+    {
+        // TODO: set this up for all other conditional syntaxes (while etc)
+        var input = @$"
+IF {expr}
+ENDIF
+";
+        var parser = MakeParser(input);
+        var prog = parser.ParseProgram();
+        prog.AssertParseErrors(1);
+        var errors = prog.GetAllErrors();
+
+        Assert.That(errors[0].Display, Is.EqualTo($"[2:0] - {ErrorCodes.UnknowableFunctionReturnType}"));
+
+    }
     
     [Test]
     public void ParseError_TypeCheck_Function_Recursive_Infinite()
