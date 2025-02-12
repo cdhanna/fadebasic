@@ -380,8 +380,7 @@ endfunction a$
     }
     
     
-    
- 
+    [Test]
     public void ParseError_ExitWithoutLoop()
     {
         string src = @"exit";
@@ -390,10 +389,25 @@ endfunction a$
         prog.AssertParseErrors(1);
         var errors = prog.GetAllErrors();
 
-        Assert.That(errors[0].Display, Is.EqualTo($"[2:0] - {ErrorCodes.UnknowableFunctionReturnType}"));
+        Assert.That(errors[0].Display, Is.EqualTo($"[0:0] - {ErrorCodes.ExitStatementFoundOutsideOfLoop}"));
     }
-    
-    public void ParseError_Exit_Works()
+
+
+    [Test]
+    public void ParseError_ExitAllowed_While()
+    {
+        string src = @"
+WHILE 1
+    EXIT
+ENDWHILE
+";
+        var parser = MakeParser(src);
+        var prog = parser.ParseProgram();
+        prog.AssertNoParseErrors();
+    }
+
+    [Test]
+    public void ParseError_ExitAllowed_Do()
     {
         string src = @"do
 exit
@@ -404,12 +418,11 @@ loop";
     }
 
     
-    [TestCase("\"toast\"")]
-    public void ParseError_Conditionals_Errors(string expr)
+    [Test]
+    public void ParseError_Conditionals_Errors_If()
     {
-        // TODO: set this up for all other conditional syntaxes (while etc)
         var input = @$"
-IF {expr}
+IF ""toast""
 ENDIF
 ";
         var parser = MakeParser(input);
@@ -417,8 +430,65 @@ ENDIF
         prog.AssertParseErrors(1);
         var errors = prog.GetAllErrors();
 
-        Assert.That(errors[0].Display, Is.EqualTo($"[2:0] - {ErrorCodes.UnknowableFunctionReturnType}"));
+        Assert.That(errors[0].Display, Is.EqualTo($"[1:3] - {ErrorCodes.InvalidCast} | cannot convert string to int"));
+    }
+    
+    [Test]
+    public void ParseError_Conditionals_Errors_WorksForEqualityCheck()
+    {
+        var input = @"
+x$ = ""toast""
+IF x$ = ""toast""
+ENDIF
+";
+        var parser = MakeParser(input);
+        var prog = parser.ParseProgram();
+        prog.AssertNoParseErrors();
+    }
 
+    [Test]
+    public void ParseError_Conditionals_Errors_WorksForEqualityCheck2()
+    {
+        var input = @"
+x# = 2.2
+IF x# > 1.0
+ENDIF
+";
+        var parser = MakeParser(input);
+        var prog = parser.ParseProgram();
+        prog.AssertNoParseErrors();
+    }
+
+    
+    [Test]
+    public void ParseError_Conditionals_Errors_While()
+    {
+        var input = @$"
+WHILE ""toast""
+ENDWHILE
+";
+        var parser = MakeParser(input);
+        var prog = parser.ParseProgram();
+        prog.AssertParseErrors(1);
+        var errors = prog.GetAllErrors();
+
+        Assert.That(errors[0].Display, Is.EqualTo($"[1:6] - {ErrorCodes.InvalidCast} | cannot convert string to int"));
+    }
+    
+    
+    [Test]
+    public void ParseError_Conditionals_Errors_Repeat()
+    {
+        var input = @$"
+REPEAT
+UNTIL ""toast""
+";
+        var parser = MakeParser(input);
+        var prog = parser.ParseProgram();
+        prog.AssertParseErrors(1);
+        var errors = prog.GetAllErrors();
+
+        Assert.That(errors[0].Display, Is.EqualTo($"[2:6] - {ErrorCodes.InvalidCast} | cannot convert string to int"));
     }
     
     [Test]

@@ -354,7 +354,23 @@ fish = sticks `this assignment is not valid
 
 ## Literals
 
-TODO: binary vs hex vs decimal vs octal
+There are 4 ways to type numbers in _Fade Basic_. Other than the default base-10 decimal system, numbers may be prefixed with a symbol that denotes their base.
+
+| Name | Base | Symbol |
+| ---- | ---- | ------ |
+| Decimal | 10 | |
+| Binary | 2 | `%` |
+| Octal | 8 | `0c` |
+| Hexadecimal | 16 | `0x` |
+
+All of these assignments create the same value, but use different methods to express the value.
+```basic
+x = 52 `decimal, base 10
+y = %110100 `binary, base 1
+z = 0c64 `octal, base 8
+w = 0x34 `hex, base 16
+```
+
 
 ## Operations
 
@@ -379,18 +395,19 @@ Most numeric operations require two expressions, a _left_ and _right_. The follo
 | ^ | raises the left number to the power of the right <pre>2 ^ 3 `8 </pre> |
 | AND | results in `1` if both left and right values are positive. Otherwise, the result is `0` <pre>1 AND 2 `1 </pre> |
 | OR | results in `1` if either the left or right values are positive. Otherwise, the result is `0` <pre>1 OR 0 `1 </pre> |
+| XOR | results in `1` if either the left or right values are positive, but not both. Otherwise, the result is `0` <pre>1 XOR 1 `0 </pre> |
 | > | results in `1` if the left number is greater than the right number. Otherwise, the result is `0`  <pre>2 > 1 `1 </pre> |
 | < | results in `1` if the right number is greater than the left number. Otherwise, the result is `0`  <pre>1 < 2 `1 </pre> |
 | >= | results in `1` if the left number is greater than _or equal_ to the right number. Otherwise, the result is `0` <pre>2 >= 2 `1 </pre> |
 | <= | results in `1` if the right number is greater than _or equal_ to the left number. Otherwise, the result is `0` <pre>2 <= 2 `1 </pre> |
 | = | results in `1` if the left number is equal to the right number. Otherwise, the result is `0` <pre>2 = 2 `1 </pre> |
 | <> | results in `1` if the left number is _not_ equal to the right number. Otherwise, the result is `0` <pre>2 <> 2 `0 </pre> |
-| >> | _Bitwise_; right shifts the left by the right |
-| << | _Bitwise_; left shifts the left by the right  |
-| ~~ | _Bitwise_; results in the XOR between the left and right  |
-| .. | _Bitwise_; results in a number the bitwise opposite of the left  |
-| || | _Bitwise_; results in the OR between the left and right |
-| && | _Bitwise_; results in the AND between the left and right |
+| >> | _Bitwise_; right shifts the left by the right <pre>4 >> 1 `2 </pre> |
+| << | _Bitwise_; left shifts the left by the right <pre>1 << 2 `4 </pre> |
+| ~~ | _Bitwise_; results in the XOR between the left and right  <pre>4 ~~ 2 `6 </pre>|
+| .. | _Bitwise_; results in a number the bitwise opposite of the left <pre>4..0 `-5 </pre> |
+| || | _Bitwise_; results in the OR between the left and right <pre>4 || 2 `6 </pre>|
+| && | _Bitwise_; results in the AND between the left and right <pre>5 && 3 `1 </pre> |
 
 When performing operations with numeric variable, variables will be implicitly cast if needed. 
 
@@ -402,17 +419,61 @@ There is also a few unary numeric operations that only require a single number.
 | .. | _Bitwise_; results in a number the bitwise opposite of the numeric value |
 
 
+----
+#### Commands
+
+_Fade Basic_ uses _Commands_ to do most of the interesting work a program will do. _Commands_ are like [#functions](#functions), except that they are declared in `C#`. All _Fade_ programs need to specify which _Commands_ they will use ahead of time. You can write yor own _Commands_, or use the standard off the shelf ones for now while _Fade_ is still in development. 
+
+_Commands_ can pretty much do anything, and they take the place of any built in language standard library. 
+The `PRINT` command is a very common one to use, available in the `FadeBasic.Lib.Standard.ConsoleCommands` collection. 
+
+```basic
+PRINT "hello world"
+```
+
+_Commands_ may accept parameters, and may return a value. For example, the `CONSOLE WIDTH()` command _returns_ a value.
+```basic
+width = CONSOLE WIDTH()
+```
+
+When a command has a return value, it must be invoked using parenthesis. Notice that the `PRINT` command is invocable without parenthesis, because it does not return a value. However, the `CONSOLE WIDTH()` command returns a number, and therefore requires parenthesis. 
+
+When a command requires multiple parameters, they may be optionally separated with commas. Both of these statements are valid.
+```basic
+SET CURSOR 1 2
+SET CURSOR 1, 2
+```
+
+Commands are very specific to your given project, based on which are configured in the `.csproj` file. Commands are grouped into _collections_. To use a command collection, you need to do two things, 
+1. Reference the project or Nuget package in your `.csproj` file, 
+2. Include a `<FadeCommand>` reference.
+
+Here is an example of a `.csproj` file that uses two command collections,
+```xml
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <OutputType>Exe</OutputType>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="FadeBasic.Build" Version="0.0.18.1" />
+    <PackageReference Include="FadeBasic.Lang.Core" Version="0.0.18.1" />
+    <PackageReference Include="FadeBasic.Lib.Standard" Version="0.0.18.1" />
+    
+    <FadeCommand Include="FadeBasic.Lib.Standard" FullName="FadeBasic.Lib.Standard.ConsoleCommands" />
+    <FadeCommand Include="FadeBasic.Lib.Standard" FullName="FadeBasic.Lib.Standard.StandardCommands" />
+    <FadeSource Include="main.fbasic" />
+  </ItemGroup>
+</Project>
+```
+
+Commands provide their own documentation, so look for the documentation from the author of the command collection. The `FadeBasic.Lib.Standard` collection has documentation available here, [Standard Library](https://github.com/cdhanna/fadebasic/blob/main/FadeBasic/book/FadeBook/Standard%20Library.md).
+
+To build your own command collection, check the [Custom Commands Documentation](https://github.com/cdhanna/fadebasic/blob/main/FadeBasic/book/FadeBook/Custom%20Commands.md).
 
 ----
-#### Bitwise Operations
-
-Bitwise operations can 
-
-| Operation | Description |
-| --------- | ----------- |
-
-
-
+#### Short Circuiting 
+TODO
 
 ## Control Statements
 
@@ -625,26 +686,4 @@ A `SELECT` statement is made up of many `CASE` statements. The `CASE` keyword mu
 
 
 
-## Program
-
-`csproj` requirement
-
-## Functions
-
-Math operations
-
-Short circuiting 
-
-Commands
-
-## Custom Commands
-
-Source Generator
-
-Attributes
-
-Documentation Support
-
-
-
-
+## Macros

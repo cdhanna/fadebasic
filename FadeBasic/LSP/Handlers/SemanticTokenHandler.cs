@@ -166,6 +166,7 @@ public class SemanticTokenHandler : SemanticTokensHandlerBase
             case LexemType.KeywordRepeat:
             case LexemType.KeywordUntil:
             case LexemType.KeywordAnd:
+            case LexemType.KeywordXor:
             case LexemType.KeywordAs:
             case LexemType.KeywordCase:
             case LexemType.KeywordElse:
@@ -186,6 +187,7 @@ public class SemanticTokenHandler : SemanticTokensHandlerBase
             case LexemType.CommandWord:
             case LexemType.KeywordReturn:
             case LexemType.KeywordEndCase:
+            case LexemType.KeywordExit:
                 return SemanticTokenType.Keyword;
                 
             case LexemType.KeywordType:

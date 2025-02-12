@@ -43,6 +43,7 @@ namespace FadeBasic.Ast
         EqualTo,
         NotEqualTo,
         And,
+        Xor,
         Or,
         Bitwise_LeftShift,
         Bitwise_RightShift,
@@ -70,6 +71,7 @@ namespace FadeBasic.Ast
                 [LexemType.OpMod] = OperationType.Mod,
                 [LexemType.OpPower] = OperationType.RaisePower,
                 [LexemType.KeywordAnd] = OperationType.And,
+                [LexemType.KeywordXor] = OperationType.Xor,
                 [LexemType.KeywordOr] = OperationType.Or,
                 [LexemType.OpBitwiseAnd] = OperationType.Bitwise_And,
                 [LexemType.OpBitwiseNot] = OperationType.Bitwise_Not,
@@ -136,6 +138,8 @@ namespace FadeBasic.Ast
                     return "and";
                 case OperationType.Or:
                     return "or";
+                case OperationType.Xor:
+                    return "xor";
                 case OperationType.Bitwise_And:
                     return "&&";
                 case OperationType.Bitwise_Or:

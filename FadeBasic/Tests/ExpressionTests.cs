@@ -66,6 +66,7 @@ public class ExpressionTests
     [TestCase("-a", "(neg (ref a))")]
     [TestCase("b - -a", "(- (ref b),(neg (ref a)))")]
     [TestCase("3 AND 2", "(and (3),(2))")]
+    [TestCase("3 XOR 2", "(xor (3),(2))")]
     [TestCase("3 AND 2+1", "(and (3),(+ (2),(1)))")]
     [TestCase("(3 AND 2)+1", "(+ (and (3),(2)),(1))")]
     [TestCase("NOT 4 AND 3", "(and (! (4)),(3))")]

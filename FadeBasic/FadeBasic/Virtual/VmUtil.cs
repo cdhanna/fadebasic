@@ -827,7 +827,8 @@ namespace FadeBasic.Virtual
                     throw new Exception("Unsupported mod operation");
             }
         }
-
+        
+        
         public static void Nand(ref VmHeap heap, byte aTypeCode, ReadOnlySpan<byte> aSpan, ReadOnlySpan<byte> bSpan,
             out ReadOnlySpan<byte> c)
         {

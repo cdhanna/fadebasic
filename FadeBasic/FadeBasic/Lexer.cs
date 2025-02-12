@@ -73,6 +73,7 @@ namespace FadeBasic
         KeywordAnd,
         KeywordOr,
         KeywordNot,
+        KeywordXor,
 
         // Colon,
 
@@ -194,6 +195,7 @@ namespace FadeBasic
             new Lexem(LexemType.OpBitwiseXor, new Regex("^~~")),
             new Lexem(-3, LexemType.OpNotEqual, new Regex("^<>")),
             new Lexem(LexemType.KeywordAnd, new Regex("^and")),
+            new Lexem(LexemType.KeywordXor, new Regex("^xor")),
             new Lexem(LexemType.KeywordOr, new Regex("^or")),
             new Lexem(LexemType.KeywordNot, new Regex("^not")),
             new Lexem(LexemType.KeywordFor, new Regex("^for")),

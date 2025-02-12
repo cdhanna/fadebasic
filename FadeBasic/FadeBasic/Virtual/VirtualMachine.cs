@@ -467,6 +467,23 @@ namespace FadeBasic.Virtual
                             VmUtil.Mod(vTypeCode, aSpan, bSpan, out cSpan);
                             VmUtil.PushSpan(ref stack, cSpan, vTypeCode);
                             break;
+                        case OpCodes.LOGICAL_2:
+                            var aTypeCode = stack.Pop();
+                            VmUtil.ReadSpan(ref stack, aTypeCode, out aSpan);
+                            
+                            var bTypeCode = stack.Pop();
+                            VmUtil.ReadSpan(ref stack, bTypeCode, out bSpan);
+
+                            VmUtil.CastInlineSpan(aSpan, aTypeCode, TypeCodes.INT, ref aSpan);
+                            VmUtil.CastInlineSpan(bSpan, bTypeCode, TypeCodes.INT, ref bSpan);
+                            
+                            int aInt = BitConverter.ToInt32(aSpan.ToArray(), 0) > 0 ? 1 : 0;
+                            int bInt = BitConverter.ToInt32(bSpan.ToArray(), 0) > 0 ? 1 : 0;
+                            
+                            VmUtil.PushSpan(ref stack, BitConverter.GetBytes(aInt), TypeCodes.INT);
+                            VmUtil.PushSpan(ref stack, BitConverter.GetBytes(bInt), TypeCodes.INT);
+                            
+                            break;
                         case OpCodes.GT:
                             VmUtil.ReadTwoValues(ref stack, out vTypeCode, out aSpan, out bSpan);
                             VmUtil.GreaterThan(vTypeCode, bSpan, aSpan, out cSpan);

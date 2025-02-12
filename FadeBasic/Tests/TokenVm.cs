@@ -534,6 +534,42 @@ ENDIF
     }
 
     
+    [TestCase("1 XOR 1", 0)]
+    [TestCase("1 XOR 0", 1)]
+    [TestCase("0 XOR 1", 1)]
+    [TestCase("0 XOR 0", 0)]
+    [TestCase("502 XOR 1004", 0)]
+    [TestCase("-42 XOR 1004", 1)]
+    
+    [TestCase("0 AND 0", 0)]
+    [TestCase("0 AND 1", 0)]
+    [TestCase("1 AND 1", 1)]
+    [TestCase("1 AND 0", 0)]
+    [TestCase("-42 AND 1004", 0)]
+    [TestCase("-42 AND -3", 0)]
+    
+    [TestCase("0 OR 0", 0)]
+    [TestCase("0 OR 1", 1)]
+    [TestCase("1 OR 1", 1)]
+    [TestCase("1 OR 0", 1)]
+    [TestCase("-42 OR 1004", 1)]
+    [TestCase("-42 OR -3", 0)]
+    [TestCase("-42 OR 1", 1)]
+    public void Logic(string expr, int expected)
+    {
+        var src = @$"
+x = {expr}
+";
+        Setup(src, out _, out var prog);
+        
+        var vm = new VirtualMachine(prog);
+        vm.Execute().MoveNext();
+        
+        Assert.That(vm.dataRegisters[0], Is.EqualTo(expected)); 
+        Assert.That(vm.typeRegisters[0], Is.EqualTo(TypeCodes.INT));
+    }
+
+    
     [Test]
     public void IfStatement_Simple_NoEntrance()
     {

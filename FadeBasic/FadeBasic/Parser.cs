@@ -76,6 +76,8 @@ namespace FadeBasic
         public Dictionary<string, List<TypeInfo>> functionReturnTypeTable = new Dictionary<string, List<TypeInfo>>();
         
         List<DelayedTypeCheck> delayedTypeChecks = new List<DelayedTypeCheck>();
+
+        private int allowExitCounter;
         
         public Scope()
         {
@@ -156,6 +158,10 @@ namespace FadeBasic
             currentFunctionName.Pop();
         }
 
+        public void BeginLoop() => allowExitCounter++;
+        public void EndLoop() => allowExitCounter--;
+        public bool AllowExits => allowExitCounter > 0;
+
         public string GetCurrentFunctionName() => currentFunctionName.Count > 0 ? currentFunctionName.Peek() : null;
 
         public void AddLabel(string funcName, LabelDeclarationNode labelDecl)
@@ -184,8 +190,17 @@ namespace FadeBasic
             var lht = expr.lhs.ParsedType;
             var rht = expr.rhs.ParsedType;
 
+       
             if (lht.type == rht.type && lht.structName == rht.structName)
             {
+                
+                if (expr.operationType == OperationType.EqualTo)
+                {
+                    // the expression has a VOID type  
+                    return;
+                }
+
+                
                 // all is well!
                 expr.ParsedType = lht;
                 return;
@@ -2719,6 +2734,8 @@ namespace FadeBasic
                     return 6;
                 case LexemType.KeywordOr:
                     return 7;
+                case LexemType.KeywordXor:
+                    return 8;
                 case LexemType.OpGt:
                 case LexemType.OpLt:
                 case LexemType.OpGte:
@@ -2771,6 +2788,7 @@ namespace FadeBasic
                 case LexemType.OpEqual:
                 case LexemType.OpNotEqual:
                 case LexemType.KeywordAnd:
+                case LexemType.KeywordXor:
                 case LexemType.KeywordOr:
                 case LexemType.OpBitwiseOr:
                 case LexemType.OpBitwiseAnd:
@@ -2798,6 +2816,7 @@ namespace FadeBasic
                 case LexemType.OpPower:
                 case LexemType.OpMod:
                 case LexemType.KeywordAnd:
+                case LexemType.KeywordXor:
                 case LexemType.KeywordOr:
                 case LexemType.OpBitwiseAnd:
                 case LexemType.OpBitwiseOr:

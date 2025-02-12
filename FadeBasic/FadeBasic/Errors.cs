@@ -173,6 +173,7 @@ namespace FadeBasic
         public static readonly ErrorCode MultiLineDeclareCannotInferType = "[0152] Multi-line declaration cannot infer type of declaration";
         public static readonly ErrorCode MultiLineDeclareInvalidVariable = "[0153] Multi-line declaration must have a valid left hand side";
         public static readonly ErrorCode MultiLineAssignmentCannotInferType = "[0153] Multi-line assignment has invalid statement";
+        public static readonly ErrorCode ExitStatementFoundOutsideOfLoop = "[0154] An EXIT statement must exist within a loop control statement";
 
         // 200 series represents post-parse issues
         public static readonly ErrorCode InvalidReference = "[0200] Invalid reference";

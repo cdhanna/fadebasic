@@ -2391,13 +2391,21 @@ namespace FadeBasic.Virtual
                             _buffer.Add(OpCodes.EQ);
                             _buffer.Add(OpCodes.NOT);
                             break;
+                        case OperationType.Xor:
+                            _buffer.Add(OpCodes.LOGICAL_2);
+                            _buffer.Add(OpCodes.BITWISE_XOR);
+                            AddPushInt(_buffer, 1);
+                            _buffer.Add(OpCodes.GTE);
+                            break;
                         case OperationType.And:
+                            _buffer.Add(OpCodes.LOGICAL_2);
                             _buffer.Add(OpCodes.MUL);
                             // push '1' onto the stack
                             AddPushInt(_buffer, 1);
                             _buffer.Add(OpCodes.GTE);
                             break;
                         case OperationType.Or:
+                            _buffer.Add(OpCodes.LOGICAL_2);
                             _buffer.Add(OpCodes.ADD);
                             // push '1' onto the stack
                             AddPushInt(_buffer, 1);

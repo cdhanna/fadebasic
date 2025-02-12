@@ -276,23 +276,40 @@ namespace FadeBasic.Ast.Visitors
                         forStatement.endValueExpression?.EnsureVariablesAreDefined(scope, ctx);
                         forStatement.stepValueExpression?.EnsureVariablesAreDefined(scope, ctx);
                         forStatement.startValueExpression?.EnsureVariablesAreDefined(scope, ctx);
+                        
+                        scope.BeginLoop();
                         forStatement.statements.CheckStatements(scope, ctx);
+                        scope.EndLoop();
+                        
                         break;
                     case IfStatement ifStatement:
                         ifStatement.condition.EnsureVariablesAreDefined(scope, ctx);
+                        scope.EnforceTypeAssignment(ifStatement.condition, ifStatement.condition.ParsedType, TypeInfo.Int, false, out _);
+
                         ifStatement.positiveStatements?.CheckStatements(scope, ctx);
                         ifStatement.negativeStatements?.CheckStatements(scope, ctx);
                         break;
                     case DoLoopStatement doStatement:
+                        scope.BeginLoop();
                         doStatement.statements?.CheckStatements(scope, ctx);
+                        scope.EndLoop();
+
                         break;
                     case WhileStatement whileStatement:
                         whileStatement.condition.EnsureVariablesAreDefined(scope, ctx);
+                        scope.EnforceTypeAssignment(whileStatement.condition, whileStatement.condition.ParsedType, TypeInfo.Int, false, out _);
+
+                        scope.BeginLoop();
                         whileStatement.statements.CheckStatements(scope, ctx);
+                        scope.EndLoop();
                         break;
                     case RepeatUntilStatement repeatStatement:
+                        scope.BeginLoop();
                         repeatStatement.statements.CheckStatements(scope, ctx);
+                        scope.EndLoop();
                         repeatStatement.condition.EnsureVariablesAreDefined(scope, ctx);
+                        scope.EnforceTypeAssignment(repeatStatement.condition, repeatStatement.condition.ParsedType, TypeInfo.Int, false, out _);
+
                         break;
                     case GoSubStatement goSub:
                         EnsureLabel(scope, goSub.label, goSub);
@@ -300,16 +317,22 @@ namespace FadeBasic.Ast.Visitors
                     case GotoStatement goTo:
                         EnsureLabel(scope, goTo.label, goTo);
                         break;
-                    
                     case ExpressionStatement exprStatement:
                         exprStatement.expression.EnsureVariablesAreDefined(scope, ctx);
                         break;
                     
                     case NoOpStatement _:
                     case ReturnStatement _:
-                    case ExitLoopStatement _:
                     case LabelDeclarationNode _:
                     case EndProgramStatement _:
+                        break;
+                    case ExitLoopStatement exitStatement:
+                        if (!scope.AllowExits)
+                        {
+                            exitStatement.Errors.Add(new ParseError(exitStatement, ErrorCodes.ExitStatementFoundOutsideOfLoop));
+                        }
+
+                        break;
                     case FunctionStatement _:
                     case FunctionReturnStatement _:
                         break;
