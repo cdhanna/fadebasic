@@ -1,5 +1,7 @@
 ﻿<Project Sdk="Microsoft.NET.Sdk">
 
+    <Import Project="../NugetPackage.props"/>
+    
     <PropertyGroup>
         <TargetFramework>net8.0</TargetFramework>
         <TargetFramework>netstandard2.0</TargetFramework>
@@ -9,12 +11,8 @@
         <PackageId>FadeBasic.Templates.Common</PackageId>
         <Title>FadeBasic Project Templates</Title>
         <Description>Fade's actually dotnet embeddable Basic. </Description>
-        <Authors>Chris Hanna</Authors>
-        <ProjectUrl>https://fadebasic.com</ProjectUrl>
-        <PackageType>Template</PackageType>
-        <RepositoryUrl>https://github.com/cdhanna/fadebasic</RepositoryUrl>
-        <PackageLicenseExpression>MIT</PackageLicenseExpression>
         
+        <PackageType>Template</PackageType>
         <IncludeContentInPack>true</IncludeContentInPack>
         <IncludeBuildOutput>false</IncludeBuildOutput>
         <ContentTargetFolders>content</ContentTargetFolders>

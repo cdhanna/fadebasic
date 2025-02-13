@@ -1,0 +1,16 @@
+<Project>
+    <PropertyGroup>
+        <Authors>Chris Hanna</Authors>
+        <ProjectUrl>https://fadebasic.com</ProjectUrl>
+        <RepositoryUrl>https://github.com/cdhanna/fadebasic</RepositoryUrl>
+        <PackageLicenseExpression>MIT</PackageLicenseExpression>
+        <PackageIcon>ghost_lee.png</PackageIcon>
+        <PackageReadmeFile>readme.md</PackageReadmeFile>
+        <PackageReleaseNotes>CHANGELOG.md</PackageReleaseNotes>
+    </PropertyGroup>
+    <ItemGroup>
+        <None Include="$(MSBuildThisFileDirectory)/../readme.md" Pack="true" PackagePath="\"/>
+        <None Include="$(MSBuildThisFileDirectory)/../images/ghost_lee.png" Pack="true" PackagePath=""/>
+        <None Include="$(MSBuildThisFileDirectory)/CHANGELOG.md" Pack="true" PackagePath=""/>
+    </ItemGroup>
+</Project>

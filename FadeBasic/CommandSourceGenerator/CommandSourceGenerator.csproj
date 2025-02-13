@@ -1,5 +1,7 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
+    <Import Project="../NugetPackage.props"/>
+    
     <PropertyGroup>
         <TargetFramework>netstandard2.0</TargetFramework>
         <EnforceExtendedAnalyzerRules>true</EnforceExtendedAnalyzerRules>
@@ -9,10 +11,6 @@
         <PackageId>FadeBasic.Lang.CommandSourceGenerator</PackageId>
         <Title>FadeBasic Language Command Source Generator</Title>
         <Description>Fade's actually dotnet embeddable Basic. </Description>
-        <Authors>Chris Hanna</Authors>
-        <ProjectUrl>https://fadebasic.com</ProjectUrl>
-        <RepositoryUrl>https://github.com/cdhanna/fadebasic</RepositoryUrl>
-        <PackageLicenseExpression>MIT</PackageLicenseExpression>
     </PropertyGroup>
 
     
