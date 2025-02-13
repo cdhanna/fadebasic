@@ -13,15 +13,9 @@ This extension includes the following tools for Fade Basic.
 
 Dotnet must be installed on the machine.
 
-## Extension Settings
-
-This extension contributes the following settings:
-
-| key                             | description |
-| ------------------------------- | ----------- |
-| conf.language.fade.formatCasing | controls how keywords are cased during formatting |
-
 ## Known Issues
+
+You may need to restart VSCode after the first time you create a project, otherwise syntax highlighting may not work.
 
 The following known features are unsupported.
 

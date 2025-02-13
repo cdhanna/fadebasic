@@ -1,5 +1,7 @@
 ﻿<Project Sdk="Microsoft.NET.Sdk">
 
+    <Import Project="../NugetPackage.props"/>
+
     <PropertyGroup>
         <TargetFramework>net8.0</TargetFramework>
         <ImplicitUsings>enable</ImplicitUsings>
@@ -9,10 +11,6 @@
         <PackageId>FadeBasic.Lang.ApplicationSupport</PackageId>
         <Title>FadeBasic Language Application Support</Title>
         <Description>Fade's actually dotnet embeddable Basic. </Description>
-        <Authors>Chris Hanna</Authors>
-        <ProjectUrl>https://fadebasic.com</ProjectUrl>
-        <RepositoryUrl>https://github.com/cdhanna/fadebasic</RepositoryUrl>
-        <PackageLicenseExpression>MIT</PackageLicenseExpression>
     </PropertyGroup>
 
     <ItemGroup>

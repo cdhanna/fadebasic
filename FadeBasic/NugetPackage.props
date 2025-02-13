@@ -6,7 +6,7 @@
         <PackageLicenseExpression>MIT</PackageLicenseExpression>
         <PackageIcon>ghost_lee.png</PackageIcon>
         <PackageReadmeFile>readme.md</PackageReadmeFile>
-        <PackageReleaseNotes>CHANGELOG.md</PackageReleaseNotes>
+        <PackageReleaseNotes>$([System.IO.File]::ReadAllText("$(MSBuildThisFileDirectory)/CHANGELOG.md"))</PackageReleaseNotes>
     </PropertyGroup>
     <ItemGroup>
         <None Include="$(MSBuildThisFileDirectory)/../readme.md" Pack="true" PackagePath="\"/>

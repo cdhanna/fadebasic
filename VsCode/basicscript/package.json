@@ -11,6 +11,7 @@
     "type": "git",
     "url": "https://github.com/cdhanna/fadebasic"
   },
+  "icon": "ghost_lee_128.png",
   "version": "0.0.1",
   "engines": {
     "vscode": "^1.85.0"
@@ -154,7 +155,8 @@
     "lint": "eslint src --ext ts",
     "test": "vscode-test",
     "check-types": "tsc --noEmit",
-    "package": "npm run check-types && node esbuild.js --production"
+    "copy-logo": "cpx '../../images/ghost_lee_128.png' './out' ",
+    "package": "npm run check-types && node esbuild.js --production && npm run copy-logo"
   },
   "dependencies": {
     "vscode-languageclient": "^9.0.1",
@@ -169,6 +171,7 @@
     "@vscode/test-cli": "^0.0.4",
     "@vscode/test-electron": "^2.3.8",
     "@vscode/vsce": "^3.2.2",
+    "cpx": "^1.5.0",
     "esbuild": "^0.24.2",
     "eslint": "^8.56.0",
     "typescript": "^5.3.3"
