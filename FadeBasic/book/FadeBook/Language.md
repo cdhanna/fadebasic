@@ -1,10 +1,29 @@
-_Fade Basic_ is a variant of BASIC. The language is fairly limited in its scope and it is intended to capture the essence of what _Dark Basic Pro_ was able to do in 2003. It is worth glancing over this document with an open mind, as some of the language decisions may raise an eyebrow in 2025. 
+# Language Guide
+
+_Fade Basic_ is a variant of BASIC. The language is fairly limited in its scope and it is intended to capture the essence of what _Dark Basic Pro_ was able to do in 2003. If you are familiar with _Dark Basic_, then read about the [Differences between _Fade Basic_ and _Dark Basic_](https://github.com/cdhanna/fadebasic/blob/main/FadeBasic/book/FadeBook/Dark%20Basic%20Pro%20Changes.md). It is worth glancing over this document with an open mind, as some of the language decisions may raise an eyebrow in 2025. 
+
+_Fade Basic_ is an odd duck of a language. Ultimately, it is an interpreted scripting language and runs inside a dotnet process. However, the source code, `.fbasic` files, are _compiled_ into a byte-code, and that byte-code is what is being interpreted at runtime. _Fade_ is debuggable and using an IDE like Visual Studio Code, you can attach a debugger to the program and use breakpoints, see state, and use watch expressions. 
+
+In the current development of _Fade_, I have been focusing on standalone application architectures, where a dotnet process boots up and immediately runs pre-compiled _Fade_ byte-code. In this way, the program _is_ a dotnet program, and uses a `.csproj` file to coordinate the build. Read more about that in the [Project Guide](https://github.com/cdhanna/fadebasic/blob/main/FadeBasic/book/FadeBook/Projects.md). Technically, it is possible to construct a _Fade_ program, compile it, and run it, all from within a running dotnet process. Read about that in the [SDK Guide](https://github.com/cdhanna/fadebasic/blob/main/FadeBasic/book/FadeBook/SDK%20Guide.md). 
+
+The rest of this document mostly focuses on the syntax of the language itself. Enjoy! :metal:
 
 ## Comments
 
 On any given line of code, the <code>`</code> character turns everything to the right of the character into a _code comment_. Comments are ignored by the compiler, and allow you to mark up your code with prose.
 
+```basic
+` this is a comment!
+```
+
 Block comments are possible as well, using the `REMSTART` and `REMEND` keywords. Any text between those two keywords are treated as comments and ignored by the compiler. `REMSTART` and `REMEND` keywords may be nested, but it does not make much sense to do so. A `REMSTART` keyword **must** have a closing `REMEND` keyword, or the entire program after `REMSTART` will be treated as a comment.
+
+```basic
+REMSTART
+    this is a multi
+    line comment!
+REMEND
+```
 
 ## Variables
 
@@ -81,7 +100,17 @@ x = 3.2 `x is an integer, and holds the value, 3
 y# = 2  `y is a float, and holds the value 2.0
 ```
 
-TODO: put in a section about explicit casts using `str$` and `val`
+It is possible to explicitly cast between values by using [commands](#commands). 
+
+The `str$()` command takes a number, and produces a string. 
+```basic
+x$ = str$(42) `x$ is "42"
+```
+
+The `val()` command takes a string, and produces a number.
+```basic
+x = val("42") `x is 42
+```
 
 ## Primitive Types
 
@@ -366,7 +395,7 @@ There are 4 ways to type numbers in _Fade Basic_. Other than the default base-10
 All of these assignments create the same value, but use different methods to express the value.
 ```basic
 x = 52 `decimal, base 10
-y = %110100 `binary, base 1
+y = %110100 `binary, base 2
 z = 0c64 `octal, base 8
 w = 0x34 `hex, base 16
 ```
@@ -410,6 +439,9 @@ Most numeric operations require two expressions, a _left_ and _right_. The follo
 | && | _Bitwise_; results in the AND between the left and right <pre>5 && 3 `1 </pre> |
 
 When performing operations with numeric variable, variables will be implicitly cast if needed. 
+
+> [!WARNING]  
+> The `/` operation will **crash** the program if the denominator is 0. There is no way to recover from this, so the best policy is to simply not. :sweat_smile:
 
 There is also a few unary numeric operations that only require a single number. 
 | Operation | Description |
@@ -473,7 +505,34 @@ To build your own command collection, check the [Custom Commands Documentation](
 
 ----
 #### Short Circuiting 
-TODO
+
+The two logical operators, `AND` and `OR` have a special property called _short circuiting_.
+If it possible to know the result of the binary operation from the first term, then the second term
+is never evaluated. 
+
+In an `AND` binary operation, both terms must be truthy (aka, a positive number) for the operation to be truthy. If the first term is not truthy, then it would be 
+impossible for the binary operation to be true, regardless of the second term. The second term will not be evaluated 
+and the operator is said to have "short circuited". In the example below, the function call is never executed. 
+```basic
+
+x = 0 AND never()
+
+FUNCTION never()
+    PRINT "this will not be seen"
+ENDFUNCTION 1
+```
+
+In an `OR` binary operation, either term may be truthy for the entire operation to be truthy. If the first term _is_ truthy, 
+then it does not matter if the second term is truthy or not, because the entire operation will be truthy regardless. In this way, 
+the `OR` operation is said to "short circuit". In the example below, the function call is never executed. 
+```basic
+
+x = 1 OR never()
+
+FUNCTION never()
+    PRINT "this will not be seen"
+ENDFUNCTION 1
+```
 
 ## Control Statements
 
@@ -685,5 +744,33 @@ The `SELECT` keyword must be followed by a numeric expression. This expression i
 A `SELECT` statement is made up of many `CASE` statements. The `CASE` keyword must be followed by a constant numeric literal. Each `CASE` statement has a set of inner statements that will only be executed if it is equal to the control value. Each `SELECT` statement is allowed one special `CASE` statement that has the keyword, `DEFAULT` instead of a numeric literal. If none of the cases' values match the control value, then the `DEFAULT` case is selected. If no case is selected, the program execution moves onto the closing `ENDSELECT` keyword. 
 
 
+## Compile Time Constants
 
-## Macros
+Compile time constants are a way to do text replacement in your source code before the text is compiled. 
+In the example below, the constant, `x` is not an actual variable, but symbolizes the text, "42". 
+```basic
+#CONSTANT x 42
+print x `prints 42
+```
+
+The source code literally becomes the following, 
+```basic
+print 42
+```
+
+Compile time constants cannot access any runtime data in their initializer, and cannot be modified at runtime. 
+Compile time constants cannot be multi-line segments. 
+
+## Memory
+
+_Fade Basic_ has a garbage collection system. When arrays UDTs, or strings are allocated, they will automatically be removed from _Fade_'s memory when no more variables reference the data. 
+```basic
+TYPE TUNA
+    size
+ENDTYPE
+
+redFish as TUNA `a TUNA is allocated
+blueFish as TUNA `a second TUNA is allocated
+redFish = blueFish `the first TUNA is no longer being reference, and is garbage collected. 
+```
+
