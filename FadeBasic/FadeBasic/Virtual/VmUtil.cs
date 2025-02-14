@@ -112,6 +112,19 @@ namespace FadeBasic.Virtual
             float output = BitConverter.ToSingle(outputRegisterBytes, 0);
             return output;
         }
+
+        public static byte ConvertToByte(ulong rawValue)
+        {
+            var outputRegisterBytes = BitConverter.GetBytes(rawValue);
+            return outputRegisterBytes[0];
+        }
+        
+        public static ushort ConvertToWord(ulong rawValue)
+        {
+            var outputRegisterBytes = BitConverter.GetBytes(rawValue);
+            return BitConverter.ToUInt16(outputRegisterBytes, 0);
+        }
+
         
         public static string GetTypeName(byte typeCode, VirtualMachine vm, ulong rawValue)
         {
@@ -386,6 +399,14 @@ namespace FadeBasic.Virtual
                 case TypeCodes.REAL:
                     ReadValue<float>(vm, default, out var floatValue, out state, out address);
                     value = floatValue;
+                    break;
+                case TypeCodes.BYTE:
+                    ReadValue<byte>(vm, default, out var byteValue, out state, out address);
+                    value = byteValue;
+                    break;
+                case TypeCodes.WORD:
+                    ReadValue<ushort>(vm, default, out var shortValue, out state, out address);
+                    value = shortValue;
                     break;
                 default:
                     throw new Exception("uh oh, the any type isn't supported for the actual read type");

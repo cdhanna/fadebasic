@@ -3046,6 +3046,7 @@ namespace FadeBasic
 
                     var deRefExpr = ParseVariableReference();
                     outputExpression = new DereferenceExpression(deRefExpr, token);
+                    outputExpression.Errors.Add(new ParseError(token, ErrorCodes.PointersAreNotSupported));
                     break;
                 case LexemType.OpMinus:
                     _stream.Advance();

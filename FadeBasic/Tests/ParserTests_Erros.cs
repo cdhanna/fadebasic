@@ -1,3 +1,4 @@
+using System.Text;
 using FadeBasic;
 using FadeBasic.Ast;
 
@@ -865,6 +866,7 @@ DIM arr(3) as egg
     }
 
     [TestCase("x as float\ny as integer\nx = y", null)]
+    [TestCase("x as float\ny as integer\nx = y", null)]
     [TestCase("x as integer\ny as float\nx = y", null)] // Allowed, with precision loss
     [TestCase("x as string\ny as integer\nx = y", "cannot convert int to string")]
     [TestCase("x as integer\ny as string\nx = y", "cannot convert string to int")]
@@ -987,6 +989,76 @@ x as egg
             Assert.That(errors[0].Display.Substring("[1:0]".Length),
                 Is.EqualTo($" - {ErrorCodes.InvalidCast} | {error}"));
         }
+    }
+    
+    
+    
+    [Test]
+    public void Primitives_All()
+    {
+       
+        var types = new (string, string[])[]
+        {
+            ("INTEGER", new string[]
+            {
+                "5", "-3"
+            }),
+            ("DOUBLE INTEGER", new string[]
+            {
+                "5", "-5"
+            }),
+            ("BYTE", new string[]
+            {
+                "5", "-2"
+            }),
+            ("WORD", new string[]
+            {
+                "5"
+            }),
+            ("DWORD", new string[]
+            {
+                "5"
+            }),
+            ("BOOLEAN", new string[]
+            {
+                "1", "0"
+            }),
+            ("FLOAT", new string[]
+            {
+                "5"
+            }),
+            ("DOUBLE FLOAT", new string[]
+            {
+                "5"
+            }),
+            ("STRING", new string[]
+            {
+                "\"toast\""
+            }),
+        };
+
+        var sourceBuilder = new StringBuilder();
+
+        for (var i = 0 ; i < types.Length; i ++)
+        {
+            var data = types[i];
+            var type = data.Item1;
+            var values = data.Item2;
+
+            for (var j = 0; j < values.Length; j++)
+            {
+                var varName = "v" + i + "_" + j;
+                var value = values[j];
+                sourceBuilder.AppendLine($"{varName} AS {type} = {value}");
+            }
+        }
+        
+        
+        var input = sourceBuilder.ToString();
+        var parser = MakeParser(input);
+        var prog = parser.ParseProgram();
+
+        prog.AssertNoParseErrors();
     }
 
     [Test]
@@ -1397,6 +1469,21 @@ local for";
         var errors = prog.GetAllErrors();
         Assert.That(errors.Count, Is.EqualTo(1));
         Assert.That(errors[0].Display, Is.EqualTo($"[1:9] - {ErrorCodes.ScopedDeclarationInvalid}"));
+
+    }
+    
+    [Test]
+    public void ParseError_PointerUnsupported()
+    {
+        var input = @"
+x = 4
+y = *x
+";
+        var parser = MakeParser(input);
+        var prog = parser.ParseProgram();
+
+        prog.AssertParseErrors(1, out var errors);
+        Assert.That(errors[0].Display, Is.EqualTo($"[2:4] - {ErrorCodes.PointersAreNotSupported}"));
 
     }
     

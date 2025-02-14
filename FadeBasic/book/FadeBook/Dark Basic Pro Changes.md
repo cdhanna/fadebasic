@@ -51,7 +51,7 @@ It was possible to "confuse" _Dark Basic Pro_'s compiler in various ways regardi
 
 ## No Pointers
 
-_Dark Basic Pro_ supported the ability to create a pointer from a variable, but it did not support the ability to _dereference_ a pointer back to a variable. To be honest, I'm not sure how pointers were meant to be used if you could only create pointers, and never dereference them. As such, I left their implementation absent completely. In _Fade Basic_, you cannot create a pointer. 
+_Dark Basic Pro_ supported the `*` side of pointers, but did not support the `&` side. I have chosen to constraint _Fade Basic_ even more, and not support any pointers at all. 
 
 ## No #INCLUDE
 

@@ -4,13 +4,13 @@
         <ProjectUrl>https://fadebasic.com</ProjectUrl>
         <RepositoryUrl>https://github.com/cdhanna/fadebasic</RepositoryUrl>
         <PackageLicenseExpression>MIT</PackageLicenseExpression>
-        <PackageIcon>ghost_lee.png</PackageIcon>
+        <PackageIcon>ghost_lee_128.png</PackageIcon>
         <PackageReadmeFile>readme.md</PackageReadmeFile>
         <PackageReleaseNotes>$([System.IO.File]::ReadAllText("$(MSBuildThisFileDirectory)/CHANGELOG.md"))</PackageReleaseNotes>
     </PropertyGroup>
     <ItemGroup>
         <None Include="$(MSBuildThisFileDirectory)/../readme.md" Pack="true" PackagePath="\"/>
-        <None Include="$(MSBuildThisFileDirectory)/../images/ghost_lee.png" Pack="true" PackagePath=""/>
+        <None Include="$(MSBuildThisFileDirectory)/../images/ghost_lee_128.png" Pack="true" PackagePath=""/>
         <None Include="$(MSBuildThisFileDirectory)/CHANGELOG.md" Pack="true" PackagePath=""/>
     </ItemGroup>
 </Project>

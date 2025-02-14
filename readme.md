@@ -103,7 +103,6 @@ Now that you have _Fade_ running locally, you should check out the full language
 - [Language Specification](https://github.com/cdhanna/fadebasic/blob/main/FadeBasic/book/FadeBook/Language.md)
 - [Project Structures](https://github.com/cdhanna/fadebasic/blob/main/FadeBasic/book/FadeBook/Project.md)
 - [The SDK](https://github.com/cdhanna/fadebasic/blob/main/FadeBasic/book/FadeBook/SDK.md)
-- Program Samples (docs yet to be written)
 - [Custom Commands](https://github.com/cdhanna/fadebasic/blob/main/FadeBasic/book/FadeBook/Custom%20Commands.md)
 - [Differences between _Dark Basic_ and _Fade_](https://github.com/cdhanna/fadebasic/blob/main/FadeBasic/book/FadeBook/Dark%20Basic%20Pro%20Changes.md)
 
