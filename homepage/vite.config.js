@@ -3,6 +3,6 @@ import { svelte } from '@sveltejs/vite-plugin-svelte'
 
 // https://vite.dev/config/
 export default defineConfig({
-  base: 'homepage',
+  base: 'http://cdhanna.github.io/fadebasic/',
   plugins: [svelte()],
 })
