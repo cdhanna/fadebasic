@@ -1,0 +1,83 @@
+<script>
+  import fadeLogo from "./../../images/ghost_lee.png";
+  import fadeScreen from "./../../images/fade_screenshot.png";
+</script>
+
+<main>
+  <div class="content">
+    <img
+      src={fadeLogo}
+      class="logo"
+      alt="Fade Basic Logo"
+      title="Ghost Lee"
+    />
+
+    <div>
+      <h1 style="
+        margin-bottom: 0px;
+      ">
+        FADE BASIC
+      </h1>
+      <p>
+        <i>Fades Actually Dotnet Embeddable</i>
+      </p>
+    </div>
+  </div>
+
+  <div>
+    <div style="
+      display: flex;
+      flex-direction: row;
+      justify-content: space-between;
+    ">
+
+      <button>
+        <a href="https://github.com/cdhanna/fadebasic">
+          Install
+        </a>
+      </button>
+        
+      <button>
+        <a href="https://github.com/cdhanna/fadebasic/blob/main/FadeBasic/book/FadeBook/Language.md">
+          Language
+        </a>
+      </button>
+      <button>
+        <a href="https://discord.gg/yxFAFJurvU" unselectable="off">
+          Discord
+        </a>
+      </button>
+
+    </div>
+
+    <div style="
+      text-align: left;
+    ">
+      <p>
+        <i>Fade</i> is a <b>BASIC</b>-<i>esque</i> scripting language for Dotnet that is,
+      </p>
+      <ol>
+        <li>Debuggable inside VSCode</li>
+        <li>Uses no runtime Reflection</li>
+        <li>Has minimal dependencies</li>
+        <li>Customizable</li>
+      </ol>
+      <p> <i>Fade</i> is open source and created by <a href="https://brewed.ink">Chris Hanna</a> </p>
+    </div>
+
+  </div>
+
+</main>
+
+
+<a href={fadeScreen} target="_blank">
+  <img
+  src={fadeScreen}
+  class="screenshot"
+  alt="Screenshot of Fade in VSCode"
+  title="It works in Visual Studio Code!"
+  />
+</a>
+<style>
+
+</style>

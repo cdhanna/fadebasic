@@ -168,6 +168,7 @@ public class SemanticTokenHandler : SemanticTokensHandlerBase
             case LexemType.KeywordAnd:
             case LexemType.KeywordXor:
             case LexemType.KeywordAs:
+            case LexemType.OpMod:
             case LexemType.KeywordCase:
             case LexemType.KeywordElse:
             case LexemType.KeywordIf:
@@ -214,7 +215,6 @@ public class SemanticTokenHandler : SemanticTokensHandlerBase
             case LexemType.OpLt:
             case LexemType.OpLte:
             case LexemType.OpMinus:
-            case LexemType.OpMod:
             case LexemType.OpMultiply:
             case LexemType.OpPower:
             case LexemType.OpNotEqual:

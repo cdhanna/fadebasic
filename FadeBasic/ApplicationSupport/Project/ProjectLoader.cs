@@ -1,12 +1,6 @@
-using System.Reflection.Metadata;
-using System.Runtime.Loader;
-using System.Text.Json;
 using Microsoft.Build.Evaluation;
-using Microsoft.Build.Evaluation.Context;
-using Microsoft.Build.FileSystem;
 using Microsoft.Build.Framework;
 using Microsoft.Build.Locator;
-using Microsoft.Build.Logging;
 
 namespace FadeBasic.ApplicationSupport.Project;
 
