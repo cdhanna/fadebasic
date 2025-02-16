@@ -647,9 +647,6 @@ namespace FadeBasic.Ast.Visitors
                             rankExpr.Errors.Add(new ParseError(rankExpr, ErrorCodes.ArrayRankMustBeInteger));
                         }
                     }
-                    // arrayRef.ApplyTypeFromSymbol(arraySymbol);
-                    // arraySymbol.typeInfo.
-                    // arrayRef.ParsedType = arraySymbol.typeInfo; // TODO: this doesn't work if the program isn't complete. partial errors and whatnot
                     break;
                 case VariableRefNode variable:
                     if (!scope.TryGetSymbol(variable.variableName, out var symbol) && variable.variableName != "_")

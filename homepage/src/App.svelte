@@ -54,13 +54,13 @@
       text-align: left;
     ">
       <p>
-        <i>Fade</i> is a <b>BASIC</b>-<i>esque</i> scripting language for Dotnet that is,
+        <i>Fade</i> is a <b>BASIC</b>-<i>esque</i> scripting language for Dotnet that, 
       </p>
       <ol>
-        <li>Debuggable inside VSCode</li>
-        <li>Uses no runtime Reflection</li>
-        <li>Has minimal dependencies</li>
-        <li>Customizable</li>
+        <li>Is debuggable inside VSCode,</li>
+        <li>Uses no runtime Reflection,</li>
+        <li>Has minimal dependencies,</li>
+        <li>Is Customizable.</li>
       </ol>
       <p> <i>Fade</i> is open source and created by <a href="https://brewed.ink">Chris Hanna</a> </p>
     </div>

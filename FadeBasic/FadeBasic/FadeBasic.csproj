@@ -13,13 +13,14 @@
         <Description>Fade's actually dotnet embeddable Basic. </Description>
         
     </PropertyGroup>
-
+    
     <ItemGroup Label="Net Standard 2.0 Dependencies"  Condition="'$(TargetFramework)' == 'netstandard2.0'">
+        <!--   
+            Fade uses the System.ReadOnlySpan type which was added in NetStandard2.1.
+            However, to provide support of NetStandard2.0, the System.Memory package
+            provides a shim for the span types.  
+        -->
         <PackageReference Include="System.Memory" Version="4.5.5"/>
     </ItemGroup>
-    <ItemGroup>
-        <PackageReference Include="System.Runtime.Loader" Version="4.3.0"/>
-    </ItemGroup>
     
-
 </Project>
