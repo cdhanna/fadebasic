@@ -25,28 +25,27 @@
   </div>
 
   <div>
-    <div style="
+    <div class="buttons" style="
       display: flex;
       flex-direction: row;
       justify-content: space-between;
     ">
 
-      <button>
-        <a href="https://github.com/cdhanna/fadebasic">
+      <a href="https://github.com/cdhanna/fadebasic">
+        <button>
           Install
-        </a>
-      </button>
-        
-      <button>
-        <a href="https://github.com/cdhanna/fadebasic/blob/main/FadeBasic/book/FadeBook/Language.md">
+        </button>
+      </a>
+      <a href="https://github.com/cdhanna/fadebasic/blob/main/FadeBasic/book/FadeBook/Language.md">          
+        <button>
           Language
-        </a>
-      </button>
-      <button>
-        <a href="https://discord.gg/yxFAFJurvU" unselectable="off">
+        </button>
+      </a>
+      <a href="https://discord.gg/yxFAFJurvU" unselectable="off">
+        <button>
           Discord
-        </a>
-      </button>
+        </button>
+      </a>
 
     </div>
 

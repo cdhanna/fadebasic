@@ -31,7 +31,10 @@ h1 {
 .card {
   padding: 2em;
 }
-
+.buttons a {
+  flex-grow: 1;
+  display: flex;
+}
 button {
   border-radius: 8px;
   border: 1px solid transparent;
@@ -93,10 +96,10 @@ main {
   padding: 0px 22px;
 }
 
-button a, a:visited, a:hover, a:active {
+.buttons a, a:visited, a:hover, a:active {
   color: inherit;
 }
-button a {
+.buttons a {
   text-decoration: none;
 }
 
