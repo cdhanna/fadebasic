@@ -19,7 +19,7 @@
         FADE BASIC
       </h1>
       <p>
-        <i>Fades Actually Dotnet Embeddable</i>
+        <i><b>F</b>ade's <b>A</b>ctually <b>D</b>otnet <b>E</b>mbeddable</i>
       </p>
     </div>
   </div>
