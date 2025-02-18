@@ -1,6 +1,6 @@
 <script>
   import fadeLogo from "./../../images/ghost_lee.png";
-  import fadeScreen from "./../../images/fade_screenshot.png";
+  import fadeScreen from "./../../images/fade_screenshot2.png";
 </script>
 
 <main>
