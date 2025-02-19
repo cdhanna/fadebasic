@@ -2360,6 +2360,9 @@ namespace FadeBasic.Virtual
                         case OperationType.Mult:
                             _buffer.Add(OpCodes.MUL);
                             break;
+                        case OperationType.RaisePower:
+                            _buffer.Add(OpCodes.POWER);
+                            break;
                         case OperationType.Divide:
                             _buffer.Add(OpCodes.DIVIDE);
                             break;

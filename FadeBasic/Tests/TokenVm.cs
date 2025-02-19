@@ -12,6 +12,7 @@ public partial class TokenVm
 
     void Setup(string src, out Compiler compiler, out List<byte> progam, int? expectedParseErrors=null, bool generaeteDebug=false, bool ignoreParseCheck=false)
     {
+        TestCommands.staticPrintBuffer.Clear();
         var collection = TestCommands.CommandsForTesting;
         var lexer = new Lexer();
         var tokens = lexer.Tokenize(src, collection);
@@ -1588,11 +1589,11 @@ Return
         var src = @"
 x = 1
 y = 0
-GOSUB Double
-GOSUB Double
+GOSUB Double2
+GOSUB Double2
 END
 
-Double:
+Double2:
 x = x * 2
 GOSUB Trace
 Return

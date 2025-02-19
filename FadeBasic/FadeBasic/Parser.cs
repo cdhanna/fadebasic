@@ -282,13 +282,19 @@ namespace FadeBasic
                         node.Errors.AddTypeError(node, rightSide, foundType);
                     }
                     break;
+                    // if (leftSide.type == VariableType.String)
+                    // {
+                    //     foundType = leftSide;
+                    //     node.Errors.AddTypeError(node, rightSide, foundType);
+                    // }
+                    // break;
+                case VariableType.Word:
+                case VariableType.DWord:
+                case VariableType.DoubleFloat:
+                case VariableType.Byte:
                 case VariableType.Float:
-                    if (leftSide.type == VariableType.String)
-                    {
-                        foundType = leftSide;
-                        node.Errors.AddTypeError(node, rightSide, foundType);
-                    }
-                    break;
+                case VariableType.Boolean:
+                case VariableType.DoubleInteger:
                 case VariableType.Integer:
                     if (leftSide.type == VariableType.String)
                     {

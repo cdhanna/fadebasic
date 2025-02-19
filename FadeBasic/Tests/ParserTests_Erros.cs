@@ -910,6 +910,91 @@ DIM arr(3) as egg
                 Is.EqualTo($"{ErrorCodes.InvalidCast} | {error}"));
         }
     }
+    
+    
+     [TestCase("x as byte\ny as word\nx = y", null)] // Word to Byte
+    [TestCase("x as byte\ny as dword\nx = y", null)] // DWORD to Byte
+    [TestCase("x as byte\ny as integer\nx = y", null)] // Integer to Byte
+    [TestCase("x as byte\ny as double integer\nx = y", null)] // Double Integer to Byte
+    [TestCase("x as byte\ny as float\nx = y", null)] // Float to Byte
+    [TestCase("x as byte\ny as double float\nx = y", null)] // Double Float to Byte
+
+    [TestCase("x as word\ny as byte\nx = y", null)] // Byte to Word
+    [TestCase("x as word\ny as dword\nx = y", null)] // DWORD to Word
+    [TestCase("x as word\ny as integer\nx = y", null)] // Integer to Word
+    [TestCase("x as word\ny as double integer\nx = y", null)] // Double Integer to Word
+    [TestCase("x as word\ny as float\nx = y", null)] // Float to Word
+    [TestCase("x as word\ny as double float\nx = y", null)] // Double Float to Word
+
+    [TestCase("x as dword\ny as byte\nx = y", null)] // Byte to DWORD
+    [TestCase("x as dword\ny as word\nx = y", null)] // Word to DWORD
+    [TestCase("x as dword\ny as integer\nx = y", null)] // Integer to DWORD
+    [TestCase("x as dword\ny as double integer\nx = y", null)] // Double Integer to DWORD
+    [TestCase("x as dword\ny as float\nx = y", null)] // Float to DWORD
+    [TestCase("x as dword\ny as double float\nx = y", null)] // Double Float to DWORD
+
+    [TestCase("x as integer\ny as byte\nx = y", null)] // Byte to Integer
+    [TestCase("x as integer\ny as word\nx = y", null)] // Word to Integer
+    [TestCase("x as integer\ny as dword\nx = y", null)] // DWORD to Integer
+    [TestCase("x as integer\ny as double integer\nx = y", null)] // Double Integer to Integer
+    [TestCase("x as integer\ny as float\nx = y", null)] // Float to Integer
+    [TestCase("x as integer\ny as double float\nx = y", null)] // Double Float to Integer
+
+    [TestCase("x as double integer\ny as byte\nx = y", null)] // Byte to Double Integer
+    [TestCase("x as double integer\ny as word\nx = y", null)] // Word to Double Integer
+    [TestCase("x as double integer\ny as dword\nx = y", null)] // DWORD to Double Integer
+    [TestCase("x as double integer\ny as integer\nx = y", null)] // Integer to Double Integer
+    [TestCase("x as double integer\ny as float\nx = y", null)] // Float to Double Integer
+    [TestCase("x as double integer\ny as double float\nx = y", null)] // Double Float to Double Integer
+
+    [TestCase("x as float\ny as byte\nx = y", null)] // Byte to Float
+    [TestCase("x as float\ny as word\nx = y", null)] // Word to Float
+    [TestCase("x as float\ny as dword\nx = y", null)] // DWORD to Float
+    [TestCase("x as float\ny as integer\nx = y", null)] // Integer to Float
+    [TestCase("x as float\ny as double integer\nx = y", null)] // Double Integer to Float
+    [TestCase("x as float\ny as double float\nx = y", null)] // Double Float to Float
+
+    [TestCase("x as double float\ny as byte\nx = y", null)] // Byte to Double Float
+    [TestCase("x as double float\ny as word\nx = y", null)] // Word to Double Float
+    [TestCase("x as double float\ny as dword\nx = y", null)] // DWORD to Double Float
+    [TestCase("x as double float\ny as integer\nx = y", null)] // Integer to Double Float
+    [TestCase("x as double float\ny as double integer\nx = y", null)] // Double Integer to Double Float
+    [TestCase("x as double float\ny as float\nx = y", null)] // Float to Double Float
+
+    [TestCase("x as boolean\ny as byte\nx = y", null)] // Byte to Boolean
+    [TestCase("x as boolean\ny as word\nx = y", null)] // Word to Boolean
+    [TestCase("x as boolean\ny as dword\nx = y", null)] // DWORD to Boolean
+    [TestCase("x as boolean\ny as integer\nx = y", null)] // Integer to Boolean
+    [TestCase("x as boolean\ny as double integer\nx = y", null)] // Double Integer to Boolean
+    [TestCase("x as boolean\ny as float\nx = y", null)] // Float to Boolean
+    [TestCase("x as boolean\ny as double float\nx = y", null)] // Double Float to Boolean
+     
+    [TestCase("x as string\ny as byte\nx = y", "cannot convert byte to string")]
+    [TestCase("x as string\ny as word\nx = y", "cannot convert ushort to string")]
+    [TestCase("x as string\ny as dword\nx = y", "cannot convert uint to string")]
+    [TestCase("x as string\ny as integer\nx = y", "cannot convert int to string")]
+    [TestCase("x as string\ny as double integer\nx = y", "cannot convert long to string")]
+    [TestCase("x as string\ny as float\nx = y", "cannot convert float to string")]
+    [TestCase("x as string\ny as double float\nx = y", "cannot convert double to string")]
+    [TestCase("x as string\ny as boolean\nx = y", "cannot convert bool to string")]
+    public void AI_ParseError_TypeCheck_ImplicitCasting(string assign, string error)
+    {
+        var input = @$"{assign}";
+        var parser = MakeParser(input);
+        var prog = parser.ParseProgram();
+        if (string.IsNullOrEmpty(error))
+        {
+            prog.AssertNoParseErrors();
+        }
+        else
+        {
+            prog.AssertParseErrors(1);
+            var errors = prog.GetAllErrors();
+            Assert.That(errors[0].CombinedMessage,
+                Is.EqualTo($"{ErrorCodes.InvalidCast} | {error}"));
+        }
+    }
+    
     #endregion
     
     [TestCase("y = x",  null)] // this one is interesting, because by it COULD just as easily be an error; but its a conceit in the language to make it easier to type things out.

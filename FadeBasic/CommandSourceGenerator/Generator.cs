@@ -381,10 +381,22 @@ public static void {descriptor.MethodName}({nameof(VirtualMachine)} {VM})
                     case "void":
                         sb.AppendLine(GetInvokeSource(descriptor));
                         break;
+                    case "bool":
+                        sb.AppendLine($"var {result} = {GetInvokeSource(descriptor)}");
+                        sb.AppendLine($"ReadOnlySpan<byte> {resultSpan} = new ReadOnlySpan<byte>(new byte[]{{ (byte)({result} ? 1 : 0) }} );");
+                        sb.AppendLine($"{nameof(VmUtil)}.{nameof(VmUtil.PushSpan)}(ref {VM}.{nameof(VirtualMachine.stack)}, {resultSpan}, {descriptor.ReturnTypeCode});");
+                        break;
                     case "byte":
+                        sb.AppendLine($"var {result} = {GetInvokeSource(descriptor)}");
+                        sb.AppendLine($"ReadOnlySpan<byte> {resultSpan} = new ReadOnlySpan<byte>(new byte[]{{ {result } }});");
+                        sb.AppendLine($"{nameof(VmUtil)}.{nameof(VmUtil.PushSpan)}(ref {VM}.{nameof(VirtualMachine.stack)}, {resultSpan}, {descriptor.ReturnTypeCode});");
+                        break;
                     case "float":
                     case "long":
                     case "short":
+                    case "ushort":
+                    case "double":
+                    case "uint":
                     case "int":
                         sb.AppendLine($"var {result} = {GetInvokeSource(descriptor)}");
 
@@ -420,9 +432,13 @@ public static void {descriptor.MethodName}({nameof(VirtualMachine)} {VM})
                         case "object":
                             break;
                         case "float":
+                        case "double":
                         case "long":
                         case "short":
+                        case "ushort":
+                        case "uint":
                         case "byte":
+                        case "bool":
                         case "int":
                             sb.AppendLine($"{nameof(VmUtil)}.{nameof(VmUtil.HandleValue)}<{parameter.TypeName}>(" +
                                           $"{VM}, " +
@@ -567,6 +583,10 @@ public static void {descriptor.MethodName}({nameof(VirtualMachine)} {VM})
                 case "long":
                 case "float":
                 case "short":
+                case "uint":
+                case "ushort":
+                case "bool":
+                case "double":
                 case "int":
                     return ($"{nameof(VmUtil)}.{nameof(VmUtil.ReadValue)}<{typeName}>(" +
                                   $"{VM}, " +
@@ -618,12 +638,18 @@ public static void {descriptor.MethodName}({nameof(VirtualMachine)} {VM})
                         return TypeCodes.INT;
                     case "float":
                         return TypeCodes.REAL;
+                    case "double":
+                        return TypeCodes.DFLOAT;
                     case "byte":
                         return TypeCodes.BYTE;
+                    case "bool":
+                        return TypeCodes.BOOL;
                     case "long":
-                        return TypeCodes.DWORD;
-                    case "short":
+                        return TypeCodes.DINT;
+                    case "ushort":
                         return TypeCodes.WORD;
+                    case "uint":
+                        return TypeCodes.DWORD;
                     case "string":
                         return TypeCodes.STRING;
                     default:
@@ -684,10 +710,14 @@ public static void {descriptor.MethodName}({nameof(VirtualMachine)} {VM})
                 {
                     "int" => TypeCodes.INT,
                     "float" => TypeCodes.REAL,
+                    "double" => TypeCodes.DFLOAT,
                     "string" => TypeCodes.STRING,
+                    "bool" => TypeCodes.BOOL,
                     "byte" => TypeCodes.BYTE,
-                    "long" => TypeCodes.DWORD,
-                    "short" => TypeCodes.WORD,
+                    "long" => TypeCodes.DINT,
+                    "uint" => TypeCodes.DWORD,
+                    "short" => TypeCodes.WORD, // hack
+                    "ushort" => TypeCodes.WORD,
                     "object" => TypeCodes.ANY,
                     "RawArg<int>" => TypeCodes.INT,
                     "RawArg<string>" => TypeCodes.STRING,

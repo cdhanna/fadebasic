@@ -56,6 +56,9 @@ namespace FadeBasic
         private static Dictionary<VariableType, string> variableToDisplayMap = new Dictionary<VariableType, string>
         {
             [VariableType.Boolean] = "bool",
+            [VariableType.Byte] = "byte",
+            [VariableType.Word] = "ushort",
+            [VariableType.DWord] = "uint",
             [VariableType.String] = "string",
             [VariableType.Integer] = "int",
             [VariableType.DoubleInteger] = "long",

@@ -66,6 +66,7 @@ namespace FadeBasic.Virtual
     {
         NONE,
         DIVIDE_BY_ZERO,
+        INVALID_POWER,
         INVALID_ADDRESS,
         EXPLODE
     }
@@ -448,6 +449,21 @@ namespace FadeBasic.Virtual
                             VmUtil.Multiply(vTypeCode, aSpan, bSpan, out cSpan);
                             VmUtil.PushSpan(ref stack, cSpan, vTypeCode);
                             break;
+                        case OpCodes.POWER:
+                            VmUtil.ReadTwoValues(ref stack, out vTypeCode, out aSpan, out bSpan);
+                            VmUtil.Power(vTypeCode, aSpan, bSpan, out cSpan, out var isInvalidExp);
+                            if (isInvalidExp)
+                            {
+                                TriggerRuntimeError(new VirtualRuntimeError
+                                {
+                                    insIndex = instructionIndex,
+                                    type = VirtualRuntimeErrorType.INVALID_POWER,
+                                    message = $"invalid-power-expression. ins=[{instructionIndex}] type-code=[{vTypeCode}]"
+                                });
+                            }
+                            
+                            VmUtil.PushSpan(ref stack, cSpan, vTypeCode);
+                            break;
                         case OpCodes.DIVIDE:
                             VmUtil.ReadTwoValues(ref stack, out vTypeCode, out aSpan, out bSpan);
                             VmUtil.Divide(vTypeCode, aSpan, bSpan, out cSpan, out var isDivideByZero);
@@ -514,49 +530,11 @@ namespace FadeBasic.Virtual
                             // read a register location, which is always 1 byte.
                             addr = Advance();
                             VmUtil.ReadSpanAsUInt(ref stack, out data);
-
-                            // 
-                            // TODO: need to check if this is an array somehow... 
-                            //       but, the compiler baked away that info... 
-                            // 
-                            
-                            // arrays have a special access pattern, 
-                            // because there are TWO store operations
-                            // this could work, but it is a lot of branching for most cases... Unless the operation is SUPER fast :( 
-                            
-                           
-                            //
-                            // var isPointer = typeCode == TypeCodes.STRING || typeCode == TypeCodes.STRUCT;
-                            // if (isPointer)
-                            // {
-                            //     // checking for zero here is a way of checking if the  
-                            //     //  register was ever used before. Otherwise, it will
-                            //     //  clear the zero-th pointer. 
-                            //     if (scope.insIndexes[addr] > 0)
-                            //     {
-                            //         heap.TryDecrementRefCount(scope.dataRegisters[addr]);
-                            //     }
-                            // }
                             scope.dataRegisters[addr] = data;
                             scope.typeRegisters[addr] = typeCode;
                             scope.insIndexes[addr] = instructionIndex - 1; // minus one because the instruction has already been advanced. 
                             globalScope.flags[addr] = 0;
                             
-                            /*
-                             * if the thing we are storing is a pointer, then that is important,
-                             * and we should keep track of it.
-                             * 
-                             */
-                            // if (isPointer)
-                            // {
-                            //     heap.IncrementRefCount(data);
-                            //     
-                            //     // TODO: this is not a very good balance of efficiency... 
-                            //     //       the sweeping is costly, and maybe it makes sense to
-                            //     //       do it only every now and then, not on EVERY assign
-                            //     heap.Sweep(); 
-                            // }
-
                             break;
                         case OpCodes.STORE_PTR:
 
@@ -575,6 +553,10 @@ namespace FadeBasic.Virtual
                             scope.flags[addr] = VirtualScope.FLAG_PTR;
                             
                             heap.IncrementRefCount(data);
+                            
+                            // TODO: this is not a very good balance of efficiency... 
+                            //       the sweeping is costly, and maybe it makes sense to
+                            //       do it only every now and then, not on EVERY assign
                             heap.Sweep(); 
                             
                             break;

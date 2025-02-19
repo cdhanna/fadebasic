@@ -114,19 +114,19 @@ x = val("42") `x is 42
 
 ## Primitive Types
 
-_Fade Basic_ supports the following primitives, 
+_Fade Basic_ supports the following primitives. The _classic name_ is inspired from the BASIC-era, and the _C# equivalent_ is the mapped type. At the moment, not all valid C# primitive types are available. However, it is valid to use either type name in your declarations. 
 
-| type    | byte-size | description |
-| ------- | --------- | ----------- |
-| `INTEGER` | 4 | a signed integer value |
-| `DOUBLE INTEGER` | 8 | tba |
-| `BYTE` | 1 | tba |
-| `WORD` | 2 | tba |
-| `DWORD` | 4 | tba |
-| `BOOLEAN` | 1 | tba |
-| `FLOAT` | 4 | tba |
-| `DOUBLE FLOAT` | 8 | tba |
-| `STRING` | 4 | tba |
+| classic name  | C# equivalent | byte-size | description | range | 
+| --------------| ------------- | --------- | ----------- | ----- |
+| `INTEGER` | `int` | 4 | 32 bit signed int | -2147483648 to 2147483647 |
+| `DOUBLE INTEGER` | `long` | 8 | 64 bit signed int  | -9223372036854775808 to 9223372036854775807 |
+| `BYTE` | `byte` | 1 | 8 bit unsigned int | 0 to 255 |
+| `WORD` | `ushort` | 2 | 16 bit unsigned int | 0 to 65536 |
+| `DWORD` | `uint` | 4 | 32 bit unsigned int | 0 to 4294967295 |
+| `BOOLEAN` | `bool` | 1 | 8 bit unsigned bit | 0 to 255 |
+| `FLOAT` | `float` | 4 | 32 bit single-precision floating point type | 3.4E +/- 38 (7 digits) |
+| `DOUBLE FLOAT` | `double` | 8 | 64 bit double-precision floating point type | 1.7E +/- 308 (15 digits) |
+| `STRING` | `string` | 4 | a pointer to string memory | - |
 
 ----
 #### Implicit Casts
@@ -454,7 +454,7 @@ There is also a few unary numeric operations that only require a single number.
 ----
 #### Commands
 
-_Fade Basic_ uses _Commands_ to do most of the interesting work a program will do. _Commands_ are like [#functions](#functions), except that they are declared in `C#`. All _Fade_ programs need to specify which _Commands_ they will use ahead of time. You can write yor own _Commands_, or use the standard off the shelf ones for now while _Fade_ is still in development. 
+_Fade Basic_ uses _Commands_ to do most of the interesting work a program will do. _Commands_ are like [#functions](#functions), except that they are declared in `C#`. All _Fade_ programs need to specify which _Commands_ they will use ahead of time. You can write your own _Commands_, or use the standard off the shelf ones for now while _Fade_ is still in development. 
 
 _Commands_ can pretty much do anything, and they take the place of any built in language standard library. 
 The `PRINT` command is a very common one to use, available in the `FadeBasic.Lib.Standard.ConsoleCommands` collection. 

@@ -142,6 +142,47 @@ namespace Tests
         {
             Console.WriteLine(string.Join("\n", variable));
         }
+
+        public static List<string> staticPrintBuffer = new List<string>();
+        [FadeBasicCommand("static print")]
+        public static void StaticPrint(params object[] variable)
+        {
+            staticPrintBuffer.AddRange(variable.Select(x => x.ToString()));
+        }
+
+        [FadeBasicCommand("all the prims")]
+        public static string Todos(int integer, ushort word, uint dword, long dint, float real, double dFloat, byte b, bool b2)
+        {
+            return $"{integer},{word},{dword},{dint},{real},{dFloat},{b},{b2}";
+        }
+
+        [FadeBasicCommand("prim test di")]
+        public static long PrimTest_ReturnLong(long x) => x * 2;
+        
+        
+        [FadeBasicCommand("prim test w")]
+        public static ushort PrimTest_ReturnWord(ushort x) => (ushort)(x * 2);
+        
+        
+        [FadeBasicCommand("prim test dw")]
+        public static uint PrimTest_ReturnDWord(uint x) => x * 2;
+        
+        
+        [FadeBasicCommand("prim test f")]
+        public static float PrimTest_ReturnFloat(float x) => x * 2;
+        
+        
+        [FadeBasicCommand("prim test df")]
+        public static double PrimTest_ReturnDouble(double x) => x * 2;
+        
+        
+        [FadeBasicCommand("prim test b")]
+        public static byte PrimTest_ReturnByte(byte x) => (byte)(x * 2);
+        
+        
+        [FadeBasicCommand("prim test b2")]
+        public static bool PrimTest_ReturnBool(bool x) => !x;
+
         
         [FadeBasicCommand("concat")]
         public static string Concat(params object[] variable)

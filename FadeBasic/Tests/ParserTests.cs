@@ -1963,10 +1963,27 @@ y as integer, x(1) = 8
     }
 
     
-    [Test]
-    public void Decl_Integer()
+    // classic DBP names
+    [TestCase("word", "word", VariableType.Word)]
+    [TestCase("dword", "dword", VariableType.DWord)]
+    [TestCase("byte", "byte", VariableType.Byte)]
+    [TestCase("double integer", "doubleinteger", VariableType.DoubleInteger)]
+    [TestCase("double float", "doublefloat", VariableType.DoubleFloat)]
+    [TestCase("integer", "integer", VariableType.Integer)]
+    [TestCase("float", "float", VariableType.Float)]
+    [TestCase("boolean", "boolean", VariableType.Boolean)]
+    
+    // C# names
+    [TestCase("ushort", "word", VariableType.Word)]
+    [TestCase("uint", "dword", VariableType.DWord)]
+    [TestCase("long", "doubleinteger", VariableType.DoubleInteger)]
+    [TestCase("double", "doublefloat", VariableType.DoubleFloat)]
+    [TestCase("int", "integer", VariableType.Integer)]
+    [TestCase("float", "float", VariableType.Float)]
+    [TestCase("bool", "boolean", VariableType.Boolean)]
+    public void Decl(string type, string name, VariableType vt)
     {
-        var input = "x AS INTEGER";
+        var input = @$"x as {type}";
         var parser = MakeParser(input);
         var prog = parser.ParseProgram();
         
@@ -1974,9 +1991,9 @@ y as integer, x(1) = 8
         Assert.That(prog.statements[0], Is.AssignableTo<DeclarationStatement>());
 
         var decl = prog.statements[0] as DeclarationStatement;
-        Assert.That(decl.type.variableType, Is.EqualTo(VariableType.Integer));
+        Assert.That(decl.type.variableType, Is.EqualTo(vt));
         var code = prog.ToString();
-        Assert.That(code, Is.EqualTo("((decl local,x,(integer)))"));
+        Assert.That(code, Is.EqualTo($"((decl local,x,({name})))"));
     }
     
     

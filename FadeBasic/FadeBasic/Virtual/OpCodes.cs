@@ -20,14 +20,14 @@ namespace FadeBasic.Virtual
 
     public static class TypeCodes
     {
-        public const byte INT      = 0x00; // 4 bytes
-        public const byte REAL     = 0x01; // 4 bytes
-        public const byte BOOL     = 0x02; // 1 bytes
-        public const byte BYTE     = 0x03; // 1 bytes
-        public const byte WORD     = 0x04; // 2 bytes
-        public const byte DWORD    = 0x05; // 4 bytes
-        public const byte DINT     = 0x06; // 8 bytes
-        public const byte DFLOAT   = 0x07; // 8 bytes
+        public const byte INT      = 0x00; // 4 bytes (int)
+        public const byte REAL     = 0x01; // 4 bytes (float)
+        public const byte BOOL     = 0x02; // 1 bytes (bool)
+        public const byte BYTE     = 0x03; // 1 bytes (byte)
+        public const byte WORD     = 0x04; // 2 bytes (ushort)
+        public const byte DWORD    = 0x05; // 4 bytes (uint)
+        public const byte DINT     = 0x06; // 8 bytes (long)
+        public const byte DFLOAT   = 0x07; // 8 bytes (double)
         public const byte VOID     = 0x08; // 0 bytes
         public const byte STRING   = 0x09; // 4 bytes (ptr)
         public const byte PTR_REG  = 0x0A; // 1 byte (registry ptr)
