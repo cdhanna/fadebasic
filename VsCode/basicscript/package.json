@@ -119,6 +119,19 @@
         }
       },
       {
+        "title": "Fade LSP Settings",
+        "order": 3,
+        "properties": {
+          "conf.language.fade.lsp.useLogFile": {
+            "scope": "window",
+            "type": "boolean",
+            "default": false,
+            "requiresRestart": true,
+            "markdownDescription": "When true, the Fade Language Server Protocol will emit a log file in your workspace that you can use to help debug issues with the _Fade_ Language Server. "
+          }
+        }
+      },
+      {
         "title": "Fade Format Settings",
         "order": 2,
         "properties": {

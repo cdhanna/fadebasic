@@ -52,7 +52,7 @@ public class ProjectService
             var ctx = ProjectLoader.LoadCsProject(filePath);
             var commands = ProjectBuilder.LoadCommandMetadata(ctx);
 
-            _uriToProject[projectUri] = (ctx, commands);        
+            _uriToProject[projectUri] = (ctx, commands);     
             _logger.LogDebug($"loaded project... uri=[{projectUri}]");
 
         }

@@ -11,8 +11,11 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Nerdbank.Streams;
 using OmniSharp.Extensions.LanguageServer.Protocol.Models;
+using OmniSharp.Extensions.LanguageServer.Protocol.Window;
 using OmniSharp.Extensions.LanguageServer.Server;
 using Serilog;
+using Serilog.Core;
+using Serilog.Events;
 
 public static class Program
 {
@@ -23,8 +26,13 @@ public static class Program
             var connectionCts = new CancellationTokenSource();
             var pipeAddr = "";
             var isStdio = false; // doesn't DO anything yet.
+            var useLspLogFile = false;
             foreach (var t in args)
             {
+                if (string.Equals("--use-log-path", t, StringComparison.InvariantCultureIgnoreCase))
+                {
+                    useLspLogFile = true;
+                }
                 if (t.StartsWith("--stdio")) isStdio = true;
                 if (!t.StartsWith("--pipe=")) continue;
 
@@ -32,13 +40,16 @@ public static class Program
                 break;
             }
 
-            Log.Logger = new LoggerConfiguration()
+            LanguageServer server = null;
+            var logConfig = new LoggerConfiguration()
                 .Enrich.FromLogContext()
-                .WriteTo.File("log.txt", rollingInterval: RollingInterval.Day)
-                // .WriteTo.Console()
-                .MinimumLevel.Information()
-                .CreateLogger();
+                .MinimumLevel.Information();
+            if (useLspLogFile)
+            {
+                logConfig = logConfig.WriteTo.File("fadeLsp.txt", rollingInterval: RollingInterval.Day);
+            }
 
+            Log.Logger = logConfig.CreateLogger();
             Log.Logger.Information($"connecting... pipeAddr=[{pipeAddr}]");
             for (var i = 0 ; i < args.Length; i ++)
             {
@@ -69,7 +80,7 @@ public static class Program
                 ProjectLoader.Initialize(); // initialize msbuild.
                 Log.Logger.Information("Creating server");
 
-                var server = await LanguageServer.From(options =>
+                server = await LanguageServer.From(options =>
                     {
                         options.OnUnhandledException = ex =>
                         {
@@ -145,6 +156,7 @@ public static class Program
                 ).ConfigureAwait(false);
 
                 Log.Logger.Information(" starting server");
+               
                 await server.WaitForExit.ConfigureAwait(false);
                 Log.Logger.Information(" started server");
             }

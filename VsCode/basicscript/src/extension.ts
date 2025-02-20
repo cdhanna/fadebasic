@@ -41,6 +41,9 @@ export async function activate(context: vscode.ExtensionContext) {
 	var lspPath : string = vscode.Uri.joinPath(context.extensionUri, 'out', 'tools', 'LSP.dll').fsPath
 	var dapPath : string = vscode.Uri.joinPath(context.extensionUri, 'out', 'tools', 'DAP.dll').fsPath
 
+	var lspUseLogFile: boolean = workspaceConfig.get('lsp.useLogFile') || false;
+
+
 	logMessage(`Fade Basic extension is running. dotnetPath=[${dotnetPath}] lspPath=[${lspPath}] dapPath=[${dapPath}]`);
 
 
@@ -99,11 +102,15 @@ export async function activate(context: vscode.ExtensionContext) {
 	// 	transport: TransportKind.pipe
 	// }
 		
+	let configArgs = [lspPath];
+	if (lspUseLogFile == true){
+		configArgs.push('--')
+		configArgs.push('--use-log-path')
+	}
+
 	let config: Executable = {
 		command: dotnetPath,
-		args: [
-			lspPath
-		],
+		args: configArgs,
 		transport: TransportKind.stdio
 	}
 	logMessage('fade LSP config', config)

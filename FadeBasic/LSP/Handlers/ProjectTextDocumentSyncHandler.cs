@@ -23,14 +23,17 @@ public class ProjectTextDocumentSyncHandler: TextDocumentSyncHandlerBase
     private readonly ILanguageServerFacade _facade;
     private readonly DocumentService _docs;
     private ProjectService _projects;
+    private CompilerService _compiler;
 
     public ProjectTextDocumentSyncHandler(
         ILogger<ProjectTextDocumentSyncHandler> logger, 
         ILanguageServerFacade facade,
         DocumentService docs,
-        ProjectService projects
+        ProjectService projects,
+        CompilerService compiler
     )
     {
+        _compiler = compiler;
         _projects = projects;
         _logger = logger;
         _facade = facade;
@@ -79,7 +82,16 @@ public class ProjectTextDocumentSyncHandler: TextDocumentSyncHandlerBase
 
     public override Task<Unit> Handle(DidSaveTextDocumentParams request, CancellationToken cancellationToken)
     {
+        
         _projects.LoadProject(request.TextDocument.Uri);
+        _projects.TryGetProject(request.TextDocument.Uri, out var tuple);
+        var (context, project) = tuple;
+        foreach (var source in context.absoluteSourceFiles)
+        {
+            var uri = DocumentUri.FromFileSystemPath(source);
+            _compiler.Update(uri); // TODO: this is a overkill and will result in recompiling the project too many times. 
+        }
+        
         return Task.FromResult(Unit.Value);
     }
 
