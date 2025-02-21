@@ -68,8 +68,6 @@ Before you can get started,
     print "hello world"
     ```
 
-> [!CAUTION]
-> Due to a [known issue](https://github.com/cdhanna/fadebasic/issues/1), Syntax Highlighting will not work until you restart _Visual Studio Code_. 
 
 4. Click on the run and debug tab in _Visual Studio Code_, and select the big blue _Run and Debug_ button. You shouldn't need to specify any new launch configuration, because one should appear automatically. The `.vscode/launch.json` file should look like the following, 
     ```jsonc
