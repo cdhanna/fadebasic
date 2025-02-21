@@ -52,10 +52,10 @@ public static class ProjectLoader
         var targetFramework = csProj.GetPropertyValue("TargetFramework");
         var fullObjDir = Path.Combine(csProjDir, objDir);
 
-        var assetsFile = Path.Combine(fullObjDir, "project.assets.json");
+        var assetsFile = Path.Combine(fullObjDir, "project.assets.json").Replace("\\", "/");
         if (!File.Exists(assetsFile))
         {
-            throw new Exception("Run a `dotnet restore`");
+            throw new Exception($"Run a `dotnet restore`. No assets file found. csprojDir=[{csProjDir}] outDir=[{objDir}] supposed-asset-file=[{assetsFile}]");
         }
         
         var assetsJson = File.ReadAllText(assetsFile);

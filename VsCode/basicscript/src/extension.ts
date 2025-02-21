@@ -63,6 +63,7 @@ export async function activate(context: vscode.ExtensionContext) {
 	//  the DAP program must be set in the package.json
 	// "program": "/Users/chrishanna/Documents/Github/dby/FadeBasic/DAP/bin/Debug/net8.0/DAP",
 	
+	// dapPath
 	var dap = new FadeBasicDebugger(dotnetPath, dapPath);
 	
 	vscode.debug.registerDebugAdapterDescriptorFactory("fadeBasicDebugger", dap)
@@ -90,17 +91,6 @@ export async function activate(context: vscode.ExtensionContext) {
 	}));
 
 	logMessage('Registered DAP')
-	// let path = '/Users/chrishanna/Documents/Github/dby/DarkBasicYo/LSP/bin/Debug/net7.0/LSP.dll'
-	
-	// let config: Executable = {
-	// 	command: '/usr/local/share/dotnet/dotnet',
-	// 	args: [
-	// 		'run',
-	// 		'--project',
-	// 		'/Users/chrishanna/Documents/Github/dby/FadeBasic/LSP'
-	// 	],
-	// 	transport: TransportKind.pipe
-	// }
 		
 	let configArgs = [lspPath];
 	if (lspUseLogFile == true){
