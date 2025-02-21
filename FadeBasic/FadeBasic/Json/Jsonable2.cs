@@ -116,7 +116,8 @@ namespace FadeBasic.Json
                     case JsonLexem.STRING_LITERAL:
                         var rawKey = next.Slice(ref json);
                         var key = rawKey.Slice(1, rawKey.Length - 2);
-                        // key!
+                        var keyStr = key.ToString();
+                        
                         var _ = stream.Next();
                         stream.Assert(JsonLexem.COLON);
                         
@@ -124,6 +125,10 @@ namespace FadeBasic.Json
                         var next2 = stream.Next();
                         switch (next2.type)
                         {
+                            case JsonLexem.NULL:
+                                data.strings.Add(keyStr, null);
+                                data.objects.Add(keyStr, null);
+                                break;
                             case JsonLexem.STRING_LITERAL:
                                 // string field!
                                 var rawValue = next2.Slice(ref json);
@@ -132,7 +137,7 @@ namespace FadeBasic.Json
                                         .Replace("\\\"", "\"")
                                         .Replace("\\\\", "\\")
                                     ;
-                                data.strings.Add(key.ToString(), valueStr);
+                                data.strings.Add(keyStr, valueStr);
                                 break;
                             case JsonLexem.NUMBER_LITERAL:
                                 // number field!
@@ -140,15 +145,15 @@ namespace FadeBasic.Json
                                 {
                                     number = 0;
                                 }
-                                data.ints.Add(key.ToString(), number);
+                                data.ints.Add(keyStr, number);
                                 break;
                             case JsonLexem.OPEN_ARRAY:
                                 // array field!
-                                (data.arrays[key.ToString()], data.numberArrays[key.ToString()]) = ParseArray(stream, ref json);
+                                (data.arrays[keyStr], data.numberArrays[key.ToString()]) = ParseArray(stream, ref json);
                                 break;
                             case JsonLexem.OPEN_BRACKET:
                                 var subObj = ParseObject(stream, ref json);
-                                data.objects.Add(key.ToString(), subObj);
+                                data.objects.Add(keyStr, subObj);
                                
                                 break;
                         }
