@@ -113,6 +113,17 @@ export async function activate(context: vscode.ExtensionContext) {
 		args: configArgs,
 		transport: TransportKind.stdio
 	}
+	// // run directly from src
+	// config = {
+	// 	command: '/usr/local/share/dotnet/dotnet',
+	// 	args: [
+	// 		'run',
+	// 		'--project',
+	// 		'/Users/chrishanna/Documents/Github/dby/FadeBasic/LSP'
+	// 	],
+	// 	transport: TransportKind.pipe
+	// }
+
 	logMessage('fade LSP config', config)
 	
 	const serverOptions: ServerOptions = {

@@ -57,7 +57,7 @@ public class ProjectService
 
         }
         catch (Exception ex)
-        {
+        {   
             _logger.LogError($"failed to load project... uri=[{projectUri}] message=[{ex.Message}]");
             diagnostics.Add(new Diagnostic
             {

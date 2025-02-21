@@ -10,7 +10,11 @@
     "type": "project"
   },
   "description": "Create a C# launcher project for Fade Basic that acts as a simple console app",
-
+  "primaryOutputs": [
+    {
+      "path": "ConsoleApp.csproj"
+    }
+  ],
   "postActions": [
     {
       "description": "Restore NuGet packages required by this project.",
