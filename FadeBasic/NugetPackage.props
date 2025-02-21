@@ -2,6 +2,7 @@
     <PropertyGroup>
         <Authors>Chris Hanna</Authors>
         <ProjectUrl>https://fadebasic.com</ProjectUrl>
+        <PackageProjectUrl>https://fadebasic.com</PackageProjectUrl>
         <RepositoryUrl>https://github.com/cdhanna/fadebasic</RepositoryUrl>
         <PackageLicenseExpression>MIT</PackageLicenseExpression>
         <PackageIcon>ghost_lee_128.png</PackageIcon>

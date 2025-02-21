@@ -11,6 +11,9 @@ import {
 	TransportKind,
 	Trace
 } from 'vscode-languageclient/node';
+import { exec as execCallback } from 'child_process';
+const exec = util.promisify(execCallback);
+
 let client: LanguageClient;
 let outputChannel: vscode.OutputChannel;
 
@@ -38,6 +41,8 @@ export async function activate(context: vscode.ExtensionContext) {
 
 
 	var dotnetPath: string = workspaceConfig.get('dotnetPath') || 'dotnet';
+	await checkDotnet(dotnetPath);
+	
 	var lspPath : string = vscode.Uri.joinPath(context.extensionUri, 'out', 'tools', 'LSP.dll').fsPath
 	var dapPath : string = vscode.Uri.joinPath(context.extensionUri, 'out', 'tools', 'DAP.dll').fsPath
 
@@ -103,6 +108,7 @@ export async function activate(context: vscode.ExtensionContext) {
 		args: configArgs,
 		transport: TransportKind.stdio
 	}
+	
 	// // run directly from src
 	// config = {
 	// 	command: '/usr/local/share/dotnet/dotnet',
@@ -162,6 +168,41 @@ export async function deactivate() {
 	await client.stop()
 	await client.dispose()
 	logMessage('extension has shut down');
+}
+
+async function checkDotnet(dotnetPath: string) {
+    // Get the configured dotnet path or default to 'dotnet'
+
+	async function showError(){
+		const result = await vscode.window.showErrorMessage(`Fade Basic requires Dotnet. Please install it, or configure the path in the settings. Then restart VSCode. `, 
+			'Download', 'Configure'
+		);
+
+		if (result == 'Download'){
+			vscode.env.openExternal(vscode.Uri.parse('https://dotnet.microsoft.com/en-us/download'));
+		} else if (result == 'Configure'){
+			await vscode.commands.executeCommand(
+				'workbench.action.openSettings',
+				'conf.language.fade.dotnetPath'
+			);
+		}
+	}
+
+    try {
+        // Run the command and wait for the output
+        const { stdout, stderr } = await exec(`${dotnetPath} --info`);
+        
+        if (stderr) {
+            
+			await showError();
+            return;
+        }
+
+        // If successful, show the output (or just confirm it worked)
+		logMessage('.NET is installed!\n' + stdout)
+    } catch  {
+		await showError();
+    }
 }
 
 class FadeBasicDebugger implements DebugAdapterDescriptorFactory
