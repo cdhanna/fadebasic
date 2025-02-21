@@ -138,20 +138,7 @@ public static class ProjectLoader
                     throw new Exception($"Run a `dotnet restore`. unable to resolve dll for {referenceName}, {fullClassName}.");
                 }
             }
-
             
-            // var expectedDllPath = Path.Join(csProjDir, outDir, referenceName + ".dll");
-            // expectedDllPath = expectedDllPath.Replace("\\", "/");
-            // if (!File.Exists(expectedDllPath))
-            // {
-            //     continue;  
-            // }///Users/chrishanna/Documents/SillyConsumerTest/Demo/bin/Debug/net8.0
-             // 
-            
-            // if (!refMap.TryGetValue(referenceName, out var dllPath))
-            // {
-            //     throw new InvalidOperationException($"No dll found for {referenceName}");
-            // }
         
             if (!libMap.TryGetValue(expectedDllPath, out var commandClasses))
             {

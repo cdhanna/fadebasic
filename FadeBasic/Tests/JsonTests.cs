@@ -341,8 +341,8 @@ public class JsonTests
         // without needing to BUILD the project. 
         // JsonData.Parse(DSpecFile_Frag1);
         // JsonData.Parse(DSpecFile_Frag2);
-        var dSpec = JsonData.Parse(DSpecFile);
-        var assets = JsonData.Parse(ProjectAssetJson);
+        var dSpec = Jsonable2.Parse(DSpecFile);
+        var assets = Jsonable2.Parse(ProjectAssetJson);
     }
 
     public const string ProjectAssetJson = @"{
