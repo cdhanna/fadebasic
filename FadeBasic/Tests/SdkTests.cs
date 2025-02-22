@@ -1,9 +1,26 @@
+using FadeBasic;
 using FadeBasic.Sdk;
 
 namespace Tests;
 
 public class SdkTests
 {
+    [Test]
+    public void Doop()
+    {
+        var commands = new CommandCollection(new FadeBasic.Lib.Standard.StandardCommands());
+        var src = "x = rnd(5) + 3";
+        var ran = Fade.TryRun(src, commands, out var ctx, out _);
+        if (!ctx.TryGetInteger("x", out var x))
+        {
+            Assert.Fail();
+        }
+        Assert.That(x, Is.GreaterThanOrEqualTo(3));
+
+
+    }
+    
+    
     [Test]
     public void Simple()
     {
@@ -272,25 +289,357 @@ w# = 1
     {
         var src = @"
 TYPE egg
-    x
-    y#
+    i as integer
+    di as double integer
+    w as word
+    dw as dword
+    b as byte
+    b2 as boolean
+    f as float
+    df as double float
+    s as string
+    c as chicken
+ENDTYPE
+TYPE chicken
+    i as integer
+    di as double integer
+    w as word
+    dw as dword
+    b as byte
+    b2 as boolean
+    f as float
+    df as double float
+    s as string
 ENDTYPE
 e as egg
-e.x = 4
-e.y# = 2.1
+e.i = 32
+e.di = 901
+e.w = 4
+e.dw = 8
+e.b = 255
+e.b2 = 4
+e.f = 32.1
+e.df = 55.5
+e.s = ""tunafish""
+
+e.c.i = 32
+e.c.di = 901
+e.c.w = 4
+e.c.dw = 8
+e.c.b = 255
+e.c.b2 = 4
+e.c.f = 32.1
+e.c.df = 55.5
+e.c.s = ""igloo""
 ";
-        Assert.Fail("should be able to read e, and get back SOMETHING");
+        if (!Fade.TryCreate(src, TestCommands.CommandsForTesting, out var ctx, out _))
+        {
+            Assert.Fail();
+        }
+        
+        ctx.Run();
+
+        var found = ctx.TryGetObject("e", out FadeObject e, out _);
+        Assert.IsTrue(found);
+        Assert.That(e.objects["c"].wordFields["w"], Is.EqualTo(4));
     }
     
     
     [Test]
-    public void Read_Array()
+    public void Read_Array_Object_Rank1()
+    {
+        var src = @"
+TYPE egg
+    a, b
+ENDTYPE
+DIM x(4) as egg
+x(1).a = 5
+x(1).b = 2
+";
+        if (!Fade.TryRun(src, TestCommands.CommandsForTesting, out var ctx, out _))
+        {
+            Assert.Fail();
+        }
+
+        ctx.TryGetObjectArray("x", out var a, out var _);
+        
+        var obj = a.GetElement(1);
+        Assert.That(obj.integerFields["a"], Is.EqualTo(5));
+        Assert.That(obj.integerFields["b"], Is.EqualTo(2));
+    }
+    
+    
+    [Test]
+    public void Read_Array_Object_Rank2()
+    {
+        var src = @"
+TYPE egg
+    a, b
+ENDTYPE
+DIM x(4, 3) as egg
+x(3, 2).a = 5
+x(3, 2).b = 2
+";
+        if (!Fade.TryRun(src, TestCommands.CommandsForTesting, out var ctx, out _))
+        {
+            Assert.Fail();
+        }
+
+        ctx.TryGetObjectArray("x", out var a, out var _);
+        
+        var obj = a.GetElement(3,2);
+        Assert.That(obj.integerFields["a"], Is.EqualTo(5));
+        Assert.That(obj.integerFields["b"], Is.EqualTo(2));
+    }
+    
+    
+    [Test]
+    public void Read_Array_ObjectNested_Rank2()
+    {
+        var src = @"
+TYPE egg
+    a, b
+    c as chicken
+ENDTYPE
+TYPE chicken
+    name$
+ENDTYPE
+DIM x(4, 3) as egg
+x(3, 2).a = 5
+x(3, 2).b = 2
+x(3, 2).c.name$ = ""hamlet""
+
+";
+        if (!Fade.TryRun(src, TestCommands.CommandsForTesting, out var ctx, out _))
+        {
+            Assert.Fail();
+        }
+
+        ctx.TryGetObjectArray("x", out var a, out var _);
+        
+        var obj = a.GetElement(3,2);
+        Assert.That(obj.integerFields["a"], Is.EqualTo(5));
+        Assert.That(obj.integerFields["b"], Is.EqualTo(2));
+    }
+    
+    [Test]
+    public void Read_Array_Integer_Rank1()
     {
         var src = @"
 DIM x(4)
 x(1) = 5
 ";
-        Assert.Fail("should be able to read x, and get back SOMETHING");
+        if (!Fade.TryRun(src, TestCommands.CommandsForTesting, out var ctx, out _))
+        {
+            Assert.Fail();
+        }
+
+        if (!ctx.TryGetIntegerArray("x", out var a, out var _))
+        {
+            Assert.Fail();
+        }
+        
+        var number = a.GetElement(1);
+        Assert.That(number, Is.EqualTo(5));
+    }
+    
+    
+    [Test]
+    public void Read_Array_Integer_Rank2()
+    {
+        var src = @"
+DIM x(4, 9)
+x(1, 7) = 5
+";
+        if (!Fade.TryRun(src, TestCommands.CommandsForTesting, out var ctx, out _))
+        {
+            Assert.Fail();
+        }
+
+        ctx.TryGetIntegerArray("x", out var a, out var _);
+
+        var number = a.GetElement(1, 7);
+        Assert.That(number, Is.EqualTo(5));
+        
+    }
+    
+    
+    [Test]
+    public void Read_Array_Integer_Rank3()
+    {
+        var src = @"
+DIM x(4, 9, 2)
+x(3, 7, 0) = 5
+";
+        if (!Fade.TryRun(src, TestCommands.CommandsForTesting, out var ctx, out _))
+        {
+            Assert.Fail();
+        }
+
+        ctx.TryGetIntegerArray("x", out var a, out var _);
+        
+        var number = a.GetElement(3, 7, 0);
+        Assert.That(number, Is.EqualTo(5));
+        
+    }
+    
+    
+    [Test]
+    public void Read_Array_DoubleInteger_Rank2()
+    {
+        var src = @"
+DIM x(4, 9) as double integer
+x(1, 7) = 5
+";
+        if (!Fade.TryRun(src, TestCommands.CommandsForTesting, out var ctx, out _))
+        {
+            Assert.Fail();
+        }
+
+        if (!ctx.TryGetDoubleIntegerArray("x", out var a, out var _))
+        {
+            Assert.Fail();
+        }
+
+        var number = a.GetElement(1, 7);
+        Assert.That(number, Is.EqualTo(5));
+        
+    }
+
+    
+    [Test]
+    public void Read_Array_Word_Rank2()
+    {
+        var src = @"
+DIM x(4, 9) as word
+x(1, 7) = 5
+";
+        if (!Fade.TryRun(src, TestCommands.CommandsForTesting, out var ctx, out _))
+        {
+            Assert.Fail();
+        }
+
+        if (!ctx.TryGetWordArray("x", out var a, out var _))
+        {
+            Assert.Fail();
+        }
+
+        var number = a.GetElement(1, 7);
+        Assert.That(number, Is.EqualTo(5));
+        
+    }
+
+    
+    [Test]
+    public void Read_Array_DWord_Rank2()
+    {
+        var src = @"
+DIM x(4, 9) as dword
+x(1, 7) = 5
+";
+        if (!Fade.TryRun(src, TestCommands.CommandsForTesting, out var ctx, out _))
+        {
+            Assert.Fail();
+        }
+
+        if (!ctx.TryGetDWordArray("x", out var a, out var _))
+        {
+            Assert.Fail();
+        }
+
+        var number = a.GetElement(1, 7);
+        Assert.That(number, Is.EqualTo(5));
+        
+    }
+
+    
+    [Test]
+    public void Read_Array_Byte_Rank2()
+    {
+        var src = @"
+DIM x(4, 9) as byte
+x(1, 7) = 5
+";
+        if (!Fade.TryRun(src, TestCommands.CommandsForTesting, out var ctx, out _))
+        {
+            Assert.Fail();
+        }
+
+        if (!ctx.TryGetByteArray("x", out var a, out var _))
+        {
+            Assert.Fail();
+        }
+
+        var number = a.GetElement(1, 7);
+        Assert.That(number, Is.EqualTo(5));
+        
+    }
+    
+    [Test]
+    public void Read_Array_Bool_Rank2()
+    {
+        var src = @"
+DIM x(4, 9) as bool
+x(1, 7) = 5
+";
+        if (!Fade.TryRun(src, TestCommands.CommandsForTesting, out var ctx, out _))
+        {
+            Assert.Fail();
+        }
+
+        if (!ctx.TryGetBoolArray("x", out var a, out var _))
+        {
+            Assert.Fail();
+        }
+
+        var number = a.GetElement(1, 7);
+        Assert.That(number, Is.EqualTo(true));
+        
+    }
+
+    [Test]
+    public void Read_Array_Float_Rank2()
+    {
+        var src = @"
+DIM x(4, 9) as float
+x(1, 7) = 5
+";
+        if (!Fade.TryRun(src, TestCommands.CommandsForTesting, out var ctx, out _))
+        {
+            Assert.Fail();
+        }
+
+        if (!ctx.TryGetFloatArray("x", out var a, out var _))
+        {
+            Assert.Fail();
+        }
+
+        var number = a.GetElement(1, 7);
+        Assert.That(number, Is.EqualTo(5));
+        
+    }
+    
+    
+    [Test]
+    public void Read_Array_DoubleFloat_Rank2()
+    {
+        var src = @"
+DIM x(4, 9) as double float
+x(1, 7) = 5
+";
+        if (!Fade.TryRun(src, TestCommands.CommandsForTesting, out var ctx, out _))
+        {
+            Assert.Fail();
+        }
+
+        if (!ctx.TryGetDoubleFloatArray("x", out var a, out var _))
+        {
+            Assert.Fail();
+        }
+
+        var number = a.GetElement(1, 7);
+        Assert.That(number, Is.EqualTo(5));
+        
     }
     
     [Test]

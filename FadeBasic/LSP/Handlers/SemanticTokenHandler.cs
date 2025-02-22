@@ -197,6 +197,7 @@ public class SemanticTokenHandler : SemanticTokensHandlerBase
             
             case LexemType.KeywordTypeBoolean:
             case LexemType.KeywordTypeInteger:
+            case LexemType.KeywordTypeFloat:
             case LexemType.KeywordTypeDoubleFloat:
             case LexemType.KeywordTypeDoubleInteger:
             case LexemType.KeywordTypeByte:

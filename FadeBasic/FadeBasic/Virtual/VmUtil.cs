@@ -8,28 +8,6 @@ using FadeBasic.Ast;
 namespace FadeBasic.Virtual
 {
 
-    public interface IVmBinaryOpTable
-    {
-        int OpInt(int a, int b);
-        float OpFloat(float a, float b);
-        byte OpByte(byte a, byte b);
-    }
-
-    public class VmBinaryAddOpTable : IVmBinaryOpTable
-    {
-        public int OpInt(int a, int b) => a + b;
-        public float OpFloat(float a, float b) => a + b;
-        public byte OpByte(byte a, byte b) => (byte)(a + b);
-    }
-    
-    public class VmBinarySubOpTable : IVmBinaryOpTable
-    {
-        public int OpInt(int a, int b) => a - b;
-        public float OpFloat(float a, float b) => a - b;
-        public byte OpByte(byte a, byte b) => (byte)(a - b);
-    }
-
-    
     public static class VmUtil
     {
         public static bool TryGetVariableTypeDisplay(int typeCode, out string type)
@@ -39,6 +17,9 @@ namespace FadeBasic.Virtual
             {
                 case TypeCodes.INT:
                     type = VariableType.Integer.ToString();
+                    return true;
+                case TypeCodes.DINT:
+                    type = VariableType.DoubleInteger.ToString();
                     return true;
                 case TypeCodes.STRING:
                     type = VariableType.String.ToString();
@@ -60,6 +41,9 @@ namespace FadeBasic.Virtual
                     return true;
                 case TypeCodes.BYTE:
                     type = VariableType.Byte.ToString();
+                    return true;
+                case TypeCodes.BOOL:
+                    type = VariableType.Boolean.ToString();
                     return true;
                 case TypeCodes.VM:
                     type = "vm";
@@ -1236,23 +1220,6 @@ namespace FadeBasic.Virtual
                     break;
                 default:
                     throw new Exception($"Unsupported Bitwise NOT operation typecode=[{aTypeCode}]");
-            }
-        }
-        
-        public static void BinaryOp(ref VmHeap heap, byte aTypeCode, IVmBinaryOpTable op, ReadOnlySpan<byte> aSpan, ReadOnlySpan<byte> bSpan, out ReadOnlySpan<byte> c)
-        {
-            byte[] a = aSpan.ToArray();
-            byte[] b = bSpan.ToArray();
-            
-            c = default;
-            switch (aTypeCode)
-            {
-                case TypeCodes.INT:
-                    int aInt = BitConverter.ToInt32(a, 0);
-                    int bInt = BitConverter.ToInt32(b, 0);
-                    var resultInt = op.OpInt(aInt, bInt);  
-                    c = BitConverter.GetBytes(resultInt);
-                    break;
             }
         }
         

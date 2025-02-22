@@ -308,7 +308,7 @@ namespace FadeBasic.Virtual
         private CompileScope scope => scopeStack.Peek();
         
         private Dictionary<string, CompiledType> _types = new Dictionary<string, CompiledType>();
-        private Dictionary<int, CompiledType> _typeTable = new Dictionary<int, CompiledType>();
+        public Dictionary<int, CompiledType> _typeTable = new Dictionary<int, CompiledType>();
 
         public HostMethodTable methodTable;
 

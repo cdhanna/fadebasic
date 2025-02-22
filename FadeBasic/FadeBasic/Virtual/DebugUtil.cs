@@ -51,8 +51,20 @@ namespace FadeBasic.Virtual
         {
             switch (typeCode)
             {
+                case TypeCodes.INT:
+                    return VmUtil.ConvertToInt(rawValue).ToString();
+                case TypeCodes.DINT:
+                    return VmUtil.ConvertToDInt(rawValue).ToString();
                 case TypeCodes.REAL:
-                    return FloatValue.ToString();
+                    return VmUtil.ConvertToFloat(rawValue).ToString();
+                case TypeCodes.DFLOAT:
+                    return VmUtil.ConvertToDFloat(rawValue).ToString();
+                case TypeCodes.WORD:
+                    return VmUtil.ConvertToWord(rawValue).ToString();
+                case TypeCodes.DWORD:
+                    return VmUtil.ConvertToDWord(rawValue).ToString();
+                case TypeCodes.BYTE:
+                    return VmUtil.ConvertToByte(rawValue).ToString();
                 case TypeCodes.STRING:
                     var address = (int)rawValue;
                     if (vm.heap.TryGetAllocationSize(address, out var strSize))
@@ -168,17 +180,6 @@ namespace FadeBasic.Virtual
                 return "UNKNOWN";
             }
             return typeName;
-        }
-
-        public float FloatValue
-        {
-            get
-            {
-                if (typeCode != TypeCodes.REAL) return 0;
-                var outputRegisterBytes = BitConverter.GetBytes(rawValue);
-                float output = BitConverter.ToSingle(outputRegisterBytes, 0);
-                return output;
-            }
         }
     }
 
