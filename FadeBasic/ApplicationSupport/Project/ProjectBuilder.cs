@@ -64,12 +64,6 @@ namespace FadeBasic.ApplicationSupport.Project
     
     public class ProjectBuilder
     {
-
-        // public static CommandCollection Load(ProjectContext context)
-        // {
-        //     
-        // }
-
         public static ProjectCommandInfo LoadCommandMetadata(ProjectContext context)
         {
             return LoadCommandMetadata(context.projectLibraries);

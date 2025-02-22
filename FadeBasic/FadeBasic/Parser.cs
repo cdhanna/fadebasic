@@ -826,7 +826,6 @@ namespace FadeBasic
 
         public Parser(TokenStream stream, CommandCollection commands)
         {
-            
             _stream = stream;
             _commands = commands;
         }

@@ -9,33 +9,7 @@ public static class ProjectLoader
 {
     public static void Initialize()
     {
-        // var x = typeof(NuGetFramework);
         var instance = MSBuildLocator.RegisterDefaults();
-        // var vsi = MSBuildLocator.QueryVisualStudioInstances().First();
-        // var alc = new AssemblyLoadContext("MSBuild");
-        // AssemblyLoadContext.Default.Resolving += (assemblyLoadContext, assemblyName) =>
-        // {
-        //     try
-        //     {
-        //         string path = Path.Combine(vsi.MSBuildPath, assemblyName.Name + ".dll");
-        //         if (path.Contains("Nuget"))
-        //         {
-        //             
-        //         }
-        //         if (File.Exists(path))
-        //         {
-        //             return alc.LoadFromAssemblyPath(path);
-        //         }
-        //
-        //         return null;
-        //     }
-        //     catch (Exception ex)
-        //     {
-        //         Console.WriteLine(ex.Message);
-        //         throw;
-        //     }
-        // };
-        // MSBuildLocator.RegisterInstance(vsi);
     }
 
     

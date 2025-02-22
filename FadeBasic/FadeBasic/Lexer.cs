@@ -142,29 +142,6 @@ namespace FadeBasic
     
     public class Lexer
     {
-
-        public int helloFromRebuild;
-        // TODOs
-        /*
-         * 3. comments REM REMSTART REMEND, `
-         * 5. if endif, else
-         * 6. for loop stuff
-         * 7. repeat until
-         * 1. functions
-         * 2. types
-         * 3. arrays
-         * 4. negative numbers
-         * AND, OR, XOR and NOT
-         */
-
-        static Lexer()
-        {
-            foreach (var l in Lexems)
-            {
-                //l.priority = (int.MinValue + 10) + l.priority;
-            }
-        }
-
         private static Lexem LexemString = new Lexem(LexemType.LiteralString, new Regex("^\""));
         public static List<Lexem> Lexems = new List<Lexem>
         {
