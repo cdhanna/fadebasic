@@ -15,7 +15,11 @@ namespace FadeBasic.Sdk
         private static Regex _sourceRegex = new Regex(@"(?<!<!--\s*)<FadeSource\s+Include\s*=\s*""([^""]+)""\s*/?>");
         private static Regex _commandRegex = new Regex(@"(?<!<!--\s*)<FadeCommand\s+(?=[^>]*Include\s*=\s*""([^""]+)"")(?=[^>]*FullName\s*=\s*""([^""]+)"")[^>]*>");
 
-        public static bool TryFromProject(string csProjPath, CommandCollection availableCommands, out FadeRuntimeContext context, out FadeErrors errors)
+        public static bool TryCreateFromProject(
+            string csProjPath, 
+            CommandCollection availableCommands, 
+            out FadeRuntimeContext context, 
+            out FadeErrors errors)
         {
             context = null;
             errors = null;
@@ -75,11 +79,11 @@ namespace FadeBasic.Sdk
             var commandCollection = new CommandCollection(usedMethodSources.ToArray());
             var sourceMap = SourceMap.CreateSourceMap(fullSourcePaths);
 
-            return TryCreate(sourceMap.fullSource, commandCollection, out context, out errors);
+            return TryCreateFromString(sourceMap.fullSource, commandCollection, out context, out errors);
 
         }
         
-        public static bool TryCreate(
+        public static bool TryCreateFromString(
             string src, 
             CommandCollection commands, 
             out FadeRuntimeContext context,
@@ -88,34 +92,7 @@ namespace FadeBasic.Sdk
             return FadeRuntimeContext.TryFromSource(src, commands, out context, out errors);
         }
         
-        public static bool TryRun(
-            string src, 
-            CommandCollection commands, 
-            out FadeRuntimeContext context,
-            out FadeErrors errors)
-        {
-            if (!FadeRuntimeContext.TryFromSource(src, commands, out context, out errors))
-            {
-                return false;
-            }
-
-            context.Run();
-            return true;
-        }
-        
-        public static bool TryRun(
-            string src, 
-            CommandCollection commands, 
-            out FadeErrors errors)
-        {
-            if (!FadeRuntimeContext.TryFromSource(src, commands, out var ctx, out errors))
-            {
-                return false;
-            }
-            
-            ctx.Run();
-            return true;
-        }
+       
     }
 
     public class FadeErrors
@@ -147,12 +124,14 @@ namespace FadeBasic.Sdk
 
         public void Debug(bool waitForConnection=true, int port = 0, string debugLogPath=null)
         {
+            if (DidProgramComplete)
+                throw new Exception(
+                    $"the program has exited. Use {nameof(DidProgramComplete)} to precheck before calling this method.");
             if (port <= 0)
             {
                 port = LaunchUtil.FreeTcpPort();
 
             }
-            // TODO: build a partial version of this method.
             _session = new DebugSession(Machine, Compiler.DebugData, CommandCollection, new LaunchOptions
             {
                 debugWaitForConnection = waitForConnection,
@@ -165,20 +144,70 @@ namespace FadeBasic.Sdk
             _session.StartDebugging(); // infinite budget
             _session.ShutdownServer();
         }
+        
+        public void DebugPartial(bool waitForConnection=true, int port = 0, string debugLogPath=null)
+        {
+            if (DidProgramComplete)
+                throw new Exception(
+                    $"the program has exited. Use {nameof(DidProgramComplete)} to precheck before calling this method.");
+            if (_session == null)
+            {
+                if (port <= 0)
+                {
+                    port = LaunchUtil.FreeTcpPort();
+                }
+
+                _session = new DebugSession(Machine, Compiler.DebugData, CommandCollection, new LaunchOptions
+                {
+                    debugWaitForConnection = waitForConnection,
+                    debugPort = port,
+                    debug = true,
+                    debugLogPath = debugLogPath
+                }, label: "fade");
+
+                _session.StartServer();
+            }
+
+            _session.StartDebugging(1);
+
+            if (DidProgramComplete)
+            {
+                _session.ShutdownServer();
+            }
+        }
+
 
         public void Run()
         {
+            if (DidProgramComplete)
+                throw new Exception(
+                    $"the program has exited. Use {nameof(DidProgramComplete)} to precheck before calling this method.");
             Machine.Execute2();
         }
 
-        public void RunPartial(int opCodeBudget)
+        public void RunPartial()
         {
-            Machine.Execute2(opCodeBudget);
+            if (DidProgramComplete)
+                throw new Exception(
+                    $"the program has exited. Use {nameof(DidProgramComplete)} to precheck before calling this method.");
+            Machine.Execute2(1);
         }
 
         public void Suspend()
         {
             Machine.Suspend();
+        }
+
+        public void Reset()
+        {
+            if (_session != null)
+            {
+                _session.ShutdownServer();
+                _session = null;
+            }
+            
+            Machine = new VirtualMachine(Compiler.Program);
+            Machine.hostMethods = Compiler.methodTable;
         }
 
         public bool TryGetInteger(string name, out int value)

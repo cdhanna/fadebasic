@@ -1,6 +1,7 @@
 // this code was stolen from Microsoft.Bcl.Memory and copied into
 // fade to avoid needing to pull in the dependency. 
 using System;
+using System.Diagnostics;
 using System.Runtime.CompilerServices;
 
 namespace FadeBasic.Sdk.Shim

@@ -5,7 +5,38 @@ using FadeBasic.Sdk;
 
 namespace Tests;
 
-public class SdkTests
+
+public partial class SdkTests
+{
+    static bool TryRun(
+        string src, 
+        CommandCollection commands, 
+        out FadeRuntimeContext context,
+        out FadeErrors errors)
+    {
+        if (!FadeRuntimeContext.TryFromSource(src, commands, out context, out errors))
+        {
+            return false;
+        }
+
+        context.Run();
+        return true;
+    }
+    static bool TryRun(
+        string src, 
+        CommandCollection commands, 
+        out FadeErrors errors)
+    {
+        if (!FadeRuntimeContext.TryFromSource(src, commands, out var ctx, out errors))
+        {
+            return false;
+        }
+            
+        ctx.Run();
+        return true;
+    }
+}
+public partial class SdkTests
 {
 
     [Test]
@@ -17,7 +48,7 @@ public class SdkTests
         );
         // var path = "/Users/chrishanna/Documents/Github/DarkBasicVsCode/sample/example.csproj";
         var path = "Fixtures/Projects/SpinFor4Seconds/prim.csproj";
-        if (!Fade.TryFromProject(path, commands, out var ctx, out _))
+        if (!Fade.TryCreateFromProject(path, commands, out var ctx, out _))
         {
             Assert.Fail("no file");
         }
@@ -31,7 +62,7 @@ public class SdkTests
             var port = servers[0].port;
             called = true;
         });
-        
+
         ctx.Debug(waitForConnection: false);//, port: 57428);
 
         Assert.IsTrue(called);
@@ -44,7 +75,7 @@ public class SdkTests
         var commands = new CommandCollection(
             new ConsoleCommands(), new StandardCommands()
             );
-        if (!Fade.TryFromProject("Fixtures/Projects/Primitive/prim.csproj", commands, out var ctx, out _))
+        if (!Fade.TryCreateFromProject("Fixtures/Projects/Primitive/prim.csproj", commands, out var ctx, out _))
         {
             Assert.Fail("no file");
         }
@@ -59,7 +90,7 @@ public class SdkTests
     {
         var commands = new CommandCollection(new FadeBasic.Lib.Standard.StandardCommands());
         var src = "x = rnd(5) + 3";
-        var ran = Fade.TryRun(src, commands, out var ctx, out _);
+        var ran = TryRun(src, commands, out var ctx, out _);
         if (!ctx.TryGetInteger("x", out var x))
         {
             Assert.Fail();
@@ -71,10 +102,33 @@ public class SdkTests
     
     
     [Test]
+    public void Resetable()
+    {
+        var commands = new CommandCollection(new FadeBasic.Lib.Standard.StandardCommands());
+        var src = "x = rnd(5) + 3";
+        var ran = TryRun(src, commands, out var ctx, out _);
+        if (!ctx.TryGetInteger("x", out var x))
+        {
+            Assert.Fail();
+        }
+        Assert.That(x, Is.GreaterThanOrEqualTo(3));
+        
+        ctx.Reset();
+        ctx.Run();
+        if (!ctx.TryGetInteger("x", out x))
+        {
+            Assert.Fail();
+        }
+        Assert.That(x, Is.GreaterThanOrEqualTo(3));
+
+    }
+    
+    
+    [Test]
     public void Simple()
     {
         var src = "print 42";
-        var ran = Fade.TryRun(src, TestCommands.CommandsForTesting, out _);
+        var ran = TryRun(src, TestCommands.CommandsForTesting, out _);
         Assert.IsTrue(ran);
     }
     
@@ -82,7 +136,7 @@ public class SdkTests
     public void Simple_GetErrors()
     {
         var src = "print 42x";
-        var ran = Fade.TryRun(src, TestCommands.CommandsForTesting, out var errors);
+        var ran = TryRun(src, TestCommands.CommandsForTesting, out var errors);
         Assert.IsFalse(ran);
         Assert.That(errors.ParserErrors.Count, Is.EqualTo(1));
     }
@@ -95,7 +149,7 @@ x = 5
 y = x + 12
 w# = 1
 ";
-        var created = Fade.TryCreate(src, TestCommands.CommandsForTesting, out var ctx, out _);
+        var created = Fade.TryCreateFromString(src, TestCommands.CommandsForTesting, out var ctx, out _);
         Assert.IsTrue(created);
         
         ctx.Run();
@@ -126,7 +180,7 @@ x as double integer = 5
 y as double integer = x + 12
 w# = 1
 ";
-        var created = Fade.TryCreate(src, TestCommands.CommandsForTesting, out var ctx, out _);
+        var created = Fade.TryCreateFromString(src, TestCommands.CommandsForTesting, out var ctx, out _);
         Assert.IsTrue(created);
         
         ctx.Run();
@@ -157,7 +211,7 @@ x as word = 5
 y as word = x + 12
 w# = 1
 ";
-        var created = Fade.TryCreate(src, TestCommands.CommandsForTesting, out var ctx, out _);
+        var created = Fade.TryCreateFromString(src, TestCommands.CommandsForTesting, out var ctx, out _);
         Assert.IsTrue(created);
         
         ctx.Run();
@@ -188,7 +242,7 @@ x as dword = 5
 y as dword = x + 12
 w# = 1
 ";
-        var created = Fade.TryCreate(src, TestCommands.CommandsForTesting, out var ctx, out _);
+        var created = Fade.TryCreateFromString(src, TestCommands.CommandsForTesting, out var ctx, out _);
         Assert.IsTrue(created);
         
         ctx.Run();
@@ -219,7 +273,7 @@ x as float = 5
 y as float = x + 12
 w = 1
 ";
-        var created = Fade.TryCreate(src, TestCommands.CommandsForTesting, out var ctx, out _);
+        var created = Fade.TryCreateFromString(src, TestCommands.CommandsForTesting, out var ctx, out _);
         Assert.IsTrue(created);
         
         ctx.Run();
@@ -250,7 +304,7 @@ x as double float = 5
 y as double float = x + 12
 w = 1
 ";
-        var created = Fade.TryCreate(src, TestCommands.CommandsForTesting, out var ctx, out _);
+        var created = Fade.TryCreateFromString(src, TestCommands.CommandsForTesting, out var ctx, out _);
         Assert.IsTrue(created);
         
         ctx.Run();
@@ -280,7 +334,7 @@ x as byte = 5
 y as byte = x + 12
 w# = 1
 ";
-        var created = Fade.TryCreate(src, TestCommands.CommandsForTesting, out var ctx, out _);
+        var created = Fade.TryCreateFromString(src, TestCommands.CommandsForTesting, out var ctx, out _);
         Assert.IsTrue(created);
         
         ctx.Run();
@@ -311,7 +365,7 @@ x as boolean = 0
 y as boolean = 54
 w# = 1
 ";
-        var created = Fade.TryCreate(src, TestCommands.CommandsForTesting, out var ctx, out _);
+        var created = Fade.TryCreateFromString(src, TestCommands.CommandsForTesting, out var ctx, out _);
         Assert.IsTrue(created);
         
         ctx.Run();
@@ -381,7 +435,7 @@ e.c.f = 32.1
 e.c.df = 55.5
 e.c.s = ""igloo""
 ";
-        if (!Fade.TryCreate(src, TestCommands.CommandsForTesting, out var ctx, out _))
+        if (!Fade.TryCreateFromString(src, TestCommands.CommandsForTesting, out var ctx, out _))
         {
             Assert.Fail();
         }
@@ -405,7 +459,7 @@ DIM x(4) as egg
 x(1).a = 5
 x(1).b = 2
 ";
-        if (!Fade.TryRun(src, TestCommands.CommandsForTesting, out var ctx, out _))
+        if (!TryRun(src, TestCommands.CommandsForTesting, out var ctx, out _))
         {
             Assert.Fail();
         }
@@ -429,7 +483,7 @@ DIM x(4, 3) as egg
 x(3, 2).a = 5
 x(3, 2).b = 2
 ";
-        if (!Fade.TryRun(src, TestCommands.CommandsForTesting, out var ctx, out _))
+        if (!TryRun(src, TestCommands.CommandsForTesting, out var ctx, out _))
         {
             Assert.Fail();
         }
@@ -459,7 +513,7 @@ x(3, 2).b = 2
 x(3, 2).c.name$ = ""hamlet""
 
 ";
-        if (!Fade.TryRun(src, TestCommands.CommandsForTesting, out var ctx, out _))
+        if (!TryRun(src, TestCommands.CommandsForTesting, out var ctx, out _))
         {
             Assert.Fail();
         }
@@ -478,7 +532,7 @@ x(3, 2).c.name$ = ""hamlet""
 DIM x(4)
 x(1) = 5
 ";
-        if (!Fade.TryRun(src, TestCommands.CommandsForTesting, out var ctx, out _))
+        if (!TryRun(src, TestCommands.CommandsForTesting, out var ctx, out _))
         {
             Assert.Fail();
         }
@@ -500,7 +554,7 @@ x(1) = 5
 DIM x(4, 9)
 x(1, 7) = 5
 ";
-        if (!Fade.TryRun(src, TestCommands.CommandsForTesting, out var ctx, out _))
+        if (!TryRun(src, TestCommands.CommandsForTesting, out var ctx, out _))
         {
             Assert.Fail();
         }
@@ -520,7 +574,7 @@ x(1, 7) = 5
 DIM x(4, 9, 2)
 x(3, 7, 0) = 5
 ";
-        if (!Fade.TryRun(src, TestCommands.CommandsForTesting, out var ctx, out _))
+        if (!TryRun(src, TestCommands.CommandsForTesting, out var ctx, out _))
         {
             Assert.Fail();
         }
@@ -540,7 +594,7 @@ x(3, 7, 0) = 5
 DIM x(4, 9) as double integer
 x(1, 7) = 5
 ";
-        if (!Fade.TryRun(src, TestCommands.CommandsForTesting, out var ctx, out _))
+        if (!TryRun(src, TestCommands.CommandsForTesting, out var ctx, out _))
         {
             Assert.Fail();
         }
@@ -563,7 +617,7 @@ x(1, 7) = 5
 DIM x(4, 9) as word
 x(1, 7) = 5
 ";
-        if (!Fade.TryRun(src, TestCommands.CommandsForTesting, out var ctx, out _))
+        if (!TryRun(src, TestCommands.CommandsForTesting, out var ctx, out _))
         {
             Assert.Fail();
         }
@@ -586,7 +640,7 @@ x(1, 7) = 5
 DIM x(4, 9) as dword
 x(1, 7) = 5
 ";
-        if (!Fade.TryRun(src, TestCommands.CommandsForTesting, out var ctx, out _))
+        if (!TryRun(src, TestCommands.CommandsForTesting, out var ctx, out _))
         {
             Assert.Fail();
         }
@@ -609,7 +663,7 @@ x(1, 7) = 5
 DIM x(4, 9) as byte
 x(1, 7) = 5
 ";
-        if (!Fade.TryRun(src, TestCommands.CommandsForTesting, out var ctx, out _))
+        if (!TryRun(src, TestCommands.CommandsForTesting, out var ctx, out _))
         {
             Assert.Fail();
         }
@@ -631,7 +685,7 @@ x(1, 7) = 5
 DIM x(4, 9) as bool
 x(1, 7) = 5
 ";
-        if (!Fade.TryRun(src, TestCommands.CommandsForTesting, out var ctx, out _))
+        if (!TryRun(src, TestCommands.CommandsForTesting, out var ctx, out _))
         {
             Assert.Fail();
         }
@@ -653,7 +707,7 @@ x(1, 7) = 5
 DIM x(4, 9) as float
 x(1, 7) = 5
 ";
-        if (!Fade.TryRun(src, TestCommands.CommandsForTesting, out var ctx, out _))
+        if (!TryRun(src, TestCommands.CommandsForTesting, out var ctx, out _))
         {
             Assert.Fail();
         }
@@ -676,7 +730,7 @@ x(1, 7) = 5
 DIM x(4, 9) as double float
 x(1, 7) = 5
 ";
-        if (!Fade.TryRun(src, TestCommands.CommandsForTesting, out var ctx, out _))
+        if (!TryRun(src, TestCommands.CommandsForTesting, out var ctx, out _))
         {
             Assert.Fail();
         }
@@ -699,7 +753,7 @@ x as string = ""tuna""
 y as string = ""hello""
 w# = 1
 ";
-        var created = Fade.TryCreate(src, TestCommands.CommandsForTesting, out var ctx, out _);
+        var created = Fade.TryCreateFromString(src, TestCommands.CommandsForTesting, out var ctx, out _);
         Assert.IsTrue(created);
         
         ctx.Run();

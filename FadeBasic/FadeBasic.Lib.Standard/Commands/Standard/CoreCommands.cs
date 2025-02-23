@@ -42,11 +42,11 @@ namespace FadeBasic.Lib.Standard
         }
         
         [FadeBasicCommand("timer")]
-        public static int Timer()
+        public static long Timer()
         {
             var now = DateTimeOffset.Now;
             var delta = now - _started;
-            return (int)delta.TotalMilliseconds;
+            return (long)delta.TotalMilliseconds;
         }
         
         [FadeBasicCommand("inc")]
