@@ -59,6 +59,10 @@ jobs:
         if: inputs.publishNuget == false
         run: echo "FADE_NUGET_DRYRUN=true" >> $GITHUB_ENV
 
+      - name: run tests
+        working-directory: ./FadeBasic
+        run: dotnet test Tests
+
       - name: Run Build Script
         working-directory: ./FadeBasic
         run: sh ./install.sh ${{ inputs.majorSemver }}.${{ inputs.minorSemver }}.${{ inputs.patchSemver }} 1 ${{ secrets.NUGET_HOST }} ${{ secrets.NUGET_API_KEY }}
