@@ -17,7 +17,7 @@
 
     <ItemGroup>
         <None Include="ApplicationSupport/Fixtures/**" CopyToOutputDirectory="Always" />
-        <None Include="Fixtures/**" CopyToOutputDirectory="Always" Exclude="Fictures/**/bin/**;Fictures/**/obj/**"/>
+        <None Include="Fixtures/**" CopyToOutputDirectory="Always" Exclude="Fixtures/**/bin/**;Fixtures/**/obj/**"/>
         <ProjectReference Include="..\ApplicationSupport\ApplicationSupport.csproj" />
         <ProjectReference Include="..\CommandSourceGenerator\CommandSourceGenerator.csproj" OutputItemType="Analyzer" ReferenceOutputAssembly="false" />
         

@@ -1,5 +1,3 @@
-x = 5
-print "hello", x
-wait ms 4000
-x = x + 1
-print "goodbye", x
+print "hello world"
+wait ms 250
+print "goodbye!!"
