@@ -1634,6 +1634,8 @@ namespace FadeBasic.Launch
             {
                 handler = socket.Accept();
                 handler.ReceiveTimeout = 1;
+                handler.ReceiveBufferSize = MAX_MESSAGE_LENGTH;
+
                 didClientConnect = true;
 
             }
