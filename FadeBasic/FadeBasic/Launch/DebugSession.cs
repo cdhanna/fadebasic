@@ -1487,7 +1487,7 @@ namespace FadeBasic.Launch
     public class DebugServerStreamUtil
     {
         // public const int MAX_MESSAGE_LENGTH = 1024 * 8; // 8kb.
-        public const int MAX_MESSAGE_LENGTH = 1024 * 32; // 32kb.
+        public const int MAX_MESSAGE_LENGTH = 1024 * 32; // 32kb. 32_768
 
         public static void Send<T>(Socket socket, T message)
             where T : IJsonable
@@ -1657,10 +1657,20 @@ namespace FadeBasic.Launch
                     }
 
                     // read the length
+                    for (var i = 0; i < sizeof(int); i++)
+                    {
+                        buffer[i] = 0;
+                    }
+                    
                     var count = handler.Receive(buffer, 0, sizeof(int), SocketFlags.None, out var err);
                     if (err != SocketError.Success) continue;
                     if (count == 0) continue;
 
+                    for (var i = 0; i < sizeof(int); i++)
+                    {
+                        Console.WriteLine(buffer[i]);
+                    }
+                    
                     var length = BitConverter.ToInt32(buffer, 0);
                     
                     // try to receive a single message
