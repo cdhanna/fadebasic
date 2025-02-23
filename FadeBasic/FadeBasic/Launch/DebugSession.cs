@@ -1670,9 +1670,15 @@ namespace FadeBasic.Launch
                     {
                         Console.WriteLine(buffer[i]);
                     }
-                    
+
                     var length = BitConverter.ToInt32(buffer, 0);
                     
+                    
+                    if (length > buffer.Length)
+                    {
+                        throw new Exception(@$"precatch error. count=[{count}] b0=[{buffer[0]}] b1=[{buffer[1]}] b2=[{buffer[2]}] b3=[{buffer[3]}]");
+                    }
+
                     // try to receive a single message
                     count = handler.Receive(buffer, 0, length, SocketFlags.None,
                         out err);
