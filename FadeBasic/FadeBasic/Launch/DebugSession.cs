@@ -17,12 +17,28 @@ using FadeBasic.Virtual;
 
 namespace FadeBasic.Launch
 {
-    
+
     
     // make a debug server!
     public class DebugSession
     {
-
+        public class DiscoveryMessage : IJsonable
+        {
+            public int port;
+            public string label;
+            public string processName;
+            public int processId;
+            public string processWindowTitle;
+            public void ProcessJson(IJsonOperation op)
+            {
+                op.IncludeField(nameof(port), ref port);
+                op.IncludeField(nameof(processId), ref processId);
+                op.IncludeField(nameof(label), ref label);
+                op.IncludeField(nameof(processName), ref processName);
+                op.IncludeField(nameof(processWindowTitle), ref processWindowTitle);
+            }
+        }
+        
         enum State
         {
             INIT,
@@ -35,6 +51,7 @@ namespace FadeBasic.Launch
         public VirtualMachine _vm;
         private DebugData _dbg;
         private readonly CommandCollection _commandCollection;
+        private readonly string _label;
         public readonly LaunchOptions _options;
 
         private bool requestedExit;
@@ -80,11 +97,43 @@ namespace FadeBasic.Launch
 
         public bool IsPaused => pauseRequestedByMessageId > resumeRequestedByMessageId;
 
-        public DebugSession(VirtualMachine vm, DebugData dbg, CommandCollection commandCollection=null, LaunchOptions options=null)
+        public const int DEBUG_SERVER_DISCOVERY_PORT = 21758;
+        public static List<DiscoveryMessage> DiscoverServers()
+        {
+            UdpClient client = new UdpClient();
+            IPEndPoint endPoint = new IPEndPoint(IPAddress.Broadcast, DEBUG_SERVER_DISCOVERY_PORT);
+            byte[] requestData = Encoding.UTF8.GetBytes("FADE_DEBUG_DISCOVERY");
+
+            client.EnableBroadcast = true;
+            client.Send(requestData, requestData.Length, endPoint);
+
+            client.Client.ReceiveTimeout = 500;
+            var messages = new List<DiscoveryMessage>();
+            try
+            {
+                while (true)
+                {
+                    var serverResponse = client.Receive(ref endPoint);
+                    var json = Encoding.UTF8.GetString(serverResponse);
+                    var message = JsonableExtensions.FromJson<DiscoveryMessage>(json);
+                    messages.Add(message);
+                }
+            }
+            catch (SocketException)
+            {
+                
+            }
+
+            return messages;
+        }
+        
+        
+        public DebugSession(VirtualMachine vm, DebugData dbg, CommandCollection commandCollection=null, LaunchOptions options=null, string label=null)
         {
             _options = options ?? LaunchOptions.DefaultOptions;
             _dbg = dbg;
             _commandCollection = commandCollection;
+            _label = label;
             _vm = vm;
             _vm.shouldThrowRuntimeException = false;
             
@@ -124,12 +173,17 @@ namespace FadeBasic.Launch
             {
                 throw new Exception("Could not acquire server thread.");
             }
+
+            if (!ThreadPool.QueueUserWorkItem(RunDiscoverability))
+            {
+                throw new Exception("Could not acquire discoverability thread.");
+            }
         }
 
         public void ShutdownServer()
         {
             logger.Log("Starting server shutdown...");
-            while (outboundMessages.Count > 0)
+            while (didClientConnect && outboundMessages.Count > 0)
             {
                 Thread.Sleep(10); // wait for messages to go away...
             }
@@ -137,10 +191,47 @@ namespace FadeBasic.Launch
             _cts.Cancel();
         }
 
+        private bool didClientConnect = false;
         void RunServer(object state)
         {
-            DebugServerStreamUtil.OpenServer2(_options.debugPort, outboundMessages, receivedMessages, _cts.Token);
+            DebugServerStreamUtil.OpenServer2(_options.debugPort, outboundMessages, ref didClientConnect, receivedMessages, _cts.Token);
         }
+
+
+        void RunDiscoverability(object state)
+        {
+            UdpClient discoverabilityListener = new UdpClient();
+
+            discoverabilityListener.Client.SetSocketOption(SocketOptionLevel.Socket, SocketOptionName.ReuseAddress, true);
+            discoverabilityListener.Client.ExclusiveAddressUse = false;
+
+            var endpoint = new IPEndPoint(IPAddress.Any, DEBUG_SERVER_DISCOVERY_PORT);
+            discoverabilityListener.Client.Bind(endpoint);
+            while (!_cts.IsCancellationRequested)
+            {
+                var requestData = discoverabilityListener.Receive(ref endpoint);
+                string request = Encoding.UTF8.GetString(requestData);
+
+                if (request == "FADE_DEBUG_DISCOVERY")
+                {
+                    var proc = Process.GetCurrentProcess();
+                    var response = new DiscoveryMessage
+                    {
+                        label = _label,
+                        port = _options.debugPort,
+                        processId = proc.Id,
+                        processWindowTitle = proc.MainWindowTitle,
+                        processName = proc.ProcessName
+                    }.Jsonify();
+                    byte[] responseData = Encoding.UTF8.GetBytes(response);
+
+                    discoverabilityListener.Send(responseData, responseData.Length, endpoint);
+                   
+                }
+            }
+
+        }
+        
 
         void Ack(int originalId, DebugMessage responseMsg)
         {
@@ -1488,7 +1579,7 @@ namespace FadeBasic.Launch
                         if (err != SocketError.Success) continue;
                         if (count == 0) continue;
                         
-                        var controlMessage = DecodeJsonable<T>(buffer);
+                        var controlMessage = DecodeJsonable<T>(buffer, messageLength);
                         inputQueue.Enqueue(controlMessage);
                     }
                     
@@ -1509,10 +1600,10 @@ namespace FadeBasic.Launch
             return bytes;
         }
 
-        public static T DecodeJsonable<T>(byte[] bytes) 
+        public static T DecodeJsonable<T>(byte[] bytes, int messageLength) 
             where T : IJsonable, IHasRawBytes, new()
         {
-            var json = Encoding.UTF8.GetString(bytes);
+            var json = Encoding.UTF8.GetString(bytes, 0, messageLength);
             var inst = JsonableExtensions.FromJson<T>(json);
             inst.RawJson = json;
             return inst;
@@ -1521,13 +1612,14 @@ namespace FadeBasic.Launch
         public static void OpenServer2<T>(
             int port, 
             ConcurrentQueue<T> outputQueue,
+            ref bool didClientConnect,
             ConcurrentQueue<T> inputQueue,
             CancellationToken cancellationToken)
             where T : IJsonable, IHasRawBytes, new()
         {
             // server only runs on local machine, cannot do cross machine debugging yet
             var ip = new IPEndPoint(IPAddress.Any, port);
-
+            didClientConnect = false;
             // host a socket...
             var socket = new Socket(ip.AddressFamily, SocketType.Stream, ProtocolType.Tcp);
             socket.ReceiveTimeout = 1; // if there isn't data available, just bail!
@@ -1536,13 +1628,14 @@ namespace FadeBasic.Launch
             socket.Listen(100);
             // var buffer = new ArraySegment<byte>(new byte[socket.ReceiveBufferSize]);
             var buffer = new byte[socket.ReceiveBufferSize];
-
-
+            
             Socket handler = null;
             try
             {
                 handler = socket.Accept();
                 handler.ReceiveTimeout = 1;
+                didClientConnect = true;
+
             }
             catch (Exception ex)
             {
@@ -1575,7 +1668,7 @@ namespace FadeBasic.Launch
                     if (count == 0) continue;
                     // TODO: should check that the received byte count is big enough to read a full message.
 
-                    var controlMessage = DecodeJsonable<T>(buffer);
+                    var controlMessage = DecodeJsonable<T>(buffer, length);
                     inputQueue.Enqueue(controlMessage);
 
                 }

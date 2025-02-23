@@ -1,10 +1,59 @@
 using FadeBasic;
+using FadeBasic.Launch;
+using FadeBasic.Lib.Standard;
 using FadeBasic.Sdk;
 
 namespace Tests;
 
 public class SdkTests
 {
+
+    [Test]
+    public void Debug()
+    {
+        var commands = new CommandCollection(
+            new ConsoleCommands(), 
+            new StandardCommands()
+        );
+        // var path = "/Users/chrishanna/Documents/Github/DarkBasicVsCode/sample/example.csproj";
+        var path = "Fixtures/Projects/SpinFor4Seconds/prim.csproj";
+        if (!Fade.TryFromProject(path, commands, out var ctx, out _))
+        {
+            Assert.Fail("no file");
+        }
+
+        var called = false;
+        Task.Factory.StartNew(async () =>
+        {
+            await Task.Delay(TimeSpan.FromSeconds(1));
+            
+            var servers = DebugSession.DiscoverServers();
+            var port = servers[0].port;
+            called = true;
+        });
+        
+        ctx.Debug(waitForConnection: false);//, port: 57428);
+
+        Assert.IsTrue(called);
+    }
+    
+    
+    [Test]
+    public void FromProject()
+    {
+        var commands = new CommandCollection(
+            new ConsoleCommands(), new StandardCommands()
+            );
+        if (!Fade.TryFromProject("Fixtures/Projects/Primitive/prim.csproj", commands, out var ctx, out _))
+        {
+            Assert.Fail("no file");
+        }
+        ctx.Run();
+
+        ctx.TryGetInteger("i", out var i);
+        Assert.That(i, Is.EqualTo(2));
+    }
+    
     [Test]
     public void Doop()
     {

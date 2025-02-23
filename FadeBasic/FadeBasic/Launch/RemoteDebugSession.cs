@@ -39,6 +39,13 @@ namespace FadeBasic.Launch
 
         void RunClient(object state)
         {
+            
+            _logger($"connecting to debug session now at port=[{_port}]");
+            DebugServerStreamUtil.ConnectToServer2(_port, outboundMessages, inboundMessages, _cts.Token);
+        }
+
+        public void SayHello()
+        {
             Send(new DebugMessage
             {
                 id = GetNextMessageId(),
@@ -48,8 +55,6 @@ namespace FadeBasic.Launch
                 var detail = JsonableExtensions.FromJson<HelloResponseMessage>(result.RawJson);
                 RemoteProcessId = detail.processId;
             });
-            _logger($"connecting to debug session now at port=[{_port}]");
-            DebugServerStreamUtil.ConnectToServer2(_port, outboundMessages, inboundMessages, _cts.Token);
         }
 
         void Listen(object state)

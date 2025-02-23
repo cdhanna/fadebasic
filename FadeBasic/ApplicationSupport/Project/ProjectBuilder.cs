@@ -16,6 +16,7 @@ namespace FadeBasic.ApplicationSupport.Project
         private CommandMetadata _metadata;
         public int Count { get; }
         public CommandInfo[] Commands { get; }
+        public string CommandGroupName => _metadata.className;
 
         public VirtualCommandProvider(CommandMetadata metadata)
         {

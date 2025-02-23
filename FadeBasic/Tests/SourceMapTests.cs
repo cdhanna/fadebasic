@@ -1,6 +1,7 @@
 using ApplicationSupport.Code;
 using FadeBasic;
 using FadeBasic.ApplicationSupport.Project;
+using FadeBasic.Sdk;
 
 namespace Tests;
 
@@ -14,7 +15,7 @@ x = 3
 print ""igloo""";
         var fileName = "mock.fbasic";
 
-        var map = ProjectSourceMethods.CreateSourceMap(new List<string> { fileName }, _ => file.SplitNewLines());
+        var map = SourceMap.CreateSourceMap(new List<string> { fileName }, _ => file.SplitNewLines());
         var unit = map.Parse(TestCommands.CommandsForTesting);
 
         var expr = unit.program.statements[2];
@@ -34,7 +35,7 @@ a = 1
 print str$(3)";
         var fileName = "mock.fbasic";
 
-        var map = ProjectSourceMethods.CreateSourceMap(new List<string> { fileName }, _ => file.SplitNewLines());
+        var map = SourceMap.CreateSourceMap(new List<string> { fileName }, _ => file.SplitNewLines());
         var unit = map.Parse(TestCommands.CommandsForTesting);
 
         var expr = unit.program.statements[2];

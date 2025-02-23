@@ -10,6 +10,8 @@ namespace FadeBasic.Virtual
 
         CommandInfo[] Commands { get; }
         
+        string CommandGroupName { get; }
+        
         // bool TryRun(VirtualMachine vm, int methodIndex);
     }
 

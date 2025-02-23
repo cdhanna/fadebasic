@@ -6,6 +6,7 @@ using System.Threading.Tasks;
 using FadeBasic;
 using FadeBasic.ApplicationSupport.Project;
 using FadeBasic.Json;
+using FadeBasic.Sdk;
 using LSP.Services;
 using Microsoft.Extensions.Logging;
 using OmniSharp.Extensions.LanguageServer.Protocol;

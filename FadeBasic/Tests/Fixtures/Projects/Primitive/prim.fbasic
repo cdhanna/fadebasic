@@ -1,0 +1,11 @@
+di as double integer = 1
+i as integer = 2
+w as word = 3
+dw as dword = 4
+f as float = 5
+df as double float = 6
+b as byte = 7
+b2 as bool = 8
+s as string = "toast"
+
+print di, i, w, dw, f, df, b, b2, s

@@ -12,6 +12,8 @@ import {
 	Trace
 } from 'vscode-languageclient/node';
 import { exec as execCallback } from 'child_process';
+import dgram from 'dgram';
+
 const exec = util.promisify(execCallback);
 
 let client: LanguageClient;
@@ -93,6 +95,47 @@ export async function activate(context: vscode.ExtensionContext) {
 		logMessage('picked', res)
 		return res;
 	
+	}));
+
+
+	context.subscriptions.push(vscode.commands.registerCommand('extension.fadeBasic.getDebugPort', async config => {
+		
+		logMessage('picking port', config)
+
+		var servers = await discoverServers();
+		/*
+			public int port;
+			public string label;
+			public string processName;
+			public int processId;
+			public string processWindowTitle;
+		*/
+		if (servers.length == 0){
+			vscode.window.showErrorMessage("Unable to find any running fade debug servers.");
+			return;
+		}
+
+		var displays: string[] = [];
+		var displayMap = {};
+		for (var i = 0 ; i < servers.length; i ++){
+			displays[i] = `${servers[i].processName} ${servers[i].label} ${servers[i].processWindowTitle} (${servers[i].processId}):${servers[i].port}`
+		}
+		
+		logMessage('found files', servers)
+		
+		var res = await vscode.window.showQuickPick(displays, {
+			canPickMany: false,
+		});
+		if (!res) {
+			logMessage('picked a no res')
+			return;
+		}
+
+		var index = displays.indexOf(res)
+		var server = servers[index]
+		logMessage('picked', res, index, server)
+
+		return "" + server.port;
 	}));
 
 	logMessage('Registered DAP')
@@ -204,6 +247,52 @@ async function checkDotnet(dotnetPath: string) {
 		await showError();
     }
 }
+
+
+
+export async function discoverServers(): Promise<any[]> {
+	const DEBUG_SERVER_DISCOVERY_PORT = 21758;
+	const DISCOVERY_MESSAGE = "FADE_DEBUG_DISCOVERY";
+    return new Promise((resolve) => {
+        const client = dgram.createSocket('udp4');
+        const requestData = Buffer.from(DISCOVERY_MESSAGE);
+        const messages :any[] = [];
+
+        client.bind(() => {
+            client.setBroadcast(true);
+
+            client.send(requestData, 0, requestData.length, DEBUG_SERVER_DISCOVERY_PORT, '255.255.255.255', (err) => {
+                if (err) {
+                    console.error('Failed to send discovery message:', err);
+                    client.close();
+                    resolve(messages);
+                }
+            });
+        });
+
+        client.on('message', (msg, rinfo) => {
+            try {
+                const json = msg.toString();
+                const message = JSON.parse(json);
+                messages.push(message);
+            } catch (error) {
+                console.error('Failed to parse message:', error);
+            }
+        });
+
+        client.on('error', (err) => {
+            console.error('Socket error:', err);
+            client.close();
+        });
+
+        // Set a timeout for receiving responses (500ms like the C# version)
+        setTimeout(() => {
+            client.close();
+            resolve(messages);
+        }, 500);
+    });
+}
+
 
 class FadeBasicDebugger implements DebugAdapterDescriptorFactory
 {

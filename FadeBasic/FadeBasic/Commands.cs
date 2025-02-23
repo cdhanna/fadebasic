@@ -18,6 +18,7 @@ namespace FadeBasic
             Lookup = new Dictionary<string, List<CommandInfo>>();
             Sources = new List<IMethodSource>();
         }
+        
        
         public CommandCollection(params IMethodSource[] sources)
         {

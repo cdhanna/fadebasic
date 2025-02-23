@@ -317,6 +317,7 @@ b2 = 2
         
         var remote = new RemoteDebugSession(port);
         remote.Connect();
+        remote.SayHello();
 
         await Task.Delay(100); // fluff time for the connection to happen...
         

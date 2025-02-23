@@ -195,6 +195,7 @@ namespace {namespaceStr}
     public partial class {name} : {nameof(IMethodSource)}
     {{
         public int Count => {descriptor.Count};
+        public string CommandGroupName => ""{namespaceStr}.{name}"";
 
         public {nameof(CommandInfo)}[] Commands {{ get; }} = new {nameof(CommandInfo)}[]
         {{

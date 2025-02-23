@@ -24,7 +24,8 @@
   "activationEvents": [
     "onLanguage:fadeBasic",
     "onDebug",
-    "onCommand:extension.fadeBasic.getProgramName"
+    "onCommand:extension.fadeBasic.getProgramName",
+    "onCommand:extension.fadeBasic.getDebugPort"
   ],
   "main": "./out/extension.js",
   "contributes": {
@@ -54,24 +55,43 @@
           {
             "type": "fadeBasicDebugger",
             "request": "launch",
-            "name": "Fade Debug",
+            "name": "Launch Fade",
             "program": "${workspaceFolder}/${command:AskForProgramName}"
+          },
+          {
+            "type": "fadeBasicDebugger",
+            "request": "launch",
+            "name": "Attach Fade",
+            "program": "${workspaceFolder}/${command:AskForProgramName}",
+            "debugPort": "${command:AskForDebugPort}"
           }
         ],
         "configurationSnippets": [
           {
-            "label": "Fade Debugger",
+            "label": "Launch Fade Debugger",
             "description": "A new configuration for debugging a Fade Basic program",
             "body": {
-              "name": "Fade Debug",
+              "name": "Launch Fade",
               "type": "fadeBasicDebugger",
               "request": "launch",
               "program": "^\"\\${workspaceFolder}/\\${command:AskForProgramName}\""
             }
+          },
+          {
+            "label": "Attach Fade Debugger",
+            "description": "A new configuration for attaching to a debugging Fade Basic program",
+            "body": {
+              "name": "Attach Fade",
+              "type": "fadeBasicDebugger",
+              "request": "attach",
+              "program": "^\"\\${workspaceFolder}/\\${command:AskForProgramName}\"",
+              "debugPort": "^\"\\${command:AskForDebugPort}\""
+            }
           }
         ],
         "variables": {
-          "AskForProgramName": "extension.fadeBasic.getProgramName"
+          "AskForProgramName": "extension.fadeBasic.getProgramName",
+          "AskForDebugPort": "extension.fadeBasic.getDebugPort"
         },
         "configurationAttributes": {
           "launch": {
@@ -93,6 +113,34 @@
                 "type": "string",
                 "description": "when provided, the debug session will overwrite logs to this file. These logs are internal debug logs of the debug session, not the STDOUT from the actual Fade Application",
                 "default": ""
+              },
+              "dapLogPath": {
+                "type": "string",
+                "description": "when provided, the DAP session will overwrite logs to this file. These logs are internal debug logs of the dap program, not the STDOUT from the actual Fade Application",
+                "default": ""
+              }
+            }
+          },
+          "attach": {
+            "required": [
+              "program",
+              "debugPort"
+            ],
+            "properties": {
+              "program": {
+                "type": "string",
+                "description": "Absolute path to a project file.",
+                "default": "none"
+              },
+              "debugPort":{
+                "type": "string",
+                "description": "The port where the existing debug server is running.",
+                "default": "none"
+              },
+              "waitForDebugger": {
+                "type": "boolean",
+                "description": "forces the DAP to wait for a debugger attachment",
+                "default": false
               },
               "dapLogPath": {
                 "type": "string",

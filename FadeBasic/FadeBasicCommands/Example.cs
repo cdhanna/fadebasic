@@ -5,12 +5,6 @@ using FadeBasic.Virtual;
 
 namespace FadeBasic
 {
-    public class StandardCommands
-    {
-        public static CommandCollection LimitedCommands => new CommandCollection(new FadeBasicCommands());
-    }
-
-    
     public class Example
     {
         

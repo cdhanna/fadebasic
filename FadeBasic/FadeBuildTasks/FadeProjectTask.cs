@@ -4,6 +4,7 @@ using ApplicationSupport.Code;
 using ApplicationSupport.Launch;
 using FadeBasic.ApplicationSupport.Project;
 using FadeBasic.Ast;
+using FadeBasic.Sdk;
 using FadeBasic.Virtual;
 using Microsoft.Build.Framework;
 using Task = Microsoft.Build.Utilities.Task;
@@ -95,7 +96,7 @@ namespace FadeBasic.Build
                 Log.LogMessage(MessageImportance.Low, $"[FADE] file: {settingFile} meta=[{item.MetadataCount}]");
             }
 
-            var map = ProjectSourceMethods.CreateSourceMap(sourcePaths);
+            var map = SourceMap.CreateSourceMap(sourcePaths);
             
             // to generate the command collection, we need to load up the metadata for those dlls...
             // that means we need to be able to resolve PackageReference and ProjectReference to their actual dll paths

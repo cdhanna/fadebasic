@@ -2,6 +2,7 @@ using System.Diagnostics;
 using FadeBasic;
 using FadeBasic.ApplicationSupport.Project;
 using FadeBasic.Launch;
+using FadeBasic.Sdk;
 using Microsoft.VisualStudio.Shared.VSCodeDebugProtocol;
 using Microsoft.VisualStudio.Shared.VSCodeDebugProtocol.Messages;
 using Microsoft.VisualStudio.Shared.VSCodeDebugProtocol.Utilities;
@@ -58,6 +59,78 @@ public partial class FadeDebugAdapter : DebugAdapterBase
         return res;
     }
 
+    protected override AttachResponse HandleAttachRequest(AttachArguments arguments)
+    {
+        _fileName = arguments.ConfigurationProperties.GetValueAsString("program");
+        var portString = arguments.ConfigurationProperties.GetValueAsString("debugPort");
+
+        if (!int.TryParse(portString, out var port))
+        {
+            throw new ProtocolException("Attach failed because attach configuration did not specify valid 'debugPort'.");
+        }
+        
+        if (String.IsNullOrEmpty(_fileName))
+        {
+            throw new ProtocolException("Attach failed because attach configuration did not specify 'program'.");
+        }
+
+        _project = ProjectLoader.LoadCsProject(_fileName);
+        var projectInfo = ProjectBuilder.LoadCommandMetadata(_project.projectLibraries);
+        var lexer = new Lexer();
+        _sourceMap = _project.CreateSourceMap();
+        var source = _sourceMap.fullSource;
+        var lexerResults = lexer.TokenizeWithErrors(source, projectInfo.collection);
+        _sourceMap.ProvideTokens(lexerResults);
+        
+        
+        _session = new RemoteDebugSession(port, _logger.Log);
+
+        _session.HitBreakpointCallback = () =>
+        {
+            Protocol.SendEvent(new StoppedEvent
+            {
+                Reason = StoppedEvent.ReasonValue.Breakpoint,
+                Description = "Hit a breakpoint",
+                AllThreadsStopped = true,
+                HitBreakpointIds = new List<int>(){0}
+            });
+        };
+
+        _session.Exited = () =>
+        {
+            Protocol.SendEvent(new ExitedEvent());
+            Protocol.SendEvent(new TerminatedEvent());
+        };
+
+        _session.RuntimeException = (error) =>
+        {
+            _logger.Log($"Received runtime exception message=[{error}]");
+            Protocol.SendEvent(new StoppedEvent(StoppedEvent.ReasonValue.Exception)
+            {
+                Text = "Fatal Exception",
+                Description = error,
+                AllThreadsStopped = true,
+            });
+        };
+
+        // as soon as this event is sent- debugger info will appear. 
+        Protocol.SendEvent(new InitializedEvent());
+        
+        _logger.Log("Attaching to debug application");
+        _session.Connect();
+
+        
+        Task.Delay(TimeSpan.FromMilliseconds(500)).ContinueWith(_ =>
+        {
+            _logger.Log("Saying Hello to debug application");
+            _session.SayHello();
+        });
+
+        
+        var res = new AttachResponse();
+        return res;
+        
+    }
 
     protected override LaunchResponse HandleLaunchRequest(LaunchArguments arguments)
     {
@@ -75,15 +148,6 @@ public partial class FadeDebugAdapter : DebugAdapterBase
         _sourceMap = _project.CreateSourceMap();
         var source = _sourceMap.fullSource;
         var lexerResults = lexer.TokenizeWithErrors(source, projectInfo.collection);
-        
-        _logger.Log($"Lexer error count=[{lexerResults.tokenErrors.Count}]");
-        foreach (var err in lexerResults.tokenErrors)
-        {
-            _logger.Log($"[TOKEN ERROR] {err.Display}");
-        }
-        _logger.Log($"Lexer token count=[{lexerResults.tokens.Count}]");
-        _logger.Log($"Found source code: \n{source}");
-        
         _sourceMap.ProvideTokens(lexerResults);
         
         // at this point, we can actually kick off the process. 
@@ -145,6 +209,7 @@ public partial class FadeDebugAdapter : DebugAdapterBase
         {
             _logger.Log("Connecting to debug application");
             _session.Connect();
+            _session.SayHello();
         
         }, (args, err) =>
         {

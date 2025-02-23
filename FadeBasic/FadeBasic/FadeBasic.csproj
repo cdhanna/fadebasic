@@ -21,6 +21,7 @@
             provides a shim for the span types.  
         -->
         <PackageReference Include="System.Memory" Version="4.5.5"/>
+        <PackageReference Include="Microsoft.Bcl.Memory" Version="9.0.2"/>
     </ItemGroup>
     
 </Project>
