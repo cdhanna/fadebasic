@@ -295,7 +295,7 @@ endfunction";
     public async Task DebugServerTest()
     {
         
-        var port = 8909;
+        var port = LaunchUtil.FreeTcpPort();
         var src = @"
 b = 1
 b2 = 2

@@ -1666,17 +1666,11 @@ namespace FadeBasic.Launch
                     if (err != SocketError.Success) continue;
                     if (count == 0) continue;
 
-                    for (var i = 0; i < sizeof(int); i++)
-                    {
-                        Console.WriteLine(buffer[i]);
-                    }
-
                     var length = BitConverter.ToInt32(buffer, 0);
-                    
                     
                     if (length > buffer.Length)
                     {
-                        throw new Exception(@$"precatch error. count=[{count}] b0=[{buffer[0]}] b1=[{buffer[1]}] b2=[{buffer[2]}] b3=[{buffer[3]}]");
+                        throw new Exception(@$"buffer error has invalid size. count=[{count}] b0=[{buffer[0]}] b1=[{buffer[1]}] b2=[{buffer[2]}] b3=[{buffer[3]}]");
                     }
 
                     // try to receive a single message
