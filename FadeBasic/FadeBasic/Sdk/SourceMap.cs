@@ -5,6 +5,7 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Text;
+using FadeBasic.Sdk.Shim;
 
 namespace FadeBasic.Sdk
 {
@@ -36,7 +37,7 @@ namespace FadeBasic.Sdk
         
             var sb = new StringBuilder();
             var totalLines = 0;
-            var fileToLineRange = new List<(string, Range)>();
+            var fileToLineRange = new List<(string, FadeShimRange)>();
             for (var i = 0; i < sourceFilePaths.Count; i++)
             {
                 var file = sourceFilePaths[i];
@@ -44,7 +45,7 @@ namespace FadeBasic.Sdk
                 var startLine = totalLines;
                 var endLine = totalLines + lines.Length;
                 totalLines += lines.Length;
-                fileToLineRange.Add((file, new Range(startLine, endLine)));
+                fileToLineRange.Add((file, new FadeShimRange(startLine, endLine)));
                 for (var lineNumber = 0; lineNumber < lines.Length; lineNumber++)
                 {
                     sb.AppendLine(lines[lineNumber]);
@@ -56,8 +57,8 @@ namespace FadeBasic.Sdk
         }
         
         
-        public List<(string, Range)> fileRanges = new List<(string, Range)>();
-        public Dictionary<string, Range> _fileToRange = new Dictionary<string, Range>();
+        public List<(string, FadeShimRange)> fileRanges = new List<(string, FadeShimRange)>();
+        public Dictionary<string, FadeShimRange> _fileToRange = new Dictionary<string, FadeShimRange>();
         public Dictionary<int, List<Token>> _lineToTokens = new Dictionary<int, List<Token>>();
         public string fullSource;
 
@@ -66,7 +67,7 @@ namespace FadeBasic.Sdk
 
         }
 
-        public SourceMap(string fullSource, List<(string, Range)> fileRanges)
+        public SourceMap(string fullSource, List<(string, FadeShimRange)> fileRanges)
         {
             this.fullSource = fullSource;
             this.fileRanges = fileRanges;

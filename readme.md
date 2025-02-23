@@ -94,8 +94,28 @@ Before you can get started,
 
 6. _Bonus:_ If you hover your mouse over the `print` command, you should see a popup that provides a small amount of documentation for the command. Click the link that says, `Full Documentation`, and a web browser should open to a `localhost` address showing a list of all available commands. 
 
+#### Run it as a script
 
-#### Next Steps
+So far, you've run the _Fade_ program as something that appears to be a standalone program. However, _Fade_'s actually Dotnet embeddable, so you can run the _Fade_ script directly from existing C# code. For now, just read along.
+
+You _could_ create a brand new C# Console application and reference the _Fade_ Nuget libraries. Then, inside that C# application, you _could_ write some code like this, 
+```csharp
+var commands = new CommandCollection(
+    new ConsoleCommands(), 
+    new StandardCommands()
+);
+var path = "/tunaFade/tunaFade.csproj";
+
+Fade.TryFromProject(path, commands, out var ctx, out _);
+ctx.Debug(); // run the Fade program in debug mode
+```
+
+The last line boots up the _Fade_ code as a runtime script within the C# application. Back in _Visual Studio Code_, you can attach the debugger to the running script and inspect the program or modify the state. 
+
+_Fade_ has almost no dependencies, so you _could_ run this code from a more complex C# environment, like Unity... 
+
+
+## Next Steps
 Now that you have _Fade_ running locally, you should check out the full language specification! Or learn how to debug your program? Maybe even create a custom command collection. 
 
 - [Language Specification](https://github.com/cdhanna/fadebasic/blob/main/FadeBasic/book/FadeBook/Language.md)
@@ -103,6 +123,9 @@ Now that you have _Fade_ running locally, you should check out the full language
 - [The SDK](https://github.com/cdhanna/fadebasic/blob/main/FadeBasic/book/FadeBook/SDK.md)
 - [Custom Commands](https://github.com/cdhanna/fadebasic/blob/main/FadeBasic/book/FadeBook/Custom%20Commands.md)
 - [Differences between _Dark Basic_ and _Fade_](https://github.com/cdhanna/fadebasic/blob/main/FadeBasic/book/FadeBook/Dark%20Basic%20Pro%20Changes.md)
+
+
+
 
 ## Contact and Help
 
