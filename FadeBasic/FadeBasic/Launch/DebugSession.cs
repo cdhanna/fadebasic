@@ -1633,7 +1633,7 @@ namespace FadeBasic.Launch
             try
             {
                 handler = socket.Accept();
-                handler.ReceiveTimeout = 1;
+                handler.ReceiveTimeout = 100;
                 handler.ReceiveBufferSize = MAX_MESSAGE_LENGTH;
 
                 didClientConnect = true;
@@ -1670,7 +1670,7 @@ namespace FadeBasic.Launch
                     
                     if (length > buffer.Length)
                     {
-                        throw new Exception(@$"buffer error has invalid size. count=[{count}] b0=[{buffer[0]}] b1=[{buffer[1]}] b2=[{buffer[2]}] b3=[{buffer[3]}]");
+                        throw new Exception(@$"buffer error has invalid size. port=[{port}] count=[{count}] b0=[{buffer[0]}] b1=[{buffer[1]}] b2=[{buffer[2]}] b3=[{buffer[3]}]");
                     }
 
                     // try to receive a single message
