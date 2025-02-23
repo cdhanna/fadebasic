@@ -1627,7 +1627,7 @@ namespace FadeBasic.Launch
             socket.Bind(ip);
             socket.Listen(100);
             // var buffer = new ArraySegment<byte>(new byte[socket.ReceiveBufferSize]);
-            var buffer = new byte[socket.ReceiveBufferSize];
+            var buffer = new byte[MAX_MESSAGE_LENGTH];
             
             Socket handler = null;
             try
