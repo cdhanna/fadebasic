@@ -41,8 +41,8 @@ sudo dotnet build ./DAP -o ../VsCode/basicscript/out/tools
 # Check if FADE_NUGET_DRYRUN is set
 if [ -z "$FADE_NUGET_DRYRUN" ]; then
   # install nuget packages to source
-  echo "pushing packages to nuget source, ${PACKAGE_SOURCE}"
-  sudo dotnet nuget push $OUTPUT_FOLDER/*.$BUILD_NUMBER.nupkg --source $PACKAGE_SOURCE $NUGET_KEY_STR
+  echo "pushing packages, $OUTPUT_FOLDER/*.$BUILD_NUMBER.nupkg, to nuget source, ${PACKAGE_SOURCE}"
+  sudo dotnet nuget push $OUTPUT_FOLDER/*.$BUILD_NUMBER.nupkg --source "$PACKAGE_SOURCE" $NUGET_KEY_STR
 else
   echo "Skipping NuGet push because FADE_NUGET_DRYRUN is set."
 fi
