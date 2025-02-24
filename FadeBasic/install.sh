@@ -39,11 +39,6 @@ sudo dotnet build ./LSP -o ../VsCode/basicscript/out/tools
 sudo dotnet build ./DAP -o ../VsCode/basicscript/out/tools
 
 if [ -z "$FADE_USE_LOCAL_SOURCE" ]; then
-  # install nuget packages to source
-  echo "pushing fade to local!"
-  sudo dotnet nuget push "$OUTPUT_FOLDER/*.$BUILD_NUMBER.nupkg" --source "LocalFade"
-else
-
   if [ -z "$FADE_NUGET_DRYRUN" ]; then
     # install nuget packages to source
     echo "pushing packages, $OUTPUT_FOLDER/*.$BUILD_NUMBER.nupkg, to nuget source, ${PACKAGE_SOURCE}"
@@ -51,5 +46,8 @@ else
   else
     echo "Skipping NuGet push because FADE_NUGET_DRYRUN is set."
   fi
-
+else
+  # install nuget packages to source
+  echo "pushing fade to local!"
+  sudo dotnet nuget push "$OUTPUT_FOLDER/*.$BUILD_NUMBER.nupkg" --source "LocalFade"
 fi
