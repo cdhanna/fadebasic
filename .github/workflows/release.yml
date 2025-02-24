@@ -55,13 +55,21 @@ jobs:
         with:
           node-version: '22.x'
 
-      - name: set FADE_NUGET_DRYRUN based on input
-        if: inputs.publishNuget == false
-        run: echo "FADE_NUGET_DRYRUN=true" >> $GITHUB_ENV
 
+      - name: pre-test build 
+        working-directory: ./FadeBasic
+        run: |
+          sh ./setup.sh
+          sh ./install.sh 0.0.1000 1
       - name: run tests
         working-directory: ./FadeBasic
         run: dotnet test Tests
+        env: 
+          FadeNugetVersion: '0.0.1000.1'
+
+      - name: set FADE_NUGET_DRYRUN based on input
+        if: inputs.publishNuget == false
+        run: echo "FADE_NUGET_DRYRUN=true" >> $GITHUB_ENV
 
       - name: Run Build Script
         working-directory: ./FadeBasic

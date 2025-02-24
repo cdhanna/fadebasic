@@ -2,7 +2,8 @@
     <PropertyGroup>
         <TargetFramework>net8.0</TargetFramework>
         <OutputType>Exe</OutputType>
-        <FadeNugetVersion>0.13.12.293</FadeNugetVersion>
+        <FadeNugetVersion Condition="'$(FadeNugetVersion)' == ''">0.13.12.293</FadeNugetVersion>
+
     </PropertyGroup>
     <ItemGroup>
         <PackageReference Include="FadeBasic.Build" Version="$(FadeNugetVersion)" />
