@@ -71,9 +71,7 @@ jobs:
 
       - name: run tests
         working-directory: ./FadeBasic
-        run: sudo dotnet test Tests
-        env: 
-          FadeNugetVersion: '0.0.1000.1'
+        run: FadeNugetVersion='0.0.1000.1' sudo dotnet test Tests
 
       - name: set FADE_NUGET_DRYRUN based on input
         if: inputs.publishNuget == false
