@@ -49,8 +49,8 @@ if [ -z "$FADE_USE_LOCAL_SOURCE" ]; then
 else
   # install nuget packages to source
   echo "pushing fade to local!"
-  sudo dotnet nuget list source
-  sudo ./setup.sh
-  sudo dotnet nuget list source
-  sudo dotnet nuget push "$OUTPUT_FOLDER/*.$BUILD_NUMBER.nupkg" --source "LocalFade"
+  dotnet nuget list source
+  ./setup.sh
+  dotnet nuget list source
+  dotnet nuget push "$OUTPUT_FOLDER/*.$BUILD_NUMBER.nupkg" --source "LocalFade"
 fi
