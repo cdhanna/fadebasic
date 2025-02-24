@@ -56,11 +56,18 @@ jobs:
           node-version: '22.x'
 
 
-      - name: pre-test build 
+      - name: pre-test setup 
         working-directory: ./FadeBasic
         run: |
           sh ./setup.sh
-          sh ./install.sh 0.0.1000 1
+      - name: pre-test check 
+        working-directory: ./FadeBasic
+        run: |
+          dotnet nuget list source
+      - name: pre-test build 
+        working-directory: ./FadeBasic
+        run: |
+          sh ./install.sh 0.0.1000 1 'LocalFade'
       - name: run tests
         working-directory: ./FadeBasic
         run: dotnet test Tests
