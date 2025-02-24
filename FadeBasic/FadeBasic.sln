@@ -32,6 +32,10 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "FadeBasic.Lib.Standard", "F
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "DAP", "DAP\DAP.csproj", "{409A2CE1-6056-42D4-AD48-584CE9CC4158}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "usesProject", "Tests\Fixtures\Projects\UsesProject\usesProject.csproj", "{77A11232-54E0-4346-A8B1-18954745B1E8}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "FadeCommandsViaNuget", "FadeCommandsViaNuget\FadeCommandsViaNuget.csproj", "{66EE8425-A1A9-4019-B1DC-0E0F8C7E2793}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -99,6 +103,14 @@ Global
 		{409A2CE1-6056-42D4-AD48-584CE9CC4158}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{409A2CE1-6056-42D4-AD48-584CE9CC4158}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{409A2CE1-6056-42D4-AD48-584CE9CC4158}.Release|Any CPU.Build.0 = Release|Any CPU
+		{77A11232-54E0-4346-A8B1-18954745B1E8}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{77A11232-54E0-4346-A8B1-18954745B1E8}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{77A11232-54E0-4346-A8B1-18954745B1E8}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{77A11232-54E0-4346-A8B1-18954745B1E8}.Release|Any CPU.Build.0 = Release|Any CPU
+		{66EE8425-A1A9-4019-B1DC-0E0F8C7E2793}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{66EE8425-A1A9-4019-B1DC-0E0F8C7E2793}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{66EE8425-A1A9-4019-B1DC-0E0F8C7E2793}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{66EE8425-A1A9-4019-B1DC-0E0F8C7E2793}.Release|Any CPU.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(NestedProjects) = preSolution
 		{BFF3475D-F580-4C2C-B025-B80BAD2EB915} = {7A2CFDCE-7E00-4B3A-82DE-E5CE48A4F13D}

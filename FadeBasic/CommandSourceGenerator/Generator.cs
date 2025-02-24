@@ -618,10 +618,48 @@ public static void {descriptor.MethodName}({nameof(VirtualMachine)} {VM})
         public ClassDeclarationSyntax classSyntax;
         public MethodDeclarationSyntax methodSyntax;
         public AttributeSyntax attributeSyntax;
-        public string TargetClassName => $"{((NamespaceDeclarationSyntax)classSyntax.Parent).Name}.{classSyntax.Identifier.ToString()}";
+        public string TargetClassName
+        {
+            get
+            {
+                if (classSyntax.Parent is NamespaceDeclarationSyntax namespaceDeclSyn)
+                {
+                    return $"{namespaceDeclSyn.Name}.{classSyntax.Identifier.ToString()}";
+                }
+                else if (classSyntax.Parent is FileScopedNamespaceDeclarationSyntax fileScopedDeclSync)
+                {
+                    return $"{fileScopedDeclSync.Name}.{classSyntax.Identifier.ToString()}";
+                }
+                else
+                {
+                    throw new Exception(
+                        $"cannot create command descriptor because class syntax is of type=[{classSyntax.Parent.GetType().Name}], which is not a known.");
+                }
+            }
+        }
+
         public string TargetMethodName => methodSyntax.Identifier.ToString();
         public string MethodName => $"Call_{TargetMethodName}_{Sig}";
-        public string NamespaceName => $"{((NamespaceDeclarationSyntax)classSyntax.Parent).Name}";
+        public string NamespaceName
+        {
+            get
+            {
+                if (classSyntax.Parent is NamespaceDeclarationSyntax namespaceDeclSyn)
+                {
+                    return $"{namespaceDeclSyn.Name}";
+                }
+                else if (classSyntax.Parent is FileScopedNamespaceDeclarationSyntax fileScopedDeclSync)
+                {
+                    return $"{fileScopedDeclSync.Name}";
+                }
+                else
+                {
+                    throw new Exception(
+                        $"cannot create command descriptor namespace class syntax is of type=[{classSyntax.Parent.GetType().Name}], which is not a known.");
+                }
+            }
+        }
+
         public string CallName => attributeSyntax.ArgumentList.Arguments[0].Expression.ToString();
         public string Sig => ReturnType + "R" + string.Join("", Parameters.Select(x => x.TypeCode + (x.IsRef ? "O":"")));
 

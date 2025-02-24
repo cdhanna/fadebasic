@@ -1,3 +1,4 @@
+using System.Buffers.Binary;
 using System.Collections.Concurrent;
 using FadeBasic;
 using FadeBasic.Ast;
@@ -290,6 +291,7 @@ endfunction";
 // TODO: 182 is not even in the tree, but that is the number that is being hit in real life after step-over. 
         // var hasIndex = tree.TryFind(182, out var index);
     }
+
     
     [Test]
     public async Task DebugServerTest()

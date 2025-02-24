@@ -1,4 +1,5 @@
-﻿using System.Collections.Generic;
+﻿using System;
+using System.Collections.Generic;
 using System.IO;
 using ApplicationSupport.Code;
 using ApplicationSupport.Launch;
@@ -43,111 +44,125 @@ namespace FadeBasic.Build
         
         public override bool Execute()
         {
-            if (SourceFiles == null)
+            try
             {
-                Log.LogError("If FadeBasic.Build is included, then SourceFiles must be specified.");
-                return false; // nothing to do;
-            }
-
-            var libMap = new Dictionary<string, List<string>>();
-
-            var dllTable = PrepareAssemblyToDllMap(References);
-
-            Log.LogMessage(MessageImportance.Low,$"[FADE] there are {Commands.Length} commands...");
-            for (var i = 0; i < Commands.Length; i++)
-            {
-                var command = Commands[i];
-                var identity = command.GetMetadata("Identity");
-                if (dllTable.TryGetValue(identity, out var dllPath))
+                if (SourceFiles == null)
                 {
-                    if (!libMap.TryGetValue(dllPath, out var lib))
+                    Log.LogError("If FadeBasic.Build is included, then SourceFiles must be specified.");
+                    return false; // nothing to do;
+                }
+
+                var libMap = new Dictionary<string, List<string>>();
+
+                var dllTable = PrepareAssemblyToDllMap(References);
+
+                Log.LogMessage(MessageImportance.Low, $"[FADE] there are {Commands.Length} commands...");
+                for (var i = 0; i < Commands.Length; i++)
+                {
+                    var command = Commands[i];
+                    var identity = command.GetMetadata("Identity");
+                    if (dllTable.TryGetValue(identity, out var dllPath))
                     {
-                        libMap[dllPath] = lib = new List<string>();
+                        if (!libMap.TryGetValue(dllPath, out var lib))
+                        {
+                            libMap[dllPath] = lib = new List<string>();
+                        }
+
+                        var className = command.GetMetadata("FullName");
+                        lib.Add(className);
                     }
-                    var className = command.GetMetadata("FullName");
-                    lib.Add(className);
                 }
-            }
-            
-            var libraries = new List<ProjectCommandSource>();
-            var allClassNames = new List<string>();
-            foreach (var kvp in libMap)
-            {
-                var source = new ProjectCommandSource
+
+                var libraries = new List<ProjectCommandSource>();
+                var allClassNames = new List<string>();
+                foreach (var kvp in libMap)
                 {
-                    absoluteOutputDllPath = kvp.Key,
-                    commandClasses = kvp.Value // TODO: hashmap this?
-                };
-                allClassNames.AddRange(kvp.Value);
-                libraries.Add(source);
-                Log.LogMessage(MessageImportance.Low,$"[FADE] IDENTIFIED SOURCE: {string.Join(",", source.commandClasses)} dll=[{source.absoluteOutputDllPath}]" );
-            }
-
-            var commandCollection = ProjectBuilder.LoadCommandMetadata(libraries);
-          
-            
-            Log.LogMessage(MessageImportance.Low, $"[FADE] there are {SourceFiles.Length} source files");
-
-            var sourcePaths = new List<string>(SourceFiles.Length);
-            foreach (var item in SourceFiles)
-            {
-                var settingFile = item.GetMetadata("FullPath");
-                sourcePaths.Add(settingFile);
-                Log.LogMessage(MessageImportance.Low, $"[FADE] file: {settingFile} meta=[{item.MetadataCount}]");
-            }
-
-            var map = SourceMap.CreateSourceMap(sourcePaths);
-            
-            // to generate the command collection, we need to load up the metadata for those dlls...
-            // that means we need to be able to resolve PackageReference and ProjectReference to their actual dll paths
-            var unit = map.Parse(commandCollection.collection, new ParseOptions
-            {
-                ignoreChecks = IgnoreSafetyChecks
-            });
-            var lexErrors = unit.lexerResults.tokenErrors;
-            if (lexErrors.Count > 0)
-            {
-                foreach (var error in lexErrors)
-                {
-                    var local = map.GetOriginalLocation(error.lineNumber, error.charNumber);
-                    Log.LogError(subcategory: "fade",
-                        errorCode: "FADE:" + error.error.code,
-                        helpKeyword: null,
-                        file: local.fileName,
-                        lineNumber: local.startLine,
-                        columnNumber: local.startChar,
-                        endLineNumber: local.startLine,
-                        endColumnNumber: local.startChar + error.text.Length,
-                        message: error.Display);
+                    var source = new ProjectCommandSource
+                    {
+                        absoluteOutputDllPath = kvp.Key,
+                        commandClasses = kvp.Value // TODO: hashmap this?
+                    };
+                    allClassNames.AddRange(kvp.Value);
+                    libraries.Add(source);
+                    Log.LogMessage(MessageImportance.Low,
+                        $"[FADE] IDENTIFIED SOURCE: {string.Join(",", source.commandClasses)} dll=[{source.absoluteOutputDllPath}]");
                 }
-                if ( lexErrors.Count > 0) return false;
 
-            }
-            else
-            {
+                var commandCollection = ProjectBuilder.LoadCommandMetadata(libraries);
 
-                var errors = unit.program?.GetAllErrors();
-                foreach (var error in errors)
+
+                Log.LogMessage(MessageImportance.Low, $"[FADE] there are {SourceFiles.Length} source files");
+
+                var sourcePaths = new List<string>(SourceFiles.Length);
+                foreach (var item in SourceFiles)
                 {
-                    var local = map.GetOriginalRange(error.location);
-                    Log.LogError(subcategory: "fade",
-                        errorCode: "FADE:" + error.errorCode.code,
-                        helpKeyword: null,
-                        file: local.fileName,
-                        lineNumber: error.location.start.lineNumber,
-                        columnNumber: error.location.start.charNumber,
-                        endLineNumber: error.location.end.lineNumber,
-                        endColumnNumber: error.location.end.charNumber,
-                        message: error.CombinedMessage);
+                    var settingFile = item.GetMetadata("FullPath");
+                    sourcePaths.Add(settingFile);
+                    Log.LogMessage(MessageImportance.Low, $"[FADE] file: {settingFile} meta=[{item.MetadataCount}]");
                 }
-                if (errors.Count > 0) return false;
 
+                var map = SourceMap.CreateSourceMap(sourcePaths);
+
+                // to generate the command collection, we need to load up the metadata for those dlls...
+                // that means we need to be able to resolve PackageReference and ProjectReference to their actual dll paths
+                var unit = map.Parse(commandCollection.collection, new ParseOptions
+                {
+                    ignoreChecks = IgnoreSafetyChecks
+                });
+                var lexErrors = unit.lexerResults.tokenErrors;
+                if (lexErrors.Count > 0)
+                {
+                    foreach (var error in lexErrors)
+                    {
+                        var local = map.GetOriginalLocation(error.lineNumber, error.charNumber);
+                        Log.LogError(subcategory: "fade",
+                            errorCode: "FADE:" + error.error.code,
+                            helpKeyword: null,
+                            file: local.fileName,
+                            lineNumber: local.startLine,
+                            columnNumber: local.startChar,
+                            endLineNumber: local.startLine,
+                            endColumnNumber: local.startChar + error.text.Length,
+                            message: error.Display);
+                    }
+
+                    if (lexErrors.Count > 0) return false;
+
+                }
+                else
+                {
+
+                    var errors = unit.program?.GetAllErrors();
+                    foreach (var error in errors)
+                    {
+                        var local = map.GetOriginalRange(error.location);
+                        Log.LogError(subcategory: "fade",
+                            errorCode: "FADE:" + error.errorCode.code,
+                            helpKeyword: null,
+                            file: local.fileName,
+                            lineNumber: error.location.start.lineNumber,
+                            columnNumber: error.location.start.charNumber,
+                            endLineNumber: error.location.end.lineNumber,
+                            endColumnNumber: error.location.end.charNumber,
+                            message: error.CombinedMessage);
+                    }
+
+                    if (errors.Count > 0) return false;
+
+                }
+
+
+                LaunchableGenerator.GenerateLaunchable(GeneratedClassName, GenerateFileLocation, unit,
+                    commandCollection.collection, allClassNames, includeMain: GenerateEntryPoint,
+                    generateDebug: GenerateDebugData);
+                GeneratedFile = GenerateFileLocation;
+                return true;
             }
-
-
-            LaunchableGenerator.GenerateLaunchable(GeneratedClassName,GenerateFileLocation,unit, commandCollection.collection, allClassNames, includeMain: GenerateEntryPoint, generateDebug: GenerateDebugData);
-            GeneratedFile = GenerateFileLocation;
-            return true;
+            catch (Exception ex)
+            {
+                Log.LogError($"FadeBuild encountered fatal error. type=[{ex.GetType().Name}] message=[{ex.Message}] stack=[{ex.StackTrace}]");
+                throw;
+            }
         }
     }
 }

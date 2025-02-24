@@ -1,3 +1,4 @@
-print "hello world"
-wait ms 250
-print "goodbye!!"
+x = 5
+toast(x)
+
+print x

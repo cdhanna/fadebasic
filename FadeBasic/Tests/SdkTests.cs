@@ -2,6 +2,7 @@ using FadeBasic;
 using FadeBasic.Launch;
 using FadeBasic.Lib.Standard;
 using FadeBasic.Sdk;
+using FadeCommandsViaNuget;
 
 namespace Tests;
 
@@ -99,7 +100,22 @@ public partial class SdkTests
 
 
     }
-    
+
+    [Test]
+    public void ProjectRef()
+    {
+        var commands = new CommandCollection(
+            new MyCommands()
+        );
+        if (!Fade.TryCreateFromProject("Fixtures/Projects/UsesProject/usesProject.csproj", commands, out var ctx, out _))
+        {
+            Assert.Fail("no file");
+        }
+        ctx.Run();
+
+        ctx.TryGetInteger("x", out var i);
+        Assert.That(i, Is.EqualTo(15));
+    }
     
     [Test]
     public void Resetable()
