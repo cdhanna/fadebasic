@@ -56,6 +56,8 @@ public static class ProjectLoader
             var sourcePath = sourceItem.GetMetadataValue("FullPath");
             context.absoluteSourceFiles.Add(sourcePath);
         }
+        
+        var packagesPath = assetsData.objects["project"].objects["restore"].strings["packagesPath"];
 
         // var references = csProj.GetItems("ReferencePath");
         // var refMap = new Dictionary<string, string>();
@@ -93,15 +95,27 @@ public static class ProjectLoader
                         // TODO: how do we know the version is correct? 
                         searchingForLibrary = false;
 
-                        var _ = kvp.Value.strings["type"];
-                        var runtimeDlls = kvp.Value.objects["runtime"];
-                        var dllPackagePath = runtimeDlls.objects.FirstOrDefault().Key;
-
+                        var refType = kvp.Value.strings["type"];
                         var nugetPath = assetLibraryData.objects[kvp.Key].strings["path"];
 
-                        var packagesPath = assetsData.objects["project"].objects["restore"].strings["packagesPath"];
-
-                        refMap[referenceName] = expectedDllPath = Path.Combine(packagesPath, nugetPath, dllPackagePath);
+                        if (refType == "package")
+                        {
+                            var runtimeDlls = kvp.Value.objects["runtime"];
+                            var dllPackagePath = runtimeDlls.objects.FirstOrDefault().Key;
+                            refMap[referenceName] = expectedDllPath = Path.Combine(packagesPath, nugetPath, dllPackagePath);
+                        } else if (refType == "package")
+                        {
+                            var refCsProjPath = Path.Combine(csProjDir, nugetPath);
+                            var refCsProjDir = Path.GetDirectoryName(refCsProjPath);
+                            var dllPath = Path.Combine(refCsProjDir, "bin", "Debug", targetFramework,
+                                referenceName + ".dll"); // TODO: this assumes the debug project is being used?
+                            refMap[referenceName] = expectedDllPath = dllPath;
+                        }
+                        else
+                        {
+                            throw new Exception($"Unknown Fade command type=[{refType}] ref=[{referenceName}]");
+                        }
+                        
                         break;
                         // refMap[referenceName] = existingDllPath = 
                     }
