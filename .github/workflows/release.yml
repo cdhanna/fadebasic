@@ -71,7 +71,7 @@ jobs:
 
       - name: run tests
         working-directory: ./FadeBasic
-        run: dotnet test Tests
+        run: sudo dotnet test Tests
         env: 
           FadeNugetVersion: '0.0.1000.1'
 
