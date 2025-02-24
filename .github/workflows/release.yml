@@ -67,9 +67,8 @@ jobs:
       - name: pre-test build 
         working-directory: ./FadeBasic
         run: |
-          bash ./install.sh 0.0.1000 1 'LocalFade'
-        env:
-          FADE_USE_LOCAL_SOURCE: true
+          FADE_USE_LOCAL_SOURCE=true bash ./install.sh 0.0.1000 1 'LocalFade'
+
       - name: run tests
         working-directory: ./FadeBasic
         run: dotnet test Tests
