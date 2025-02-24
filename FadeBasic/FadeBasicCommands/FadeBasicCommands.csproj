@@ -2,7 +2,7 @@
 
     <PropertyGroup>
         <TargetFramework>netstandard2.0</TargetFramework>
-        <EmitCompilerGeneratedFiles>true</EmitCompilerGeneratedFiles>
+<!--        <EmitCompilerGeneratedFiles>true</EmitCompilerGeneratedFiles>-->
 
         <AssemblyName>FadeBasic.Lib.Testing</AssemblyName>
         <PackageId>FadeBasic.Lib.Testing</PackageId>

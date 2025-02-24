@@ -22,10 +22,11 @@ echo "installing fade basic development version=${SEM_VER}"
 
 # build all projects once
 BUILD_ARGS="-c Release /p:Version=$SEM_VER /p:FadeInstall=true"
+dotnet clean build.sln -c Release
 dotnet build build.sln $BUILD_ARGS
 
 # build nuget packages (without building, so its quicker)
-PACK_ARGS="--output $OUTPUT_FOLDER /p:Version=$SEM_VER --include-symbols --include-source"
+PACK_ARGS="--output $OUTPUT_FOLDER /p:Version=$SEM_VER --include-symbols --include-source -c Release"
 dotnet pack ./FadeBasic $PACK_ARGS
 dotnet pack ./FadeBasicCommands $PACK_ARGS
 dotnet pack ./FadeBasic.Lib.Standard $PACK_ARGS
@@ -35,8 +36,8 @@ dotnet pack ./Templates $PACK_ARGS
 dotnet pack ./FadeBuildTasks $PACK_ARGS
 
 # build the LSP and DAP and store it in the associated vscode extension folder
-dotnet build ./LSP -o ../VsCode/basicscript/out/tools
-dotnet build ./DAP -o ../VsCode/basicscript/out/tools
+dotnet build ./LSP -o ../VsCode/basicscript/out/tools -c Release
+dotnet build ./DAP -o ../VsCode/basicscript/out/tools -c Release
 
 if [ -z "$FADE_USE_LOCAL_SOURCE" ]; then
   if [ -z "$FADE_NUGET_DRYRUN" ]; then

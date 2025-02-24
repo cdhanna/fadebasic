@@ -4,7 +4,7 @@
 
     <PropertyGroup>
         <TargetFramework>netstandard2.0</TargetFramework>
-        <EmitCompilerGeneratedFiles>true</EmitCompilerGeneratedFiles>
+<!--        <EmitCompilerGeneratedFiles>true</EmitCompilerGeneratedFiles>-->
 
         <AssemblyName>FadeBasic.Lib.Standard</AssemblyName>
         <PackageId>FadeBasic.Lib.Standard</PackageId>
