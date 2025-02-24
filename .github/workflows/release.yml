@@ -68,6 +68,8 @@ jobs:
         working-directory: ./FadeBasic
         run: |
           bash ./install.sh 0.0.1000 1 'LocalFade'
+        env:
+          FADE_USE_LOCAL_SOURCE: true
       - name: run tests
         working-directory: ./FadeBasic
         run: dotnet test Tests
@@ -78,9 +80,9 @@ jobs:
         if: inputs.publishNuget == false
         run: echo "FADE_NUGET_DRYRUN=true" >> $GITHUB_ENV
 
-      # - name: Run Build Script
-      #   working-directory: ./FadeBasic
-      #   run: bash ./install.sh ${{ inputs.majorSemver }}.${{ inputs.minorSemver }}.${{ inputs.patchSemver }} 1 ${{ secrets.NUGET_HOST }} ${{ secrets.NUGET_API_KEY }}
+      - name: Run Build Script
+        working-directory: ./FadeBasic
+        run: bash ./install.sh ${{ inputs.majorSemver }}.${{ inputs.minorSemver }}.${{ inputs.patchSemver }} 1 ${{ secrets.NUGET_HOST }} ${{ secrets.NUGET_API_KEY }}
         # env:
         #   FADE_NUGET_DRYRUN: true
 
