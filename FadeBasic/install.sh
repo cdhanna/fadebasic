@@ -16,33 +16,33 @@ OUTPUT_FOLDER="bin/artifacts_${SEM_VER}"
 NUGET_KEY_STR=${PACKAGE_SOURCE_API_KEY:+"--api-key $PACKAGE_SOURCE_API_KEY"}
 
 echo "cleaning old output folders..."
-sudo rm -rf $OUTPUT_FOLDER
+rm -rf $OUTPUT_FOLDER
 
 echo "installing fade basic development version=${SEM_VER}"
 
 # build all projects once
 BUILD_ARGS="-c Release /p:Version=$SEM_VER /p:FadeInstall=true"
-sudo dotnet build build.sln $BUILD_ARGS
+dotnet build build.sln $BUILD_ARGS
 
 # build nuget packages (without building, so its quicker)
 PACK_ARGS="--output $OUTPUT_FOLDER /p:Version=$SEM_VER --include-symbols --include-source"
-sudo dotnet pack ./FadeBasic $PACK_ARGS
-sudo dotnet pack ./FadeBasicCommands $PACK_ARGS
-sudo dotnet pack ./FadeBasic.Lib.Standard $PACK_ARGS
-sudo dotnet pack ./ApplicationSupport $PACK_ARGS
-sudo dotnet pack ./CommandSourceGenerator $PACK_ARGS
-sudo dotnet pack ./Templates $PACK_ARGS
-sudo dotnet pack ./FadeBuildTasks $PACK_ARGS
+dotnet pack ./FadeBasic $PACK_ARGS
+dotnet pack ./FadeBasicCommands $PACK_ARGS
+dotnet pack ./FadeBasic.Lib.Standard $PACK_ARGS
+dotnet pack ./ApplicationSupport $PACK_ARGS
+dotnet pack ./CommandSourceGenerator $PACK_ARGS
+dotnet pack ./Templates $PACK_ARGS
+dotnet pack ./FadeBuildTasks $PACK_ARGS
 
 # build the LSP and DAP and store it in the associated vscode extension folder
-sudo dotnet build ./LSP -o ../VsCode/basicscript/out/tools
-sudo dotnet build ./DAP -o ../VsCode/basicscript/out/tools
+dotnet build ./LSP -o ../VsCode/basicscript/out/tools
+dotnet build ./DAP -o ../VsCode/basicscript/out/tools
 
 if [ -z "$FADE_USE_LOCAL_SOURCE" ]; then
   if [ -z "$FADE_NUGET_DRYRUN" ]; then
     # install nuget packages to source
     echo "pushing packages, $OUTPUT_FOLDER/*.$BUILD_NUMBER.nupkg, to nuget source, ${PACKAGE_SOURCE}"
-    sudo dotnet nuget push $OUTPUT_FOLDER/*.$BUILD_NUMBER.nupkg --source "$PACKAGE_SOURCE" $NUGET_KEY_STR
+    dotnet nuget push $OUTPUT_FOLDER/*.$BUILD_NUMBER.nupkg --source "$PACKAGE_SOURCE" $NUGET_KEY_STR
   else
     echo "Skipping NuGet push because FADE_NUGET_DRYRUN is set."
   fi
