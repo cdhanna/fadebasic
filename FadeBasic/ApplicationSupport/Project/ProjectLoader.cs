@@ -103,7 +103,7 @@ public static class ProjectLoader
                             var runtimeDlls = kvp.Value.objects["runtime"];
                             var dllPackagePath = runtimeDlls.objects.FirstOrDefault().Key;
                             refMap[referenceName] = expectedDllPath = Path.Combine(packagesPath, nugetPath, dllPackagePath);
-                        } else if (refType == "package")
+                        } else if (refType == "project")
                         {
                             var refCsProjPath = Path.Combine(csProjDir, nugetPath);
                             var refCsProjDir = Path.GetDirectoryName(refCsProjPath);
