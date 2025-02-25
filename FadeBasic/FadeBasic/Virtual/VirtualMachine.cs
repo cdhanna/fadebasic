@@ -135,7 +135,7 @@ namespace FadeBasic.Virtual
         }
 
 
-        private bool isSuspendRequested;
+        public bool isSuspendRequested;
         public void Suspend()
         {
             isSuspendRequested = true;

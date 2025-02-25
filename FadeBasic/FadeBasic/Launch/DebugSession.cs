@@ -1283,7 +1283,10 @@ namespace FadeBasic.Launch
             }
 
 
-            SendExitedMessage();
+            if (_vm.instructionIndex >= _vm.program.Length || requestedExit)
+            {
+                SendExitedMessage();
+            }
         }
         
     }
