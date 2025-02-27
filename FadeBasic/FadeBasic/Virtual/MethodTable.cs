@@ -21,6 +21,7 @@ namespace FadeBasic.Virtual
     {
         Value,
         RegisterRef,
+        GlobalRegisterRef,
         HeapRef
     }
     

@@ -284,8 +284,12 @@ namespace FadeBasic.Virtual
         {
             switch (state)
             {
-                case CommandArgRuntimeState.RegisterRef:
+                case CommandArgRuntimeState.GlobalRegisterRef:
                     GetBytes(value, out var regBytes);
+                    vm.globalScope.dataRegisters[address] = BitConverter.ToUInt32(regBytes, 0);
+                    break;
+                case CommandArgRuntimeState.RegisterRef:
+                    GetBytes(value, out regBytes);
                     vm.dataRegisters[address] = BitConverter.ToUInt32(regBytes, 0);
                     break;
                 case CommandArgRuntimeState.HeapRef:
@@ -358,6 +362,24 @@ namespace FadeBasic.Virtual
                         value = null;
                     }
                     break;
+                case TypeCodes.PTR_GLOBAL_REG:
+                    state = CommandArgRuntimeState.GlobalRegisterRef;
+                    address = (int) span[0];
+                    data = vm.globalScope.dataRegisters[address];
+                    typeCode = vm.globalScope.typeRegisters[address];
+                    // TODO: we could validate that typeCode is equal to the given typeCode for <T>
+                    bytes = BitConverter.GetBytes(data);
+                    strPtr = (int)BitConverter.ToUInt32(bytes, 0);
+                    if (vm.heap.TryGetAllocationSize(strPtr, out strSize))
+                    {
+                        vm.heap.Read(strPtr, strSize, out var strBytes);
+                        value = VmConverter.ToString(strBytes);
+                    }
+                    else
+                    {
+                        value = null;
+                    }
+                    break;
                 case TypeCodes.PTR_HEAP:
                     state = CommandArgRuntimeState.HeapRef;
                     address = MemoryMarshal.Read<int>(span);
@@ -404,11 +426,17 @@ namespace FadeBasic.Virtual
                 case TypeCodes.PTR_REG:
                     state = CommandArgRuntimeState.RegisterRef;
                     address = (int) span[0];
-                    // refRegisters[i] = regAddr;
                     var data = vm.dataRegisters[address];
                     typeCode = vm.typeRegisters[address];
-                    // TODO: we could validate that typeCode is equal to the given typeCode for <T>
                     var bytes = BitConverter.GetBytes(data);
+                    value = MemoryMarshal.Read<T>(bytes);
+                    break;
+                case TypeCodes.PTR_GLOBAL_REG:
+                    state = CommandArgRuntimeState.GlobalRegisterRef;
+                    address = (int) span[0];
+                    data = vm.globalScope.dataRegisters[address];
+                    typeCode = vm.globalScope.typeRegisters[address];
+                    bytes = BitConverter.GetBytes(data);
                     value = MemoryMarshal.Read<T>(bytes);
                     break;
                 case TypeCodes.PTR_HEAP:

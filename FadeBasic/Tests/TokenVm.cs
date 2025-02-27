@@ -4120,6 +4120,25 @@ w$ = x$(2)
         Assert.That(vm.dataRegisters[0], Is.EqualTo(1));
     }
     
+    
+    [Test]
+    public void CallHost_RefType_GlobalFunction()
+    {
+        var src = $@"
+global x = 5
+beepBoop()
+function beepBoop()
+    inc x
+endfunction
+";
+        Setup(src, out var compiler, out var prog);
+        var vm = new VirtualMachine(prog);
+        vm.hostMethods = compiler.methodTable;
+        vm.Execute2();
+        Assert.That(vm.typeRegisters[0], Is.EqualTo(TypeCodes.INT));
+        Assert.That(vm.dataRegisters[0], Is.EqualTo(6));
+    }
+    
     [Test]
     public void CallHost_RefType_Optional_ButHasValue()
     {

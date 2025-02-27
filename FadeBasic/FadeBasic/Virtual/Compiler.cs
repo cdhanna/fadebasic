@@ -1373,7 +1373,10 @@ namespace FadeBasic.Virtual
                         default:
                             // anything else is a registry ptr!
                             var regAddr = variable.registerAddress;
-                            AddPush(_buffer, new byte[]{regAddr}, TypeCodes.PTR_REG);
+                            AddPush(_buffer, new byte[]
+                            {
+                                regAddr
+                            }, variable.isGlobal ? TypeCodes.PTR_GLOBAL_REG : TypeCodes.PTR_REG);
                             break;
                     }
                
