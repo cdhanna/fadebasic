@@ -1376,6 +1376,8 @@ namespace FadeBasic
                         return new EndProgramStatement(token);
                     case LexemType.KeywordExit:
                         return new ExitLoopStatement(token);
+                    case LexemType.KeywordSkip:
+                        return new SkipLoopStatement(token);
                     case LexemType.KeywordScope:
                         return ParseStatementThatStartsWithScope(token);
                     case LexemType.KeywordDeclareArray:

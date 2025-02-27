@@ -177,7 +177,8 @@ namespace FadeBasic
         public static readonly ErrorCode MultiLineDeclareInvalidVariable = "[0153] Multi-line declaration must have a valid left hand side";
         public static readonly ErrorCode MultiLineAssignmentCannotInferType = "[0153] Multi-line assignment has invalid statement";
         public static readonly ErrorCode ExitStatementFoundOutsideOfLoop = "[0154] An EXIT statement must exist within a loop control statement";
-        public static readonly ErrorCode PointersAreNotSupported = "[0155] Pointers are not supported";
+        public static readonly ErrorCode SkipStatementFoundOutsideOfLoop = "[0155] A SKIP statement must exist within a loop control statement";
+        public static readonly ErrorCode PointersAreNotSupported = "[0156] Pointers are not supported";
 
         // 200 series represents post-parse issues
         public static readonly ErrorCode InvalidReference = "[0200] Invalid reference";

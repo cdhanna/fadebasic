@@ -314,6 +314,7 @@ namespace FadeBasic.Virtual
 
         private Dictionary<string, int> _commandToPtr = new Dictionary<string, int>();
         private Stack<List<int>> _exitInstructionIndexes = new Stack<List<int>>();
+        private Stack<List<int>> _skipInstructionIndexes = new Stack<List<int>>();
 
         private List<LabelReplacement> _labelReplacements = new List<LabelReplacement>();
         private Dictionary<string, int> _labelToInstructionIndex = new Dictionary<string, int>();
@@ -625,6 +626,9 @@ namespace FadeBasic.Virtual
                 case ExitLoopStatement exitStatement:
                     Compile(exitStatement);
                     break;
+                case SkipLoopStatement skipStatement:
+                    Compile(skipStatement);
+                    break;
                 case WhileStatement whileStatement:
                     Compile(whileStatement);
                     break;
@@ -785,6 +789,16 @@ namespace FadeBasic.Virtual
             _exitInstructionIndexes.Peek().Add(_buffer.Count);
 
             // and then jump to the exit block
+            AddPushInt(_buffer, int.MaxValue);
+            _buffer.Add(OpCodes.JUMP);
+        }
+        
+        private void Compile(SkipLoopStatement skipLoopStatement)
+        {
+            // immediately jump to the start of the loop...
+            _skipInstructionIndexes.Peek().Add(_buffer.Count);
+
+            // and then jump to the beginning of the loop (this will be replaced later)
             AddPushInt(_buffer, int.MaxValue);
             _buffer.Add(OpCodes.JUMP);
         }
@@ -964,12 +978,18 @@ namespace FadeBasic.Virtual
             // keep track of the first index of the success
             var successJumpValue = _buffer.Count;
             _exitInstructionIndexes.Push(new List<int>());
+            _skipInstructionIndexes.Push(new List<int>());
             foreach (var successStatement in forStatement.statements)
             {
                 Compile(successStatement);
             }
             var exitStatementIndexes = _exitInstructionIndexes.Pop();
-
+            var skipStatementIndexes = _skipInstructionIndexes.Pop();
+            
+            // This is the location where Step updates and evaluation happens 
+            // (important as skip should jump here, not to the very start)
+            var stepLoopValue = _buffer.Count;
+            
             // now to update the value of x, we need to add the stepExpr to it.
             Compile(stepAssignment); // NOTE: there could be a bug here, because we are looping on a deterministic math operation, but simulating the interpolated variable
             
@@ -982,6 +1002,8 @@ namespace FadeBasic.Virtual
             // now go back and fill in the success ptr
             var successJumpBytes = BitConverter.GetBytes(successJumpValue);
             var endJumpBytes = BitConverter.GetBytes(endJumpValue);
+            var stepLoopBytes = BitConverter.GetBytes(stepLoopValue);
+            
             for (var i = 0; i < successJumpBytes.Length; i++)
             {
                 // offset by 2, because of the opcode, and the type code
@@ -993,25 +1015,31 @@ namespace FadeBasic.Virtual
                 {
                     _buffer[index + 2 + i] = endJumpBytes[i];
                 }
+                
+                // Update skip instructions to jump to the increment/evaluation part
+                foreach (var index in skipStatementIndexes)
+                {
+                    _buffer[index + 2 + i] = stepLoopBytes[i];
+                }
             }
-            
         }
          
         
         private void Compile(DoLoopStatement doLoopStatement)
         {
-
             // first, keep track of the start of the while loop
             var whileLoopValue = _buffer.Count;
             
             // keep track of the first index of the success
             var successJumpValue = _buffer.Count;
             _exitInstructionIndexes.Push(new List<int>());
+            _skipInstructionIndexes.Push(new List<int>());
             foreach (var successStatement in doLoopStatement.statements)
             {
                 Compile(successStatement);
             }
             var exitStatementIndexes = _exitInstructionIndexes.Pop();
+            var skipStatementIndexes = _skipInstructionIndexes.Pop();
 
             // at the end of the successful statements, we need to jump back to the start
             AddPushInt(_buffer, whileLoopValue);
@@ -1023,6 +1051,8 @@ namespace FadeBasic.Virtual
             // now go back and fill in the success ptr
             var successJumpBytes = BitConverter.GetBytes(successJumpValue);
             var endJumpBytes = BitConverter.GetBytes(endJumpValue);
+            var whileLoopBytes = BitConverter.GetBytes(whileLoopValue);
+            
             for (var i = 0; i < successJumpBytes.Length; i++)
             {
                 // offset by 2, because of the opcode, and the type code
@@ -1031,24 +1061,32 @@ namespace FadeBasic.Virtual
                     _buffer[index + 2 + i] = endJumpBytes[i];
                 }
                 
+                // Update skip instructions to jump back to the beginning of the loop
+                foreach (var index in skipStatementIndexes)
+                {
+                    _buffer[index + 2 + i] = whileLoopBytes[i];
+                }
             }
         }
         
         
         private void Compile(RepeatUntilStatement repeatStatement)
         {
-            
             // first, keep track of the start of the while loop
             var startValue = _buffer.Count;
             
-            // keep track of the first index of the success
-            var successJumpValue = _buffer.Count;
             _exitInstructionIndexes.Push(new List<int>());
+            _skipInstructionIndexes.Push(new List<int>());
+            
             foreach (var successStatement in repeatStatement.statements)
             {
                 Compile(successStatement);
             }
             var exitStatementIndexes = _exitInstructionIndexes.Pop();
+            var skipStatementIndexes = _skipInstructionIndexes.Pop();
+            
+            // keep track of where the skip should go
+            var skipJumpValue = _buffer.Count;
             
             // compile the condition expression
             Compile(repeatStatement.condition);
@@ -1070,16 +1108,23 @@ namespace FadeBasic.Virtual
             var endJumpValue = _buffer.Count;
             _buffer.Add(OpCodes.NOOP);
             
-            // now go back and fill in the success ptr
+            // now go back and fill in the jump addresses
             var endJumpBytes = BitConverter.GetBytes(endJumpValue);
+            var skipValueBytes = BitConverter.GetBytes(skipJumpValue);
+            
             for (var i = 0; i < endJumpBytes.Length; i++)
             {
                 // offset by 2, because of the opcode, and the type code
                 foreach (var index in exitStatementIndexes)
                 {
-                    _buffer[index + 2 + i] = endJumpBytes[ i];
+                    _buffer[index + 2 + i] = endJumpBytes[i];
                 }
                 
+                // Update skip instructions to jump back to the beginning of the loop
+                foreach (var index in skipStatementIndexes)
+                {
+                    _buffer[index + 2 + i] = skipValueBytes[i];
+                }
             }
         }
         
@@ -1126,11 +1171,14 @@ namespace FadeBasic.Virtual
             // keep track of the first index of the success
             var successJumpValue = _buffer.Count;
             _exitInstructionIndexes.Push(new List<int>());
+            _skipInstructionIndexes.Push(new List<int>());
             foreach (var successStatement in whileStatement.statements)
             {
                 Compile(successStatement);
             }
             var exitStatementIndexes = _exitInstructionIndexes.Pop();
+            var skipStatementIndexes = _skipInstructionIndexes.Pop();
+            
             // at the end of the successful statements, we need to jump back to the start
             AddPushInt(_buffer, whileLoopValue);
             _buffer.Add(OpCodes.JUMP);
@@ -1141,16 +1189,24 @@ namespace FadeBasic.Virtual
             // now go back and fill in the success ptr
             var successJumpBytes = BitConverter.GetBytes(successJumpValue);
             var endJumpBytes = BitConverter.GetBytes(endJumpValue);
+            var whileLoopBytes = BitConverter.GetBytes(whileLoopValue);
+            
             for (var i = 0; i < successJumpBytes.Length; i++)
             {
                 // offset by 2, because of the opcode, and the type code
                 _buffer[successJumpIndex + 2 + i] = successJumpBytes[i];
                 _buffer[exitJumpIndex + 2 + i] = endJumpBytes[i];
+                
                 foreach (var index in exitStatementIndexes)
                 {
-                    _buffer[index + 2 + i] = endJumpBytes[ i];
+                    _buffer[index + 2 + i] = endJumpBytes[i];
                 }
                 
+                // Update skip instructions to jump back to the beginning of the loop
+                foreach (var index in skipStatementIndexes)
+                {
+                    _buffer[index + 2 + i] = whileLoopBytes[i];
+                }
             }
         }
         

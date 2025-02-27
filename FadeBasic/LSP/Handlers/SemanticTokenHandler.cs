@@ -159,6 +159,7 @@ public class SemanticTokenHandler : SemanticTokensHandlerBase
             case LexemType.KeywordTo:
             case LexemType.KeywordNext:
             case LexemType.KeywordFor:
+            case LexemType.KeywordSkip:
             case LexemType.KeywordStep:
             case LexemType.KeywordDo:
             case LexemType.KeywordLoop:

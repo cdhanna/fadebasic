@@ -331,7 +331,12 @@ namespace FadeBasic.Ast.Visitors
                         {
                             exitStatement.Errors.Add(new ParseError(exitStatement, ErrorCodes.ExitStatementFoundOutsideOfLoop));
                         }
-
+                        break;
+                    case SkipLoopStatement skipStatement:
+                        if (!scope.AllowExits)
+                        {
+                            skipStatement.Errors.Add(new ParseError(skipStatement, ErrorCodes.SkipStatementFoundOutsideOfLoop));
+                        }
                         break;
                     case FunctionStatement _:
                     case FunctionReturnStatement _:

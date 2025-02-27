@@ -230,6 +230,23 @@ namespace FadeBasic.Ast
         }
     }
 
+    public class SkipLoopStatement : AstNode, IStatementNode
+    {
+        public SkipLoopStatement(Token token) : base(token, token)
+        {
+            
+        }
+        protected override string GetString()
+        {
+            return "skip";
+        }
+
+        public override IEnumerable<IAstVisitable> IterateChildNodes()
+        {
+            yield break;
+        }
+    }
+
     public class DoLoopStatement : AstNode, IStatementNode
     {
         public List<IStatementNode> statements;

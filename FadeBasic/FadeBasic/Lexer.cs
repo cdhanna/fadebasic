@@ -56,6 +56,7 @@ namespace FadeBasic
         KeywordEndWhile,
         
         KeywordExit,
+        KeywordSkip,
         
         KeywordAs,
         KeywordTypeInteger,
@@ -205,6 +206,7 @@ namespace FadeBasic
             new Lexem(LexemType.KeywordThen, new Regex("^then")),
             new Lexem(1,LexemType.KeywordEnd, new Regex("^end")),
             new Lexem(LexemType.KeywordExit, new Regex("^exit")),
+            new Lexem(LexemType.KeywordSkip, new Regex("^skip")),
             
             new Lexem(LexemType.KeywordGoto, new Regex("^goto")),
             new Lexem(LexemType.KeywordGoSub, new Regex("^gosub")),

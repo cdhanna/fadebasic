@@ -869,6 +869,30 @@ UNTIL x > 100
         Assert.That(vm.dataRegisters[0], Is.EqualTo(6));
         Assert.That(vm.typeRegisters[0], Is.EqualTo(TypeCodes.INT));
     }
+    
+    
+    [Test]
+    public void RepeatUntil_Skip()
+    {
+        var src = @"
+x = 0
+y = 0
+REPEAT
+    x = x + 1
+    IF x = 3 THEN SKIP
+    y = y + 1
+UNTIL x >= 5
+";
+        Setup(src, out _, out var prog);
+        
+        var vm = new VirtualMachine(prog);
+        vm.Execute().MoveNext();
+        
+        Assert.That(vm.dataRegisters[0], Is.EqualTo(5)); // x incremented in all 5 iterations
+        Assert.That(vm.dataRegisters[1], Is.EqualTo(4)); // y incremented in 4 iterations (skipped when x=3)
+        Assert.That(vm.typeRegisters[0], Is.EqualTo(TypeCodes.INT));
+        Assert.That(vm.typeRegisters[1], Is.EqualTo(TypeCodes.INT));
+    }
 
     
     [Test]
@@ -888,6 +912,57 @@ LOOP
         
         Assert.That(vm.dataRegisters[0], Is.EqualTo(10));
         Assert.That(vm.typeRegisters[0], Is.EqualTo(TypeCodes.INT));
+    }
+    
+    
+    [Test]
+    public void RepeatUntil_Simple_Skip()
+    {
+        var src = @"
+
+x = 4
+y = 0
+REPEAT
+    x = x - 1
+
+    if x = 2 then skip
+    y = y + 1
+UNTIL x = 0
+";
+        Setup(src, out _, out var prog);
+        
+        var vm = new VirtualMachine(prog);
+        vm.Execute2(0);
+        
+        Assert.That(vm.dataRegisters[0], Is.EqualTo(0)); 
+        Assert.That(vm.dataRegisters[1], Is.EqualTo(3)); 
+        Assert.That(vm.typeRegisters[0], Is.EqualTo(TypeCodes.INT));
+        Assert.That(vm.typeRegisters[1], Is.EqualTo(TypeCodes.INT));
+    }
+
+    
+    [Test]
+    public void DoLoop_Simple_Skip()
+    {
+        var src = @"
+x = 0
+y = 0
+DO
+    x = x + 1
+    IF x = 3 THEN SKIP
+    y = y + 1
+    IF x >= 5 THEN EXIT
+LOOP
+";
+        Setup(src, out _, out var prog);
+        
+        var vm = new VirtualMachine(prog);
+        vm.Execute().MoveNext();
+        
+        Assert.That(vm.dataRegisters[0], Is.EqualTo(5)); // x incremented in all 5 iterations
+        Assert.That(vm.dataRegisters[1], Is.EqualTo(4)); // y incremented in 4 iterations (skipped when x=3)
+        Assert.That(vm.typeRegisters[0], Is.EqualTo(TypeCodes.INT));
+        Assert.That(vm.typeRegisters[1], Is.EqualTo(TypeCodes.INT));
     }
 
     [Test]
@@ -1251,6 +1326,53 @@ NEXT
         Assert.That(vm.typeRegisters[1], Is.EqualTo(TypeCodes.INT));
     }
     
+    [Test]
+    public void For_Simple_Skip()
+    {
+        var src = @"
+x = 0
+y = 0
+z = 0
+FOR x = 1 TO 5
+    y = y + 1
+    IF x = 3 THEN SKIP
+    z = z + 1
+NEXT
+";
+        Setup(src, out _, out var prog);
+        
+        var vm = new VirtualMachine(prog);
+        vm.Execute2();
+        
+        Assert.That(vm.dataRegisters[0], Is.EqualTo(6)); 
+        Assert.That(vm.dataRegisters[1], Is.EqualTo(5)); // y is incremented in all 5 iterations
+        Assert.That(vm.dataRegisters[2], Is.EqualTo(4)); // z is incremented in 4 iterations (skipped when x=3)
+        Assert.That(vm.typeRegisters[0], Is.EqualTo(TypeCodes.INT));
+        Assert.That(vm.typeRegisters[1], Is.EqualTo(TypeCodes.INT));
+        Assert.That(vm.typeRegisters[2], Is.EqualTo(TypeCodes.INT));
+    }
+    
+    
+    [Test]
+    public void For_Simple_Skip2()
+    {
+        var src = @"
+n = 0
+FOR x = 0 to 5
+    if x > 1 then skip
+    n += 1
+NEXT
+";
+        Setup(src, out _, out var prog);
+        
+        var vm = new VirtualMachine(prog);
+        vm.Execute2(0);
+        
+        Assert.That(vm.dataRegisters[0], Is.EqualTo(2)); // x is 3 after executing the test
+        Assert.That(vm.dataRegisters[1], Is.EqualTo(6));
+        Assert.That(vm.typeRegisters[0], Is.EqualTo(TypeCodes.INT));
+        Assert.That(vm.typeRegisters[1], Is.EqualTo(TypeCodes.INT));
+    }
     
     [Test]
     public void For_Simple_Reg()
@@ -1479,6 +1601,29 @@ x = x * 2
         Assert.That(vm.typeRegisters[0], Is.EqualTo(TypeCodes.INT));
     }
     
+    [Test]
+    public void While_Skip()
+    {
+        var src = @"
+x = 0
+y = 0
+WHILE x < 5
+    x = x + 1
+    IF x = 3 THEN SKIP
+    y = y + 1
+ENDWHILE
+";
+        Setup(src, out _, out var prog);
+        
+        var vm = new VirtualMachine(prog);
+        vm.Execute().MoveNext();
+        
+        Assert.That(vm.dataRegisters[0], Is.EqualTo(5)); // x incremented in all 5 iterations
+        Assert.That(vm.dataRegisters[1], Is.EqualTo(4)); // y incremented in 4 iterations (skipped when x=3)
+        Assert.That(vm.typeRegisters[0], Is.EqualTo(TypeCodes.INT));
+        Assert.That(vm.typeRegisters[1], Is.EqualTo(TypeCodes.INT));
+    }
+    
     
     [Test]
     public void While_Nested()
@@ -1515,9 +1660,9 @@ x = x * 2
     {
         var src = @"
 x = 1
-GOTO Skip
+GOTO SkipHere
 x = 2
-Skip:
+SkipHere:
 x = 3
 
 ";

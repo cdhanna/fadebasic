@@ -392,6 +392,18 @@ endfunction a$
 
         Assert.That(errors[0].Display, Is.EqualTo($"[0:0] - {ErrorCodes.ExitStatementFoundOutsideOfLoop}"));
     }
+    
+    [Test]
+    public void ParseError_SkipWithoutLoop()
+    {
+        string src = @"skip";
+        var parser = MakeParser(src);
+        var prog = parser.ParseProgram();
+        prog.AssertParseErrors(1);
+        var errors = prog.GetAllErrors();
+
+        Assert.That(errors[0].Display, Is.EqualTo($"[0:0] - {ErrorCodes.SkipStatementFoundOutsideOfLoop}"));
+    }
 
 
     [Test]
@@ -406,12 +418,36 @@ ENDWHILE
         var prog = parser.ParseProgram();
         prog.AssertNoParseErrors();
     }
+    
+    [Test]
+    public void ParseError_SkipAllowed_While()
+    {
+        string src = @"
+WHILE 1
+    SKIP
+ENDWHILE
+";
+        var parser = MakeParser(src);
+        var prog = parser.ParseProgram();
+        prog.AssertNoParseErrors();
+    }
 
     [Test]
     public void ParseError_ExitAllowed_Do()
     {
         string src = @"do
 exit
+loop";
+        var parser = MakeParser(src);
+        var prog = parser.ParseProgram();
+        prog.AssertNoParseErrors();
+    }
+    
+    [Test]
+    public void ParseError_SkipAllowed_Do()
+    {
+        string src = @"do
+skip
 loop";
         var parser = MakeParser(src);
         var prog = parser.ParseProgram();

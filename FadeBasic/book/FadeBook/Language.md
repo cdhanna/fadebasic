@@ -607,12 +607,27 @@ NEXT
 
 Every `FOR` statement must include the `TO` expression, and must close with a `NEXT` keyword.
 
-It is possible to exit early from a `FOR` loop using the `EXIT` statement. The `EXIT` statement will skip any modifications to the control variable move the program execution to the end of the loop.
+It is possible to exit early from a `FOR` loop using the `EXIT` statement. The `EXIT` statement will skip any modifications to the control variable and move the program execution to the end of the loop. The _control variable_ will be modified, and the loop condition checked. If the loop is still valid, then it will cycle again. 
 ```basic
 FOR t = 1 TO 10
     EXIT
 NEXT
 PRINT t `prints 1
+```
+
+It is possible skip an iteration of a `FOR` loop using the `SKIP` statement. The `SKIP` statement will move the program execution back to the start of the loop. 
+
+```basic
+FOR t = 1 to 3
+    IF t = 2 
+        SKIP
+    ENDIF
+    PRINT t
+NEXT
+` prints 
+` 1
+` 3
+
 ```
 
 ----
@@ -637,6 +652,22 @@ WHILE 1
 ENDWHILE
 ```
 
+It is possible skip an iteration of a `WHILE` loop using the `SKIP` statement. The `SKIP` statement will move the program execution back to the start of the loop. 
+
+```basic
+n = 3
+WHILE n > 0
+    IF n = 2
+        SKIP
+    ENDIF
+    PRINT n
+    n = n - 1
+ENDWHILE
+` prints
+` 3
+` 1
+```
+
 ---- 
 #### Repeat Loops
 
@@ -658,6 +689,22 @@ REPEAT
 UNTIL 1
 ```
 
+It is possible skip an iteration of a `REPEAT` loop using the `SKIP` statement. The `SKIP` statement will move the program execution to the `UNTIL` conditional check. If the loop condition is still valid, then the loop will cycle again. 
+
+```basic
+n = 3
+REPEAT
+    n = n - 1
+    IF n = 2
+        SKIP
+    ENDIF
+    PRINT n
+UNTIL n = 0
+` prints
+` 3
+` 1
+```
+
 ---- 
 #### Do Loops
 
@@ -675,6 +722,24 @@ The usual way to exit a `DO` loop is to use the `EXIT` keyword, which will move 
 DO
     EXIT
 LOOP
+```
+
+It is possible skip an iteration of a `DO` loop using the `SKIP` statement. The `SKIP` statement will move the program execution to the start of the `DO` loop
+
+```basic
+n = 0
+DO
+    n = n + 1
+    IF n = 2
+        SKIP
+    ENDIF
+    PRINT n
+LOOP
+` prints
+` 1
+` 3
+` 4
+` ...
 ```
 
 ----

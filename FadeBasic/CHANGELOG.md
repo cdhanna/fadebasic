@@ -11,4 +11,4 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Debugger would emit exit event during partial budget runs. 
 
 ### Added
-- Everything
+- `SKIP` keyword for skipping iterations of looping control structures. 
