@@ -77,6 +77,8 @@ dim x(3,5) as vec
     }
     
     [TestCase("x# = 4.2", "x#+1", "5.2")]
+    [TestCase("inc x", "x", "1")]
+    [TestCase("tuna x$", "x$", "tuna")]
     [TestCase("x = 4", "x+1", "5")]
     [TestCase(@"
 x = 1

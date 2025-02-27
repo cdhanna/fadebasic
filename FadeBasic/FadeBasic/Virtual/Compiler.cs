@@ -1360,7 +1360,7 @@ namespace FadeBasic.Virtual
                             variable = refNode.variableName,
                             type = new TypeReferenceNode(refNode.DefaultTypeByName, refNode.startToken)
                         };
-                        Compile(fakeDeclStatement);
+                        Compile(fakeDeclStatement, includeDefaultInitializer: true);
                         if (!scope.TryGetVariable(refNode.variableName, out variable))
                         {
                             throw new Exception(
@@ -1575,7 +1575,7 @@ namespace FadeBasic.Virtual
 
         }
         
-        public void Compile(DeclarationStatement declaration)
+        public void Compile(DeclarationStatement declaration, bool includeDefaultInitializer=false)
         {
             /*
              * the declaration tells us that we need a register
@@ -1756,6 +1756,38 @@ namespace FadeBasic.Virtual
                     variable = new VariableRefNode(declaration.startToken, declaration.variable)
                 };
                 Compile(fakeAssignment);
+            }
+            else if (includeDefaultInitializer)
+            {
+
+                if (declaration.ranks == null)
+                {
+                    switch (tc)
+                    {
+                        case TypeCodes.STRUCT:
+                            // TODO: it isn't possible to pass structs as refs atm, but if it was, this would be a problem. 
+                            break;
+                        case TypeCodes.STRING: // TODO: handle the empty string?
+                            // if the variable is a string, then always assign it to the empty string, which will get interned. 
+                            var fadeStrAssignment = new AssignmentStatement
+                            {
+                                expression = new LiteralStringExpression(declaration.startToken, ""),
+                                variable = new VariableRefNode(declaration.startToken, declaration.variable)
+                            };
+                            Compile(fadeStrAssignment);
+                            break;
+                        default:
+                            // if the variable is a primitive, then always assign it to a default value.
+                            var fakeAssignment = new AssignmentStatement
+                            {
+                                expression = new LiteralIntExpression(declaration.startToken, 0),
+                                variable = new VariableRefNode(declaration.startToken, declaration.variable)
+                            };
+                            Compile(fakeAssignment);
+                            break;
+                    }
+                    
+                }
             }
         }
 

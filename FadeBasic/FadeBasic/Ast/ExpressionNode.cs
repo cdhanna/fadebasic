@@ -360,8 +360,11 @@ namespace FadeBasic.Ast
 
         public LiteralStringExpression(Token token) : base(token)
         {
-            
             value = token.raw.Substring(1, token.raw.Length - 2); // account for quotes
+        }
+        public LiteralStringExpression(Token token, string value) : base(token)
+        {
+            this.value = value;
         }
 
 
