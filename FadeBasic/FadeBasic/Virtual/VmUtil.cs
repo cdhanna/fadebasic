@@ -207,6 +207,8 @@ namespace FadeBasic.Virtual
                     return BitConverter.ToInt64(span.ToArray(), 0).ToString();
                 case TypeCodes.BOOL:
                     return span[0] == 0 ? "false" : "true";
+                case TypeCodes.BYTE:
+                    return span[0].ToString();
                 case TypeCodes.REAL:
                     var num = BitConverter.ToSingle(span.ToArray(), 0);
                     return num.ToString(CultureInfo.InvariantCulture);
@@ -227,24 +229,6 @@ namespace FadeBasic.Virtual
 
                 default:
                     throw new NotImplementedException($"don't know how to convert span of size=[{span.Length}] to typecode=[{typeCode}]");
-                //
-                // case TypeCodes.STRING:
-                //     var address = (int)rawValue;
-                //     if (vm.heap.TryGetAllocationSize(address, out var strSize))
-                //     {
-                //         vm.heap.Read(address, strSize, out var strBytes);
-                //         return  VmConverter.ToString(strBytes);
-                //     }
-                //     else
-                //     {
-                //         return "<?>";
-                //     }
-             
-                // case TypeCodes.STRUCT:
-                //     return "[" + GetTypeName(typeCode, vm, rawValue) + "]";
-                //     
-                // default:
-                //     return rawValue.ToString();
             }
         }
         

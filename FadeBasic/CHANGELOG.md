@@ -9,7 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 - Debugger would emit exit event during partial budget runs. 
-- Commands with `ref` parameters can access globally scoped variables. 
+- Debugger can render `byte` variables.
+- Commands with `ref` parameters can access globally scoped variables.
 
 ### Added
 - `SKIP` keyword for skipping iterations of looping control structures. 
