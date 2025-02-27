@@ -170,6 +170,19 @@ x = 5
     [TestCase(@"`basic float
 x# = 5.2
 ", "x#", "8.3", "8.3", 3, new int[]{})]
+    
+    [TestCase(@"`basic float (but looks like int)
+x# = 5.2
+", "x#", "8", "8", 3, new int[]{})]
+    
+    [TestCase(@"`basic byte
+x as byte = 5
+", "x", "8", "8", 3, new int[]{})]
+
+    [TestCase(@"`basic double integer
+x as double integer = 5
+", "x", "8", "8", 3, new int[]{})]
+
     [TestCase(@"`accessor
 type vec
     x

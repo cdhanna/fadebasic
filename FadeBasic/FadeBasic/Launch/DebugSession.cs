@@ -841,11 +841,21 @@ namespace FadeBasic.Launch
             {
                 finalDeclare = null;
                 // TypeInfo.FromVariableType()
+
+                var finalType = finalStatement.expression.ParsedType.type;
+                if (overwriteVariableId > 1 && variableDb.TryGetTypeCodeForVariableId(overwriteVariableId, out var finaltypeCode))
+                {
+                    if (!VmUtil.TryGetVariableType(finaltypeCode, out finalType))
+                    {
+                        throw new Exception("invalid type code");
+                    }
+                }
+                
                 finalDeclare = new DeclarationStatement(new Token
                     {
                         caseInsensitiveRaw = "local"
                     }, new VariableRefNode(Token.Blank, SYNTHETIC_NAME2),
-                    new TypeReferenceNode(finalStatement.expression.ParsedType.type, Token.Blank));
+                    new TypeReferenceNode(finalType, Token.Blank));
                 node.statements.Insert(node.statements.Count - 1, finalDeclare);
             }
             

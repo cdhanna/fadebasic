@@ -576,6 +576,21 @@ namespace FadeBasic.Virtual
             return res;
         }
 
+        public bool TryGetTypeCodeForVariableId(int variableId, out byte typeCode)
+        {
+            typeCode = TypeCodes.ANY;
+            if (idToVariable.TryGetValue(variableId, out var dbgVar) && dbgVar.runtimeVariable != null)
+            {
+                typeCode = dbgVar.runtimeVariable.typeCode;
+                return true;
+            } else if (idToTopLevelVariable.TryGetValue(variableId, out var tuple))
+            {
+                typeCode = tuple.Item2.typeCode;
+                return true;
+            }
+
+            return false;
+        }
 
         public bool TrySetValue(int variableId, int valueId, out string error)
         {

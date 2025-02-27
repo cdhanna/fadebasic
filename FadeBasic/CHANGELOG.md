@@ -10,6 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 - Debugger would emit exit event during partial budget runs. 
 - Debugger can render `byte` variables.
+- Debugger can set non `int` and non `float` values.
 - Commands with `ref` parameters can access globally scoped variables.
 
 ### Added
