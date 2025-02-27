@@ -31,7 +31,7 @@
       justify-content: space-between;
     ">
 
-      <a href="?tab=readme-ov-file#getting-started">
+      <a href="https://github.com/cdhanna/fadebasic/blob/main/readme.md#getting-started">
         <button>
           Install
         </button>
