@@ -40,7 +40,7 @@ namespace FadeBasic.Virtual
         public int[] insIndexes;
         public byte[] flags;
         
-        public VirtualScope(int initialCapacity)
+        public VirtualScope(ulong initialCapacity)
         {
             dataRegisters = new ulong[initialCapacity];
             typeRegisters = new byte[initialCapacity];
@@ -105,18 +105,19 @@ namespace FadeBasic.Virtual
         {
             this.program = program;
             shouldThrowRuntimeException = true;
-            globalScope = scope = new VirtualScope(256);
             // scope = new VirtualScope(256);
             scopeStack = new FastStack<VirtualScope>(16);
             methodStack = new FastStack<JumpHistoryData>(16);
             heap = new VmHeap(128);
-            scopeStack.Push(globalScope);
             
             instructionIndex = 4;
             internedDataInstructionIndex = BitConverter.ToInt32(program, 0);
 
             
             ReadInternedData();
+            globalScope = scope = new VirtualScope(internedData.maxRegisterAddress);
+            scopeStack.Push(globalScope);
+
             // scopeStack.Push(scope);
         }
 
@@ -149,8 +150,8 @@ namespace FadeBasic.Virtual
         /// </summary>
         public struct VmState
         {
-            public byte vTypeCode, typeCode, addr, size;
-            public ulong data;
+            public byte vTypeCode, typeCode, size;
+            public ulong data, addr;
             public int insPtr;
         }
 
@@ -227,8 +228,8 @@ namespace FadeBasic.Virtual
                 
                 // these pointer/data values need to be held between instruction evaluations, and therefor stay in the state. 
                 byte vTypeCode = state.vTypeCode, typeCode = state.typeCode;
-                ulong data = state.data;
-                byte addr = state.addr, size = state.size;
+                ulong data = state.data, addr = state.addr;
+                byte size = state.size;
                 int insPtr = state.insPtr;
                 
                 // var sw = new Stopwatch();
@@ -257,7 +258,7 @@ namespace FadeBasic.Virtual
                             break;
 
                         case OpCodes.PUSH_SCOPE:
-                            var newScope = new VirtualScope(64);
+                            var newScope = new VirtualScope(internedData.maxRegisterAddress);
                             scopeStack.Push(newScope);
                             scope = newScope;
                             break;
@@ -526,9 +527,9 @@ namespace FadeBasic.Virtual
                             VmUtil.PushSpan(ref stack, cSpan, TypeCodes.INT);
                             break;
                         case OpCodes.STORE:
-
                             // read a register location, which is always 1 byte.
-                            addr = Advance();
+                            VmUtil.ReadRegAddress(program, ref instructionIndex, out addr);
+
                             VmUtil.ReadSpanAsUInt(ref stack, out data);
                             scope.dataRegisters[addr] = data;
                             scope.typeRegisters[addr] = typeCode;
@@ -539,7 +540,8 @@ namespace FadeBasic.Virtual
                         case OpCodes.STORE_PTR:
 
                             // read a register location, which is always 1 byte.
-                            addr = Advance();
+                            VmUtil.ReadRegAddress(program, ref instructionIndex, out addr);
+
                             VmUtil.ReadSpanAsUInt(ref stack, out data);
 
                             if (scope.insIndexes[addr] > 0)
@@ -563,7 +565,8 @@ namespace FadeBasic.Virtual
                         case OpCodes.STORE_PTR_GLOBAL:
 
                             // read a register location, which is always 1 byte.
-                            addr = Advance();
+                            VmUtil.ReadRegAddress(program, ref instructionIndex, out addr);
+
                             VmUtil.ReadSpanAsUInt(ref stack, out data);
 
                             if (globalScope.insIndexes[addr] > 0)
@@ -581,7 +584,7 @@ namespace FadeBasic.Virtual
                             
                             break;
                         case OpCodes.STORE_GLOBAL:
-                            addr = Advance();
+                            VmUtil.ReadRegAddress(program, ref instructionIndex, out addr);
                             VmUtil.ReadSpanAsUInt(ref stack, out data);
                             globalScope.dataRegisters[addr] = data;
                             globalScope.typeRegisters[addr] = typeCode;
@@ -590,7 +593,7 @@ namespace FadeBasic.Virtual
 
                             break;
                         case OpCodes.LOAD:
-                            addr = Advance();
+                            VmUtil.ReadRegAddress(program, ref instructionIndex, out addr);
 
                             typeCode = scope.typeRegisters[addr];
                             data = scope.dataRegisters[addr];
@@ -600,7 +603,7 @@ namespace FadeBasic.Virtual
                             
                             break;
                         case OpCodes.LOAD_GLOBAL:
-                            addr = Advance();
+                            VmUtil.ReadRegAddress(program, ref instructionIndex, out addr);
 
                             typeCode = globalScope.typeRegisters[addr];
                             data = globalScope.dataRegisters[addr];
@@ -701,6 +704,8 @@ namespace FadeBasic.Virtual
             
 
         }
+        
+        public int test = 0;
 
         void TriggerRuntimeError(VirtualRuntimeError error)
         {

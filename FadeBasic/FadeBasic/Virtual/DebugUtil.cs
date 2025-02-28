@@ -10,12 +10,12 @@ namespace FadeBasic.Virtual
         public readonly byte typeCode;
         public ulong rawValue; // could be a ptr.
         public readonly int scopeIndex;
-        public readonly int regAddr;
+        public readonly ulong regAddr;
 
         public readonly VmAllocation allocation;
         public readonly VirtualMachine vm;
 
-        public DebugRuntimeVariable(VirtualMachine vm, string name, byte typeCode, ulong rawValue, ref VmAllocation allocation, int scopeIndex, int regAddr)
+        public DebugRuntimeVariable(VirtualMachine vm, string name, byte typeCode, ulong rawValue, ref VmAllocation allocation, int scopeIndex, ulong regAddr)
         {
             this.vm = vm;
             this.name = name;
@@ -26,7 +26,7 @@ namespace FadeBasic.Virtual
             this.regAddr = regAddr;
             
         }
-        public DebugRuntimeVariable(VirtualMachine vm, string name, byte typeCode, ulong rawValue, int scopeIndex, int regAddr)
+        public DebugRuntimeVariable(VirtualMachine vm, string name, byte typeCode, ulong rawValue, int scopeIndex, ulong regAddr)
         {
             
             this.vm = vm;
@@ -142,7 +142,7 @@ namespace FadeBasic.Virtual
              * Then move backwards by our current rank index (-arrayRankIndex*2)
              * And then of the two registers, the element size is 1 back. 
              */
-            var elementRegAddr = regAddr + rankCount * 2 - (arrayRankIndex * 2 ) - 1;
+            ulong elementRegAddr = regAddr + (ulong)rankCount * 2 - ((ulong)arrayRankIndex * 2 ) - 1;
             var elementCount = scope.dataRegisters[elementRegAddr];
             
             return (int)elementCount;
@@ -344,7 +344,7 @@ namespace FadeBasic.Virtual
                         var elementTypeCode = variable.allocation.format.typeCode;
                         
                         // TODO: replace this with the stide in the dataRegisters...
-                        var elementRegAddr = variable.regAddr + arrayRanks * 2 - (variable.arrayRankIndex * 2 );
+                        var elementRegAddr = variable.regAddr + (ulong)arrayRanks * 2 - ((ulong)variable.arrayRankIndex * 2 );
                         var strideLength = (int)_vm.scopeStack.buffer[variable.scopeIndex].dataRegisters[elementRegAddr];
                         _logger.Log($"found stride length=[{strideLength}] at reg=[{elementRegAddr}]");
                         var elementSize = (int)TypeCodes.GetByteSize(elementTypeCode);
@@ -673,7 +673,7 @@ namespace FadeBasic.Virtual
         public static Dictionary<string, DebugRuntimeVariable> LookupVariablesFromScope(VirtualMachine vm, Dictionary<string, DebugRuntimeVariable> results, DebugData dbg, int vmScopeIndex, bool global)
         {
             var scope = vm.scopeStack.buffer[vmScopeIndex];
-            for (var scopeIndex = 0; scopeIndex < scope.dataRegisters.Length; scopeIndex++)
+            for (ulong scopeIndex = 0; scopeIndex < (ulong)scope.dataRegisters.LongLength; scopeIndex++)
             {
                 var insIndex = scope.insIndexes[scopeIndex];
                 if (!dbg.insToVariable.TryGetValue(insIndex, out var variable))

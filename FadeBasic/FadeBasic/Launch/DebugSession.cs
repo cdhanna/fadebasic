@@ -683,7 +683,7 @@ namespace FadeBasic.Launch
                     {
                         typeCode = variable.typeCode,
                         name = local.name,
-                        registerAddress = (byte)variable.regAddr,
+                        registerAddress = variable.regAddr,
                         byteSize = TypeCodes.GetByteSize(variable.typeCode),
                         structType = structName,
                         isGlobal = isGlobal
@@ -730,7 +730,7 @@ namespace FadeBasic.Launch
                     var rankExprs = new IExpressionNode[arrayRankCount];
                     for (var i = 0; i < arrayRankCount; i++)
                     {
-                        var rankStrideRegAddr = variable.regAddr + arrayRankCount * 2 - (i * 2) ;
+                        var rankStrideRegAddr = variable.regAddr + (ulong)arrayRankCount * 2 - ((ulong)i * 2) ;
                         var rankSizeRegAddr = rankStrideRegAddr - 1;
                         var rankSize = _vm.scopeStack.buffer[variable.scopeIndex]
                             .dataRegisters[rankSizeRegAddr];

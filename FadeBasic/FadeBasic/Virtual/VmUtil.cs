@@ -264,7 +264,7 @@ namespace FadeBasic.Virtual
                     throw new NotImplementedException("cannot convert unknown type to bytes " + value + " typeof " + typeof(T));
             }
         }
-        public static void HandleValue<T>(VirtualMachine vm, T value, byte typeCode, CommandArgRuntimeState state, int address) where T : struct
+        public static void HandleValue<T>(VirtualMachine vm, T value, byte typeCode, CommandArgRuntimeState state, ulong address) where T : struct
         {
             switch (state)
             {
@@ -279,7 +279,7 @@ namespace FadeBasic.Virtual
                 case CommandArgRuntimeState.HeapRef:
                     var size = TypeCodes.GetByteSize(typeCode);
                     GetBytes(value, out var heapBytes);
-                    vm.heap.Write(address, size, heapBytes);
+                    vm.heap.Write((int)address, size, heapBytes);
                     break;
                 case CommandArgRuntimeState.Value:
                     // do nothing.
@@ -288,7 +288,7 @@ namespace FadeBasic.Virtual
         }
         
         
-        public static void HandleValueString(VirtualMachine vm, string value, byte typeCode, CommandArgRuntimeState state, int address)
+        public static void HandleValueString(VirtualMachine vm, string value, byte typeCode, CommandArgRuntimeState state, ulong address)
         {
             byte[] strBytes;
             int strPtr;
@@ -306,7 +306,7 @@ namespace FadeBasic.Virtual
                     VmConverter.FromString(value, out strBytes);
                     vm.heap.Allocate(ref HeapTypeFormat.STRING_FORMAT,strBytes.Length, out strPtr);
                     vm.heap.Write(strPtr, strBytes.Length, strBytes);
-                    vm.heap.Write(address, 4, BitConverter.GetBytes(strPtr));
+                    vm.heap.Write((int)address, 4, BitConverter.GetBytes(strPtr));
                     break;
                 case CommandArgRuntimeState.Value:
                     // do nothing.
@@ -317,7 +317,7 @@ namespace FadeBasic.Virtual
         
         // public static void ReadValue(VirtualMachine vm, string defaultValue, out string )
         public static void ReadValueString(VirtualMachine vm, string defaultValue, out string value,
-            out CommandArgRuntimeState state, out int address)
+            out CommandArgRuntimeState state, out ulong address)
         {
             ReadSpan(ref vm.stack, out var typeCode, out var span);
             int strPtr = 0, strSize = 0;
@@ -330,7 +330,7 @@ namespace FadeBasic.Virtual
                     break;
                 case TypeCodes.PTR_REG:
                     state = CommandArgRuntimeState.RegisterRef;
-                    address = (int) span[0];
+                    address = MemoryMarshal.Read<ulong>(span);
                     var data = vm.dataRegisters[address];
                     typeCode = vm.typeRegisters[address];
                     // TODO: we could validate that typeCode is equal to the given typeCode for <T>
@@ -348,7 +348,7 @@ namespace FadeBasic.Virtual
                     break;
                 case TypeCodes.PTR_GLOBAL_REG:
                     state = CommandArgRuntimeState.GlobalRegisterRef;
-                    address = (int) span[0];
+                    address = MemoryMarshal.Read<ulong>(span);
                     data = vm.globalScope.dataRegisters[address];
                     typeCode = vm.globalScope.typeRegisters[address];
                     // TODO: we could validate that typeCode is equal to the given typeCode for <T>
@@ -366,12 +366,12 @@ namespace FadeBasic.Virtual
                     break;
                 case TypeCodes.PTR_HEAP:
                     state = CommandArgRuntimeState.HeapRef;
-                    address = MemoryMarshal.Read<int>(span);
+                    address = (ulong)MemoryMarshal.Read<int>(span);
                     // the heap does not store type info, which means we need to assume the next value on the stack is the type code.
                     typeCode = vm.stack.Pop();
-                    if (vm.heap.TryGetAllocationSize(address, out strSize))
+                    if (vm.heap.TryGetAllocationSize((int)address, out strSize))
                     {
-                        vm.heap.Read(address, strSize, out var strBytes);
+                        vm.heap.Read((int)address, strSize, out var strBytes);
                         value = VmConverter.ToString(strBytes);
                     }
                     else
@@ -397,7 +397,7 @@ namespace FadeBasic.Virtual
             }
         }
         
-        public static void ReadValue<T>(VirtualMachine vm, T defaultValue, out T value, out CommandArgRuntimeState state, out int address) where T : struct
+        public static void ReadValue<T>(VirtualMachine vm, T defaultValue, out T value, out CommandArgRuntimeState state, out ulong address) where T : struct
         {
             ReadSpan(ref vm.stack, out var typeCode, out var span);
             switch (typeCode)
@@ -409,7 +409,7 @@ namespace FadeBasic.Virtual
                     break;
                 case TypeCodes.PTR_REG:
                     state = CommandArgRuntimeState.RegisterRef;
-                    address = (int) span[0];
+                    address = MemoryMarshal.Read<ulong>(span);
                     var data = vm.dataRegisters[address];
                     typeCode = vm.typeRegisters[address];
                     var bytes = BitConverter.GetBytes(data);
@@ -417,7 +417,7 @@ namespace FadeBasic.Virtual
                     break;
                 case TypeCodes.PTR_GLOBAL_REG:
                     state = CommandArgRuntimeState.GlobalRegisterRef;
-                    address = (int) span[0];
+                    address = MemoryMarshal.Read<ulong>(span);
                     data = vm.globalScope.dataRegisters[address];
                     typeCode = vm.globalScope.typeRegisters[address];
                     bytes = BitConverter.GetBytes(data);
@@ -425,7 +425,7 @@ namespace FadeBasic.Virtual
                     break;
                 case TypeCodes.PTR_HEAP:
                     state = CommandArgRuntimeState.HeapRef;
-                    address = MemoryMarshal.Read<int>(span);
+                    address = (ulong)MemoryMarshal.Read<int>(span);
                     
                     // the heap does not store type info, which means we need to assume the next value on the stack is the type code.
                     typeCode = vm.stack.Pop();
@@ -435,7 +435,7 @@ namespace FadeBasic.Virtual
                     {
                         var size = TypeCodes.GetByteSize(typeCode);
                         // vm.heap.Read(address, size, out bytes);
-                        vm.heap.ReadSpan(address, size, out span);
+                        vm.heap.ReadSpan((int)address, size, out span);
                     }
                     value = MemoryMarshal.Read<T>(span);
 
@@ -449,7 +449,7 @@ namespace FadeBasic.Virtual
         }
         
         
-        public static void ReadValueAny(VirtualMachine vm, object defaultValue, out object value, out CommandArgRuntimeState state, out int address)
+        public static void ReadValueAny(VirtualMachine vm, object defaultValue, out object value, out CommandArgRuntimeState state, out ulong address)
         {
             // peek the type code...
             var peekTypeCode = vm.stack.Peek();
@@ -1617,6 +1617,12 @@ namespace FadeBasic.Virtual
                 default:
                     throw new Exception("Unsupported add operation");
             }
+        }
+
+        public static void ReadRegAddress(byte[] program, ref int instructionIndex, out ulong addr)
+        {
+            addr = BitConverter.ToUInt64(program, instructionIndex);
+            instructionIndex += sizeof(ulong);
         }
     }
 }

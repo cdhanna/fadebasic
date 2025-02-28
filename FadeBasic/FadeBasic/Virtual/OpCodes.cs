@@ -30,10 +30,10 @@ namespace FadeBasic.Virtual
         public const byte DFLOAT   = 0x07; // 8 bytes (double)
         public const byte VOID     = 0x08; // 0 bytes
         public const byte STRING   = 0x09; // 4 bytes (ptr)
-        public const byte PTR_REG  = 0x0A; // 1 byte (registry ptr)
+        public const byte PTR_REG  = 0x0A; // 8 byte (registry ptr)
         public const byte PTR_HEAP = 0x0B; // 4 bytes (heap ptr)
         public const byte STRUCT   = 0x0C; // 4 bytes (ptr)
-        public const byte PTR_GLOBAL_REG = 0x0D; // 1 byte (global registry ptr)
+        public const byte PTR_GLOBAL_REG = 0x0D; // 8 byte (global registry ptr)
 
         public const byte ANY      = 254; // this isn't a real type code, it is a fake number used for calling C# methods
         public const byte VM       = 255; // this isn't a real type code, it is used as a hack in calling C# methods
@@ -67,10 +67,10 @@ namespace FadeBasic.Virtual
             8, // dfloat
             0, // void
             4, // string (int ptr)
-            1, // ptr_reg
+            8, // ptr_reg
             4, // ptr_heap
             4, // struct (int ptr)
-            1, // global ptr_reg
+            8, // global ptr_reg
         };
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]

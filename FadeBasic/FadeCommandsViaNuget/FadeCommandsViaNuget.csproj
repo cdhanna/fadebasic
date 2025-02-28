@@ -5,7 +5,7 @@
         <ImplicitUsings>enable</ImplicitUsings>
         <Nullable>enable</Nullable>
         <FadeNugetVersion>$(FADE_NUGET_VERSION)</FadeNugetVersion>
-        <FadeNugetVersion Condition="'$(FadeNugetVersion)' == ''">0.13.12.293</FadeNugetVersion>
+        <FadeNugetVersion Condition="'$(FadeNugetVersion)' == ''">0.12.13.305</FadeNugetVersion>
     </PropertyGroup>
 
     <ItemGroup>

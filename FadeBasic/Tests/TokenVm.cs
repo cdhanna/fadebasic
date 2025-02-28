@@ -2573,8 +2573,8 @@ y = x
         Assert.That(vm.globalScope.dataRegisters[1], Is.EqualTo(4)); // register 1 is y, 
         Assert.That(vm.globalScope.typeRegisters[1], Is.EqualTo(TypeCodes.INT));
         
-        Assert.That(vm.dataRegisters[2], Is.EqualTo(0)); // register 2 should have nothing in it
-        Assert.That(vm.typeRegisters[2], Is.EqualTo(0));
+        Assert.That(vm.dataRegisters.Length, Is.EqualTo(3)); // 2, plus 1 for the debugger room
+        Assert.That(vm.typeRegisters.Length, Is.EqualTo(3));
     }
 
     
@@ -2597,9 +2597,9 @@ next
         
         Assert.That(vm.globalScope.dataRegisters[1], Is.EqualTo(3)); // register 1 is y, 
         Assert.That(vm.globalScope.typeRegisters[1], Is.EqualTo(TypeCodes.INT));
-        
-        Assert.That(vm.dataRegisters[2], Is.EqualTo(0)); // register 2 should have nothing in it
-        Assert.That(vm.typeRegisters[2], Is.EqualTo(0));
+
+        Assert.That(vm.dataRegisters.Length, Is.EqualTo(3)); // 2, plus 1 for the debugger room
+        Assert.That(vm.typeRegisters.Length, Is.EqualTo(3));
     }
     
     
