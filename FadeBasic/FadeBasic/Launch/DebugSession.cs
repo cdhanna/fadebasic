@@ -683,7 +683,7 @@ namespace FadeBasic.Launch
                     {
                         typeCode = variable.typeCode,
                         name = local.name,
-                        registerAddress = (byte)variable.regAddr,
+                        registerAddress = variable.regAddr,
                         byteSize = TypeCodes.GetByteSize(variable.typeCode),
                         structType = structName,
                         isGlobal = isGlobal
@@ -730,7 +730,7 @@ namespace FadeBasic.Launch
                     var rankExprs = new IExpressionNode[arrayRankCount];
                     for (var i = 0; i < arrayRankCount; i++)
                     {
-                        var rankStrideRegAddr = variable.regAddr + arrayRankCount * 2 - (i * 2) ;
+                        var rankStrideRegAddr = variable.regAddr + (ulong)arrayRankCount * 2 - ((ulong)i * 2) ;
                         var rankSizeRegAddr = rankStrideRegAddr - 1;
                         var rankSize = _vm.scopeStack.buffer[variable.scopeIndex]
                             .dataRegisters[rankSizeRegAddr];
@@ -1010,7 +1010,7 @@ namespace FadeBasic.Launch
             if (synth.typeCode == TypeCodes.STRUCT)
             {
                 var ptr = _vm.dataRegisters[synth.registerAddress];
-                if (!_vm.heap.TryGetAllocation((int)ptr, out var alloc))
+                if (!_vm.heap.TryGetAllocation(VmPtr.FromRaw(ptr), out var alloc))
                 {
                     return DebugEvalResult.Failed(
                         $"invalid heap, reg=[{synth.registerAddress}] data=[{ptr}] which is not a valid heap pointer");

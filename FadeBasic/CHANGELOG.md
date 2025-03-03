@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.0.37] - 2025-03-02
+
+### Changed
+- VM register max count increased from `byte` to `ulong`.
+- VM heap max size increased from ~ 2^31 to ~ 2^64. 
+
 ## [0.0.36] - 2025-02-26
 
 ### Fixed

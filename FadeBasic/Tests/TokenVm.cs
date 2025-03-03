@@ -150,18 +150,18 @@ x=len(buffer$)
         Assert.That(vm.dataRegisters[0], Is.EqualTo(0)); // the ptr to the string in memory
         Assert.That(vm.typeRegisters[0], Is.EqualTo(TypeCodes.STRING));
         
-        Assert.That(vm.dataRegisters[1], Is.EqualTo(1)); // the ptr to the string in memory
+        Assert.That(vm.dataRegisters[1].ToPtr(), Is.EqualTo(1.ToPtr())); // the ptr to the string in memory
         Assert.That(vm.typeRegisters[1], Is.EqualTo(TypeCodes.STRING));
         
         Assert.That(vm.typeRegisters[2], Is.EqualTo(TypeCodes.INT));
         Assert.That(vm.dataRegisters[2], Is.EqualTo(0)); // zero length string
 
         
-        vm.heap.Read((int)vm.dataRegisters[0], "".Length * 4, out var memory);
+        vm.heap.Read(vm.dataRegisters[0].ToPtr(), "".Length * 4, out var memory);
         var str = VmConverter.ToString(memory);
         Assert.That(str, Is.EqualTo(""));
         
-        vm.heap.Read((int)vm.dataRegisters[1], "a".Length * 4, out memory);
+        vm.heap.Read(vm.dataRegisters[1].ToPtr(), "a".Length * 4, out memory);
         str = VmConverter.ToString(memory);
         Assert.That(str, Is.EqualTo("a"));
         
@@ -183,16 +183,16 @@ z$ = x$ + y$
         Assert.That(vm.dataRegisters[0], Is.EqualTo(0)); // the ptr to the string in memory
         Assert.That(vm.typeRegisters[0], Is.EqualTo(TypeCodes.STRING));
         
-        vm.heap.Read((int)vm.dataRegisters[0], "hello".Length * 4, out var memory);
+        vm.heap.Read(vm.dataRegisters[0].ToPtr(), "hello".Length * 4, out var memory);
         var str = VmConverter.ToString(memory);
         Assert.That(str, Is.EqualTo("hello"));
         
         
-        vm.heap.Read((int)vm.dataRegisters[1], "world".Length * 4, out memory);
+        vm.heap.Read(vm.dataRegisters[1].ToPtr(), "world".Length * 4, out memory);
         str = VmConverter.ToString(memory);
         Assert.That(str, Is.EqualTo("world"));
         
-        vm.heap.Read((int)vm.dataRegisters[2], "helloworld".Length * 4, out memory);
+        vm.heap.Read(vm.dataRegisters[2].ToPtr(), "helloworld".Length * 4, out memory);
         str = VmConverter.ToString(memory);
         Assert.That(str, Is.EqualTo("helloworld"));
     }
@@ -210,10 +210,10 @@ x$ = ""hello "" + x$
         var vm = new VirtualMachine(prog);
         vm.Execute2();
         
-        Assert.That(vm.dataRegisters[0], Is.EqualTo("world".Length * 4 + "hello ".Length * 4)); // the ptr to the string in memory
+        Assert.That(vm.dataRegisters[0].ToPtr(), Is.EqualTo(("world".Length * 4 + "hello ".Length * 4).ToPtr())); // the ptr to the string in memory
         Assert.That(vm.typeRegisters[0], Is.EqualTo(TypeCodes.STRING));
         
-        vm.heap.Read((int)vm.dataRegisters[0], "hello world".Length * 4, out var memory);
+        vm.heap.Read(vm.dataRegisters[0].ToPtr(), "hello world".Length * 4, out var memory);
         var str = VmConverter.ToString(memory);
         Assert.That(str, Is.EqualTo("hello world"));
         
@@ -243,11 +243,11 @@ y$ = x$ + "" world""
         Assert.That(vm.dataRegisters[0], Is.EqualTo(0)); // the ptr to the string in memory
         Assert.That(vm.typeRegisters[0], Is.EqualTo(TypeCodes.STRING));
         
-        vm.heap.Read((int)vm.dataRegisters[0], "hello".Length * 4, out var memory);
+        vm.heap.Read(vm.dataRegisters[0].ToPtr(), "hello".Length * 4, out var memory);
         var str = VmConverter.ToString(memory);
         Assert.That(str, Is.EqualTo("hello"));
 
-        vm.heap.Read((int)vm.dataRegisters[1], "hello world".Length * 4, out memory);
+        vm.heap.Read(vm.dataRegisters[1].ToPtr(), "hello world".Length * 4, out memory);
         str = VmConverter.ToString(memory);
         Assert.That(str, Is.EqualTo("hello world"));
         
@@ -269,11 +269,11 @@ y$ = ""world"" + x$
         Assert.That(vm.dataRegisters[0], Is.EqualTo(0)); // the ptr to the string in memory
         Assert.That(vm.typeRegisters[0], Is.EqualTo(TypeCodes.STRING));
         
-        vm.heap.Read((int)vm.dataRegisters[0], "hello".Length * 4, out var memory);
+        vm.heap.Read(vm.dataRegisters[0].ToPtr(), "hello".Length * 4, out var memory);
         var str = VmConverter.ToString(memory);
         Assert.That(str, Is.EqualTo("hello"));
 
-        vm.heap.Read((int)vm.dataRegisters[1], "helloworld".Length * 4, out memory);
+        vm.heap.Read(vm.dataRegisters[1].ToPtr(), "helloworld".Length * 4, out memory);
         str = VmConverter.ToString(memory);
         Assert.That(str, Is.EqualTo("worldhello"));
         
@@ -292,7 +292,7 @@ y$ = ""world"" + x$
         Assert.That(vm.dataRegisters[1], Is.EqualTo(0)); // the ptr to the string in memory
         Assert.That(vm.typeRegisters[1], Is.EqualTo(TypeCodes.STRING));
         
-        vm.heap.Read(0, "hello".Length * 4, out var memory);
+        vm.heap.Read(0.ToPtr(), "hello".Length * 4, out var memory);
         var str = VmConverter.ToString(memory);
         
         Assert.That(str, Is.EqualTo("hello"));
@@ -310,7 +310,7 @@ y$ = ""world"" + x$
         Assert.That(vm.dataRegisters[0], Is.EqualTo(0)); // the ptr to the string in memory
         Assert.That(vm.typeRegisters[0], Is.EqualTo(TypeCodes.STRING));
         
-        vm.heap.Read(0, "hello".Length * 4, out var memory);
+        vm.heap.Read(0.ToPtr(), "hello".Length * 4, out var memory);
         var str = VmConverter.ToString(memory);
         
         Assert.That(str, Is.EqualTo("hello"));
@@ -349,7 +349,7 @@ y$ = ""world"" + x$
         Assert.That(vm.dataRegisters[0], Is.EqualTo(0)); // the ptr to the string in memory
         Assert.That(vm.typeRegisters[0], Is.EqualTo(TypeCodes.STRING));
         
-        vm.heap.Read(0, initialStr.Length * 4, out var memory);
+        vm.heap.Read(0.ToPtr(), initialStr.Length * 4, out var memory);
         var str = VmConverter.ToString(memory);
         
         Assert.That(str, Is.EqualTo(initialStr));
@@ -368,7 +368,7 @@ y$ = ""world"" + x$
         Assert.That(vm.dataRegisters[0], Is.EqualTo(0)); // the ptr to the string in memory
         Assert.That(vm.typeRegisters[0], Is.EqualTo(TypeCodes.STRING));
         
-        vm.heap.Read(0, "hello".Length * 4, out var memory);
+        vm.heap.Read(0.ToPtr(), "hello".Length * 4, out var memory);
         var str = VmConverter.ToString(memory);
         
         Assert.That(str, Is.EqualTo("hello"));
@@ -384,16 +384,16 @@ y$ = ""world"" + x$
         
         Assert.That(vm.dataRegisters[0], Is.EqualTo(0)); // the ptr to the string in memory
         Assert.That(vm.typeRegisters[0], Is.EqualTo(TypeCodes.STRING));
-        Assert.That(vm.dataRegisters[1], Is.EqualTo("hello".Length*4)); // the ptr to the string in memory
+        Assert.That(vm.dataRegisters[1].ToPtr(), Is.EqualTo(("hello".Length*4).ToPtr())); // the ptr to the string in memory
         Assert.That(vm.typeRegisters[1], Is.EqualTo(TypeCodes.STRING));
 
-        vm.heap.Read(0, "hello".Length * 4, out var memory);
+        vm.heap.Read(0.ToPtr(), "hello".Length * 4, out var memory);
         var str = VmConverter.ToString(memory);
         
         Assert.That(str, Is.EqualTo("hello"));
         
         
-        vm.heap.Read("hello".Length * 4, "world".Length * 4, out memory);
+        vm.heap.Read(("hello".Length * 4).ToPtr(), "world".Length * 4, out memory);
         str = VmConverter.ToString(memory);
         
         Assert.That(str, Is.EqualTo("world"));
@@ -1818,7 +1818,7 @@ y = x(1)
         
         var vm = new VirtualMachine(prog);
         vm.Execute2();
-        Assert.That(vm.heap.Cursor, Is.EqualTo(4));
+        Assert.That(vm.heap.Cursor, Is.EqualTo(4.ToPtr()));
 
         var heap = vm.heap;
         Assert.That(vm.dataRegisters[0], Is.EqualTo(0));
@@ -1844,7 +1844,7 @@ y = x(1)
         
         var vm = new VirtualMachine(prog);
         vm.Execute2();
-        Assert.That(vm.heap.Cursor, Is.EqualTo(4));
+        Assert.That(vm.heap.Cursor, Is.EqualTo(4.ToPtr()));
 
         Assert.That(vm.dataRegisters[0], Is.EqualTo(0));
         Assert.That(vm.typeRegisters[0], Is.EqualTo(TypeCodes.INT));
@@ -1894,7 +1894,7 @@ y = x(3)
         
         var vm = new VirtualMachine(prog);
         vm.Execute2();
-        Assert.That(vm.heap.Cursor, Is.EqualTo(16));
+        Assert.That(vm.heap.Cursor, Is.EqualTo(16.ToPtr()));
 
         Assert.That(vm.dataRegisters[0], Is.EqualTo(0));
         Assert.That(vm.typeRegisters[0], Is.EqualTo(TypeCodes.INT));
@@ -1915,7 +1915,7 @@ y# = x#(0)
         
         var vm = new VirtualMachine(prog);
         vm.Execute2();
-        Assert.That(vm.heap.Cursor, Is.EqualTo(16));
+        Assert.That(vm.heap.Cursor, Is.EqualTo(16.ToPtr()));
 
         Assert.That(vm.dataRegisters[0], Is.EqualTo(0));
         Assert.That(vm.typeRegisters[0], Is.EqualTo(TypeCodes.INT));
@@ -1947,7 +1947,7 @@ dim x(4)
         Assert.That(vm.dataRegisters[0], Is.EqualTo(0));
         Assert.That(vm.typeRegisters[0], Is.EqualTo(TypeCodes.INT));
         
-        Assert.That(vm.heap.Cursor, Is.EqualTo(16));
+        Assert.That(vm.heap.Cursor, Is.EqualTo(16.ToPtr()));
     }
 
     
@@ -1965,7 +1965,7 @@ dim x(4,2)
         Assert.That(vm.dataRegisters[0], Is.EqualTo(0));
         Assert.That(vm.typeRegisters[0], Is.EqualTo(TypeCodes.INT));
         
-        Assert.That(vm.heap.Cursor, Is.EqualTo(32));
+        Assert.That(vm.heap.Cursor, Is.EqualTo(32.ToPtr()));
     }
 
     
@@ -1984,10 +1984,10 @@ x(1,1) = 42
         Assert.That(vm.dataRegisters[0], Is.EqualTo(0));
         Assert.That(vm.typeRegisters[0], Is.EqualTo(TypeCodes.INT));
         
-        Assert.That(vm.heap.Cursor, Is.EqualTo(16));
+        Assert.That(vm.heap.Cursor, Is.EqualTo(16.ToPtr()));
         
                
-        vm.heap.Read((1*2 + 1) * 2, 2, out var bytes);
+        vm.heap.Read(((1*2 + 1) * 2).ToPtr(), 2, out var bytes);
         var value = BitConverter.ToInt16(bytes, 0);
         Assert.That(value, Is.EqualTo(42));
     }
@@ -2007,10 +2007,10 @@ x(2,3,2) = 42
         Assert.That(vm.dataRegisters[0], Is.EqualTo(0));
         Assert.That(vm.typeRegisters[0], Is.EqualTo(TypeCodes.INT));
         
-        Assert.That(vm.heap.Cursor, Is.EqualTo(120));
+        Assert.That(vm.heap.Cursor, Is.EqualTo(120.ToPtr()));
         
                
-        vm.heap.Read(( (2*5*3) + (3*3) + 2) * 2, 2, out var bytes);
+        vm.heap.Read((( (2*5*3) + (3*3) + 2) * 2).ToPtr(), 2, out var bytes);
         var value = BitConverter.ToInt16(bytes, 0);
         Assert.That(value, Is.EqualTo(42));
     }
@@ -2033,7 +2033,7 @@ y = x(2,3,2)
         Assert.That(vm.dataRegisters[0], Is.EqualTo(0));
         Assert.That(vm.typeRegisters[0], Is.EqualTo(TypeCodes.INT));
         
-        Assert.That(vm.heap.Cursor, Is.EqualTo(120));
+        Assert.That(vm.heap.Cursor, Is.EqualTo(120.ToPtr()));
         
         Assert.That(vm.dataRegisters[1 + (3*2) /* 3 ranks, 2 registers per rank. */], Is.EqualTo(42));
         Assert.That(vm.typeRegisters[1 + (3*2)], Is.EqualTo(TypeCodes.WORD));
@@ -2057,7 +2057,7 @@ y = x(2,3,2) + x(2,3,1)
         Assert.That(vm.dataRegisters[0], Is.EqualTo(0));
         Assert.That(vm.typeRegisters[0], Is.EqualTo(TypeCodes.INT));
         
-        Assert.That(vm.heap.Cursor, Is.EqualTo(60));
+        Assert.That(vm.heap.Cursor, Is.EqualTo(60.ToPtr()));
         
         Assert.That(vm.dataRegisters[1 + (3*2) /* 3 ranks, 2 registers per rank. */], Is.EqualTo(53));
         Assert.That(vm.typeRegisters[1 + (3*2)], Is.EqualTo(TypeCodes.INT));
@@ -2078,7 +2078,7 @@ dim x(4) as word
         Assert.That(vm.dataRegisters[0], Is.EqualTo(0));
         Assert.That(vm.typeRegisters[0], Is.EqualTo(TypeCodes.INT));
         
-        Assert.That(vm.heap.Cursor, Is.EqualTo(8));
+        Assert.That(vm.heap.Cursor, Is.EqualTo(8.ToPtr()));
     }
     
 
@@ -2123,9 +2123,9 @@ x(1) = 12
         Assert.That(vm.dataRegisters[0], Is.EqualTo(0));
         Assert.That(vm.typeRegisters[0], Is.EqualTo(TypeCodes.INT));
         
-        Assert.That(vm.heap.Cursor, Is.EqualTo(10));
+        Assert.That(vm.heap.Cursor, Is.EqualTo(10.ToPtr()));
          
-        vm.heap.Read(2, 2, out var bytes);
+        vm.heap.Read(2.ToPtr(), 2, out var bytes);
         var value = BitConverter.ToInt16(bytes, 0);
         Assert.That(value, Is.EqualTo(12));
     }
@@ -2147,13 +2147,13 @@ x(2) = 3 + 2
         Assert.That(vm.dataRegisters[0], Is.EqualTo(0));
         Assert.That(vm.typeRegisters[0], Is.EqualTo(TypeCodes.INT));
         
-        Assert.That(vm.heap.Cursor, Is.EqualTo(10));
+        Assert.That(vm.heap.Cursor, Is.EqualTo(10.ToPtr()));
          
-        vm.heap.Read(2, 2, out var bytes);
+        vm.heap.Read(2.ToPtr(), 2, out var bytes);
         var value = BitConverter.ToInt16(bytes, 0);
         Assert.That(value, Is.EqualTo(12));
         
-        vm.heap.Read(4, 2, out bytes);
+        vm.heap.Read(4.ToPtr(), 2, out bytes);
         value = BitConverter.ToInt16(bytes, 0);
         Assert.That(value, Is.EqualTo(5));
     }
@@ -2175,13 +2175,13 @@ x(2) = x(1) * 2
         Assert.That(vm.dataRegisters[0], Is.EqualTo(0));
         Assert.That(vm.typeRegisters[0], Is.EqualTo(TypeCodes.INT));
         
-        Assert.That(vm.heap.Cursor, Is.EqualTo(10));
+        Assert.That(vm.heap.Cursor, Is.EqualTo(10.ToPtr()));
          
-        vm.heap.Read(2, 2, out var bytes);
+        vm.heap.Read(2.ToPtr(), 2, out var bytes);
         var value = BitConverter.ToInt16(bytes, 0);
         Assert.That(value, Is.EqualTo(12));
         
-        vm.heap.Read(4, 2, out bytes);
+        vm.heap.Read(4.ToPtr(), 2, out bytes);
         value = BitConverter.ToInt16(bytes, 0);
         Assert.That(value, Is.EqualTo(24));
     }
@@ -2573,8 +2573,8 @@ y = x
         Assert.That(vm.globalScope.dataRegisters[1], Is.EqualTo(4)); // register 1 is y, 
         Assert.That(vm.globalScope.typeRegisters[1], Is.EqualTo(TypeCodes.INT));
         
-        Assert.That(vm.dataRegisters[2], Is.EqualTo(0)); // register 2 should have nothing in it
-        Assert.That(vm.typeRegisters[2], Is.EqualTo(0));
+        Assert.That(vm.dataRegisters.Length, Is.EqualTo(3)); // 2, plus 1 for the debugger room
+        Assert.That(vm.typeRegisters.Length, Is.EqualTo(3));
     }
 
     
@@ -2597,9 +2597,9 @@ next
         
         Assert.That(vm.globalScope.dataRegisters[1], Is.EqualTo(3)); // register 1 is y, 
         Assert.That(vm.globalScope.typeRegisters[1], Is.EqualTo(TypeCodes.INT));
-        
-        Assert.That(vm.dataRegisters[2], Is.EqualTo(0)); // register 2 should have nothing in it
-        Assert.That(vm.typeRegisters[2], Is.EqualTo(0));
+
+        Assert.That(vm.dataRegisters.Length, Is.EqualTo(3)); // 2, plus 1 for the debugger room
+        Assert.That(vm.typeRegisters.Length, Is.EqualTo(3));
     }
     
     
@@ -2816,7 +2816,7 @@ y$ = str$(x)
         Assert.That(vm.dataRegisters[1], Is.EqualTo(0)); // the ptr to the string in memory
         Assert.That(vm.typeRegisters[1], Is.EqualTo(TypeCodes.STRING));
 
-        vm.heap.Read(0, "-4".Length * 4, out var memory);
+        vm.heap.Read(0.ToPtr(), "-4".Length * 4, out var memory);
         var str = VmConverter.ToString(memory);
         Assert.That(str, Is.EqualTo("-4"));
     }
@@ -2931,7 +2931,7 @@ b.x = 1
         vm.hostMethods = compiler.methodTable;
         vm.Execute2();
         
-        Assert.That(vm.heap.Cursor, Is.EqualTo(8)); // size of the only field in egg, int, 4. (times 2, because there are 2 copies)
+        Assert.That(vm.heap.Cursor, Is.EqualTo(8.ToPtr())); // size of the only field in egg, int, 4. (times 2, because there are 2 copies)
         Assert.That(vm.typeRegisters[0], Is.EqualTo(TypeCodes.STRUCT));
         Assert.That(vm.typeRegisters[1], Is.EqualTo(TypeCodes.STRUCT));
     }
@@ -2953,7 +2953,7 @@ y as egg
         vm.hostMethods = compiler.methodTable;
         vm.Execute2();
         
-        Assert.That(vm.heap.Cursor, Is.EqualTo(4)); // size of the only field in egg, int, 4.
+        Assert.That(vm.heap.Cursor, Is.EqualTo(4.ToPtr())); // size of the only field in egg, int, 4.
         Assert.That(vm.typeRegisters[0], Is.EqualTo(TypeCodes.STRUCT));
     }
 
@@ -2974,10 +2974,10 @@ y.x = 53
         vm.hostMethods = compiler.methodTable;
         vm.Execute2();
         
-        Assert.That(vm.heap.Cursor, Is.EqualTo(4)); // size of the only field in egg, int, 4.
+        Assert.That(vm.heap.Cursor, Is.EqualTo(4.ToPtr())); // size of the only field in egg, int, 4.
         Assert.That(vm.typeRegisters[0], Is.EqualTo(TypeCodes.STRUCT));
         
-        vm.heap.Read((int)vm.dataRegisters[0], 4, out var memory);
+        vm.heap.Read(vm.dataRegisters[0].ToPtr(), 4, out var memory);
         var data = BitConverter.ToInt32(memory);
         Assert.That(data, Is.EqualTo(53));
     }
@@ -3000,10 +3000,10 @@ y.x = y.x + y.x
         vm.hostMethods = compiler.methodTable;
         vm.Execute2();
         
-        Assert.That(vm.heap.Cursor, Is.EqualTo(4)); // size of the only field in egg, int, 4.
+        Assert.That(vm.heap.Cursor, Is.EqualTo(4.ToPtr())); // size of the only field in egg, int, 4.
         Assert.That(vm.typeRegisters[0], Is.EqualTo(TypeCodes.STRUCT));
         
-        vm.heap.Read((int)vm.dataRegisters[0], 4, out var memory);
+        vm.heap.Read(vm.dataRegisters[0].ToPtr(), 4, out var memory);
         var data = BitConverter.ToInt32(memory);
         Assert.That(data, Is.EqualTo(106));
     }
@@ -3028,7 +3028,7 @@ w = y.x + y.z
         vm.hostMethods = compiler.methodTable;
         vm.Execute2();
         
-        Assert.That(vm.heap.Cursor, Is.EqualTo(8)); 
+        Assert.That(vm.heap.Cursor, Is.EqualTo(8.ToPtr())); 
         Assert.That(vm.typeRegisters[0], Is.EqualTo(TypeCodes.STRUCT));
         
         Assert.That(vm.typeRegisters[1], Is.EqualTo(TypeCodes.INT));
@@ -3055,7 +3055,7 @@ w = y.x + len(y.z$)
         vm.Execute2();
         
         
-        Assert.That(vm.heap.Cursor, Is.EqualTo(4 + 4 + "hello".Length*4)); // a '4' comes from y.x, and the other '4' is the ptr to z$
+        Assert.That(vm.heap.Cursor, Is.EqualTo(12.ToPtr() + ("hello".Length*4))); // egg is 4+8 big (an int plus a pointer), and the size of the string.
         Assert.That(vm.typeRegisters[0], Is.EqualTo(TypeCodes.STRUCT));
         
         Assert.That(vm.typeRegisters[1], Is.EqualTo(TypeCodes.INT));
@@ -3084,7 +3084,7 @@ albert as chicken
         vm.Execute2();
         
         
-        Assert.That(vm.heap.Cursor, Is.EqualTo(8));
+        Assert.That(vm.heap.Cursor, Is.EqualTo(8.ToPtr()));
         Assert.That(vm.typeRegisters[0], Is.EqualTo(TypeCodes.STRUCT));
         
         // Assert.That(vm.typeRegisters[1], Is.EqualTo(TypeCodes.INT));
@@ -3113,7 +3113,7 @@ albert as chicken
         vm.Execute2();
         
         
-        Assert.That(vm.heap.Cursor, Is.EqualTo(8));
+        Assert.That(vm.heap.Cursor, Is.EqualTo(8.ToPtr()));
         Assert.That(vm.typeRegisters[0], Is.EqualTo(TypeCodes.STRUCT));
         
         // it shouldn't matter the order we define the types, because we are parse-sure they don't have loops.
@@ -3148,7 +3148,7 @@ x = player.pos.x
         vm.Execute2();
         
         
-        Assert.That(vm.heap.Cursor, Is.EqualTo(16));
+        Assert.That(vm.heap.Cursor, Is.EqualTo(16.ToPtr()));
         Assert.That(vm.typeRegisters[0], Is.EqualTo(TypeCodes.STRUCT));
         
         Assert.That(vm.typeRegisters[1], Is.EqualTo(TypeCodes.INT));
@@ -3186,7 +3186,7 @@ x = player.pos.x
         vm.Execute2();
         
         
-        Assert.That(vm.heap.Cursor, Is.EqualTo(16));
+        Assert.That(vm.heap.Cursor, Is.EqualTo(16.ToPtr()));
         Assert.That(vm.typeRegisters[0], Is.EqualTo(TypeCodes.STRUCT));
         
         Assert.That(vm.typeRegisters[1], Is.EqualTo(TypeCodes.INT));
@@ -3218,7 +3218,7 @@ test = albert.e.color * albert.n
         vm.Execute2();
         
         
-        Assert.That(vm.heap.Cursor, Is.EqualTo(8));
+        Assert.That(vm.heap.Cursor, Is.EqualTo(8.ToPtr()));
         Assert.That(vm.typeRegisters[0], Is.EqualTo(TypeCodes.STRUCT));
         
         Assert.That(vm.typeRegisters[1], Is.EqualTo(TypeCodes.INT));
@@ -3242,7 +3242,7 @@ DIM x(3) AS egg
         vm.Execute2();
         
         
-        Assert.That(vm.heap.Cursor, Is.EqualTo(12));
+        Assert.That(vm.heap.Cursor, Is.EqualTo(12.ToPtr()));
         // Assert.That(vm.typeRegisters[0], Is.EqualTo(TypeCodes.STRUCT));
         
     }
@@ -3264,7 +3264,7 @@ DIM x(3) AS egg
         vm.Execute2();
         
         
-        Assert.That(vm.heap.Cursor, Is.EqualTo(6));
+        Assert.That(vm.heap.Cursor, Is.EqualTo(6.ToPtr()));
         // Assert.That(vm.typeRegisters[0], Is.EqualTo(TypeCodes.STRUCT));
         
     }
@@ -3286,9 +3286,9 @@ x(1).color = 3
         vm.Execute2();
         
         
-        Assert.That(vm.heap.Cursor, Is.EqualTo(6));
+        Assert.That(vm.heap.Cursor, Is.EqualTo(6.ToPtr()));
         
-        vm.heap.Read(1 * 2, 2, out var mem);
+        vm.heap.Read((1 * 2).ToPtr(), 2, out var mem);
         var data = BitConverter.ToInt16(mem, 0);
         
         Assert.That(data, Is.EqualTo(3));
@@ -3313,9 +3313,9 @@ x(1,1).color = 3
         vm.Execute2();
         
         
-        Assert.That(vm.heap.Cursor, Is.EqualTo(12));
+        Assert.That(vm.heap.Cursor, Is.EqualTo(12.ToPtr()));
         
-        vm.heap.Read((1 + 2 * 1) * 2, 2, out var mem);
+        vm.heap.Read(((1 + 2 * 1) * 2).ToPtr(), 2, out var mem);
         var data = BitConverter.ToInt16(mem, 0);
         
         Assert.That(data, Is.EqualTo(3));
@@ -3342,7 +3342,7 @@ y = x(2).derp
         vm.Execute2();
         
         
-        Assert.That(vm.heap.Cursor, Is.EqualTo(18));
+        Assert.That(vm.heap.Cursor, Is.EqualTo(18.ToPtr()));
         
         Assert.That(vm.dataRegisters[3], Is.EqualTo(3));
 
@@ -3367,7 +3367,7 @@ y = x(2,3).derp
         vm.hostMethods = compiler.methodTable;
         vm.Execute2();
         
-        Assert.That(vm.heap.Cursor, Is.EqualTo(6*12));
+        Assert.That(vm.heap.Cursor, Is.EqualTo((6*12).ToPtr()));
         Assert.That(vm.globalScope.dataRegisters[3], Is.EqualTo(3));
     }
     
@@ -3401,7 +3401,7 @@ y = n.derp
         vm.hostMethods = compiler.methodTable;
         vm.Execute2();
         
-        Assert.That(vm.heap.Cursor, Is.EqualTo(6*(3 + 1))); // 1 extra for the original assignment of n as egg
+        Assert.That(vm.heap.Cursor, Is.EqualTo((6*(3 + 1)).ToPtr())); // 1 extra for the original assignment of n as egg
         Assert.That(vm.dataRegisters[0], Is.EqualTo(122));
     }
 
@@ -3426,7 +3426,7 @@ y = x(2).derp * x(1).color
         vm.Execute2();
         
         
-        Assert.That(vm.heap.Cursor, Is.EqualTo(18));
+        Assert.That(vm.heap.Cursor, Is.EqualTo(18.ToPtr()));
         
         Assert.That(vm.dataRegisters[3], Is.EqualTo(6));
 
@@ -3534,10 +3534,10 @@ refDbl bread(1).x";
         var vm = new VirtualMachine(prog);
         vm.hostMethods = compiler.methodTable;
         vm.Execute2();
-        Assert.That(vm.heap.Cursor, Is.EqualTo(8)); // size of the only field in toast, int, 4.
+        Assert.That(vm.heap.Cursor, Is.EqualTo(8.ToPtr())); // size of the only field in toast, int, 4.
         // Assert.That(vm.typeRegisters[0], Is.EqualTo(TypeCodes.PTR_HEAP));
         
-        vm.heap.Read((int)vm.dataRegisters[0] + 4, 4, out var memory);
+        vm.heap.Read(vm.dataRegisters[0].ToPtr() + 4, 4, out var memory);
         var data = BitConverter.ToInt32(memory);
         Assert.That(data, Is.EqualTo(6));
     }
@@ -3557,10 +3557,10 @@ refDbl bread.x";
         var vm = new VirtualMachine(prog);
         vm.hostMethods = compiler.methodTable;
         vm.Execute2();
-        Assert.That(vm.heap.Cursor, Is.EqualTo(4)); // size of the only field in toast, int, 4.
+        Assert.That(vm.heap.Cursor, Is.EqualTo(4.ToPtr())); // size of the only field in toast, int, 4.
         Assert.That(vm.typeRegisters[0], Is.EqualTo(TypeCodes.STRUCT));
         
-        vm.heap.Read((int)vm.dataRegisters[0], 4, out var memory);
+        vm.heap.Read(vm.dataRegisters[0].ToPtr(), 4, out var memory);
         var data = BitConverter.ToInt32(memory);
         Assert.That(data, Is.EqualTo(6));
     }
@@ -3582,10 +3582,10 @@ refDbl bread(1).y";
         var vm = new VirtualMachine(prog);
         vm.hostMethods = compiler.methodTable;
         vm.Execute2();
-        Assert.That(vm.heap.Cursor, Is.EqualTo(16)); // size of the only field in toast, int, 4.
+        Assert.That(vm.heap.Cursor, Is.EqualTo(16.ToPtr())); // size of the only field in toast, int, 4.
         // Assert.That(vm.typeRegisters[0], Is.EqualTo(TypeCodes.PTR_HEAP));
         
-        vm.heap.Read((int)vm.dataRegisters[0] + 12, 4, out var memory);
+        vm.heap.Read(vm.dataRegisters[0].ToPtr() + 12, 4, out var memory);
         var data = BitConverter.ToInt32(memory);
         Assert.That(data, Is.EqualTo(6));
     }
@@ -3611,10 +3611,10 @@ refDbl bread(1).y.w";
         var vm = new VirtualMachine(prog);
         vm.hostMethods = compiler.methodTable;
         vm.Execute2();
-        Assert.That(vm.heap.Cursor, Is.EqualTo(24)); // size of the only field in toast, int, 4.
+        Assert.That(vm.heap.Cursor, Is.EqualTo(24.ToPtr())); // size of the only field in toast, int, 4.
         // Assert.That(vm.typeRegisters[0], Is.EqualTo(TypeCodes.PTR_HEAP));
         
-        vm.heap.Read((int)vm.dataRegisters[0] + 20, 4, out var memory);
+        vm.heap.Read(vm.dataRegisters[0].ToPtr() + 20, 4, out var memory);
         var data = BitConverter.ToInt32(memory);
         Assert.That(data, Is.EqualTo(6));
     }
@@ -3636,10 +3636,10 @@ refDbl bread.y";
         var vm = new VirtualMachine(prog);
         vm.hostMethods = compiler.methodTable;
         vm.Execute2();
-        Assert.That(vm.heap.Cursor, Is.EqualTo(8)); // there are two ints, each are 4
+        Assert.That(vm.heap.Cursor, Is.EqualTo(8.ToPtr())); // there are two ints, each are 4
         Assert.That(vm.typeRegisters[0], Is.EqualTo(TypeCodes.STRUCT));
         
-        vm.heap.Read((int)vm.dataRegisters[0] + 4, 4, out var memory);
+        vm.heap.Read(vm.dataRegisters[0].ToPtr() + 4, 4, out var memory);
         var data = BitConverter.ToInt32(memory);
         Assert.That(data, Is.EqualTo(6));
     }
@@ -3667,10 +3667,10 @@ refDbl bread.y.w";
         var vm = new VirtualMachine(prog);
         vm.hostMethods = compiler.methodTable;
         vm.Execute2();
-        Assert.That(vm.heap.Cursor, Is.EqualTo(12)); // there are three ints, each are 4
+        Assert.That(vm.heap.Cursor, Is.EqualTo(12.ToPtr())); // there are three ints, each are 4
         Assert.That(vm.typeRegisters[0], Is.EqualTo(TypeCodes.STRUCT));
         
-        vm.heap.Read((int)vm.dataRegisters[0] + 8, 4, out var memory);
+        vm.heap.Read(vm.dataRegisters[0].ToPtr() + 8, 4, out var memory);
         var data = BitConverter.ToInt32(memory);
         Assert.That(data, Is.EqualTo(6));
     }
@@ -3864,7 +3864,7 @@ x$ = concat( 1, ""hello"", 2)
         vm.hostMethods = compiler.methodTable;
         vm.Execute2();
         Assert.That(vm.typeRegisters[0], Is.EqualTo(TypeCodes.STRING));
-        vm.heap.Read((int)vm.dataRegisters[0], "1;hello;2".Length * 4, out var memory);
+        vm.heap.Read(vm.dataRegisters[0].ToPtr(), "1;hello;2".Length * 4, out var memory);
         var str = VmConverter.ToString(memory);
         Assert.That(str, Is.EqualTo("1;hello;2"));
     }
@@ -3879,7 +3879,7 @@ x$ = concat( 1, ""hello"", 2)
         vm.hostMethods = compiler.methodTable;
         vm.Execute2();
         Assert.That(vm.typeRegisters[0], Is.EqualTo(TypeCodes.STRING));
-        vm.heap.Read((int)vm.dataRegisters[0], "tuna".Length * 4, out var memory);
+        vm.heap.Read(vm.dataRegisters[0].ToPtr(), "tuna".Length * 4, out var memory);
         var str = VmConverter.ToString(memory);
         Assert.That(str, Is.EqualTo("tuna"));
     }
@@ -3893,7 +3893,7 @@ x$ = concat( 1, ""hello"", 2)
         vm.hostMethods = compiler.methodTable;
         vm.Execute2();
         Assert.That(vm.typeRegisters[0], Is.EqualTo(TypeCodes.STRING));
-        vm.heap.Read((int)vm.dataRegisters[0], "tuna".Length * 4, out var memory);
+        vm.heap.Read(vm.dataRegisters[0].ToPtr(), "tuna".Length * 4, out var memory);
         var str = VmConverter.ToString(memory);
         Assert.That(str, Is.EqualTo("tuna"));
     }
@@ -3968,11 +3968,30 @@ y$ = x$(1)
         vm.hostMethods = compiler.methodTable;
         vm.Execute2();
         Assert.That(vm.typeRegisters[3], Is.EqualTo(TypeCodes.STRING));
-        vm.heap.Read((int)vm.dataRegisters[3], "tuna".Length * 4, out var memory);
+        vm.heap.Read(vm.dataRegisters[3].ToPtr(), "tuna".Length * 4, out var memory);
         var str = VmConverter.ToString(memory);
         Assert.That(str, Is.EqualTo("tuna"));
     }
 
+    
+    [Test]
+    public void Array_StringAssign()
+    {
+        var src = @"
+dim x$(3)
+x$(1) = ""tuna""
+y$ = x$(1)      
+";
+  
+        Setup(src, out var compiler, out var prog);
+        var vm = new VirtualMachine(prog);
+        vm.hostMethods = compiler.methodTable;
+        vm.Execute2();
+        Assert.That(vm.typeRegisters[3], Is.EqualTo(TypeCodes.STRING));
+        vm.heap.Read(vm.dataRegisters[3].ToPtr(), "tuna".Length * 4, out var memory);
+        var str = VmConverter.ToString(memory);
+        Assert.That(str, Is.EqualTo("tuna"));
+    }
     
     [Test]
     public void CallHost_StringArg()
@@ -4028,12 +4047,12 @@ w$ = x$(2)
         Assert.That(vm.typeRegisters[3], Is.EqualTo(TypeCodes.INT));
         Assert.That(vm.dataRegisters[3], Is.EqualTo("hello".Length));
         Assert.That(vm.typeRegisters[4], Is.EqualTo(TypeCodes.STRING));
-        vm.heap.Read((int)vm.dataRegisters[4], "hello".Length * 4, out var memory);
+        vm.heap.Read(vm.dataRegisters[4].ToPtr(), "hello".Length * 4, out var memory);
         var str = VmConverter.ToString(memory);
         Assert.That(str, Is.EqualTo("olleh"));
         
         Assert.That(vm.typeRegisters[5], Is.EqualTo(TypeCodes.STRING));
-        vm.heap.Read((int)vm.dataRegisters[5], "hello".Length * 4, out memory);
+        vm.heap.Read(vm.dataRegisters[5].ToPtr(), "hello".Length * 4, out memory);
         str = VmConverter.ToString(memory);
         Assert.That(str, Is.EqualTo("olleh"));
     }
@@ -4048,7 +4067,7 @@ w$ = x$(2)
         vm.hostMethods = compiler.methodTable;
         vm.Execute2();
         Assert.That(vm.typeRegisters[0], Is.EqualTo(TypeCodes.STRING));
-        vm.heap.Read((int)vm.dataRegisters[0], "hello".Length * 4, out var memory);
+        vm.heap.Read(vm.dataRegisters[0].ToPtr(), "hello".Length * 4, out var memory);
         var str = VmConverter.ToString(memory);
         Assert.That(str, Is.EqualTo("olleh"));
     }
@@ -4063,7 +4082,7 @@ w$ = x$(2)
         vm.hostMethods = compiler.methodTable;
         vm.Execute2();
         Assert.That(vm.typeRegisters[0], Is.EqualTo(TypeCodes.STRING));
-        vm.heap.Read((int)vm.dataRegisters[0], "32".Length * 4, out var memory);
+        vm.heap.Read(vm.dataRegisters[0].ToPtr(), "32".Length * 4, out var memory);
         var str = VmConverter.ToString(memory);
         Assert.That(str, Is.EqualTo("32"));
     }
@@ -4077,12 +4096,12 @@ w$ = x$(2)
         vm.hostMethods = compiler.methodTable;
         vm.Execute2();
         Assert.That(vm.typeRegisters[0], Is.EqualTo(TypeCodes.STRING));
-        vm.heap.Read((int)vm.dataRegisters[0], "hello".Length * 4, out var memory);
+        vm.heap.Read(vm.dataRegisters[0].ToPtr(), "hello".Length * 4, out var memory);
         var str = VmConverter.ToString(memory);
         Assert.That(str, Is.EqualTo("hello"));
         
         Assert.That(vm.typeRegisters[1], Is.EqualTo(TypeCodes.STRING));
-        vm.heap.Read((int)vm.dataRegisters[1], "hello".Length * 4, out memory);
+        vm.heap.Read(vm.dataRegisters[1].ToPtr(), "hello".Length * 4, out memory);
         str = VmConverter.ToString(memory);
         Assert.That(str, Is.EqualTo("olleh"));
     }
@@ -4097,12 +4116,12 @@ w$ = x$(2)
         vm.hostMethods = compiler.methodTable;
         vm.Execute2();
         Assert.That(vm.typeRegisters[0], Is.EqualTo(TypeCodes.STRING));
-        vm.heap.Read((int)vm.dataRegisters[0], "hello".Length * 4, out var memory);
+        vm.heap.Read(vm.dataRegisters[0].ToPtr(), "hello".Length * 4, out var memory);
         var str = VmConverter.ToString(memory);
         Assert.That(str, Is.EqualTo("hello"));
         
         Assert.That(vm.typeRegisters[1], Is.EqualTo(TypeCodes.STRING));
-        vm.heap.Read((int)vm.dataRegisters[1], "helloworld".Length * 4, out memory);
+        vm.heap.Read(vm.dataRegisters[1].ToPtr(), "helloworld".Length * 4, out memory);
         str = VmConverter.ToString(memory);
         Assert.That(str, Is.EqualTo("worldolleh"));
     }

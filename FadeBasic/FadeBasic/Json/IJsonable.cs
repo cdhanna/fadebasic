@@ -16,6 +16,12 @@ namespace FadeBasic.Json
         void ProcessJson(IJsonOperation op);
     }
 
+    public interface IJsonableSerializationCallbacks : IJsonable
+    {
+        void OnAfterDeserialized();
+        void OnBeforeSerialize();
+    }
+
     public interface IJsonOperation
     {
         void Process(IJsonable jsonable);
@@ -52,7 +58,7 @@ namespace FadeBasic.Json
         {
             var instance = new T();
             var op = new JsonReadOp(json);
-            instance.ProcessJson(op);
+            op.Process(instance);
             return instance;
         }
         
@@ -376,7 +382,13 @@ namespace FadeBasic.Json
 
         public void Process(IJsonable jsonable)
         {
+            
             jsonable.ProcessJson(this);
+            
+            if (jsonable is IJsonableSerializationCallbacks cbr)
+            {
+                cbr.OnAfterDeserialized();
+            }
         }
 
         public void IncludeField(string name, ref int fieldValue)
@@ -388,6 +400,11 @@ namespace FadeBasic.Json
         {
             _data.ints.TryGetValue(name, out var byteValue);
             fieldValue = (byte)byteValue;
+        }
+
+        public void IncludeField(string name, ref ulong fieldValue)
+        {
+            throw new NotImplementedException();
         }
 
         public void IncludeField(string name, ref bool fieldValue)
@@ -538,12 +555,17 @@ namespace FadeBasic.Json
         public void Process(IJsonable jsonable)
         {
             _sb.Append(JsonConstants.OPEN_BRACKET);
+            if (jsonable is IJsonableSerializationCallbacks cbr)
+            {
+                cbr.OnBeforeSerialize();
+            }
             jsonable.ProcessJson(this);
             _sb.Append(JsonConstants.CLOSE_BRACKET);
         }
 
         public void IncludeField(string name, ref int fieldValue) => IncludePrim(name, ref fieldValue);
         public void IncludeField(string name, ref byte fieldValue) => IncludePrim(name, ref fieldValue);
+        public void IncludeField(string name, ref ulong fieldValue) => IncludePrim(name, ref fieldValue);
 
         public void IncludeField(string name, ref bool fieldValue)
         {

@@ -8,13 +8,15 @@ using FadeBasic.Json;
 
 namespace FadeBasic.Virtual
 {
-    public class CompiledVariable : IJsonable
+    public class CompiledVariable : IJsonable, IJsonableSerializationCallbacks
     {
         public byte byteSize;
         public byte typeCode;
         public string name;
         public string structType;
-        public byte registerAddress;
+        public ulong registerAddress;
+
+        private string registerAddressSerializer;
         public bool isGlobal;
         
         public void ProcessJson(IJsonOperation op)
@@ -23,18 +25,31 @@ namespace FadeBasic.Virtual
             op.IncludeField(nameof(typeCode), ref typeCode);
             op.IncludeField(nameof(name), ref name);
             op.IncludeField(nameof(structType), ref structType);
-            op.IncludeField(nameof(registerAddress), ref registerAddress);
+            op.IncludeField(nameof(registerAddressSerializer), ref registerAddressSerializer);
             op.IncludeField(nameof(isGlobal), ref isGlobal);
+        }
+
+        public void OnAfterDeserialized()
+        {
+            registerAddress = ulong.Parse(registerAddressSerializer);
+        }
+
+        public void OnBeforeSerialize()
+        {
+            registerAddressSerializer = registerAddress.ToString();
         }
     }
 
-    public class CompiledArrayVariable : IJsonable
+    public class CompiledArrayVariable : IJsonable, IJsonableSerializationCallbacks
     {
         public int byteSize;
         public byte typeCode;
         public string name;
         public CompiledType structType;
-        public byte registerAddress;
+        public ulong registerAddress;
+
+        private string registerAddressSerializer;
+        
         public bool isGlobal;
         public byte[] rankSizeRegisterAddresses; // an array where the index is the rank, and the value is the ptr to a register whose value holds the size of the rank
         public byte[] rankIndexScalerRegisterAddresses; // an array where the index is the rank, and the value is the ptr to a register whose value holds the multiplier factor for the rank's indexing
@@ -44,10 +59,20 @@ namespace FadeBasic.Virtual
             op.IncludeField(nameof(typeCode), ref typeCode);
             op.IncludeField(nameof(name), ref name);
             op.IncludeField(nameof(structType), ref structType);
-            op.IncludeField(nameof(registerAddress), ref registerAddress);
+            op.IncludeField(nameof(registerAddressSerializer), ref registerAddressSerializer);
             op.IncludeField(nameof(isGlobal), ref isGlobal);
             op.IncludeField(nameof(rankSizeRegisterAddresses), ref rankSizeRegisterAddresses);
             op.IncludeField(nameof(rankIndexScalerRegisterAddresses), ref rankIndexScalerRegisterAddresses);
+        }
+
+        public void OnAfterDeserialized()
+        {
+            registerAddress = ulong.Parse(registerAddressSerializer);
+        }
+
+        public void OnBeforeSerialize()
+        {
+            registerAddressSerializer = registerAddress.ToString();
         }
     }
 
@@ -95,7 +120,7 @@ namespace FadeBasic.Virtual
 
     public class CompileScope
     {
-        public int registerCount;
+        public ulong registerCount;
         
         private Dictionary<string, CompiledVariable> _varToReg = new Dictionary<string, CompiledVariable>();
 
@@ -111,7 +136,7 @@ namespace FadeBasic.Virtual
         {
             _varToReg = varToReg;
             _arrayVarToReg = arrayVarToReg;
-            var highestAddress = -1;
+            ulong highestAddress = 0;
             foreach (var kvp in _varToReg)
             {
                 if (kvp.Value.registerAddress > highestAddress)
@@ -153,7 +178,7 @@ namespace FadeBasic.Virtual
         {
             var compileVar = new CompiledVariable
             {
-                registerAddress = (byte)(regOffset + registerCount++),
+                registerAddress = (regOffset + registerCount++),
                 name = name,
                 typeCode = typeCode,
                 byteSize = TypeCodes.GetByteSize(typeCode),
@@ -199,17 +224,53 @@ namespace FadeBasic.Virtual
         };
     }
 
+    public class InternedScopeMetadata : IJsonableSerializationCallbacks
+    {
+        public int scopeIndex;
+        public ulong maxRegisterSize;
+        private string maxRegisterSizeSerializer;
+        
+        public void ProcessJson(IJsonOperation op)
+        {
+            op.IncludeField(nameof(scopeIndex), ref scopeIndex);
+            op.IncludeField(nameof(maxRegisterSizeSerializer), ref maxRegisterSizeSerializer);
+        }
+
+        public void OnAfterDeserialized()
+        {
+            maxRegisterSize = ulong.Parse(maxRegisterSizeSerializer);
+        }
+
+        public void OnBeforeSerialize()
+        {
+            maxRegisterSizeSerializer = maxRegisterSize.ToString();
+        }
+    }
     
-    public class InternedData : IJsonable
+    public class InternedData : IJsonable, IJsonableSerializationCallbacks
     {
         public Dictionary<string, InternedType> types;
         public Dictionary<string, InternedFunction> functions = new Dictionary<string, InternedFunction>();
         public List<InternedString> strings = new List<InternedString>();
+        // public Dictionary<int, InternedScopeMetadata> scopeMetaDatas = new Dictionary<int, InternedScopeMetadata>();
+        public ulong maxRegisterAddress;
+        private string maxRegisterAddressSerializer;
         public void ProcessJson(IJsonOperation op)
         {
             op.IncludeField(nameof(types), ref types);
             op.IncludeField(nameof(functions), ref functions);
             op.IncludeField(nameof(strings), ref strings);
+            op.IncludeField(nameof(maxRegisterAddressSerializer), ref maxRegisterAddressSerializer);
+        }
+
+        public void OnAfterDeserialized()
+        {
+            maxRegisterAddress = ulong.Parse(maxRegisterAddressSerializer);
+        }
+
+        public void OnBeforeSerialize()
+        {
+            maxRegisterAddressSerializer = maxRegisterAddress.ToString();
         }
     }
     
@@ -490,6 +551,8 @@ namespace FadeBasic.Virtual
                 data.types.Add(type.name, type);
             }
 
+            data.maxRegisterAddress = scopeStack.Peek().registerCount;
+            data.maxRegisterAddress += 1; // an extra 1 for debugging room.
             var json = data.Jsonify();
             var jsonBytes = Encoding.Default.GetBytes(json);
             _buffer.AddRange(jsonBytes);
@@ -765,9 +828,7 @@ namespace FadeBasic.Virtual
 
             }
             
-            
-            
-            _buffer.Add(OpCodes.BREAKPOINT);
+           
             // compile all the statements...
             foreach (var statement in functionStatement.statements)
             {
@@ -1373,10 +1434,9 @@ namespace FadeBasic.Virtual
                         default:
                             // anything else is a registry ptr!
                             var regAddr = variable.registerAddress;
-                            AddPush(_buffer, new byte[]
-                            {
-                                regAddr
-                            }, variable.isGlobal ? TypeCodes.PTR_GLOBAL_REG : TypeCodes.PTR_REG);
+                            _buffer.Add(OpCodes.PUSH);
+                            _buffer.Add(variable.isGlobal ? TypeCodes.PTR_GLOBAL_REG : TypeCodes.PTR_REG);
+                            AddPushULongNoTypeCode(_buffer, regAddr);
                             break;
                     }
                
@@ -1701,7 +1761,6 @@ namespace FadeBasic.Virtual
                     // _buffer.Add(OpCodes.STORE);
                     // _buffer.Add(arrayVar.rankIndexScalerRegisterAddresses[i]); // store the multiplier 
                     PushStore(_buffer, arrayVar.rankIndexScalerRegisterAddresses[i], arrayVar.isGlobal);
-
                 }
                 
                 
@@ -1832,29 +1891,36 @@ namespace FadeBasic.Virtual
             _buffer.Add(OpCodes.MUL);
 
             // load the array's ptr onto the stack, this is for the math of the offset
-            PushLoad(_buffer, compiledArrayVar.registerAddress, compiledArrayVar.isGlobal);
-
-
+            PushLoadPtr(_buffer, compiledArrayVar.registerAddress, compiledArrayVar.isGlobal);
+            
             // add the offset to the original pointer to get the write location
             _buffer.Add(OpCodes.ADD);
 
         }
 
-        static void PushStorePtr(List<byte> buffer, byte regAddr, bool isGlobal)
+        static void PushStorePtr(List<byte> buffer, ulong regAddr, bool isGlobal)
         {
             buffer.Add(isGlobal ? OpCodes.STORE_PTR_GLOBAL : OpCodes.STORE_PTR);
-            buffer.Add(regAddr);
+            // buffer.Add(regAddr);
+            AddPushULongNoTypeCode(buffer, regAddr);
+        }
+        static void PushLoadPtr(List<byte> buffer, ulong regAddr, bool isGlobal)
+        {
+            buffer.Add(isGlobal ? OpCodes.LOAD_PTR_GLOBAL : OpCodes.LOAD_PTR);
+            // buffer.Add(regAddr);
+            AddPushULongNoTypeCode(buffer, regAddr);
         }
 
-        static void PushStore(List<byte> buffer, byte registerAddress, bool isGlobal)
+        static void PushStore(List<byte> buffer, ulong registerAddress, bool isGlobal)
         {
             buffer.Add(isGlobal ? OpCodes.STORE_GLOBAL : OpCodes.STORE);
-            buffer.Add(registerAddress);
+            AddPushULongNoTypeCode(buffer, registerAddress);
+
         }
-        static void PushLoad(List<byte> buffer, byte registerAddress, bool isGlobal)
+        static void PushLoad(List<byte> buffer, ulong registerAddress, bool isGlobal)
         {
             buffer.Add(isGlobal ? OpCodes.LOAD_GLOBAL : OpCodes.LOAD);
-            buffer.Add(registerAddress);
+            AddPushULongNoTypeCode(buffer, registerAddress);
         }
 
         void CompileStructData(CompiledVariable compiledVar, bool ignoreType=true)
@@ -1872,9 +1938,6 @@ namespace FadeBasic.Virtual
                         
             // now, push the pointer where to write the data to- which, we know is the register address
             PushLoad(_buffer, compiledVar.registerAddress, compiledVar.isGlobal);
-                        
-            // the address is a struct ref, not an int, so for the write-command to work, we need to cast the struct to an int
-            CastToInt();
             
             _buffer.Add(OpCodes.WRITE); // consume the ptr, then the length, then the data
         }
@@ -2043,7 +2106,8 @@ namespace FadeBasic.Virtual
                             PushLoad(_buffer, compiledVar.registerAddress, compiledVar.isGlobal);
                             
                             // load the offset of the right side
-                            AddPushInt(_buffer, offset);
+                            // AddPushInt(_buffer, offset);
+                            AddPushPtr(_buffer, new VmPtr(){memoryPtr = offset}, TypeCodes.PTR_HEAP);
                             
                             // sum them, then the result is the ptr on the stack
                             _buffer.Add(OpCodes.ADD);
@@ -2082,8 +2146,13 @@ namespace FadeBasic.Virtual
             Compile(assignmentStatement.expression);
             CompileAssignmentLeftHandSide(assignmentStatement.variable);
 
+            if (test++ > 330)
+            {
+                
+            }
         }
 
+        private int test = 0;
         public void ComputeStructOffsets(CompiledType baseType, IVariableNode right, out int offset, out int writeLength, out byte typeCode)
         {
             writeLength = 0;
@@ -2182,7 +2251,8 @@ namespace FadeBasic.Virtual
                         // push a fake pointer onto the stack... The value gets replaced 
                         //  at RUNTIME as the machine is allocating the interned strings. 
                         // AddPushUInt(_buffer, int.MaxValue, includeTypeCode: false);
-                        AddPushInt(_buffer, int.MaxValue);
+                        // AddPushInt(_buffer, int.MaxValue);
+                        AddPushPtr(_buffer, VmPtr.TEMP, TypeCodes.PTR_HEAP);
                     }
                     else
                     {
@@ -2279,12 +2349,15 @@ namespace FadeBasic.Virtual
                             AddPushInt(_buffer, readLength);
                             
                             // push the read offset, so that we can add it to the ptr
-                            AddPushInt(_buffer, readOffset);
+                            // AddPushInt(_buffer, readOffset);
+                            AddPushPtr(_buffer, new VmPtr{memoryPtr = readOffset}, TypeCodes.PTR_HEAP);
                             
                             // push the ptr of the variable, and cast it to an int for easy math
                             PushLoad(_buffer, typeCompiledVar.registerAddress, typeCompiledVar.isGlobal);
-                            _buffer.Add(OpCodes.CAST);
-                            _buffer.Add(TypeCodes.INT);
+                            
+                            // TODO: I removed these as part of the PTR refactor?
+                            // _buffer.Add(OpCodes.CAST);
+                            // _buffer.Add(TypeCodes.INT);
                             
                             // add those two op codes back together...
                             _buffer.Add(OpCodes.ADD);
@@ -2348,9 +2421,7 @@ namespace FadeBasic.Virtual
                         // load the size up
                         AddPushInt(_buffer, structType.byteSize);
 
-                        // PushAddress(arrayRef);
                         PushLoad(_buffer, compiledVar.registerAddress, compiledVar.isGlobal);
-                        CastToInt();
                         
                         // read, it'll find the ptr, size, and then place the data onto the stack
                         _buffer.Add(OpCodes.READ);
@@ -2584,6 +2655,18 @@ namespace FadeBasic.Virtual
             buffer.Add(OpCodes.PUSH_TYPE_FORMAT);
             HeapTypeFormat.AddToBuffer(ref format, buffer);
         }
+
+        private static void AddPushPtr(List<byte> buffer, VmPtr ptr, byte typeCode)
+        {
+            buffer.Add(OpCodes.PUSH);
+            buffer.Add(typeCode);
+            var value = VmPtr.GetBytes(ref ptr);
+            for (var i = 0; i < value.Length; i++)
+                // for (var i = value.Length - 1; i >= 0; i--)
+            {
+                buffer.Add(value[i]);
+            }
+        }
         
         private static void AddPushInt(List<byte> buffer, int x)
         {
@@ -2596,9 +2679,18 @@ namespace FadeBasic.Virtual
                 buffer.Add(value[i]);
             }
         }
+
+        private static void AddPushULongNoTypeCode(List<byte> buffer, ulong x)
+        {
+            var value = BitConverter.GetBytes(x);
+            for (var i = 0 ; i < value.Length; i ++)
+            {
+                buffer.Add(value[i]);
+            }
+        }
+        
         private static void AddPushUInt(List<byte> buffer, uint x, bool includeTypeCode=true)
         {
-
             if (includeTypeCode)
             {
                 buffer.Add(OpCodes.PUSH);

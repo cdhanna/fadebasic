@@ -11,7 +11,6 @@
         <PackageId>FadeBasic.Lang.Core</PackageId>
         <Title>FadeBasic Language Core</Title>
         <Description>Fade's actually dotnet embeddable Basic. </Description>
-        
     </PropertyGroup>
     
     <ItemGroup Label="Net Standard 2.0 Dependencies"  Condition="'$(TargetFramework)' == 'netstandard2.0'">

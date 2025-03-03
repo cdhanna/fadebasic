@@ -380,7 +380,7 @@ b2 = 2
             session.StartDebugging(2); // read the message (1 op for the read, and 1 op to move the debugger forward)
             await Task.Delay(100); // fluff time for the ack to emit
             Assert.That(receivedConf, Is.True);
-            Assert.That(session.InstructionPointer, Is.EqualTo(20),
+            Assert.That(session.InstructionPointer, Is.EqualTo(27),
                 "The debugger should be paused, so the insptr should not have moved from last time.");
         }
 

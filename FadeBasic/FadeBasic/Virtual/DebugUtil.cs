@@ -10,12 +10,12 @@ namespace FadeBasic.Virtual
         public readonly byte typeCode;
         public ulong rawValue; // could be a ptr.
         public readonly int scopeIndex;
-        public readonly int regAddr;
+        public readonly ulong regAddr;
 
         public readonly VmAllocation allocation;
         public readonly VirtualMachine vm;
 
-        public DebugRuntimeVariable(VirtualMachine vm, string name, byte typeCode, ulong rawValue, ref VmAllocation allocation, int scopeIndex, int regAddr)
+        public DebugRuntimeVariable(VirtualMachine vm, string name, byte typeCode, ulong rawValue, ref VmAllocation allocation, int scopeIndex, ulong regAddr)
         {
             this.vm = vm;
             this.name = name;
@@ -26,7 +26,7 @@ namespace FadeBasic.Virtual
             this.regAddr = regAddr;
             
         }
-        public DebugRuntimeVariable(VirtualMachine vm, string name, byte typeCode, ulong rawValue, int scopeIndex, int regAddr)
+        public DebugRuntimeVariable(VirtualMachine vm, string name, byte typeCode, ulong rawValue, int scopeIndex, ulong regAddr)
         {
             
             this.vm = vm;
@@ -39,7 +39,7 @@ namespace FadeBasic.Virtual
             // we know at this moment if the rawValue is a ptr or not...
             if (typeCode == TypeCodes.STRUCT || typeCode == TypeCodes.STRING)
             {
-                if (!this.vm.heap.TryGetAllocation((int) rawValue, out allocation))
+                if (!this.vm.heap.TryGetAllocation(VmPtr.FromRaw(rawValue), out allocation))
                 {
                     throw new InvalidOperationException("There is no allocation for the struct reference. hh");
                 }
@@ -66,7 +66,7 @@ namespace FadeBasic.Virtual
                 case TypeCodes.BYTE:
                     return VmUtil.ConvertToByte(rawValue).ToString();
                 case TypeCodes.STRING:
-                    var address = (int)rawValue;
+                    var address = VmPtr.FromRaw(rawValue);
                     if (vm.heap.TryGetAllocationSize(address, out var strSize))
                     {
                         vm.heap.Read(address, strSize, out var strBytes);
@@ -142,7 +142,7 @@ namespace FadeBasic.Virtual
              * Then move backwards by our current rank index (-arrayRankIndex*2)
              * And then of the two registers, the element size is 1 back. 
              */
-            var elementRegAddr = regAddr + rankCount * 2 - (arrayRankIndex * 2 ) - 1;
+            ulong elementRegAddr = regAddr + (ulong)rankCount * 2 - ((ulong)arrayRankIndex * 2 ) - 1;
             var elementCount = scope.dataRegisters[elementRegAddr];
             
             return (int)elementCount;
@@ -344,7 +344,7 @@ namespace FadeBasic.Virtual
                         var elementTypeCode = variable.allocation.format.typeCode;
                         
                         // TODO: replace this with the stide in the dataRegisters...
-                        var elementRegAddr = variable.regAddr + arrayRanks * 2 - (variable.arrayRankIndex * 2 );
+                        var elementRegAddr = variable.regAddr + (ulong)arrayRanks * 2 - ((ulong)variable.arrayRankIndex * 2 );
                         var strideLength = (int)_vm.scopeStack.buffer[variable.scopeIndex].dataRegisters[elementRegAddr];
                         _logger.Log($"found stride length=[{strideLength}] at reg=[{elementRegAddr}]");
                         var elementSize = (int)TypeCodes.GetByteSize(elementTypeCode);
@@ -384,7 +384,7 @@ namespace FadeBasic.Virtual
                                 var ptr = variable.rawValue + (ulong)(elementSize * i * strideLength);
                                 var alloc = new VmAllocation
                                 {
-                                    ptr = (int)ptr,
+                                    ptr = VmPtr.FromRaw(ptr),
                                     length = elementSize,
                                     format = new HeapTypeFormat
                                     {
@@ -444,7 +444,7 @@ namespace FadeBasic.Virtual
                             }
                             else
                             {
-                                _vm.heap.ReadSpan((int)variable.rawValue + elementSize * i, elementSize,
+                                _vm.heap.ReadSpan(VmPtr.FromRaw(variable.rawValue) + elementSize * i, elementSize,
                                     out var fieldSpan);
                                 subVariable.value =
                                     VmUtil.ConvertValueToDisplayString(elementTypeCode, _vm, ref fieldSpan);
@@ -479,7 +479,7 @@ namespace FadeBasic.Virtual
                             var ptr = variable.rawValue + (ulong)field.offset;
                             var alloc = new VmAllocation
                             {
-                                ptr = (int)ptr,
+                                ptr = VmPtr.FromRaw(ptr),
                                 length = field.length,
                                 format = new HeapTypeFormat
                                 {
@@ -523,7 +523,7 @@ namespace FadeBasic.Virtual
                                     };
                                     
                                     evalNameToId[subVariable.evalName] = subVariable.id;
-                                    _vm.heap.ReadSpan((int)variable.rawValue + field.offset, field.length, out var fieldSpan);
+                                    _vm.heap.ReadSpan(VmPtr.FromRaw(variable.rawValue) + field.offset, field.length, out var fieldSpan);
                                     VmUtil.TryGetVariableTypeDisplay(field.typeCode, out subVariable.type);
                                     subVariable.value =
                                         VmUtil.ConvertValueToDisplayString(field.typeCode, _vm, ref fieldSpan);
@@ -673,7 +673,7 @@ namespace FadeBasic.Virtual
         public static Dictionary<string, DebugRuntimeVariable> LookupVariablesFromScope(VirtualMachine vm, Dictionary<string, DebugRuntimeVariable> results, DebugData dbg, int vmScopeIndex, bool global)
         {
             var scope = vm.scopeStack.buffer[vmScopeIndex];
-            for (var scopeIndex = 0; scopeIndex < scope.dataRegisters.Length; scopeIndex++)
+            for (ulong scopeIndex = 0; scopeIndex < (ulong)scope.dataRegisters.LongLength; scopeIndex++)
             {
                 var insIndex = scope.insIndexes[scopeIndex];
                 if (!dbg.insToVariable.TryGetValue(insIndex, out var variable))
@@ -689,7 +689,7 @@ namespace FadeBasic.Virtual
 
                 if (variable.isPtr > 0)
                 {
-                    if (!vm.heap.TryGetAllocation((int)scope.dataRegisters[scopeIndex], out var allocation))
+                    if (!vm.heap.TryGetAllocation(VmPtr.FromRaw(scope.dataRegisters[scopeIndex]), out var allocation))
                     {
                         throw new InvalidOperationException($"Could not get allocation for pointer based variable=[{variable.name}]");
                     }

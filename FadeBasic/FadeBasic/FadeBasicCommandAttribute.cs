@@ -23,7 +23,7 @@ namespace FadeBasic.SourceGenerators
     public struct RawArg<T>
     {
         public T value;
-        public int address;
+        public ulong address;
         public CommandArgRuntimeState state;
     } 
 }

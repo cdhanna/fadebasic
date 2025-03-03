@@ -437,11 +437,11 @@ namespace FadeBasic.Sdk
                 return false;
             }
 
-            var address = VmUtil.ConvertToInt(scope.dataRegisters[index]);
+            var address = VmUtil.ConvertToPtr(scope.dataRegisters[index]);
             return TryReadString(address, out value, out error);
         }
 
-        bool TryReadString(int address, out string value, out string error)
+        bool TryReadString(VmPtr address, out string value, out string error)
         {
             value = null;
             error = null;
@@ -514,7 +514,7 @@ namespace FadeBasic.Sdk
             }
             
           
-            var address = VmUtil.ConvertToInt(scope.dataRegisters[index]);
+            var address = VmUtil.ConvertToPtr(scope.dataRegisters[index]);
             if (!Machine.heap.TryGetAllocation(address, out var allocation))
             {
                 error = "invalid memory address";
@@ -592,14 +592,14 @@ namespace FadeBasic.Sdk
                 return false;
             }
             
-            var address = VmUtil.ConvertToInt(scope.dataRegisters[index]);
+            var address = VmUtil.ConvertToPtr(scope.dataRegisters[index]);
             return TryReadObject(address, out value, out error);
             
         }
         
         
 
-        bool TryReadObject(int address, out FadeObject value, out string error)
+        bool TryReadObject(VmPtr address, out FadeObject value, out string error)
         {
             value = null;
             error = null;
@@ -663,7 +663,8 @@ namespace FadeBasic.Sdk
                     value.doubleFloatFields[fieldName] = BitConverter.ToDouble(memory, member.Offset + offset);
                     break;
                 case TypeCodes.STRING:
-                    var strPtr = BitConverter.ToInt32(memory, member.Offset + offset);
+                    var strPtr = allocation.ptr + member.Offset + offset;
+                    // var strPtr = BitConverter.ToInt32(memory, member.Offset + offset);
                     TryReadString(strPtr, out var strValue, out _);
                     value.stringFields[fieldName] = strValue;
                     break;
