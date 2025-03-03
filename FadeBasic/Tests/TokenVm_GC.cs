@@ -113,7 +113,7 @@ y$ = ""{str}""
         Assert.That(xPtr, Is.EqualTo(0));
         Assert.That(yPtr, Is.EqualTo(xPtr));
         
-        vm.heap.Read((int)xPtr, expected.Length * 4, out var memory);
+        vm.heap.Read(xPtr.ToPtr(), expected.Length * 4, out var memory);
         var actual = VmConverter.ToString(memory);
         Assert.That(actual, Is.EqualTo(expected));
 

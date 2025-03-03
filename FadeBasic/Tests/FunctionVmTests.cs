@@ -227,7 +227,7 @@ EndFunction a + ""hello""
         var vm = new VirtualMachine(prog);
         vm.Execute2();
         
-        vm.heap.Read((int)vm.dataRegisters[0], "worldhello".Length * 4, out var memory);
+        vm.heap.Read(vm.dataRegisters[0].ToPtr(), "worldhello".Length * 4, out var memory);
         var str = VmConverter.ToString(memory);
         Assert.That(str, Is.EqualTo("worldhello"));
 
@@ -251,7 +251,7 @@ EndFunction a$
         var vm = new VirtualMachine(prog);
         vm.Execute2();
         
-        vm.heap.Read((int)vm.dataRegisters[0], "hello".Length * 4, out var memory);
+        vm.heap.Read(vm.dataRegisters[0].ToPtr(), "hello".Length * 4, out var memory);
         var str = VmConverter.ToString(memory);
         Assert.That(str, Is.EqualTo("hello"));
 
@@ -288,15 +288,15 @@ EndFunction e
         var vm = new VirtualMachine(prog);
         vm.Execute2();
         
-        Assert.That(vm.heap.Cursor, Is.EqualTo(4 * 3)); // size of the only field in egg, int, 4. And there are 3 copies; one in global scope, one passed to the function, and one returned from the function
+        Assert.That(vm.heap.Cursor, Is.EqualTo((4 * 3).ToPtr())); // size of the only field in egg, int, 4. And there are 3 copies; one in global scope, one passed to the function, and one returned from the function
         Assert.That(vm.typeRegisters[0], Is.EqualTo(TypeCodes.STRUCT));
         
-        vm.heap.Read((int)vm.dataRegisters[0], 4, out var memory);
+        vm.heap.Read(vm.dataRegisters[0].ToPtr(), 4, out var memory);
         var data = BitConverter.ToInt32(memory);
         Assert.That(data, Is.EqualTo(1));
         
         Assert.That(vm.typeRegisters[1], Is.EqualTo(TypeCodes.STRUCT));
-        vm.heap.Read((int)vm.dataRegisters[1], 4, out memory);
+        vm.heap.Read(vm.dataRegisters[1].ToPtr(), 4, out memory);
         data = BitConverter.ToInt32(memory);
         Assert.That(data, Is.EqualTo(6));
     }
@@ -436,8 +436,8 @@ EndFunction returnValue$
         // at this point, the pointer to the right heap is getting lost???
         
         var expected = "the eight of pie";
-        vm.heap.GetAllocationSize((int)vm.dataRegisters[0], out var allocSize);
-        vm.heap.Read((int)vm.dataRegisters[0], allocSize, out var memory);
+        vm.heap.GetAllocationSize(vm.dataRegisters[0].ToPtr(), out var allocSize);
+        vm.heap.Read(vm.dataRegisters[0].ToPtr(), allocSize, out var memory);
         var str = VmConverter.ToString(memory);
         Assert.That(str, Is.EqualTo(expected));
 
@@ -472,11 +472,11 @@ EndFunction a.x + a.y
         var vm = new VirtualMachine(prog);
         vm.Execute().MoveNext();
         
-        vm.heap.Read((int)vm.dataRegisters[0], 4, out var memory);
+        vm.heap.Read(vm.dataRegisters[0].ToPtr(), 4, out var memory);
         var data = BitConverter.ToInt32(memory);
         Assert.That(data, Is.EqualTo(32));
         
-        vm.heap.Read((int)vm.dataRegisters[0] + 4, 4, out memory); 
+        vm.heap.Read(vm.dataRegisters[0].ToPtr() + 4, 4, out memory); 
         data = BitConverter.ToInt32(memory);
         Assert.That(data, Is.EqualTo(66));
 
@@ -513,11 +513,11 @@ EndFunction
         var vm = new VirtualMachine(prog);
         vm.Execute().MoveNext();
         
-        vm.heap.Read((int)vm.dataRegisters[0], 4, out var memory);
+        vm.heap.Read(vm.dataRegisters[0].ToPtr(), 4, out var memory);
         var data = BitConverter.ToInt32(memory);
         Assert.That(data, Is.EqualTo(32));
         
-        vm.heap.Read((int)vm.dataRegisters[0] + 4, 4, out memory); 
+        vm.heap.Read(vm.dataRegisters[0].ToPtr() + 4, 4, out memory); 
         data = BitConverter.ToInt32(memory);
         Assert.That(data, Is.EqualTo(66));
 

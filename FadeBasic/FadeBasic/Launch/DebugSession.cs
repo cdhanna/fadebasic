@@ -1010,7 +1010,7 @@ namespace FadeBasic.Launch
             if (synth.typeCode == TypeCodes.STRUCT)
             {
                 var ptr = _vm.dataRegisters[synth.registerAddress];
-                if (!_vm.heap.TryGetAllocation((int)ptr, out var alloc))
+                if (!_vm.heap.TryGetAllocation(VmPtr.FromRaw(ptr), out var alloc))
                 {
                     return DebugEvalResult.Failed(
                         $"invalid heap, reg=[{synth.registerAddress}] data=[{ptr}] which is not a valid heap pointer");

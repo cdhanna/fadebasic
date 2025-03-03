@@ -186,7 +186,7 @@ namespace FadeBasic.Virtual
                 heap.AllocateString(size, out var ptr);
                 
                 // this interned string should never be free'd, because we don't know when it will need to be accessed. 
-                heap.IncrementRefCount((ulong)ptr); 
+                heap.IncrementRefCount(ptr); 
                 var span = new byte[size];
                 for (var i = 0; i < str.value.Length; i++)
                 {
@@ -200,7 +200,7 @@ namespace FadeBasic.Virtual
 
                 heap.Write(ptr, size, span);
 
-                var ptrBytes = BitConverter.GetBytes(ptr);
+                var ptrBytes = VmPtr.GetBytes(ref ptr);
                 foreach (var index in str.indexReferences)
                 {
                     // replace the ptr starting at index with the actual assigned ptr
@@ -209,6 +209,11 @@ namespace FadeBasic.Virtual
                     program[index + 3] = ptrBytes[1];
                     program[index + 4] = ptrBytes[2];
                     program[index + 5] = ptrBytes[3];
+                    
+                    program[index + 6] = ptrBytes[4];
+                    program[index + 7] = ptrBytes[5];
+                    program[index + 8] = ptrBytes[6];
+                    program[index + 9] = ptrBytes[7];
                 }
             }
         }
@@ -277,7 +282,6 @@ namespace FadeBasic.Virtual
                                     var ptr = vScope.dataRegisters[scopeIndex];
                                     if (isPtr && vScope.insIndexes[scopeIndex] > 0)
                                     {
-                                        
                                         heap.TryDecrementRefCount(ptr);
                                     }
                                 }
@@ -602,6 +606,26 @@ namespace FadeBasic.Virtual
                             stack.PushSpanAndType(new ReadOnlySpan<byte>(aBytes), typeCode, size);
                             
                             break;
+                        case OpCodes.LOAD_PTR:
+                            VmUtil.ReadRegAddress(program, ref instructionIndex, out addr);
+
+                            typeCode = TypeCodes.PTR_HEAP;// globalScope.typeRegisters[addr];
+                            data = scope.dataRegisters[addr];
+                            size = TypeCodes.GetByteSize(typeCode);
+                            aBytes = BitConverter.GetBytes(data);
+                            stack.PushSpanAndType(new ReadOnlySpan<byte>(aBytes), typeCode, size);
+
+                            break;
+                        case OpCodes.LOAD_PTR_GLOBAL:
+                            VmUtil.ReadRegAddress(program, ref instructionIndex, out addr);
+
+                            typeCode = TypeCodes.PTR_HEAP;// globalScope.typeRegisters[addr];
+                            data = globalScope.dataRegisters[addr];
+                            size = TypeCodes.GetByteSize(typeCode);
+                            aBytes = BitConverter.GetBytes(data);
+                            stack.PushSpanAndType(new ReadOnlySpan<byte>(aBytes), typeCode, size);
+
+                            break;
                         case OpCodes.LOAD_GLOBAL:
                             VmUtil.ReadRegAddress(program, ref instructionIndex, out addr);
 
@@ -622,8 +646,8 @@ namespace FadeBasic.Virtual
                             VmUtil.ReadAsInt(ref stack, out var allocLength);
                             heap.Allocate(ref format, allocLength, out var allocPtr);
                             // push the address onto the stack
-                            bBytes = BitConverter.GetBytes(allocPtr);
-                            VmUtil.PushSpan(ref stack, bBytes, TypeCodes.INT);
+                            bBytes = VmPtr.GetBytes(ref allocPtr);
+                            VmUtil.PushSpan(ref stack, bBytes, TypeCodes.PTR_HEAP);
                             
                             break;
                         case OpCodes.DISCARD:
@@ -660,7 +684,7 @@ namespace FadeBasic.Virtual
                             break;
                         case OpCodes.READ:
                             
-                            VmUtil.ReadAsInt(ref stack, out var readPtr);
+                            VmUtil.ReadAsVmPtr(ref stack, out var readPtr);
                             VmUtil.ReadAsInt(ref stack, out var readLength);
                             heap.Read(readPtr, readLength, out aBytes);
                             stack.PushSpan(aBytes, readLength);

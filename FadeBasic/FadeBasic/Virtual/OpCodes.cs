@@ -29,10 +29,10 @@ namespace FadeBasic.Virtual
         public const byte DINT     = 0x06; // 8 bytes (long)
         public const byte DFLOAT   = 0x07; // 8 bytes (double)
         public const byte VOID     = 0x08; // 0 bytes
-        public const byte STRING   = 0x09; // 4 bytes (ptr)
+        public const byte STRING   = 0x09; // 8 bytes (ptr)
         public const byte PTR_REG  = 0x0A; // 8 byte (registry ptr)
-        public const byte PTR_HEAP = 0x0B; // 4 bytes (heap ptr)
-        public const byte STRUCT   = 0x0C; // 4 bytes (ptr)
+        public const byte PTR_HEAP = 0x0B; // 8 bytes (heap ptr)
+        public const byte STRUCT   = 0x0C; // 8 bytes (ptr), bucket and ptr
         public const byte PTR_GLOBAL_REG = 0x0D; // 8 byte (global registry ptr)
 
         public const byte ANY      = 254; // this isn't a real type code, it is a fake number used for calling C# methods
@@ -50,9 +50,9 @@ namespace FadeBasic.Virtual
             60, // dfloat
             30, // void
             30, // string (int ptr)
-            10, // ptr_reg
-            10, // ptr_heap
-            10, // struct (int ptr)
+            100, // ptr_reg
+            100, // ptr_heap
+            100, // struct (int ptr)
         };
 
         public static readonly byte[] SIZE_TABLE = new byte[]
@@ -66,10 +66,10 @@ namespace FadeBasic.Virtual
             8, // dint
             8, // dfloat
             0, // void
-            4, // string (int ptr)
+            8, // string (int ptr)
             8, // ptr_reg
-            4, // ptr_heap
-            4, // struct (int ptr)
+            8, // ptr_heap
+            8, // struct (int ptr)
             8, // global ptr_reg
         };
 
@@ -350,5 +350,11 @@ namespace FadeBasic.Virtual
         /// The intersection of <see cref="STORE_PTR"/> and <see cref="STORE_GLOBAL"/>
         /// </summary>
         public const byte STORE_PTR_GLOBAL = 48;
+
+        /// <summary>
+        /// Similar to <see cref="LOAD_GLOBAL"/>, but the value is actually a pointer
+        /// </summary>
+        public const byte LOAD_PTR_GLOBAL = 57;
+        public const byte LOAD_PTR = 58;
     }
 }

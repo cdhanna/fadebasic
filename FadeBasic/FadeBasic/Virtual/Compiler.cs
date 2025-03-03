@@ -828,9 +828,7 @@ namespace FadeBasic.Virtual
 
             }
             
-            
-            
-            _buffer.Add(OpCodes.BREAKPOINT);
+           
             // compile all the statements...
             foreach (var statement in functionStatement.statements)
             {
@@ -1763,7 +1761,6 @@ namespace FadeBasic.Virtual
                     // _buffer.Add(OpCodes.STORE);
                     // _buffer.Add(arrayVar.rankIndexScalerRegisterAddresses[i]); // store the multiplier 
                     PushStore(_buffer, arrayVar.rankIndexScalerRegisterAddresses[i], arrayVar.isGlobal);
-
                 }
                 
                 
@@ -1894,9 +1891,8 @@ namespace FadeBasic.Virtual
             _buffer.Add(OpCodes.MUL);
 
             // load the array's ptr onto the stack, this is for the math of the offset
-            PushLoad(_buffer, compiledArrayVar.registerAddress, compiledArrayVar.isGlobal);
-
-
+            PushLoadPtr(_buffer, compiledArrayVar.registerAddress, compiledArrayVar.isGlobal);
+            
             // add the offset to the original pointer to get the write location
             _buffer.Add(OpCodes.ADD);
 
@@ -1905,6 +1901,12 @@ namespace FadeBasic.Virtual
         static void PushStorePtr(List<byte> buffer, ulong regAddr, bool isGlobal)
         {
             buffer.Add(isGlobal ? OpCodes.STORE_PTR_GLOBAL : OpCodes.STORE_PTR);
+            // buffer.Add(regAddr);
+            AddPushULongNoTypeCode(buffer, regAddr);
+        }
+        static void PushLoadPtr(List<byte> buffer, ulong regAddr, bool isGlobal)
+        {
+            buffer.Add(isGlobal ? OpCodes.LOAD_PTR_GLOBAL : OpCodes.LOAD_PTR);
             // buffer.Add(regAddr);
             AddPushULongNoTypeCode(buffer, regAddr);
         }
@@ -1936,9 +1938,6 @@ namespace FadeBasic.Virtual
                         
             // now, push the pointer where to write the data to- which, we know is the register address
             PushLoad(_buffer, compiledVar.registerAddress, compiledVar.isGlobal);
-                        
-            // the address is a struct ref, not an int, so for the write-command to work, we need to cast the struct to an int
-            CastToInt();
             
             _buffer.Add(OpCodes.WRITE); // consume the ptr, then the length, then the data
         }
@@ -2107,7 +2106,8 @@ namespace FadeBasic.Virtual
                             PushLoad(_buffer, compiledVar.registerAddress, compiledVar.isGlobal);
                             
                             // load the offset of the right side
-                            AddPushInt(_buffer, offset);
+                            // AddPushInt(_buffer, offset);
+                            AddPushPtr(_buffer, new VmPtr(){memoryPtr = offset}, TypeCodes.PTR_HEAP);
                             
                             // sum them, then the result is the ptr on the stack
                             _buffer.Add(OpCodes.ADD);
@@ -2251,7 +2251,8 @@ namespace FadeBasic.Virtual
                         // push a fake pointer onto the stack... The value gets replaced 
                         //  at RUNTIME as the machine is allocating the interned strings. 
                         // AddPushUInt(_buffer, int.MaxValue, includeTypeCode: false);
-                        AddPushInt(_buffer, int.MaxValue);
+                        // AddPushInt(_buffer, int.MaxValue);
+                        AddPushPtr(_buffer, VmPtr.TEMP, TypeCodes.PTR_HEAP);
                     }
                     else
                     {
@@ -2348,12 +2349,15 @@ namespace FadeBasic.Virtual
                             AddPushInt(_buffer, readLength);
                             
                             // push the read offset, so that we can add it to the ptr
-                            AddPushInt(_buffer, readOffset);
+                            // AddPushInt(_buffer, readOffset);
+                            AddPushPtr(_buffer, new VmPtr{memoryPtr = readOffset}, TypeCodes.PTR_HEAP);
                             
                             // push the ptr of the variable, and cast it to an int for easy math
                             PushLoad(_buffer, typeCompiledVar.registerAddress, typeCompiledVar.isGlobal);
-                            _buffer.Add(OpCodes.CAST);
-                            _buffer.Add(TypeCodes.INT);
+                            
+                            // TODO: I removed these as part of the PTR refactor?
+                            // _buffer.Add(OpCodes.CAST);
+                            // _buffer.Add(TypeCodes.INT);
                             
                             // add those two op codes back together...
                             _buffer.Add(OpCodes.ADD);
@@ -2417,9 +2421,7 @@ namespace FadeBasic.Virtual
                         // load the size up
                         AddPushInt(_buffer, structType.byteSize);
 
-                        // PushAddress(arrayRef);
                         PushLoad(_buffer, compiledVar.registerAddress, compiledVar.isGlobal);
-                        CastToInt();
                         
                         // read, it'll find the ptr, size, and then place the data onto the stack
                         _buffer.Add(OpCodes.READ);
@@ -2652,6 +2654,18 @@ namespace FadeBasic.Virtual
         {
             buffer.Add(OpCodes.PUSH_TYPE_FORMAT);
             HeapTypeFormat.AddToBuffer(ref format, buffer);
+        }
+
+        private static void AddPushPtr(List<byte> buffer, VmPtr ptr, byte typeCode)
+        {
+            buffer.Add(OpCodes.PUSH);
+            buffer.Add(typeCode);
+            var value = VmPtr.GetBytes(ref ptr);
+            for (var i = 0; i < value.Length; i++)
+                // for (var i = value.Length - 1; i >= 0; i--)
+            {
+                buffer.Add(value[i]);
+            }
         }
         
         private static void AddPushInt(List<byte> buffer, int x)

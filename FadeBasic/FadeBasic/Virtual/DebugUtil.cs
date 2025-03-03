@@ -39,7 +39,7 @@ namespace FadeBasic.Virtual
             // we know at this moment if the rawValue is a ptr or not...
             if (typeCode == TypeCodes.STRUCT || typeCode == TypeCodes.STRING)
             {
-                if (!this.vm.heap.TryGetAllocation((int) rawValue, out allocation))
+                if (!this.vm.heap.TryGetAllocation(VmPtr.FromRaw(rawValue), out allocation))
                 {
                     throw new InvalidOperationException("There is no allocation for the struct reference. hh");
                 }
@@ -66,7 +66,7 @@ namespace FadeBasic.Virtual
                 case TypeCodes.BYTE:
                     return VmUtil.ConvertToByte(rawValue).ToString();
                 case TypeCodes.STRING:
-                    var address = (int)rawValue;
+                    var address = VmPtr.FromRaw(rawValue);
                     if (vm.heap.TryGetAllocationSize(address, out var strSize))
                     {
                         vm.heap.Read(address, strSize, out var strBytes);
@@ -384,7 +384,7 @@ namespace FadeBasic.Virtual
                                 var ptr = variable.rawValue + (ulong)(elementSize * i * strideLength);
                                 var alloc = new VmAllocation
                                 {
-                                    ptr = (int)ptr,
+                                    ptr = VmPtr.FromRaw(ptr),
                                     length = elementSize,
                                     format = new HeapTypeFormat
                                     {
@@ -444,7 +444,7 @@ namespace FadeBasic.Virtual
                             }
                             else
                             {
-                                _vm.heap.ReadSpan((int)variable.rawValue + elementSize * i, elementSize,
+                                _vm.heap.ReadSpan(VmPtr.FromRaw(variable.rawValue) + elementSize * i, elementSize,
                                     out var fieldSpan);
                                 subVariable.value =
                                     VmUtil.ConvertValueToDisplayString(elementTypeCode, _vm, ref fieldSpan);
@@ -479,7 +479,7 @@ namespace FadeBasic.Virtual
                             var ptr = variable.rawValue + (ulong)field.offset;
                             var alloc = new VmAllocation
                             {
-                                ptr = (int)ptr,
+                                ptr = VmPtr.FromRaw(ptr),
                                 length = field.length,
                                 format = new HeapTypeFormat
                                 {
@@ -523,7 +523,7 @@ namespace FadeBasic.Virtual
                                     };
                                     
                                     evalNameToId[subVariable.evalName] = subVariable.id;
-                                    _vm.heap.ReadSpan((int)variable.rawValue + field.offset, field.length, out var fieldSpan);
+                                    _vm.heap.ReadSpan(VmPtr.FromRaw(variable.rawValue) + field.offset, field.length, out var fieldSpan);
                                     VmUtil.TryGetVariableTypeDisplay(field.typeCode, out subVariable.type);
                                     subVariable.value =
                                         VmUtil.ConvertValueToDisplayString(field.typeCode, _vm, ref fieldSpan);
@@ -689,7 +689,7 @@ namespace FadeBasic.Virtual
 
                 if (variable.isPtr > 0)
                 {
-                    if (!vm.heap.TryGetAllocation((int)scope.dataRegisters[scopeIndex], out var allocation))
+                    if (!vm.heap.TryGetAllocation(VmPtr.FromRaw(scope.dataRegisters[scopeIndex]), out var allocation))
                     {
                         throw new InvalidOperationException($"Could not get allocation for pointer based variable=[{variable.name}]");
                     }
