@@ -78,6 +78,10 @@ FUNCTION getEgg()
 ENDFUNCTION egg
 ```
 
+## UDT Initializers
+
+_Fade_ supports [object initializers](https://github.com/cdhanna/fadebasic/blob/main/FadeBasic/book/FadeBook/Language.md#udt-initializer), where-as _Dark Basic Pro_ did not. 
+
 ## No String Concatenation with semicolons
 _Fade Basic_ does not support string concatenation with the `;` character. Instead, please use the `+` character. 
 

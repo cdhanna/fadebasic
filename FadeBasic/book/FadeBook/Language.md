@@ -1,3 +1,54 @@
+
+### Contents
+
+- [Inspiration](#language-guide)
+- Language features
+    - [Comments](#comments)
+    - [Variables](#variables)
+        - [Single Line](#single-line-assignment)
+        - [Sigils](#sigils)
+    - [Casting](#casting)
+    - [Primitives](#primitive-types)
+        - [Implicit Casts](#implicit-casts)
+    - [Strings](#strings)
+    - [Functions](#functions)
+        - [Scopes](#function-scopes)
+        - [Returns](#return-values)
+        - [Parameters](#parameters)
+        - [Nested Functions](#no-nested-functions)
+        - [Clojures](#no-lambdas-or-clojures)
+    - [Scopes](#scopes)
+    - [Types](#user-defined-types)
+        - [Default](#udt-default-value)
+        - [Initializers](#udt-initializer)
+        - [Assignment](#udt-assignment)
+        - [Methods](#no-methods)
+    - [Arrays](#arrays)
+        - [Multidimensions](#multidimensional-arrays)
+        - [Arrays of Types](#arrays-of-udt)
+        - [Out of Bounds](#array-out-of-bounds)
+        - [Return Values](#cannot-return-arrays-from-functions)
+        - [Assignment](#cannot-assign-an-array)
+    - [Literals](#literals)
+    - [Operations](#operations)
+        - [Numerics](#numeric-operations)
+        - [Commands](#commands)
+        - [Short Circuits](#short-circuiting)
+    - [Control Statements](#control-statements)
+        - [Conditionals](#conditionals)
+        - [Single Line](#single-line-statements)
+        - [For Loops](#for-loops)
+        - [While Loops](#while-loops)
+        - [Repeat Loops](#repeat-loops)
+        - [Do Loops](#do-loops)
+        - [End](#end)
+        - [Goto](#goto)
+        - [Gosub](#gosub)
+        - [Select](#select)
+    - [Constants](#compile-time-constants)
+    - [Memory](#memory)
+
+
 # Language Guide
 
 _Fade Basic_ is a variant of BASIC. The language is fairly limited in its scope and it is intended to capture the essence of what _Dark Basic Pro_ was able to do in 2003. If you are familiar with _Dark Basic_, then read about the [Differences between _Fade Basic_ and _Dark Basic_](https://github.com/cdhanna/fadebasic/blob/main/FadeBasic/book/FadeBook/Dark%20Basic%20Pro%20Changes.md). It is worth glancing over this document with an open mind, as some of the language decisions may raise an eyebrow in 2025. 
@@ -114,7 +165,7 @@ x = val("42") `x is 42
 
 ## Primitive Types
 
-_Fade Basic_ supports the following primitives. The _classic name_ is inspired from the BASIC-era, and the _C# equivalent_ is the mapped type. At the moment, not all valid C# primitive types are available. However, it is valid to use either type name in your declarations. 
+_Fade Basic_ supports the following primitives. The _classic name_ is inspired from the BASIC-era, and the _C# equivalent_ is the mapped type. At the moment, not all valid C# primitive types are available. However, it is valid to use either type name in your declarations. The default value of all primtives is zero, except for `STRING`, which is an empty string. 
 
 | classic name  | C# equivalent | byte-size | description | range | 
 | --------------| ------------- | --------- | ----------- | ----- |
@@ -235,7 +286,7 @@ ENDFUNCTION
 ```
 
 ----
-#### No Lambdas or Closures
+#### No Lambdas or Clojures
 _Fade_ does not support function pointers or the ability to create a closure. 
 
 
@@ -286,6 +337,103 @@ ENDTYPE
 ```
 
 Be careful! It is not valid to have a recursive type dependency. In the example above, it would be incorrect to add an `EGG` field to the `CHICKEN` type.
+
+----
+#### UDT Default Value
+
+An instance of a UDT can be reset back to an empty object using the `default` keyword.
+```basic
+TYPE VECTOR
+    x, 
+    y
+ENDTYPE
+
+v AS VECTOR
+v.x = 4
+v.y = 2
+
+` this line resets the object and clears all field values
+v = default 
+
+PRINT v.x + v.y `prints 0
+```
+
+The `default` keyword can only be used in simple assignments and declarations. 
+
+----
+#### UDT Initializer
+
+It is possible to set many fields at once by using object initializers.
+```basic
+TYPE VECTOR
+    x, 
+    y
+ENDTYPE
+
+v AS VECTOR = {
+    x = 1, 
+    y = 2
+}
+```
+
+This syntax is equivelent to writing the assignments out one by one. The declaration above is equivelent to the following code snippet, 
+```basic
+v AS VECTOR
+v.x = 1
+v.y = 2
+```
+
+Object initializers can be used in a nested construction as well.
+```basic
+TYPE CHICKEN
+    name$
+ENDTYPE
+TYPE EGG
+    size
+    chicken AS CHICKEN
+ENDTYPE
+e AS EGG = {
+    size = 1,
+    chicken = {
+        name$ = "Albert"
+    }
+}
+```
+
+It is also valid to use field accessors within the assignments of an object initializer. 
+```basic
+TYPE CHICKEN
+    name$
+ENDTYPE
+TYPE EGG
+    size
+    chicken AS CHICKEN
+ENDTYPE
+e AS EGG = {
+    size = 1,
+    chicken.name$ = "Albert"
+}
+```
+
+When object initializers are used _after_ the initial declaration of an instance, they also reset the instance data to `default` before applying the initializer assignments. For example, the following example only prints "1".
+```basic
+TYPE VECTOR
+    x, 
+    y
+ENDTYPE
+
+v AS VECTOR = {
+    x = 4, 
+    y = 7
+}
+
+v = {
+    y = 1
+}
+
+PRINT v.y + v.x `prints 1
+```
+
 
 ----
 #### UDT Assignment
