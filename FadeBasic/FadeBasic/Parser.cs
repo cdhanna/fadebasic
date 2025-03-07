@@ -74,7 +74,7 @@ namespace FadeBasic
         public Dictionary<string, Symbol> functionSymbolTable = new Dictionary<string, Symbol>();
         public Dictionary<string, FunctionStatement> functionTable = new Dictionary<string, FunctionStatement>();
         public Dictionary<string, List<TypeInfo>> functionReturnTypeTable = new Dictionary<string, List<TypeInfo>>();
-        
+        public List<DefaultValueExpression> defaultValueExpressions = new List<DefaultValueExpression>();
         List<DelayedTypeCheck> delayedTypeChecks = new List<DelayedTypeCheck>();
 
         private int allowExitCounter;
@@ -397,6 +397,11 @@ namespace FadeBasic
                     // declr is optional...
                     if (TryGetSymbol(variableRef.variableName, out var existingSymbol))
                     {
+                        if (assignment.expression is DefaultValueExpression defExpr)
+                        {
+                            defExpr.ParsedType = existingSymbol.typeInfo;
+                        }
+                        
                         EnforceTypeAssignment(variableRef, assignment.expression.ParsedType, existingSymbol.typeInfo, false, out _);
                         variableRef.DeclaredFromSymbol = existingSymbol;
                     }
@@ -409,7 +414,17 @@ namespace FadeBasic
                         };
                         var rightType = assignment.expression.ParsedType;
 
-                        EnforceTypeAssignment(variableRef, rightType, defaultTypeInfo, true, out var foundType);
+                        TypeInfo foundType = default;
+                        if (assignment.expression is DefaultValueExpression defExpr)
+                        {
+                            defExpr.ParsedType = defaultTypeInfo;
+                            variableRef.ParsedType = defaultTypeInfo;
+                            foundType = defaultTypeInfo;
+                        }
+                        else
+                        {
+                            EnforceTypeAssignment(variableRef, rightType, defaultTypeInfo, true, out foundType);
+                        }
                         
                         
                         var locals = GetVariables(DeclarationScopeType.Local);
@@ -456,7 +471,14 @@ namespace FadeBasic
                             }
                         }
                         
-                        EnforceTypeAssignment(indexRef, assignment.expression.ParsedType, nonArrayVersion, false, out _);
+                        if (assignment.expression is DefaultValueExpression defExpr)
+                        {
+                            defExpr.ParsedType = nonArrayVersion;
+                        }
+                        else
+                        {
+                            EnforceTypeAssignment(indexRef, assignment.expression.ParsedType, nonArrayVersion, false, out _);
+                        }
                         indexRef.DeclaredFromSymbol = existingArrSymbol;
                     }
                     // EnforceTypeAssignment(variableRef, rightType, defaultTypeInfo, true, out var foundType);
@@ -806,6 +828,11 @@ namespace FadeBasic
         {
             public IAstNode source, right, left;
         }
+
+        public void AddDefaultExpression(DefaultValueExpression defExpr)
+        {
+            defaultValueExpressions.Add(defExpr);
+        }
     }
 
     public class ParseOptions
@@ -867,6 +894,7 @@ namespace FadeBasic
             program.endToken = _stream.Current;
             
             // program.AddTypeInfo();
+            program.AddInitializerSugar();
             program.AddScopeRelatedErrors(options);
             
             return program;
@@ -2970,7 +2998,60 @@ namespace FadeBasic
             recovery = null;
             switch (token.type)
             {
-                
+                case LexemType.KeywordCaseDefault:
+                    _stream.Advance();
+                    outputExpression = new DefaultValueExpression
+                    {
+                        startToken = token, endToken = token
+                    };
+                    break;
+                case LexemType.BracketOpen:
+                    _stream.Advance(); // consume open bracket
+                    outputExpression = null;
+
+                    var lookingForClose = true;
+                    var subStatements = new List<IStatementNode>();
+                    var assignments = new List<AssignmentStatement>();
+                    while (lookingForClose)
+                    {
+                        switch (_stream.Peek.type)
+                        {
+                            case LexemType.EOF:
+                                // TODO: add error
+                                // errors.Add(new ParseError(start, ErrorCodes.TypeDefMissingEndType));
+                                lookingForClose = false;
+                                break;
+                                
+                            case LexemType.EndStatement:
+                                _stream.Advance();
+                                break;
+                            case LexemType.BracketClose:
+                                lookingForClose = false;
+                                _stream.Advance();
+                                break;
+                            default:
+                                var statement = ParseStatement(subStatements);
+                                subStatements.Add(statement);
+
+                                switch (statement)
+                                {
+                                    case AssignmentStatement assignment:
+                                        assignments.Add(assignment);
+                                        break;
+                                    default:
+                                        // TODO: add error saying only assignments are allowed
+                                        break;
+                                }
+                                break;
+                        }
+                        
+                    }
+
+                    outputExpression = new InitializerExpression
+                    {
+                        startToken = token, endToken = _stream.Current, assignments = assignments
+                    };
+                    break;
                 case LexemType.CommandWord:
                     _stream.Advance();
 

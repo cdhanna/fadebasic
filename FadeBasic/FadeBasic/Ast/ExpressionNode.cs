@@ -278,6 +278,19 @@ namespace FadeBasic.Ast
         }
     }
 
+    public class DefaultValueExpression : AstNode, ILiteralNode
+    {
+        protected override string GetString()
+        {
+            return "default";
+        }
+
+        public override IEnumerable<IAstVisitable> IterateChildNodes()
+        {
+            yield break;
+        }
+    }
+
     public class LiteralIntExpression : AstNode, ILiteralNode
     {
         public int value;

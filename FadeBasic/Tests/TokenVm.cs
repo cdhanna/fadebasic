@@ -2958,6 +2958,174 @@ y as egg
     }
 
     
+    [TestCase("")]
+    [TestCase("y = 123")]
+    public void Default_Int_Assign(string snippet)
+    {
+        var src = @$"
+{snippet}
+y = default
+";
+        Setup(src, out var compiler, out var prog);
+        var vm = new VirtualMachine(prog);
+        vm.hostMethods = compiler.methodTable;
+        vm.Execute2();
+        
+        Assert.That(VmUtil.ConvertToInt(vm.dataRegisters[0]), Is.EqualTo(0));
+    }
+    
+    
+    [TestCase("x$ = default")]
+    [TestCase("x$ = \"\"")]
+    public void Default_String_Assign(string src)
+    {
+        Setup(src, out var compiler, out var prog);
+        var vm = new VirtualMachine(prog);
+        vm.hostMethods = compiler.methodTable;
+        vm.Execute2();
+        
+        
+        Assert.That(vm.dataRegisters[0], Is.EqualTo(0)); // the ptr to the string in memory
+        Assert.That(vm.typeRegisters[0], Is.EqualTo(TypeCodes.STRING));
+        
+        vm.heap.Read(0.ToPtr(), 0, out var memory);
+        var str = VmConverter.ToString(memory);
+        
+        // Assert.That(str, Is.EqualTo("hello"));
+        // Assert.That(VmUtil.ConvertToInt(vm.dataRegisters[0]), Is.EqualTo(0));
+    }
+
+
+    
+    [TestCase("")]
+    [TestCase("y# = 2.0")]
+    [TestCase("y# = 123")]
+    public void Default_Float_Assign(string snippet)
+    {
+        var src = @$"
+{snippet}
+y# = default
+";
+        Setup(src, out var compiler, out var prog);
+        var vm = new VirtualMachine(prog);
+        vm.hostMethods = compiler.methodTable;
+        vm.Execute2();
+        
+        Assert.That(VmUtil.ConvertToFloat(vm.dataRegisters[0]), Is.EqualTo(0));
+    }
+    
+    [Test]
+    public void Type_Default_Decl()
+    {
+        var src = @"
+type egg 
+x
+endtype
+
+y as egg = default
+y.x = 31
+y = default
+";
+        Setup(src, out var compiler, out var prog);
+        var vm = new VirtualMachine(prog);
+        vm.hostMethods = compiler.methodTable;
+        vm.Execute2();
+        
+        Assert.That(vm.heap.Cursor, Is.EqualTo(4.ToPtr())); // size of the only field in egg, int, 4.
+        Assert.That(vm.typeRegisters[0], Is.EqualTo(TypeCodes.STRUCT));
+        
+        vm.heap.Read(vm.dataRegisters[0].ToPtr(), 4, out var memory);
+        var data = BitConverter.ToInt32(memory);
+        Assert.That(data, Is.EqualTo(0));
+    }
+
+    
+    [Test]
+    public void Type_Init_Decl()
+    {
+        var src = $@"
+type egg 
+x
+endtype
+
+y as egg = {{
+    x = 43
+}}
+";
+        Setup(src, out var compiler, out var prog);
+        var vm = new VirtualMachine(prog);
+        vm.hostMethods = compiler.methodTable;
+        vm.Execute2();
+        
+        Assert.That(vm.heap.Cursor, Is.EqualTo(4.ToPtr())); // size of the only field in egg, int, 4.
+        Assert.That(vm.typeRegisters[0], Is.EqualTo(TypeCodes.STRUCT));
+        
+        vm.heap.Read(vm.dataRegisters[0].ToPtr(), 4, out var memory);
+        var data = BitConverter.ToInt32(memory);
+        Assert.That(data, Is.EqualTo(43));
+    }
+    
+    
+    [Test]
+    public void Type_Init_Assign_Blank()
+    {
+        var src = $@"
+type egg 
+x
+endtype
+
+y as egg = {{
+    x = 43
+}}
+
+y = {{
+    ` sugar for y = default
+}}
+";
+        Setup(src, out var compiler, out var prog);
+        var vm = new VirtualMachine(prog);
+        vm.hostMethods = compiler.methodTable;
+        vm.Execute2();
+        
+        Assert.That(vm.heap.Cursor, Is.EqualTo(4.ToPtr())); // size of the only field in egg, int, 4.
+        Assert.That(vm.typeRegisters[0], Is.EqualTo(TypeCodes.STRUCT));
+        
+        vm.heap.Read(vm.dataRegisters[0].ToPtr(), 4, out var memory);
+        var data = BitConverter.ToInt32(memory);
+        Assert.That(data, Is.EqualTo(0));
+    }
+    
+    
+    [Test]
+    public void Type_Init_Assign_Reset()
+    {
+        var src = $@"
+type egg 
+x, y
+endtype
+
+y as egg = {{
+    x = 43
+}}
+
+y = {{
+    y = 12
+}}
+";
+        Setup(src, out var compiler, out var prog);
+        var vm = new VirtualMachine(prog);
+        vm.hostMethods = compiler.methodTable;
+        vm.Execute2();
+        
+        Assert.That(vm.heap.Cursor, Is.EqualTo(8.ToPtr())); // size of the 2 fields in egg, int, 4., times 2
+        Assert.That(vm.typeRegisters[0], Is.EqualTo(TypeCodes.STRUCT));
+        
+        vm.heap.Read(vm.dataRegisters[0].ToPtr() + 4, 4, out var memory);
+        var data = BitConverter.ToInt32(memory);
+        Assert.That(data, Is.EqualTo(12));
+    }
+
+    
     [Test]
     public void Type_Instantiate_Assign()
     {

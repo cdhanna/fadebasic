@@ -69,6 +69,15 @@ namespace FadeBasic.Virtual
             }
         }
         
+        public void PushFiller(T filler, int length)
+        {
+            Expand(length);
+
+            for (var n = 0; n < length; n ++)
+            {
+                buffer[ptr++] = filler;
+            }
+        }
         
         public void PushSpan(ReadOnlySpan<T> data, int length)
         {

@@ -293,6 +293,171 @@ x = 1.2
     
     
     [Test]
+    public void ParseError_TypeCheck_Default_String()
+    {
+        var input = @"
+x$ = default
+";
+        var parser = MakeParser(input);
+        var prog = parser.ParseProgram();
+        prog.AssertNoParseErrors();
+    }
+    
+    [Test]
+    public void ParseError_TypeCheck_Default_Array_Element_Int_Okay()
+    {
+        var input = @"
+DIM x(3)
+x(1) = default
+";
+        var parser = MakeParser(input);
+        var prog = parser.ParseProgram();
+        prog.AssertNoParseErrors();
+    }
+    
+    
+    [Test]
+    public void ParseError_TypeCheck_Default_Array_Element_Type_Okay()
+    {
+        var input = @"
+TYPE egg 
+    x, y
+ENDTYPE
+DIM x(3) as egg
+x(1) = default
+";
+        var parser = MakeParser(input);
+        var prog = parser.ParseProgram();
+        prog.AssertNoParseErrors();
+    }
+
+    
+    [Test]
+    public void ParseError_TypeCheck_Default_Decl_TypeOkay()
+    {
+        var input = @"
+type egg
+    x, y
+endtype
+e as egg = default";
+        var parser = MakeParser(input);
+        var prog = parser.ParseProgram();
+        prog.AssertNoParseErrors();
+    }
+
+    
+    [Test]
+    public void ParseError_TypeCheck_Default_Assign_TypeOkay()
+    {
+        var input = @"
+type egg
+    x, y
+endtype
+e as egg
+
+e = default
+";
+        var parser = MakeParser(input);
+        var prog = parser.ParseProgram();
+        prog.AssertNoParseErrors();
+    }
+
+    
+    [Test]
+    public void ParseError_TypeCheck_Default_Assign_IntOkay()
+    {
+        var input = @"
+e = default
+";
+        var parser = MakeParser(input);
+        var prog = parser.ParseProgram();
+        prog.AssertNoParseErrors();
+    }
+    
+    
+    [TestCase("{}")]
+    [TestCase(@"{
+    x = 2
+}")]
+    [TestCase(@"{
+    x = 2
+    y = 1
+}")]
+    public void ParseError_TypeCheck_Init_Okay(string snippets)
+    {
+        var input = @"
+type egg
+    x, y
+endtype
+
+e as egg = " + snippets + "\n";
+        var parser = MakeParser(input);
+        var prog = parser.ParseProgram();
+        prog.AssertNoParseErrors();
+    }
+    
+    
+    [TestCase("{}")]
+    [TestCase(@"{
+    a = 3
+}")]
+    [TestCase(@"{
+    nest.x = 1
+}")]
+    [TestCase(@"{
+    nest = { 
+        x = 1
+    }
+}")]
+    public void ParseError_TypeCheck_Init_NestedOkay(string snippets)
+    {
+        var input = @"
+type egg
+    x, y
+endtype
+type chicken
+    a
+    nest as egg
+endtype
+
+c as chicken = " + snippets + "\n";
+        var parser = MakeParser(input);
+        var prog = parser.ParseProgram();
+        prog.AssertNoParseErrors();
+    }
+
+    
+    
+    [Test]
+    public void ParseError_TypeCheck_DefaultNotOkayInNonLiterals()
+    {
+        var input = @"
+x = default + 3";
+        var parser = MakeParser(input);
+        var prog = parser.ParseProgram();
+        prog.AssertParseErrors(1, out var errors);
+        Assert.That(errors[0].Display, Is.EqualTo($"[1:4] - {ErrorCodes.DefaultExpressionUnknownType}"));
+    }
+    
+    
+    [Test]
+    public void ParseError_TypeCheck_Init_AssignmentOkay()
+    {
+        var input = @"
+type egg
+    x, y
+endtype
+e as egg
+e = { 
+}";
+        var parser = MakeParser(input);
+        var prog = parser.ParseProgram();
+        prog.AssertParseErrors(0, out var errors);
+        // Assert.That(errors[0].Display, Is.EqualTo($"[1:4] - {ErrorCodes.InitializerNotAllowed}"));
+    }
+    
+    
+    [Test]
     public void ParseError_TypeCheck_Function_ReturnTypeAmbig()
     {
         var input = @"
