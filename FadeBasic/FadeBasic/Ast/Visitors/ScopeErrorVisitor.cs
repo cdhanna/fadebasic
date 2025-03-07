@@ -95,6 +95,14 @@ namespace FadeBasic.Ast.Visitors
 
             }
 
+            foreach (var def in scope.defaultValueExpressions)
+            {
+                if (def.ParsedType.type == VariableType.Void)
+                {
+                    def.Errors.Add(new ParseError(def, ErrorCodes.DefaultExpressionUnknownType));
+                }
+            }
+
             scope.DoDelayedTypeChecks();
         }
 
@@ -230,6 +238,11 @@ namespace FadeBasic.Ast.Visitors
 
                         if (decl.initializerExpression != null)
                         {
+                            if (decl.initializerExpression is DefaultValueExpression defExpr)
+                            {
+                                defExpr.ParsedType = decl.ParsedType;
+                            }
+                            
                             scope.EnforceTypeAssignment(decl.initializerExpression,
                                 decl.initializerExpression.ParsedType, decl.ParsedType, false, out _);
                         }
@@ -242,6 +255,7 @@ namespace FadeBasic.Ast.Visitors
 
                         // and THEN register LHS of the assignemnt (otherwise you can get self-referential stuff)
                         scope.AddAssignment(assignment, ctx, out var implicitDecl);
+                        
                         if (implicitDecl != null)
                         {
                             statements.Insert(i, implicitDecl);
@@ -256,6 +270,11 @@ namespace FadeBasic.Ast.Visitors
                                 break;
                             default:
                                 break;
+                        }
+
+                        if (assignment.expression is DefaultValueExpression defExpr2 && assignment.variable.ParsedType.type != VariableType.Void)
+                        {
+                            defExpr2.ParsedType = assignment.variable.ParsedType;
                         }
                         
                         break;
@@ -501,6 +520,13 @@ namespace FadeBasic.Ast.Visitors
         {
             switch (expr)
             {
+                case DefaultValueExpression defExpr:
+                    scope.AddDefaultExpression(defExpr);
+                    break;
+                case InitializerExpression initExpr:
+                    // initializers are not allowed to appear here; they are syntax sugar and should be removed by now.
+                    initExpr.Errors.Add(new ParseError(initExpr.startToken, ErrorCodes.InitializerNotAllowed));
+                    break;
                 case BinaryOperandExpression binaryOpExpr:
                     binaryOpExpr.lhs.EnsureVariablesAreDefined(scope, ctx);
                     binaryOpExpr.rhs.EnsureVariablesAreDefined(scope, ctx);

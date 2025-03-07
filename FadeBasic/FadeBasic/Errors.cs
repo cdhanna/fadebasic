@@ -194,6 +194,8 @@ namespace FadeBasic
         public static readonly ErrorCode UnknownType = "[0210] Type is not defined";
         public static readonly ErrorCode ArrayRankMustBeInteger = "[0211] Array rank expression must be an integer";
         public static readonly ErrorCode ImplicitArrayDeclaration = "[0212] Implicit array declarations are not allowed";
+        public static readonly ErrorCode InitializerNotAllowed = "[0213] Initializer is not allowed here";
+        public static readonly ErrorCode DefaultExpressionUnknownType = "[0214] Default expression has unknown type";
     
         // 300 series represents type issues
         public static readonly ErrorCode SymbolAlreadyDeclared = "[0300] Symbol already declared";

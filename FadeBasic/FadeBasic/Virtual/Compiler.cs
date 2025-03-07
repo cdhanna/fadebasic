@@ -2221,6 +2221,34 @@ namespace FadeBasic.Virtual
             // CompiledVariable compiledVar = null;
             switch (expr)
             {
+                case DefaultValueExpression defExpr:
+                    // the default value for any type is just zeros, right?
+
+                    switch (defExpr.ParsedType.type)
+                    {
+                        case VariableType.String:
+                            Compile(new LiteralStringExpression(defExpr.startToken, ""));
+                            break;
+                        case VariableType.Struct:
+                            
+                            if (_types.TryGetValue(defExpr.ParsedType.structName, out var typeInfo))
+                            {
+                                AddPushZeros(_buffer, TypeCodes.STRUCT, typeInfo.byteSize);
+                            }
+                            else
+                            {
+                                throw new Exception("unknown type reference" + defExpr.ParsedType.structName);
+                            }
+                            break;
+                        default:
+                            // push the type-code for this def-expr
+                            var tc = VmUtil.GetTypeCode(defExpr.ParsedType.type);
+
+                            // everything else is an empty zero block
+                            AddPushZeros(_buffer, tc, TypeCodes.GetByteSize(tc));
+                            break;
+                    }
+                    break;
                 case CommandExpression commandExpr:
                     Compile(new CommandStatement
                     {
@@ -2680,6 +2708,18 @@ namespace FadeBasic.Virtual
             }
         }
 
+        
+        private static void AddPushZeros(List<byte> buffer, byte typeCode, int howManyBytesOfZero)
+        {
+            buffer.Add(OpCodes.PUSH_ZEROS);
+            buffer.Add(typeCode);    
+            var value = BitConverter.GetBytes(howManyBytesOfZero);
+            for (var i = 0; i < value.Length; i++)
+            {
+                buffer.Add(value[i]);
+            }
+        }
+        
         private static void AddPushULongNoTypeCode(List<byte> buffer, ulong x)
         {
             var value = BitConverter.GetBytes(x);

@@ -695,11 +695,67 @@ x = 1 + 2 > 3
         var code = prog.ToString();
         Assert.That(code, Is.EqualTo("((= (ref x),(?> (+ (1),(2)),(3))))"));
     }
+    
+    
+    [Test]
+    public void Default_int()
+    {
+        var input = @"
+
+x = default ` reset the object
+";
+        var parser = MakeParser(input);
+        var prog = parser.ParseProgram();
+        prog.AssertNoParseErrors();
+        Assert.That(prog.statements.Count, Is.EqualTo(1));
+        var code = prog.ToString();
+        Assert.That(code, Is.EqualTo("((= (ref x),(default)))"));
+    }
+    
+    [Test]
+    public void Default_Type()
+    {
+        var input = @"
+type egg
+    x, y
+endtype
+
+e as egg = default ` reset the object
+";
+        var parser = MakeParser(input);
+        var prog = parser.ParseProgram();
+        prog.AssertNoParseErrors();
+        Assert.That(prog.statements.Count, Is.EqualTo(1));
+        var code = prog.ToString();
+        Assert.That(code, Is.EqualTo("((type egg ((ref x) as (integer)),((ref y) as (integer))),(decl local,e,(typeRef egg),(default)))"));
+    }
 
     [Test]
-    public void Doop()
+    public void Initializers_Test()
     {
-        var x = (1 * 3) > 3;
+        var input = @"
+type egg
+    x, y
+endtype
+
+e as egg = { 
+    x = 1
+    y = 2
+}
+";
+        var parser = MakeParser(input);
+        var prog = parser.ParseProgram();
+        prog.AssertNoParseErrors();
+        Assert.That(prog.statements.Count, Is.EqualTo(3));
+        var code = prog.ToString();
+        Assert.That(code, Is.EqualTo(@"(
+(type egg 
+((ref x) as (integer)),
+((ref y) as (integer))
+),
+(decl local,e,(typeRef egg)),
+(= ((ref e).(ref x)),(1)),
+(= ((ref e).(ref y)),(2)))".ReplaceLineEndings("").Replace("\t", "")));
     }
         
     [Test]
@@ -1186,6 +1242,36 @@ y.x = 2
 (= ((ref y).(ref x)),(2))
 )".ReplaceLineEndings("")));
     }
+    
+    
+//     [Test]
+//     public void Type_Assignment_Nested()
+//     {
+//         var input = @"
+// type hotdog
+// x
+// endtype
+// type food 
+//     h as hotdog
+// endtype
+// type cave
+//     f as food
+// endtype
+// y as cave
+// y.f.h.x = 2
+// ";
+//         var parser = MakeParser(input);
+//         var prog = parser.ParseProgram();
+//         prog.AssertNoParseErrors();
+//
+//         var code = prog.ToString();
+//         Console.WriteLine(code);
+//         Assert.That(code, Is.EqualTo(@"(
+// (type hotdog ((ref x) as (integer))),
+// (decl local,y,(typeRef hotdog)),
+// (= ((ref y).(ref x)),(2))
+// )".ReplaceLineEndings("")));
+//     }
 
     
     [Test]

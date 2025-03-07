@@ -251,6 +251,12 @@ namespace FadeBasic.Virtual
         /// Exactly the same as push, but it does not push the type code aftewards
         /// </summary>
         public const byte PUSH_TYPELESS = 18;
+
+        /// <summary>
+        /// The next INS should be a number, and then this will inject that number of ZEROs
+        /// onto the program stack
+        /// </summary>
+        public const byte PUSH_ZEROS = 59;
         
         /// <summary>
         /// Pushes a type-format byte array from INS onto the stack.

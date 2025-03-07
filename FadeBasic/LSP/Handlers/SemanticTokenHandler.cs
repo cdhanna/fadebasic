@@ -208,6 +208,9 @@ public class SemanticTokenHandler : SemanticTokensHandlerBase
             case LexemType.KeywordTypeDWord:
                 return SemanticTokenType.Type;
 
+            
+            case LexemType.BracketClose:
+            case LexemType.BracketOpen:
             case LexemType.ParenClose:
             case LexemType.ParenOpen:
             case LexemType.OpPlus:

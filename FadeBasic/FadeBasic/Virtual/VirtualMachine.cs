@@ -376,6 +376,16 @@ namespace FadeBasic.Virtual
                             var code = Advance();
                             stack.Push(code);
                             break;
+                        case OpCodes.PUSH_ZEROS:
+                            // next 4 bytes in INS are zero-amount
+                            typeCode = Advance();
+                            var amount = BitConverter.ToInt32(program, instructionIndex);
+                            // var amountSpan = program.AsSpan(instructionIndex, 4);
+                            instructionIndex += sizeof(int);
+                            stack.PushFiller(0, amount);
+                            stack.Push(typeCode);
+
+                            break;
 
                         case OpCodes.PUSH_TYPELESS:
                             typeCode = Advance();
