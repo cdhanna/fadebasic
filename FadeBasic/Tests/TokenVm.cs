@@ -3041,6 +3041,25 @@ y = default
 
     
     [Test]
+    public void Bug_April26_Repro_InitializerInFunction()
+    {
+        var src = $@"
+type egg 
+    x
+endtype
+function toast()
+ n as egg = {{
+ }}
+endfunction
+
+";
+        Setup(src, out var compiler, out var prog);
+        var vm = new VirtualMachine(prog);
+        vm.hostMethods = compiler.methodTable;
+        vm.Execute2(0);
+    }
+    
+    [Test]
     public void Type_Init_Decl()
     {
         var src = $@"

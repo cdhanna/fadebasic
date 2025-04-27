@@ -109,6 +109,10 @@ namespace FadeBasic.Ast.Visitors
         public static void AddInitializerSugar(this ProgramNode node)
         {
             ApplyStatements(node.statements);
+            foreach (var function in node.functions)
+            {
+                ApplyStatements(function.statements);
+            }
         }
     }
 }
