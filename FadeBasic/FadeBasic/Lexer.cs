@@ -123,6 +123,7 @@ namespace FadeBasic
         public List<Token> tokens;
         public List<Token> comments;
         public List<Token> combinedTokens; // tokens and comments.
+        public List<Token> allTokens; // tokens and macros and comments.
         public TokenStream stream;
         public List<LexerError> tokenErrors;
         public List<Token> macroTokens = new List<Token>();
@@ -146,6 +147,7 @@ namespace FadeBasic
     public class Lexer
     {
         private static Lexem LexemString = new Lexem(LexemType.LiteralString, new Regex("^\""));
+        private static Lexem LexemConstant = new Lexem(LexemType.Constant);
         public static List<Lexem> Lexems = new List<Lexem>
         {
             new Lexem(LexemType.Constant, new Regex("^\\s*#constant\\s+([a-zA-Z][a-zA-Z0-9_]*)\\s+(.*)\\s*$")),
@@ -278,18 +280,21 @@ namespace FadeBasic
             var tokens = new List<Token>();
             var comments = new List<Token>();
             var combined = new List<Token>();
+            var all = new List<Token>();
             var macroTokens = new List<Token>();
 
             void AddToken(Token t)
             {
                 tokens.Add(t);
                 combined.Add(t);
+                all.Add(t);
             }
 
             void AddComment(Token t)
             {
                 comments.Add(t);
                 combined.Add(t);
+                all.Add(t);
             }
             if (commandNames == null)
             {
@@ -372,12 +377,21 @@ namespace FadeBasic
                     };
                 }
 
+                var charNumberMacroOffset = 0;
+                var macroUntilCharNumber = -1;
                 for (var charNumber = 0; charNumber < line.Length; charNumber = charNumber)
                 {
                     var foundMatch = false;
                     var sub = line.Substring(charNumber);
                     var subStr = sub.ToLowerInvariant();
 
+                    var isStillMacro = charNumber+charNumberMacroOffset < macroUntilCharNumber;
+                    var flags = TokenFlags.None;
+                    if (isStillMacro)
+                    {
+                        flags |= TokenFlags.IsMacro;
+                    }
+                    
                     
                     if (remBlockToken == null && subStr.StartsWith("remstart"))
                     {
@@ -473,7 +487,7 @@ namespace FadeBasic
                                 charNumber = charNumber,
                                 lineNumber = lineNumber,
                                 error = ErrorCodes.LexerStringNeedsEnd,
-                                text = line.Substring(charNumber)
+                                text = line.Substring(charNumber),
                             });
                         }
 
@@ -485,7 +499,9 @@ namespace FadeBasic
                             raw = stringLiteralSubStr,
                             lexem = LexemString,
                             lineNumber = lineNumber,
-                            charNumber = charNumber
+                            charNumber = charNumber + charNumberMacroOffset,
+                            flags = flags
+
                         };
                         foundMatch = true;
                         charNumber += charOffset;
@@ -506,7 +522,9 @@ namespace FadeBasic
                                 raw = sub.Substring(matches[0].Index, matches[0].Length),
                                 lexem = lexem,
                                 lineNumber = lineNumber,
-                                charNumber = charNumber
+                                charNumber = charNumber + charNumberMacroOffset,
+                                flags = flags
+
                             };
                            
                             if (bestToken == null || token.Length > bestToken.Length)
@@ -548,6 +566,7 @@ namespace FadeBasic
                                 var toAdd = bestMatches[0].Groups[2].Value;
 
                                 macroTokens.Add(bestToken);
+                                all.Add(bestToken);
                                 constantTable[toRemove.ToLowerInvariant()] = toAdd;
                                 // var prefix = line.Substring(0, charNumber);
                                 // var suffix = line.Substring(charNumber + toRemove.Length);
@@ -560,8 +579,13 @@ namespace FadeBasic
                                 var suffix = line.Substring(charNumber + bestToken.Length);
 
                                 var replacementLine = prefix + replacement + suffix;
+                                charNumberMacroOffset += line.Length - replacementLine.Length;
                                 line = replacementLine;
+                                macroUntilCharNumber = charNumber + bestToken.Length;
+
+                                bestToken.lexem = new Lexem(LexemType.Constant);
                                 macroTokens.Add(bestToken);
+                                all.Add(bestToken);
                                 continue;
                                 break;
                             default:
@@ -571,10 +595,12 @@ namespace FadeBasic
                                     requestEoS = false;
                                     AddToken(new Token
                                     {
-                                        charNumber = requestEoSCharNumber,
+                                        charNumber = requestEoSCharNumber ,
                                         lexem = eolLexem,
                                         lineNumber = lineNumber,
-                                        caseInsensitiveRaw = "\n"
+                                        caseInsensitiveRaw = "\n",
+                                        flags = flags
+
                                     });
                                 }
 
@@ -645,6 +671,7 @@ namespace FadeBasic
             {
                 tokens = tokens,
                 comments = comments,
+                allTokens = all,
                 combinedTokens = combined,
                 stream = new TokenStream(tokens, errors),
                 tokenErrors = errors,
@@ -695,7 +722,11 @@ namespace FadeBasic
         /// </summary>
         FunctionCall  = 1 << 0,
         
-        // Second = 1 << 1,
+        /// <summary>
+        /// This flag indicates that the given token was expanded from a macro
+        /// </summary>
+        IsMacro = 1 << 1,
+        
         // Third  = 1 << 2,
         // Fourth = 1 << 3
     }

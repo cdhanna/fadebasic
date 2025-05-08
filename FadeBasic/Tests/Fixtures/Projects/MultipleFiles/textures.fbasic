@@ -1,0 +1,8 @@
+
+
+textures:
+
+    print "re-wiring x"
+    x = 100
+    
+return

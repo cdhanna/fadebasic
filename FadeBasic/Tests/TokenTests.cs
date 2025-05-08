@@ -166,6 +166,31 @@ y = x";
         };
         CheckTokens(expectedLexemTypes, tokens);
     }
+    
+    
+    [Test]
+    public void Tokenize_Constant_BugMay_8_2025_LSPTokens_1()
+    {
+        var input = @"#constant sixoclock 42
+y = sixoclock + 3";
+
+        var lexer = new Lexer();
+        var lexResults = lexer.TokenizeWithErrors(input, TestCommands.CommandsForTesting);
+
+        var tokens = lexResults.allTokens;
+        var expectedLexemTypes = new LexemType[]
+        {
+            LexemType.Constant,
+            LexemType.VariableGeneral,
+            LexemType.OpEqual,
+            LexemType.Constant,
+            LexemType.LiteralInt,
+            LexemType.OpPlus,
+            LexemType.LiteralInt,
+            LexemType.EndStatement,
+        };
+        CheckTokens(expectedLexemTypes, tokens);
+    }
 
     
     [Test]

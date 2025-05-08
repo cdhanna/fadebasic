@@ -1,0 +1,6 @@
+#constant HOLY_TUNA 10
+#constant HOLY_MOLY HOLY_TUNA + 1
+#constant BANANA HOLY_MOLY + HOLY_TUNA
+
+x = BANANA + HOLY_MOLY
+print x 

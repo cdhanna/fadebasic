@@ -86,6 +86,40 @@ public partial class SdkTests
         Assert.That(i, Is.EqualTo(2));
     }
     
+    
+    [Test]
+    public void FromProject_MultipleFiles()
+    {
+        var commands = new CommandCollection(
+            new ConsoleCommands(), new StandardCommands()
+        );
+        if (!Fade.TryCreateFromProject("Fixtures/Projects/MultipleFiles/prim.csproj", commands, out var ctx, out _))
+        {
+            Assert.Fail("no file");
+        }
+        ctx.Run();
+
+        ctx.TryGetInteger("x", out var i);
+        Assert.That(i, Is.EqualTo(101));
+    }
+    
+    
+    [Test]
+    public void FromProject_Constants()
+    {
+        var commands = new CommandCollection(
+            new ConsoleCommands(), new StandardCommands()
+        );
+        if (!Fade.TryCreateFromProject("Fixtures/Projects/Constants/prim.csproj", commands, out var ctx, out _))
+        {
+            Assert.Fail("no file");
+        }
+        ctx.Run();
+
+        ctx.TryGetInteger("x", out var i);
+        Assert.That(i, Is.EqualTo(32));
+    }
+    
     [Test]
     public void Doop()
     {

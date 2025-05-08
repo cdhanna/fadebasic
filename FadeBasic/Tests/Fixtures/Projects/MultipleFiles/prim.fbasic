@@ -1,0 +1,11 @@
+
+x = 52
+
+print "going to label"
+gosub textures:
+
+x += 1
+print "done"
+print x
+
+end

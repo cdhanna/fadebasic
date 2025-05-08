@@ -71,18 +71,18 @@ public class SemanticTokenHandler : SemanticTokensHandlerBase
             
             // it is important that macro tokens GO FIRST; the LSP takes the first value for each spot. 
             // TODO: this is still a little flakey
-            foreach (var token in unit.lexerResults.macroTokens)
-            {
-                if (token.raw == null) continue;
-                var location = unit.sourceMap.GetOriginalLocation(token.lineNumber, token.charNumber);
-                if (location.fileName != identifier.TextDocument.Uri.GetFileSystemPath())
-                {
-                    continue;
-                }
-                builder.Push(location.startLine, location.startChar, token.Length, SemanticTokenType.Macro, emptyMods);
-            }
+            // foreach (var token in unit.lexerResults.macroTokens)
+            // {
+            //     if (token.raw == null) continue;
+            //     var location = unit.sourceMap.GetOriginalLocation(token.lineNumber, token.charNumber);
+            //     if (location.fileName != identifier.TextDocument.Uri.GetFileSystemPath())
+            //     {
+            //         continue;
+            //     }
+            //     builder.Push(location.startLine, location.startChar, token.Length, SemanticTokenType.Macro, emptyMods);
+            // }
             
-            foreach (var token in unit.lexerResults.combinedTokens)
+            foreach (var token in unit.lexerResults.allTokens)
             {
                 if (token.raw == null) continue;
                 
@@ -96,10 +96,17 @@ public class SemanticTokenHandler : SemanticTokensHandlerBase
                 }
 
                 var tokenType = ConvertSymbol(token.type);
+               
                 if (token.flags.HasFlag(TokenFlags.FunctionCall))
                 {
                     tokenType = SemanticTokenType.Method;
                     
+                }
+                
+                if (token.flags.HasFlag(TokenFlags.IsMacro))
+                {
+                    // tokenType = SemanticTokenType.Macro;
+                    continue;
                 }
                 builder.Push(location.startLine, location.startChar, token.Length, tokenType, emptyMods);
             }

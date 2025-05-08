@@ -1,0 +1,20 @@
+<Project Sdk="Microsoft.NET.Sdk">
+    <PropertyGroup>
+        <TargetFramework>net8.0</TargetFramework>
+        <OutputType>Exe</OutputType>
+        <FadeNugetVersion>0.13.12.286</FadeNugetVersion>
+    </PropertyGroup>
+    <ItemGroup>
+        <PackageReference Include="FadeBasic.Build" Version="$(FadeNugetVersion)" />
+        <PackageReference Include="FadeBasic.Lang.Core" Version="$(FadeNugetVersion)" />
+        <PackageReference Include="FadeBasic.Lib.Standard" Version="$(FadeNugetVersion)" />
+
+        <FadeCommand Include="FadeBasic.Lib.Standard" FullName="FadeBasic.Lib.Standard.ConsoleCommands" />
+        <FadeCommand Include="FadeBasic.Lib.Standard" FullName="FadeBasic.Lib.Standard.StandardCommands" />
+        <!-- 
+        <FadeSource Include="snake.fbasic" /> -->
+        <FadeSource Include="prim.fbasic" />
+        <FadeSource Include="textures.fbasic" />
+        <!-- <FadeSource Include="game.fbasic" /> -->
+    </ItemGroup>
+</Project>
