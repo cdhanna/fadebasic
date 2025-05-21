@@ -5,6 +5,11 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.0.41] - 2025-05-20
+
+### Fixed
+- Object initializers can be used inside all program blocks 
+
 ## [0.0.40] - 2025-05-08
 
 ### Fixed

@@ -7,6 +7,7 @@ namespace FadeBasic.Ast.Visitors
 
         static void ApplyStatements(List<IStatementNode> statements)
         {
+            if (statements == null) return;
             for (var i = 0; i < statements.Count; i++)
             {
                 var statement = statements[i];
@@ -18,6 +19,29 @@ namespace FadeBasic.Ast.Visitors
                         break;
                     case AssignmentStatement assignment:
                         ApplyAssign(assignment, i, statements);
+                        break;
+                    case ForStatement forStatement:
+                        ApplyStatements(forStatement.statements);
+                        break;
+                    case IfStatement ifState:
+                        ApplyStatements(ifState.positiveStatements);
+                        ApplyStatements(ifState.negativeStatements);
+                        break;
+                    case DoLoopStatement loopState:
+                        ApplyStatements(loopState.statements);
+                        break;
+                    case WhileStatement whileState:
+                        ApplyStatements(whileState.statements);
+                        break;
+                    case RepeatUntilStatement repeatState:
+                        ApplyStatements(repeatState.statements);
+                        break;
+                    case SwitchStatement switchStatement:
+                        foreach (var caseState in switchStatement.cases)
+                        {
+                            ApplyStatements(caseState.statements);
+                        }
+                        ApplyStatements(switchStatement.defaultCase?.statements);
                         break;
                 }
                 

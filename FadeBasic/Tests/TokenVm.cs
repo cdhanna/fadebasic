@@ -3059,6 +3059,27 @@ endfunction
         vm.Execute2(0);
     }
     
+    
+    [Test]
+    public void Bug_May20_Repro_InitializerInForLoop()
+    {
+        var src = $@"
+type egg 
+    x
+endtype
+
+for n = 1 to 10
+    e as egg = {{
+        x = n
+    }}
+next
+";
+        Setup(src, out var compiler, out var prog);
+        var vm = new VirtualMachine(prog);
+        vm.hostMethods = compiler.methodTable;
+        vm.Execute2(0);
+    }
+    
     [Test]
     public void Type_Init_Decl()
     {
