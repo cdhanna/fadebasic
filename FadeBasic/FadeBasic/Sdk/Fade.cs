@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Text;
 using System.Text.RegularExpressions;
 using FadeBasic.Ast;
 using FadeBasic.Launch;
@@ -15,6 +16,26 @@ namespace FadeBasic.Sdk
         private static Regex _sourceRegex = new Regex(@"(?<!<!--\s*)<FadeSource\s+Include\s*=\s*""([^""]+)""\s*/?>");
         private static Regex _commandRegex = new Regex(@"(?<!<!--\s*)<FadeCommand\s+(?=[^>]*Include\s*=\s*""([^""]+)"")(?=[^>]*FullName\s*=\s*""([^""]+)"")[^>]*>");
 
+        public static List<string> GetFadeFilesFromProject(string csProjPath)
+        {
+            var csProjDir = Path.GetDirectoryName(csProjPath);
+            var csProjText = File.ReadAllText(csProjPath);
+            
+            var fullSourcePaths = new List<string>();
+            var sourceMatches = _sourceRegex.Matches(csProjText);
+            for (var i = 0; i < sourceMatches.Count; i++)
+            {
+                var sourceMatch = sourceMatches[i];
+                var relativeSourceFile = sourceMatch.Groups[1].Value;
+
+                var fullSource = Path.Combine(csProjDir, relativeSourceFile);
+                fullSourcePaths.Add(fullSource);
+            }
+
+            return fullSourcePaths;
+        } 
+        
+        
         public static bool TryCreateFromProject(
             string csProjPath, 
             CommandCollection availableCommands, 
@@ -39,19 +60,7 @@ namespace FadeBasic.Sdk
             }
 
             var csProjText = File.ReadAllText(csProjPath);
-                // <FadeSource Include="music.fbasic" />
-
-
-            var fullSourcePaths = new List<string>();
-            var sourceMatches = _sourceRegex.Matches(csProjText);
-            for (var i = 0; i < sourceMatches.Count; i++)
-            {
-                var sourceMatch = sourceMatches[i];
-                var relativeSourceFile = sourceMatch.Groups[1].Value;
-
-                var fullSource = Path.Combine(csProjDir, relativeSourceFile);
-                fullSourcePaths.Add(fullSource);
-            }
+            var fullSourcePaths = GetFadeFilesFromProject(csProjPath);
 
 
             var usedMethodSources = new List<IMethodSource>();
@@ -102,10 +111,47 @@ namespace FadeBasic.Sdk
         public List<string> SystemErrors = new List<string>();
         public List<LexerError> LexicalErrors = new List<LexerError>();
         public List<ParseError> ParserErrors = new List<ParseError>();
+
+        public string ToDisplay()
+        {
+            var sb = new StringBuilder();
+            sb.AppendLine($"System Errors: {SystemErrors.Count}");
+            foreach (var err in SystemErrors)
+            {
+                sb.Append("\t");
+                sb.AppendLine(err);
+            }
+
+            sb.AppendLine();
+            
+            sb.AppendLine($"Lex Errors: {LexicalErrors.Count}");
+            foreach (var err in LexicalErrors)
+            {
+                sb.Append("\t");
+                sb.AppendLine(err.Display);
+            }
+
+            sb.AppendLine();
+            
+            sb.AppendLine($"Parse Errors: {ParserErrors.Count}");
+            foreach (var err in ParserErrors)
+            {
+                sb.Append("\t");
+                sb.AppendLine(err.Display);
+            }
+
+            sb.AppendLine();
+
+            return sb.ToString();
+        }
     }
 
-    public class FadeRuntimeContext
+    public class FadeRuntimeContext : ILaunchable
     {
+        byte[] ILaunchable.Bytecode => Machine.program;
+        CommandCollection ILaunchable.CommandCollection => CommandCollection;
+        DebugData ILaunchable.DebugData => Compiler.DebugData;
+        
         private DebugSession _session;
         private static Lexer _lexer = new Lexer();
 
