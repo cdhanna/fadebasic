@@ -5,6 +5,17 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.0.43] - Unreleased
+
+### Fixed
+- String concatenation no longer causes virtual memory leak 
+
+## [0.0.42] - 2025-05-29
+
+### Added
+- `FadeRuntimeContext` is now an `ILaunchable` implementation
+- new `Fade.GetFadeFilesFromProject()` function allows user to find fade files in a csproj file
+
 ## [0.0.41] - 2025-05-20
 
 ### Fixed

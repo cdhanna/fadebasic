@@ -91,6 +91,36 @@ ENDFUNCTION
         Assert.That(vm.heap.Allocations, Is.EqualTo(allocationCount));
     }
 
+    [TestCase(@"
+for n = 1 to 100
+    ` concat of literals is fine
+    x$ = ""a"" + ""b""
+next 
+", 3)]
+    [TestCase(@"
+for n = 1 to 100
+    ` just accessing string is fine
+    x$ = str$(1)
+next 
+", 1)]
+    [TestCase(@"
+for n = 1 to 100
+    ` concat of returned is not?
+    x$ = str$(1) + str$(2)
+next 
+", 1)]
+    public void GC_Simple_StringConcatIssues(string src, int allocationCount)
+    {
+        Setup(src, out var compiler, out var prog);
+        
+        var vm = new VirtualMachine(prog);
+        vm.hostMethods = compiler.methodTable;
+
+        vm.Execute2(0);
+        vm.heap.Sweep();
+
+        Assert.That(vm.heap.Allocations, Is.EqualTo(allocationCount));
+    }
 
     [TestCase("toast", "toast")]
     [TestCase("/", "/")]

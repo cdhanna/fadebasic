@@ -321,21 +321,17 @@ namespace FadeBasic.Virtual
         {
             foreach (var allocation in _allocations)
             {
-                if (_ptrToRefCount.TryGetValue(allocation.Key, out var refCount))
+                if (!_ptrToRefCount.TryGetValue(allocation.Key, out var refCount))
                 {
-                    if (refCount <= 0)
-                    {
-                        Free(allocation.Key);
-                    }
+                    refCount = 0;
                 }
+
+                if (refCount <= 0)
+                {
+                    Free(allocation.Key);
+                }
+            
             }
-            // foreach (var kvp in _ptrToRefCount)
-            // {
-            //     if (kvp.Value <= 0 && _allocations.try)
-            //     {
-            //         Free(kvp.Key);
-            //     }
-            // }
         }
 
         public void TryDecrementRefCount(ulong ptr) => TryDecrementRefCount(VmPtr.FromRaw(ptr));
