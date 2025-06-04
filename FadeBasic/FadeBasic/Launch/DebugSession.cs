@@ -1509,8 +1509,9 @@ namespace FadeBasic.Launch
             var sendBytes = EncodeJsonable(message);
 
             var sendLength = sendBytes.Length;
-            if (sendLength > MAX_MESSAGE_LENGTH)
-                throw new InvalidOperationException("Cannot send message longer than max-length");
+            var messageCount = (sendLength / MAX_MESSAGE_LENGTH) + 1;
+            // if (sendLength > MAX_MESSAGE_LENGTH)
+            //     throw new InvalidOperationException("Cannot send message longer than max-length");
 
             var lengthBytes = BitConverter.GetBytes(sendLength);
 
@@ -1519,12 +1520,23 @@ namespace FadeBasic.Launch
             {
                 // TODO: uh oh?
             }
-                        
-            var sentByteCount = socket.Send(sendBytes, 0, sendBytes.Length, SocketFlags.None,
-                out sendError);
-            if (sendError != SocketError.Success)
+
+            var sendOffset = 0;
+            for (var i = 0; i < messageCount; i++)
             {
-                // TODO: uh oh?
+                var chunkSize = MAX_MESSAGE_LENGTH;
+                if (i == messageCount - 1)
+                {
+                    chunkSize = sendLength % MAX_MESSAGE_LENGTH;
+                }
+                var sentByteCount = socket.Send(sendBytes, sendOffset, chunkSize, SocketFlags.None,
+                    out sendError);
+                if (sendError != SocketError.Success)
+                {
+                    // TODO: uh oh?
+                }
+
+                sendOffset += MAX_MESSAGE_LENGTH;
             }
         }
         
@@ -1558,7 +1570,6 @@ namespace FadeBasic.Launch
             socket.ReceiveTimeout = 1;
             socket.ReceiveBufferSize = MAX_MESSAGE_LENGTH;
             var buffer = new byte[MAX_MESSAGE_LENGTH];
-
             try
             {
                 while (!cancellationToken.IsCancellationRequested)
@@ -1587,12 +1598,30 @@ namespace FadeBasic.Launch
                         messageLength = BitConverter.ToInt32(bufferSpan.ToArray(), 0);
                     }
 
-                    { // receive the content of the message
-                        count = socket.Receive(buffer, 0, messageLength, SocketFlags.None, out err);
-                        if (err != SocketError.Success) continue;
-                        if (count == 0) continue;
+                    var messageCount = (messageLength / MAX_MESSAGE_LENGTH) + 1;
+                    if (messageCount > 1)
+                    {
                         
-                        var controlMessage = DecodeJsonable<T>(buffer, messageLength);
+                    }
+
+                    { // receive the content of the message
+                        var giantBuffer = new byte[messageLength];
+
+                        var recvOffset = 0;
+                        for (var i = 0; i < messageCount; i++)
+                        {
+                            var recvSize = MAX_MESSAGE_LENGTH;
+                            if (i == messageCount - 1)
+                            {
+                                recvSize = messageLength % MAX_MESSAGE_LENGTH;
+                            }
+                            count = socket.Receive(giantBuffer, recvOffset, recvSize, SocketFlags.None, out err);
+                            if (err != SocketError.Success) continue;
+                            if (count == 0) continue;
+                            recvOffset += MAX_MESSAGE_LENGTH;
+                        }
+
+                        var controlMessage = DecodeJsonable<T>(giantBuffer, messageLength);
                         inputQueue.Enqueue(controlMessage);
                     }
                     

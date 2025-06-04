@@ -1,5 +1,6 @@
 using System.Buffers.Binary;
 using System.Collections.Concurrent;
+using System.Text;
 using FadeBasic;
 using FadeBasic.Ast;
 using FadeBasic.Json;
@@ -307,13 +308,11 @@ endfunction";
         // var hasIndex = tree.TryFind(182, out var index);
     }
 
-    
     [Test]
     public async Task DebugServerTest()
     {
-        
         var port = LaunchUtil.FreeTcpPort();
-        var src = @"
+        var src = @$"
 b = 1
 b2 = 2
 ";
@@ -344,7 +343,7 @@ b2 = 2
         
         session.StartDebugging(2);
         Assert.That(session.InstructionPointer, Is.EqualTo(12),
-            "I happen to know that 2 is a magical number of budget to yield 8 as an instruction index...");
+            "I happen to know that 2 is a magical number of budget to yield 12 as an instruction index...");
 
         
         var receivedConf = false;
@@ -368,6 +367,7 @@ b2 = 2
                 
             });
             await Task.Delay(100); // fluff time for the message to send
+            
             session.StartDebugging(1); // read the message, but do not process
             await Task.Delay(100); // fluff time for the ack to emit
         }
@@ -382,6 +382,137 @@ b2 = 2
             Assert.That(receivedConf, Is.True);
             Assert.That(session.InstructionPointer, Is.EqualTo(27),
                 "The debugger should be paused, so the insptr should not have moved from last time.");
+        }
+        
+        { // check variables
+            // var opsLeft = session.InstructionPointer - 
+            session.StartDebugging(3); // allow the rest of the program to execute
+            await Task.Delay(100); // fluff time for program to run
+            remote.RequestScopes(0, scopes =>
+            {
+                
+            });
+            await Task.Delay(100); // fluff time for the message to send
+            
+            session.StartDebugging(1); // read the message, but do not process
+            await Task.Delay(100); // fluff time for the ack to emit
+        }
+
+
+
+    }
+    
+    
+    [Test]
+    public async Task DebugServerTest_Big()
+    {
+        var port = LaunchUtil.FreeTcpPort();
+        
+        var variableCount = 1000;
+        var sb = new StringBuilder();
+        for (var i = 0; i < variableCount; i++)
+        {
+            sb.AppendLine($"a{i} = {i}");
+        }
+
+        var src = @$"
+b = 1
+b2 = 2
+{sb.ToString()}
+";
+        Compile(src, out _, out var compiler, out var vm);
+        var dbg = compiler.DebugData;
+
+        var session = new DebugSession(vm, dbg, null, new LaunchOptions
+        {
+            debug = true,
+            debugPort = port,
+            debugWaitForConnection = true
+        });
+        session.StartServer();
+        
+        session.StartDebugging(2);
+        Assert.That(session.InstructionPointer, Is.EqualTo(4),
+            "because the client has not connected yet, the program should not have run at all, even through there was budget");
+        
+        var remote = new RemoteDebugSession(port);
+        remote.Connect();
+        remote.SayHello();
+
+        await Task.Delay(100); // fluff time for the connection to happen...
+        
+        session.StartDebugging(1);
+        Assert.That(session.InstructionPointer, Is.EqualTo(4),
+            "Exactly 1 op will let the debugger attach, but the program counter has no budget left");
+        
+        session.StartDebugging(2);
+        Assert.That(session.InstructionPointer, Is.EqualTo(12),
+            "I happen to know that 2 is a magical number of budget to yield 12 as an instruction index...");
+
+        
+        var receivedConf = false;
+
+        { // verify that a pause event can be sent
+            remote.SendPause(() => { receivedConf = true; });
+
+            await Task.Delay(100); // fluff time for the message to send
+            session.StartDebugging(
+                2); // read the message (1 op for the read, and 1 op to be ignored because we are paused)
+            await Task.Delay(100); // fluff time for the ack to emit
+
+            Assert.That(receivedConf, Is.True);
+            Assert.That(session.InstructionPointer, Is.EqualTo(12),
+                "The debugger should be paused, so the insptr should not have moved from last time.");
+        }
+        
+        { // check stack frames
+            remote.RequestStackFrames(frames =>
+            {
+                
+            });
+            await Task.Delay(100); // fluff time for the message to send
+            
+            session.StartDebugging(1); // read the message, but do not process
+            await Task.Delay(100); // fluff time for the ack to emit
+        }
+
+        { // verify that a play event can be sent
+            receivedConf = false;
+            remote.SendPlay(() => { receivedConf = true; });
+
+            await Task.Delay(100); // fluff time for the message to send
+            session.StartDebugging(2); // read the message (1 op for the read, and 1 op to move the debugger forward)
+            await Task.Delay(100); // fluff time for the ack to emit
+            Assert.That(receivedConf, Is.True);
+            Assert.That(session.InstructionPointer, Is.EqualTo(27),
+                "The debugger should be paused, so the insptr should not have moved from last time.");
+        }
+        
+        { // check variables
+            var lines = src.Count(x => x == '\n');
+            if (!session.instructionMap.TryFindClosestTokenAtLocation(lines - 1, 0, out var token))
+            {
+                Assert.Fail("no token found");
+            }
+            // var opsLeft = session.InstructionPointer - 
+            session.StartDebugging(3 + (500 * 5)); // allow the rest of the program to execute
+            await Task.Delay(100); // fluff time for program to run
+            // Assert.That(session.InstructionPointer, Is.EqualTo(vm.program.Length - 1),
+            //     "I happen to know that 3 more steps gets the program to finish at line 44");
+            //
+            var hit = false;
+            remote.RequestScopes(0, scopes =>
+            {
+                var locals = scopes[1];
+                var localCount = locals.variables.Count;
+                hit = true;
+            });
+            await Task.Delay(100); // fluff time for the message to send
+            
+            session.StartDebugging(1); // read the message, but do not process
+            await Task.Delay(2500); // fluff time for the ack to emit. Giant for large message
+            
+            Assert.IsTrue(hit);
         }
 
 
