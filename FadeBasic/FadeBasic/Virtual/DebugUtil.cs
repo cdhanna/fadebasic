@@ -337,10 +337,7 @@ namespace FadeBasic.Virtual
                     
                     for (var i = 0; i < elementCount; i ++)
                     {
-                        // TODO: it might be a nested array... 
-                       
                         
-
                         var elementTypeCode = variable.allocation.format.typeCode;
                         
                         // TODO: replace this with the stide in the dataRegisters...
@@ -381,10 +378,10 @@ namespace FadeBasic.Virtual
                             else
                             {
                                 //terminal point of the array!
-                                var ptr = variable.rawValue + (ulong)(elementSize * i * strideLength);
+                                var ptr = VmPtr.FromRaw(variable.rawValue) + (elementSize * i * strideLength);
                                 var alloc = new VmAllocation
                                 {
-                                    ptr = VmPtr.FromRaw(ptr),
+                                    ptr = ptr,
                                     length = elementSize,
                                     format = new HeapTypeFormat
                                     {
@@ -393,8 +390,9 @@ namespace FadeBasic.Virtual
                                         // typeFlags = variable.allocation.format.typeFlags
                                     }
                                 };
+                                _logger.Debug($"putting sub-array pointer i=[{i}] at ptr=[{alloc.ptr}], raw=[{VmPtr.FromRaw(variable.rawValue)}] offset=[{(ulong)(elementSize * i * strideLength)}]");
                                 
-                                var v = new DebugRuntimeVariable(_vm, $"{i}", elementTypeCode, ptr, ref alloc,
+                                var v = new DebugRuntimeVariable(_vm, $"{i}", elementTypeCode, VmPtr.GetRaw(ref ptr), ref alloc,
                                     variable.scopeIndex,
                                     variable.regAddr)
                                 {
@@ -523,7 +521,9 @@ namespace FadeBasic.Virtual
                                     };
                                     
                                     evalNameToId[subVariable.evalName] = subVariable.id;
-                                    _vm.heap.ReadSpan(VmPtr.FromRaw(variable.rawValue) + field.offset, field.length, out var fieldSpan);
+                                    var fieldPtr = VmPtr.FromRaw(variable.rawValue) + field.offset;
+                                    _vm.heap.ReadSpan(fieldPtr, field.length, out var fieldSpan);
+                                    
                                     VmUtil.TryGetVariableTypeDisplay(field.typeCode, out subVariable.type);
                                     subVariable.value =
                                         VmUtil.ConvertValueToDisplayString(field.typeCode, _vm, ref fieldSpan);

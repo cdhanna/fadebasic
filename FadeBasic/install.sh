@@ -26,7 +26,7 @@ dotnet clean build.sln -c Release
 dotnet build build.sln $BUILD_ARGS
 
 # build nuget packages (without building, so its quicker)
-PACK_ARGS="--output $OUTPUT_FOLDER /p:Version=$SEM_VER --include-symbols --include-source -c Release"
+PACK_ARGS="--output $OUTPUT_FOLDER /p:Version=$SEM_VER --include-symbols --include-source -p:SymbolPackageFormat=snupkg -c Release"
 dotnet pack ./FadeBasic $PACK_ARGS
 dotnet pack ./FadeBasicCommands $PACK_ARGS
 dotnet pack ./FadeBasic.Lib.Standard $PACK_ARGS
@@ -44,6 +44,7 @@ if [ -z "$FADE_USE_LOCAL_SOURCE" ]; then
     # install nuget packages to source
     echo "pushing packages, $OUTPUT_FOLDER/*.$BUILD_NUMBER.nupkg, to nuget source, ${PACKAGE_SOURCE}"
     dotnet nuget push $OUTPUT_FOLDER/*.$BUILD_NUMBER.nupkg --source "$PACKAGE_SOURCE" $NUGET_KEY_STR
+
   else
     echo "Skipping NuGet push because FADE_NUGET_DRYRUN is set."
   fi
