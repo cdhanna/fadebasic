@@ -662,10 +662,10 @@ namespace FadeBasic
             });
         }
 
-        public bool TryAddVariable(VariableRefNode variable)
+        public bool TryAddVariable(VariableRefNode variable, out Symbol symbol)
         {
             var symbolTable = localVariables.Peek();
-            var symbol = new Symbol
+            symbol = new Symbol
             {
                 text = variable.variableName,
                 typeInfo = TypeInfo.FromVariableType(variable.DefaultTypeByName),
@@ -673,6 +673,7 @@ namespace FadeBasic
             };
             if (symbolTable.TryGetValue(variable.variableName, out var existing))
             {
+                symbol = existing;
                 return false; // TODO: maybe validate?
             }
             else
@@ -767,7 +768,7 @@ namespace FadeBasic
                 {
                     if (argExpr is VariableRefNode variableRefNode)
                     {
-                        TryAddVariable(variableRefNode);
+                        TryAddVariable(variableRefNode, out _);
                     }
                 }
             }

@@ -1680,6 +1680,50 @@ a = x";
     }
     
     
+    
+    
+    [Test]
+    public void ParseError_StructCastToForLoopVariable()
+    {
+        var input = $@"
+type egg
+    x
+endtype
+n as egg
+
+for n = 1 to 4
+next
+";
+        var parser = MakeParser(input);
+        var prog = parser.ParseProgram();
+
+        prog.AssertParseErrors(1, out var errors);
+        Assert.That(errors[0].Display, Is.EqualTo($"[6:4] - {ErrorCodes.InvalidCast} | cannot convert int to egg"));
+    }
+
+    
+    [Test]
+    public void ParseError_GlobalUsedBeforeDeclared()
+    {
+        var input = $@"
+
+global x1 = 1
+result = f1()
+
+global x2 = 2
+function f1() 
+endfunction x1 + x2
+
+
+";
+        var parser = MakeParser(input);
+        var prog = parser.ParseProgram();
+
+        prog.AssertParseErrors(1, out var errors);
+        Assert.That(errors[0].Display, Is.EqualTo($"[7:17] - {ErrorCodes.SymbolNotDeclaredYet} | symbol, x2"));
+    }
+
+    
     [Test]
     public void ParseError_Function_CanUseGlobal()
     {

@@ -301,13 +301,28 @@ namespace FadeBasic.Ast.Visitors
                         }
                         break;
                     case ForStatement forStatement:
+                        
                         if (forStatement.variableNode is VariableRefNode forVariable)
                         {
-                            scope.TryAddVariable(forVariable);
+                            if (!scope.TryAddVariable(forVariable, out var existingSymbol))
+                            {
+                            }
+                            forVariable.ParsedType = existingSymbol.typeInfo;
                         }
+                        else
+                        {
+                            forVariable = null;
+                        }
+                        
+                        
                         forStatement.endValueExpression?.EnsureVariablesAreDefined(scope, ctx);
                         forStatement.stepValueExpression?.EnsureVariablesAreDefined(scope, ctx);
                         forStatement.startValueExpression?.EnsureVariablesAreDefined(scope, ctx);
+                        
+                        if (forVariable != null)
+                        {
+                            scope.EnforceTypeAssignment(forVariable, forStatement.startValueExpression.ParsedType, forVariable.ParsedType, false, out _);
+                        }
                         
                         scope.BeginLoop();
                         forStatement.statements.CheckStatements(scope, ctx);
