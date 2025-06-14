@@ -81,7 +81,8 @@ namespace FadeBasic.Ast.Visitors
             assignment.expression = new DefaultValueExpression
             {
                 startToken = assignment.startToken, 
-                endToken = assignment.endToken
+                endToken = assignment.endToken,
+                Errors = init.Errors
             };
             
             for (var i = init.assignments.Count - 1; i >= 0; i--)

@@ -458,6 +458,24 @@ e = {
     
     
     [Test]
+    public void ParseError_InitNeedsAssignments()
+    {
+        var input = @"
+type egg
+    x, y
+endtype
+e as egg
+e = { 
+ 1, 2
+}";
+        var parser = MakeParser(input);
+        var prog = parser.ParseProgram();
+        prog.AssertParseErrors(1, out var errors);
+        Assert.That(errors[0].Display, Is.EqualTo($"[6:1,7:5] - {ErrorCodes.InitializerCanOnlyHaveAssignments}"));
+    }
+
+    
+    [Test]
     public void ParseError_TypeCheck_Function_ReturnTypeAmbig()
     {
         var input = @"

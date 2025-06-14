@@ -3012,6 +3012,7 @@ namespace FadeBasic
                     var lookingForClose = true;
                     var subStatements = new List<IStatementNode>();
                     var assignments = new List<AssignmentStatement>();
+                    var initErrors = new List<ParseError>();
                     while (lookingForClose)
                     {
                         switch (_stream.Peek.type)
@@ -3039,7 +3040,7 @@ namespace FadeBasic
                                         assignments.Add(assignment);
                                         break;
                                     default:
-                                        // TODO: add error saying only assignments are allowed
+                                        initErrors.Add(new ParseError(statement, ErrorCodes.InitializerCanOnlyHaveAssignments));
                                         break;
                                 }
                                 break;
@@ -3049,7 +3050,7 @@ namespace FadeBasic
 
                     outputExpression = new InitializerExpression
                     {
-                        startToken = token, endToken = _stream.Current, assignments = assignments
+                        startToken = token, endToken = _stream.Current, assignments = assignments, Errors = initErrors
                     };
                     break;
                 case LexemType.CommandWord:

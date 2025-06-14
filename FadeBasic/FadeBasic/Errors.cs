@@ -204,6 +204,7 @@ namespace FadeBasic
         public static readonly ErrorCode ImplicitArrayDeclaration = "[0212] Implicit array declarations are not allowed";
         public static readonly ErrorCode InitializerNotAllowed = "[0213] Initializer is not allowed here";
         public static readonly ErrorCode DefaultExpressionUnknownType = "[0214] Default expression has unknown type";
+        public static readonly ErrorCode InitializerCanOnlyHaveAssignments = "[0215] Initializer is only allowed to have assignment statements";
     
         // 300 series represents type issues
         public static readonly ErrorCode SymbolAlreadyDeclared = "[0300] Symbol already declared";
