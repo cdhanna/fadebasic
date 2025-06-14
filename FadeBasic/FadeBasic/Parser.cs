@@ -69,6 +69,7 @@ namespace FadeBasic
         public Dictionary<string, SymbolTable> typeNameToTypeMembers = new Dictionary<string, SymbolTable>();
         public Dictionary<string, TypeDefinitionStatement> typeNameToDecl = new Dictionary<string, TypeDefinitionStatement>();
         public SymbolTable globalVariables = new SymbolTable();
+        public SymbolTable allGlobalVariables = new SymbolTable();
         public Stack<SymbolTable> localVariables = new Stack<SymbolTable>();
         public Stack<string> currentFunctionName = new Stack<string>();
         public Dictionary<string, Symbol> functionSymbolTable = new Dictionary<string, Symbol>();
@@ -615,6 +616,8 @@ namespace FadeBasic
             return typeNameToTypeMembers.TryGetValue(typeName, out typeSymbols);
         }
 
+        
+        
         public bool TryGetSymbol(string variableName, out Symbol symbol)
         {
             if (GetVariables(DeclarationScopeType.Local).TryGetValue(variableName, out symbol))
@@ -625,10 +628,29 @@ namespace FadeBasic
                 return true;
             } else
             {
+                if (allGlobalVariables.TryGetValue(variableName, out symbol))
+                {
+                    return false;
+                }
+
                 return false;
             }
         }
 
+        public void AddGlobalVariable(DeclarationStatement decl)
+        {
+            if (allGlobalVariables.ContainsKey(decl.variable))
+            {
+                // this failure case is already handled by the scoping rules
+                return;
+            }
+            allGlobalVariables.Add(decl.variable, new Symbol
+            {
+                text = decl.variable,
+                typeInfo = TypeInfo.FromVariableType(decl.type.variableType),
+                source = decl
+            });
+        }
 
         public void AddVariable(VariableRefNode variable)
         {

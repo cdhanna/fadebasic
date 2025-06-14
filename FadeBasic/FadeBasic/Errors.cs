@@ -205,6 +205,7 @@ namespace FadeBasic
         public static readonly ErrorCode InitializerNotAllowed = "[0213] Initializer is not allowed here";
         public static readonly ErrorCode DefaultExpressionUnknownType = "[0214] Default expression has unknown type";
         public static readonly ErrorCode InitializerCanOnlyHaveAssignments = "[0215] Initializer is only allowed to have assignment statements";
+        public static readonly ErrorCode SymbolNotDeclaredYet = "[0216] Reference has not been declared yet";
     
         // 300 series represents type issues
         public static readonly ErrorCode SymbolAlreadyDeclared = "[0300] Symbol already declared";

@@ -29,6 +29,19 @@ namespace FadeBasic.Ast.Visitors
                 scope.AddType(type);
             }
             
+            // find all global declarations and put them in a list in the 
+            //  scope itself, so we can know if the symbol exists AT ALL, or
+            //  just yet...
+            program.Visit(node =>
+            {
+                switch (node)
+                {
+                    case DeclarationStatement decl when decl.scopeType == DeclarationScopeType.Global:
+                        scope.AddGlobalVariable(decl);
+                        break;
+                }
+            });
+            
             
             foreach (var function in program.functions)
             {
@@ -474,8 +487,16 @@ namespace FadeBasic.Ast.Visitors
 
                     if (!scope.TryGetSymbol(variableRefNode.variableName, out var symbol))
                     {
-                        // accessing an undefined variable...
-                        variableRefNode.Errors.Add(new ParseError(variableRefNode, ErrorCodes.InvalidReference, "unknown symbol, " + variableRefNode.variableName));
+                        if (symbol != null)
+                        {
+                            // accessing a symbol before it has been decalred
+                            variableRefNode.Errors.Add(new ParseError(variableRefNode, ErrorCodes.SymbolNotDeclaredYet, "unknown symbol, " + variableRefNode.variableName));
+                        }
+                        else
+                        {
+                            // accessing an undefined variable...
+                            variableRefNode.Errors.Add(new ParseError(variableRefNode, ErrorCodes.InvalidReference, "unknown symbol, " + variableRefNode.variableName));
+                        }
                         break; // no hook into the symbol table, the rest of this expression is unknown...
                     }
                     EnsureStructRefRight(fieldRef, symbol, scope, ctx);
@@ -682,7 +703,15 @@ namespace FadeBasic.Ast.Visitors
                 case VariableRefNode variable:
                     if (!scope.TryGetSymbol(variable.variableName, out var symbol) && variable.variableName != "_")
                     {
-                        expr.Errors.Add(new ParseError(expr.StartToken, ErrorCodes.InvalidReference, $"unknown symbol, {variable.variableName}"));
+                        if (symbol != null)
+                        {
+                            // accessing a symbol before it has been decalred
+                            expr.Errors.Add(new ParseError(expr.StartToken, ErrorCodes.SymbolNotDeclaredYet, "symbol, " + variable.variableName));
+                        }
+                        else
+                        {
+                            expr.Errors.Add(new ParseError(expr.StartToken, ErrorCodes.InvalidReference, $"unknown symbol, {variable.variableName}"));
+                        }
                     }
 
                     variable.DeclaredFromSymbol = symbol;
