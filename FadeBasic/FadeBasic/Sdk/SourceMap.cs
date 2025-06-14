@@ -16,6 +16,11 @@ namespace FadeBasic.Sdk
         public int startChar;
         public int endLine;
         public int endChar;
+        
+        public override string ToString()
+        {
+            return $"[{fileName} {startLine}:{startChar},{endLine}:{endChar}]";
+        }
     }
 
     public struct SourceLocation

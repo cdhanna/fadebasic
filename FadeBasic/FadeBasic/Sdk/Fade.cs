@@ -88,7 +88,7 @@ namespace FadeBasic.Sdk
             var commandCollection = new CommandCollection(usedMethodSources.ToArray());
             var sourceMap = SourceMap.CreateSourceMap(fullSourcePaths);
 
-            return TryCreateFromString(sourceMap.fullSource, commandCollection, out context, out errors);
+            return TryCreateFromString(sourceMap.fullSource, commandCollection, out context, out errors, sourceMap);
 
         }
         
@@ -96,9 +96,10 @@ namespace FadeBasic.Sdk
             string src, 
             CommandCollection commands, 
             out FadeRuntimeContext context,
-            out FadeErrors errors)
+            out FadeErrors errors,
+            SourceMap map=null)
         {
-            return FadeRuntimeContext.TryFromSource(src, commands, out context, out errors);
+            return FadeRuntimeContext.TryFromSource(src, commands, out context, out errors, map);
         }
         
        
@@ -112,6 +113,11 @@ namespace FadeBasic.Sdk
         public List<LexerError> LexicalErrors = new List<LexerError>();
         public List<ParseError> ParserErrors = new List<ParseError>();
 
+        public SourceMap SourceMap;
+        
+        public FadeErrors(){}
+        
+        
         public string ToDisplay()
         {
             var sb = new StringBuilder();
@@ -137,7 +143,14 @@ namespace FadeBasic.Sdk
             foreach (var err in ParserErrors)
             {
                 sb.Append("\t");
-                sb.AppendLine(err.Display);
+                if (SourceMap != null)
+                {
+                    sb.AppendLine(err.DisplaySourceMap(SourceMap));
+                }
+                else
+                {
+                    sb.AppendLine(err.Display);
+                }
             }
 
             sb.AppendLine();
@@ -160,6 +173,7 @@ namespace FadeBasic.Sdk
         public ProgramNode Program { get; private set; }
         public Compiler Compiler { get; private set; }
         public CommandCollection CommandCollection { get; private set; }
+        public SourceMap SourceMap { get; private set; }
 
         public bool DidProgramComplete => Machine.instructionIndex >= Machine.program.Length;
         
@@ -747,7 +761,8 @@ namespace FadeBasic.Sdk
         public static bool TryFromSource(string src, 
             CommandCollection commands, 
             out FadeRuntimeContext context,
-            out FadeErrors errors)
+            out FadeErrors errors,
+            SourceMap map = null)
         {
             errors = null;
             context = null;
@@ -759,7 +774,8 @@ namespace FadeBasic.Sdk
             {
                 errors = new FadeErrors
                 {
-                    LexicalErrors = lexResults.tokenErrors
+                    LexicalErrors = lexResults.tokenErrors,
+                    SourceMap = map,
                 };
                 return false;
             }
@@ -772,7 +788,8 @@ namespace FadeBasic.Sdk
             {
                 errors = new FadeErrors
                 {
-                    ParserErrors = parseErrors
+                    ParserErrors = parseErrors,
+                    SourceMap = map
                 };
                 return false;
             }
@@ -795,7 +812,8 @@ namespace FadeBasic.Sdk
                 Parser = parser, 
                 Compiler = compiler,
                 Program = program,
-                CommandCollection = commands
+                CommandCollection = commands,
+                SourceMap = map
             };
 
             return true;

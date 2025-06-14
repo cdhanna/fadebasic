@@ -1,6 +1,7 @@
 using System.Collections.Generic;
 using System.Diagnostics;
 using FadeBasic.Ast;
+using FadeBasic.Sdk;
 
 namespace FadeBasic
 {
@@ -102,6 +103,13 @@ namespace FadeBasic
         {
             
         }
+
+        public string DisplaySourceMap(SourceMap map)
+        {
+            var sourceRange = map.GetOriginalRange(location);
+            return $"{sourceRange.ToString()} - {CombinedMessage}";
+        }
+        
 
         public ParseError(Token atToken, ErrorCode errorCode, string message="")
         {
