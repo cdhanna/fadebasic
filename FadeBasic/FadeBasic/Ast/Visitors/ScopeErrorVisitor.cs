@@ -291,6 +291,32 @@ namespace FadeBasic.Ast.Visitors
                         }
                         
                         break;
+                    case RedimStatement redimStatement:
+                        redimStatement.variable.EnsureVariablesAreDefined(scope, ctx);
+                        
+                        if (!scope.TryGetSymbol(redimStatement.variable.variableName, out var symbol) &&
+                            redimStatement.variable.variableName != "_")
+                        {
+                            
+                        }
+                        else
+                        {
+                            var src = symbol.source as DeclarationStatement;
+                            if (redimStatement.ranks.Length != src.ranks.Length)
+                            {
+                                if (redimStatement.ranks.Length == 0)
+                                {
+                                    redimStatement.ranks = src.ranks; // just clone 'em
+                                }
+                                else
+                                {
+                                    redimStatement.Errors.Add(new ParseError(redimStatement, ErrorCodes.ReDimHasIncorrectNumberOfRanks));
+                                }
+                            }
+                        }
+
+                        
+                        break;
                     case SwitchStatement switchStatement:
                         switchStatement.expression.EnsureVariablesAreDefined(scope, ctx);
                         foreach (var caseGroup in switchStatement.cases )

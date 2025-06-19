@@ -11,6 +11,24 @@ namespace FadeBasic.Ast
         Global
     }
 
+    public class RedimStatement : AstNode, IStatementNode, IHasTriviaNode
+    {
+        public VariableRefNode variable;
+        public IExpressionNode[] ranks;
+        
+        protected override string GetString()
+        {
+            return $"redim {variable},({string.Join(",", ranks.Select(x => x.ToString()))})";
+        }
+
+        public override IEnumerable<IAstVisitable> IterateChildNodes()
+        {
+            yield return variable;
+            if (ranks != null) foreach (var rank in ranks) yield return rank;
+        }
+        public string Trivia { get; set; }
+    }
+
     public class DeclarationStatement : AstNode, IStatementNode, IHasTriviaNode
     {
         public string variable;
