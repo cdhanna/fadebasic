@@ -662,6 +662,9 @@ namespace FadeBasic.Virtual
                 case DeclarationStatement declarationStatement:
                     Compile(declarationStatement);
                     break;
+                case RedimStatement redimStatement:
+                    Compile(redimStatement);
+                    break;
                 case AssignmentStatement assignmentStatement:
                     Compile(assignmentStatement);
                     break;
@@ -716,6 +719,7 @@ namespace FadeBasic.Virtual
                 case ExpressionStatement expressionStatement:
                     Compile(expressionStatement);
                     break;
+                    
                 default:
                     throw new Exception("compiler exception: unhandled statement node " + statement);
             }
@@ -1634,7 +1638,85 @@ namespace FadeBasic.Virtual
             _buffer.Add(OpCodes.CALL_HOST);
 
         }
-        
+
+        public void Compile(RedimStatement redimStatement)
+        {
+            if (!scope.TryGetArray(redimStatement.variable.variableName, out var arrayVar))
+            {
+                throw new Exception("invalid array to redim");
+            }
+
+            // need to reset the registers
+            for (var i = redimStatement.ranks.Length - 1; i >= 0; i--)
+            {
+                // put the expression value onto the stack
+                var expr = redimStatement.ranks[i];
+                Compile(expr);
+
+                // store the expression value (the length for this rank) in a register
+                PushStore(_buffer, arrayVar.rankSizeRegisterAddresses[i], arrayVar.isGlobal);
+
+
+                if (i == redimStatement.ranks.Length - 1)
+                {
+                    // push 1 as the multiplier factor, because later, multiplying by 1 is a no-op;
+                    AddPushInt(_buffer, 1);
+                }
+                else
+                {
+                    // get the length of the right term
+                    PushLoad(_buffer, arrayVar.rankSizeRegisterAddresses[i + 1], arrayVar.isGlobal);
+
+                    // and get the multiplier factor of the right term
+                    PushLoad(_buffer, arrayVar.rankIndexScalerRegisterAddresses[i + 1], arrayVar.isGlobal);
+
+                    // and multiply those together...
+                    _buffer.Add(OpCodes.MUL);
+                }
+
+                // _buffer.Add(OpCodes.STORE);
+                // _buffer.Add(arrayVar.rankIndexScalerRegisterAddresses[i]); // store the multiplier 
+                PushStore(_buffer, arrayVar.rankIndexScalerRegisterAddresses[i], arrayVar.isGlobal);
+
+                // need to clear the data
+                
+            }
+            
+            
+                
+            // now, we need to allocate enough memory for the entire thing
+            AddPushInt(_buffer, 1);
+                
+            for (var i = 0; i < redimStatement.ranks.Length; i++)
+            {
+                // _buffer.Add(OpCodes.LOAD);
+                // _buffer.Add(arrayVar.rankSizeRegisterAddresses[i]); // store the length of the sub var on the register.
+                PushLoad(_buffer, arrayVar.rankSizeRegisterAddresses[i], arrayVar.isGlobal);
+
+                _buffer.Add(OpCodes.MUL);
+            }
+                
+            var sizeOfElement = arrayVar.byteSize;
+            AddPushInt(_buffer, sizeOfElement);
+                
+            _buffer.Add(OpCodes.MUL); // multiply the length by the size, to get the entire byte-size of the requested array
+                
+            // inject the type format.
+            var tf = new HeapTypeFormat
+            {
+                typeCode = arrayVar.typeCode,
+                typeId = arrayVar.structType?.typeId ?? 0,
+                typeFlags = HeapTypeFormat.CreateArrayFlag(redimStatement.ranks.Length)
+            };
+            AddPushTypeFormat(_buffer, ref tf);
+                
+            _buffer.Add(OpCodes.ALLOC); // push the alloc instruction
+                
+            // _buffer.Add(OpCodes.STORE);
+            // _buffer.Add(arrayVar.registerAddress);
+            PushStorePtr(_buffer, arrayVar.registerAddress, arrayVar.isGlobal);
+        }
+
         public void Compile(DeclarationStatement declaration, bool includeDefaultInitializer=false)
         {
             /*
@@ -1978,13 +2060,52 @@ namespace FadeBasic.Virtual
                     
                     break;
                 case VariableRefNode variableRefNode:
+
+
+                    if (scope.TryGetArray(variableRefNode.variableName, out var compiledArrayVariable))
+                    {
+                        // hopefully the rhs compilation pushed a ptr onto the stack, 
+                        //  so the job here is to allocate some new memory, copy the memory, and then write the 
+                        //  pointer to the register address for the array
+                        
+                        _buffer.Add(OpCodes.COPY_HEAP_MEM);
+                        
+                        // save the resulting pointer
+                        PushStorePtr(_buffer, compiledArrayVariable.registerAddress, compiledArrayVariable.isGlobal);
+                        
+                        // // push the size of the write operation- it is the size of the struct we happen to have!
+                        // // AddPushInt(_buffer, structType.byteSize);
+                        // // AddPushInt(_buffer, 10);
+                        // AddPushInt(_buffer, compiledArrayVariable.byteSize * 5); // the 5 is hardcoded for a test
+                        //
+                        // // now, push the pointer where to write the data to- which, we know is the register address
+                        // // PushLoad(_buffer, comp.registerAddress, compiledVar.isGlobal);
+                        // PushAddress(new ArrayIndexReference
+                        // {
+                        //     variableName = variableRefNode.variableName,
+                        //     rankExpressions = new List<IExpressionNode>
+                        //     {
+                        //         new LiteralIntExpression(Token.Blank, 0)
+                        //     }
+                        // });
+                        //
+                        // _buffer.Add(OpCodes.WRITE); // consume the ptr, then the length, then the data
+                        //
+                        //
+                        // _buffer.Add(OpCodes.CAST);
+                        // _buffer.Add(compiledArrayVariable.typeCode);
+                        //
+                        // PushStorePtr(_buffer, compiledArrayVariable.registerAddress, compiledArrayVariable.isGlobal);
+
+                        break;
+                    }
                     
                     if (!scope.TryGetVariable(variableRefNode.variableName, out var compiledVar))
                     {
                         var tc = VmUtil.GetTypeCode(variableRefNode.DefaultTypeByName);
                         compiledVar = scope.Create(variableRefNode.variableName, tc, false);
                     }
-            
+                    
                     // wait wait, if the rhs is a pointer, and the lhs is a struct, then we actually need to COPY the pointer data...
                     if (compiledVar.typeCode == TypeCodes.STRUCT)
                     {
@@ -2146,13 +2267,8 @@ namespace FadeBasic.Virtual
             Compile(assignmentStatement.expression);
             CompileAssignmentLeftHandSide(assignmentStatement.variable);
 
-            if (test++ > 330)
-            {
-                
-            }
         }
 
-        private int test = 0;
         public void ComputeStructOffsets(CompiledType baseType, IVariableNode right, out int offset, out int writeLength, out byte typeCode)
         {
             writeLength = 0;
@@ -2430,6 +2546,38 @@ namespace FadeBasic.Virtual
                     }
                     break;
                 case VariableRefNode variableRef:
+                    
+                    // maybe this is an array?
+                    if (scope.TryGetArray(variableRef.variableName, out var compiledArrayVar))
+                    {
+                        // compile the pointer to this array?
+                        PushLoadPtr(_buffer, compiledArrayVar.registerAddress, compiledArrayVar.isGlobal);
+                        
+                        // // ah, the entire memory needs to get pushed 
+                        // // load the size up
+                        // AddPushInt(_buffer, compiledArrayVar.byteSize * 5); // the 5 is hardcoded for a test
+                        //
+                        // PushAddress(new ArrayIndexReference
+                        // {
+                        //     variableName = variableRef.variableName,
+                        //     rankExpressions = new List<IExpressionNode>
+                        //     {
+                        //         new LiteralIntExpression(Token.Blank, 0)
+                        //     }
+                        // });
+                        // // PushLoad(_buffer, compiledArrayVar.registerAddress, compiledArrayVar.isGlobal);
+                        //
+                        // // read, it'll find the ptr, size, and then place the data onto the stack
+                        // _buffer.Add(OpCodes.READ);
+                        //
+                        // // inject a type-code onto the stack
+                        // _buffer.Add(OpCodes.BPUSH);
+                        // _buffer.Add(compiledArrayVar.typeCode);
+
+                        break;
+                    }
+                    
+                    
                     // emit the read from register
                     if (!scope.TryGetVariable(variableRef.variableName, out var compiledVar))
                     {

@@ -206,6 +206,8 @@ namespace FadeBasic
         public static readonly ErrorCode DefaultExpressionUnknownType = "[0214] Default expression has unknown type";
         public static readonly ErrorCode InitializerCanOnlyHaveAssignments = "[0215] Initializer is only allowed to have assignment statements";
         public static readonly ErrorCode SymbolNotDeclaredYet = "[0216] Reference has not been declared yet";
+        public static readonly ErrorCode ReDimHasIncorrectNumberOfRanks = "[0217] Must have same rank as declaration";
+        public static readonly ErrorCode ArrayCannotAssignFromDefault = "[0218] Cannot assign default to array";
     
         // 300 series represents type issues
         public static readonly ErrorCode SymbolAlreadyDeclared = "[0300] Symbol already declared";
@@ -213,6 +215,7 @@ namespace FadeBasic
         public static readonly ErrorCode AmbiguousFunctionReturnType = "[0302] Function has ambiguous return type";
         public static readonly ErrorCode UnknowableFunctionReturnType = "[0303] Function has no inferable return type";
         public static readonly ErrorCode InvalidFunctionReturnType = "[0304] Functions cannot return arrays";
+        public static readonly ErrorCode ArrayRankMismatch = "[0305] Arrays must have the same rank";
     }
 
     public struct ErrorCode

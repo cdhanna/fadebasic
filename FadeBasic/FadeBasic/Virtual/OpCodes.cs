@@ -362,5 +362,13 @@ namespace FadeBasic.Virtual
         /// </summary>
         public const byte LOAD_PTR_GLOBAL = 57;
         public const byte LOAD_PTR = 58;
+
+        /// <summary>
+        /// pops the following data from the stack,
+        ///  - the read ptr,
+        /// allocates memory for the same size and copies the contents
+        /// pushes the resulting allocation back onto the stack
+        /// </summary>
+        public const byte COPY_HEAP_MEM = 60;
     }
 }

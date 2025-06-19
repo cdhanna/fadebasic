@@ -13,6 +13,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Parser reports error when invalid-cast occurs in the variable assignment of for-loops
 - Usage of global variables before they are declared reports a different error than simply an undefined symbol
 
+### Added
+- Simple array assignment 
+- `redim` keyword allows arrays to be resized
+
 ## [0.0.44] - 2025-06-05
 
 ### Fixed

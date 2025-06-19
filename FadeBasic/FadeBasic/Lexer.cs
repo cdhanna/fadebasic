@@ -18,7 +18,8 @@ namespace FadeBasic
         KeywordRemEnd,
         
         KeywordDeclareArray,
-        KeywordUnDeclareArray,
+        // KeywordUnDeclareArray,
+        KeywordReDimArray,
         
         KeywordFor, 
         KeywordTo, 
@@ -219,7 +220,8 @@ namespace FadeBasic
             new Lexem(LexemType.KeywordReturn, new Regex("^return")),
             
             new Lexem(LexemType.KeywordDeclareArray, new Regex("^dim")),
-            new Lexem(LexemType.KeywordUnDeclareArray, new Regex("^undim")),
+            // new Lexem(LexemType.KeywordUnDeclareArray, new Regex("^undim")),
+            new Lexem(LexemType.KeywordReDimArray, new Regex("^redim")),
 
             new Lexem(LexemType.KeywordRem, new Regex("^`(.*)$")),
             new Lexem(LexemType.KeywordRem, new Regex("^rem(.*)$")),

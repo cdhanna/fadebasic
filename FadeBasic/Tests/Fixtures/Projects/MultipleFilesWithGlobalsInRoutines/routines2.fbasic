@@ -1,0 +1,9 @@
+
+remstart
+goto fake_2
+    setup2:
+        global g2 = 4
+    return
+end
+fake_2:
+remend

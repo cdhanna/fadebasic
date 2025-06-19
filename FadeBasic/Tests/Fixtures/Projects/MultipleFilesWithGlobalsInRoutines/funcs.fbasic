@@ -1,0 +1,8 @@
+global g3 = 3
+
+function sampleFunc(n)
+    print g3
+endfunction g2
+
+`function sampleFunc2(n)
+`endfunction g1 * sampleFunc(n)

@@ -239,7 +239,28 @@ namespace FadeBasic
 
             if (leftSide.IsArray)
             {
-                node.Errors.Add(new ParseError(node, ErrorCodes.InvalidCast, $"cannot assign to array"));
+                if (!rightSide.IsArray)
+                {
+                    node.Errors.Add(new ParseError(node, ErrorCodes.InvalidCast, $"cannot assign to array"));
+                }
+                else
+                {
+                    // TODO: add type validation?
+
+                    if (rightSide.rank != leftSide.rank)
+                    {
+                        node.Errors.Add(new ParseError(node, ErrorCodes.ArrayRankMismatch));
+                    }
+                    
+                    // the type code needs to be exactly the same on array copies...
+                    if (rightSide.type != leftSide.type)
+                    {
+                        node.Errors.Add(new ParseError(node, ErrorCodes.InvalidCast, $"array is wrong type"));
+                        return;
+                    }
+                }
+                
+                
             }
 
             if (!rightSide.unset && rightSide.type == VariableType.Void)
@@ -405,6 +426,12 @@ namespace FadeBasic
                         
                         EnforceTypeAssignment(variableRef, assignment.expression.ParsedType, existingSymbol.typeInfo, false, out _);
                         variableRef.DeclaredFromSymbol = existingSymbol;
+                        
+                        if (existingSymbol.typeInfo.IsArray && assignment.expression is DefaultValueExpression)
+                        {
+                            assignment.Errors.Add(new ParseError(assignment.expression, ErrorCodes.ArrayCannotAssignFromDefault));
+                        }
+
                     }
                     else // no symbol exists, so this is a defacto local variable
                     {
@@ -440,6 +467,12 @@ namespace FadeBasic
                         var isArray = symbol.typeInfo.IsArray;
                         var needsImplicitAssignment =
                             symbol.typeInfo.type == VariableType.Struct || isArray;
+
+                        if (isArray && assignment.expression is DefaultValueExpression)
+                        {
+                            assignment.Errors.Add(new ParseError(assignment.expression, ErrorCodes.ArrayCannotAssignFromDefault));
+                        }
+                        
                         if (needsImplicitAssignment)
                         {
                             implicitDecl = DeclarationStatement.FromAssignment(variableRef, assignment, symbol);
@@ -1015,6 +1048,129 @@ namespace FadeBasic
         //     
         // }
 
+        private RedimStatement ParseRedimStatement(Token redimToken)
+        {
+            
+            var next = _stream.Advance();
+            var errors = new List<ParseError>();
+            var hasParens = false;
+            switch (next.type)
+            {
+                case LexemType.VariableString:
+                case LexemType.VariableReal:
+                case LexemType.VariableGeneral:
+                    // dim x
+                    var openParenToken = _stream.Peek;
+                    if (openParenToken.type == LexemType.ParenOpen)
+                    {
+                        hasParens = true;
+                        _stream.Advance(); // skip the (
+                        // errors.Add(new ParseError(openParenToken, ErrorCodes.ArrayDeclarationMissingOpenParen));
+                    }
+                    
+                    var rankExpressions = new List<IExpressionNode>();
+                    var rankIndex = -1;
+                    while (hasParens)
+                    // for (var rankIndex = 0; rankIndex < 5; rankIndex++) // 5 is the magic "max dimension"
+                    {
+                        rankIndex++;
+                        var curr = _stream.Current;
+                        if (!TryParseExpression(out var rankExpression, out var recovery))
+                        {
+                            if (rankIndex == 0)
+                            {
+                                errors.Add(new ParseError(curr, ErrorCodes.ArrayDeclarationRequiresSize));
+                            }
+                            else
+                            {
+                                // errors.Add();
+                            }
+                            _stream.Patch(recovery.index, recovery.correctiveTokens);
+
+                            if (!TryParseExpression(out rankExpression, out _))
+                            {
+                                throw new Exception("Failed to patch stream");
+                            }
+                        }
+                        // var rankExpression = ParseWikiExpression();
+                        rankExpressions.Add(rankExpression);
+                        var closeFound = false;
+                        var looking = true;
+                        while (looking)
+                        {
+                            var closeOrComma = _stream.Advance();
+                            switch (closeOrComma.type)
+                            {
+                                case LexemType.ParenClose:
+                                    closeFound = true;
+                                    looking = false;
+                                    break;
+                                case LexemType.ArgSplitter:
+                                    if (rankIndex + 1 == 5)
+                                    {
+                                        errors.Add(new ParseError(closeOrComma, ErrorCodes.ArrayDeclarationSizeLimit));
+                                    }
+                                    looking = false;
+
+                                    break;
+                                case LexemType.EndStatement:
+                                case LexemType.EOF:
+                                    errors.Add(new ParseError(closeOrComma,
+                                        ErrorCodes.ArrayDeclarationMissingCloseParen));
+                                    closeFound = true;
+                                    looking = false;
+
+                                    break;
+                                default:
+                                    errors.Add(new ParseError(closeOrComma,
+                                        ErrorCodes.ArrayDeclarationInvalidSizeExpression));
+                                    break;
+                            }
+                        }
+
+                        if (closeFound)
+                        {
+                            break;
+                        }
+                    }
+
+                    // so far, we have dim x(n)
+                    // next, we _could_ have an AS, or it could be an end-of-statement
+
+                    // if (_stream.Peek?.type == LexemType.KeywordAs)
+                    // {
+                    //   
+                    // }
+
+                    var statement = new RedimStatement
+                    {
+                        startToken = redimToken,
+                        endToken = _stream.Current,
+                        variable = new VariableRefNode(next),
+                        ranks = rankExpressions.ToArray()
+                    };
+                    
+                    // var statement = new RedimStatement(
+                    //     redimToken, 
+                    //     new VariableRefNode(next), 
+                    //     rankExpressions.ToArray());
+                    statement.Errors = errors;
+                    return statement;
+                    break;
+                default:
+                    var patchToken = _stream.CreatePatchToken(LexemType.VariableGeneral, "_")[0];
+                    var fake = new RedimStatement
+                    {
+                        startToken = redimToken,
+                        endToken = redimToken,
+                        variable = new VariableRefNode(patchToken),
+                        ranks = new IExpressionNode[1]
+                    };
+                    fake.Errors.Add(new ParseError(patchToken, ErrorCodes.ArrayDeclarationInvalid));
+                    return fake;
+            }
+        }
+        
         private DeclarationStatement ParseDimStatement(Token dimToken)
         {
             // dim
@@ -1433,6 +1589,8 @@ namespace FadeBasic
                         return ParseStatementThatStartsWithScope(token);
                     case LexemType.KeywordDeclareArray:
                         return ParseDimStatement(token);
+                    case LexemType.KeywordReDimArray:
+                        return ParseRedimStatement(token);
                     case LexemType.VariableReal:
                     case LexemType.VariableString:
                     case LexemType.VariableGeneral:

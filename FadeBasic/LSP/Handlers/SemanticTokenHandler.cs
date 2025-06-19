@@ -193,7 +193,7 @@ public class SemanticTokenHandler : SemanticTokensHandlerBase
             case LexemType.ArgSplitter:
             case LexemType.FieldSplitter:
             case LexemType.KeywordDeclareArray:
-            case LexemType.KeywordUnDeclareArray:
+            case LexemType.KeywordReDimArray:
             case LexemType.CommandWord:
             case LexemType.KeywordReturn:
             case LexemType.KeywordEndCase:

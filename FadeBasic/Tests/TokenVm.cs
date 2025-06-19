@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using FadeBasic;
 using FadeBasic.Ast;
+using FadeBasic.Sdk;
 using FadeBasic.Virtual;
 
 namespace Tests;
@@ -2107,6 +2108,138 @@ dim x(4) as word
 //         Assert.IsTrue(called, "exception not called");
 //     }
 
+
+
+    [Test]
+    public void Array_Default()
+    {
+        Assert.Fail("It would be cool if this just reset the array");
+        var src = @"
+dim x(5) as word
+x = default
+z = x(1)
+";
+        Setup(src, out _, out var prog);
+        
+        var vm = new VirtualMachine(prog);
+        vm.Execute2();
+        
+        Assert.That(vm.heap.Cursor, Is.EqualTo(10.ToPtr()));
+
+        // var v = vm.dataRegisters[6];
+        // Assert.That(v, Is.EqualTo(88));
+        //
+        // vm.heap.Read(22.ToPtr(), 2, out var bytes);
+        // var value = BitConverter.ToInt16(bytes, 0);
+        // Assert.That(value, Is.EqualTo(88));
+    }
+
+
+    [Test]
+    public void Array_Reassign()
+    {
+        var src = @"
+dim x(5) as word
+dim y(5) as word
+x(1) = 12
+y(1) = 88
+x = y
+
+z = x(1)
+";
+        Setup(src, out _, out var prog);
+        
+        var vm = new VirtualMachine(prog);
+        vm.Execute2();
+        
+        Assert.That(vm.heap.Cursor, Is.EqualTo(30.ToPtr()));
+
+        var v = vm.dataRegisters[6];
+        Assert.That(v, Is.EqualTo(88));
+        
+        vm.heap.Read(22.ToPtr(), 2, out var bytes);
+        var value = BitConverter.ToInt16(bytes, 0);
+        Assert.That(value, Is.EqualTo(88));
+    }
+    
+    
+    [Test]
+    public void Array_Reassign_ChangeSize()
+    {
+        var src = @"
+dim x(5) as word
+dim y(2) as word
+x(1) = 12
+y(1) = 88
+x = y
+
+z = x(1)
+";
+        Setup(src, out _, out var prog);
+        
+        var vm = new VirtualMachine(prog);
+        vm.Execute2();
+        
+        Assert.That(vm.heap.Cursor, Is.EqualTo((5*2 + 2*2 + 2*2 ).ToPtr()));
+
+        var v = vm.dataRegisters[6];
+        Assert.That(v, Is.EqualTo(88));
+        
+        vm.heap.Read((5*2 + 2*2 + 1*2).ToPtr(), 2, out var bytes);
+        var value = BitConverter.ToInt16(bytes, 0);
+        Assert.That(value, Is.EqualTo(88));
+    }
+
+    
+    [Test]
+    public void Array_Redim()
+    {
+        var src = @"
+dim x(5) as word
+x(1) = 5
+z = x(1)
+redim x(3)
+z2 = x(1)
+
+";
+        Setup(src, out _, out var prog);
+        
+        var vm = new VirtualMachine(prog);
+        vm.Execute2();
+        
+        Assert.That(vm.heap.Cursor, Is.EqualTo((5*2 + 3*2 ).ToPtr()));
+
+        var v = vm.dataRegisters[3];
+        var v2 = vm.dataRegisters[4];
+        Assert.That(v, Is.EqualTo(5));
+        Assert.That(v2, Is.EqualTo(0));
+    }
+
+    
+    [Test]
+    public void Array_Redim_Implicit()
+    {
+        var src = @"
+dim x(5) as word
+x(1) = 5
+z = x(1)
+redim x
+z2 = x(1)
+
+";
+        Setup(src, out _, out var prog);
+        
+        var vm = new VirtualMachine(prog);
+        vm.Execute2();
+        
+        Assert.That(vm.heap.Cursor, Is.EqualTo((5*2 + 5*2 ).ToPtr()));
+
+        var v = vm.dataRegisters[3];
+        var v2 = vm.dataRegisters[4];
+        Assert.That(v, Is.EqualTo(5));
+        Assert.That(v2, Is.EqualTo(0));
+    }
+
     
     [Test]
     public void Array_CreateAssign()
@@ -2186,6 +2319,46 @@ x(2) = x(1) * 2
         Assert.That(value, Is.EqualTo(24));
     }
 
+    
+    [Test]
+    public void Array_DeclareTwice_ClearsMemory()
+    {
+        
+        var src = @"
+remstart
+ if an array gets declared multiple times,
+ then it should 
+  1. allocate new memory for the new size, 
+  2. free the old memory
+remend
+for n = 0 to 5
+    dim x(10)
+next
+
+a = x(1)
+
+";
+        Setup(src, out _, out var prog);
+        
+        var vm = new VirtualMachine(prog);
+        vm.Execute2();
+        
+        // the first data-register is the loop variable, n 
+        // Assert.That(vm.dataRegisters[1], Is.EqualTo(0));
+        // Assert.That(vm.typeRegisters[1], Is.EqualTo(TypeCodes.INT));
+        
+        
+        Assert.That(vm.heap.Cursor, Is.EqualTo((2*(10*4)).ToPtr())); //10 ints, which have a size of 4.. And the second one, because of the re-assignment
+         
+//        Assert.Fail("It shouldn't be possible to clear an array, because the pointer tracking is going to get confused. ");
+        // vm.heap.Read(2.ToPtr(), 2, out var bytes);
+        // var value = BitConverter.ToInt16(bytes, 0);
+        // Assert.That(value, Is.EqualTo(12));
+        //
+        // vm.heap.Read(4.ToPtr(), 2, out bytes);
+        // value = BitConverter.ToInt16(bytes, 0);
+        // Assert.That(value, Is.EqualTo(24));
+    }
     
     [Test]
     public void TestAutoDeclareAndAssignToExpression()
@@ -3060,6 +3233,7 @@ endfunction
     }
     
     
+
     [Test]
     public void Bug_May20_Repro_InitializerInForLoop()
     {
@@ -3079,6 +3253,38 @@ next
         vm.hostMethods = compiler.methodTable;
         vm.Execute2(0);
     }
+    
+    
+    [Test]
+    public void Bug_May21_Repro_GlobalsInRoutines()
+    {
+        var src = $@"
+
+goto done
+
+textures:
+
+    global i_should_exist = 5
+
+return
+
+done:
+
+print ""going to label""
+gosub textures:
+
+print ""done""
+print i_should_exist
+x = i_should_exist
+end
+
+";
+        Setup(src, out var compiler, out var prog);
+        var vm = new VirtualMachine(prog);
+        vm.hostMethods = compiler.methodTable;
+        vm.Execute2(0);
+    }
+    
     
     [Test]
     public void Type_Init_Decl()

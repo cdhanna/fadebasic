@@ -969,6 +969,201 @@ x(1) = 2
     }
 
     
+    
+    [Test]
+    public void ArrayAssign_ReDim_MultiDim()
+    {
+        var input = @"
+dim x(10,4)
+redim x(5,1)
+";
+        var parser = MakeParser(input);
+        var prog = parser.ParseProgram();
+        prog.AssertNoParseErrors();
+    }
+    
+    [Test]
+    public void ArrayAssign_ReDim()
+    {
+        var input = @"
+dim x(10)
+x(1) = 2
+
+redim x(5)
+";
+        var parser = MakeParser(input);
+        var prog = parser.ParseProgram();
+        prog.AssertNoParseErrors();
+    }
+    
+    [Test]
+    public void ArrayAssign_ReDim_Implicit()
+    {
+        var input = @"
+dim x(10)
+x(1) = 2
+
+redim x `implies same size as original, clears array contents
+";
+        var parser = MakeParser(input);
+        var prog = parser.ParseProgram();
+        prog.AssertNoParseErrors();
+
+        var redim = prog.statements[2] as RedimStatement;
+        Assert.That(redim.ranks.Length, Is.EqualTo(1));
+        Assert.That((redim.ranks[0] as LiteralIntExpression).value, Is.EqualTo(10));
+    }
+    
+    
+    [Test]
+    public void ArrayAssign_ReDim_Error_BadRankCount()
+    {
+        var input = @"
+dim x(10)
+x(1) = 2
+
+redim x(5,2)
+";
+        var parser = MakeParser(input);
+        var prog = parser.ParseProgram();
+        prog.AssertParseErrors(1, out var errors);
+        Assert.That(errors[0].Display, Is.EqualTo($"[4:0,4:11] - {ErrorCodes.ReDimHasIncorrectNumberOfRanks}"));
+
+    }
+    
+    
+    [Test]
+    public void ArrayAssign_ReDim_Error_BeforeDecl()
+    {
+        var input = @"
+redim x(5)
+dim x(10)
+x(1) = 2
+
+";
+        var parser = MakeParser(input);
+        var prog = parser.ParseProgram();
+        prog.AssertParseErrors(1, out var errors);
+        Assert.That(errors[0].Display, Is.EqualTo($"[1:6] - {ErrorCodes.SymbolNotDeclaredYet} | symbol, x"));
+
+    }
+    
+    
+    [Test]
+    public void ArrayAssign_Default_ErrorBecauseItDoesntWorkYet()
+    {
+        var input = @"
+dim x(10)
+x = default
+";
+        var parser = MakeParser(input);
+        var prog = parser.ParseProgram();
+        prog.AssertParseErrors(1, out var errors);
+        Assert.That(errors[0].Display, Is.EqualTo($"[2:4] - {ErrorCodes.ArrayCannotAssignFromDefault}"));
+
+    }
+    
+    
+    [Test]
+    public void ArrayAssign_Reassign_fromNested()
+    {
+        Assert.Fail("It would be cool if this didn't need to fail");
+        var input = @"
+dim x(10)
+dim y(10,5)
+x(1) = 2
+
+x = y(2) `acts as a FULL COPY of the array
+";
+        var parser = MakeParser(input);
+        var prog = parser.ParseProgram();
+        prog.AssertNoParseErrors();
+    }
+
+    
+    
+    [Test]
+    public void ArrayAssign_Reassign_ErrorRanks()
+    {
+        var input = @"
+dim x(10)
+dim y(10,5)
+x(1) = 2
+x = y
+";
+        var parser = MakeParser(input);
+        var prog = parser.ParseProgram();
+        prog.AssertParseErrors(1, out var errors);
+        Assert.That(errors[0].Display, Is.EqualTo($"[4:0] - {ErrorCodes.ArrayRankMismatch}"));
+    }
+
+    
+    [Test]
+    public void ArrayAssign_Reassign_ErrorType()
+    {
+        var input = @"
+dim x(10)
+dim y(10) as word
+x(1) = 2
+
+x = y
+";
+        var parser = MakeParser(input);
+        var prog = parser.ParseProgram();
+        prog.AssertParseErrors(1, out var errors);
+        Assert.That(errors[0].Display, Is.EqualTo($"[5:0] - {ErrorCodes.InvalidCast} | array is wrong type"));
+    }
+    
+    [Test]
+    public void ArrayAssign_Reassign()
+    {
+        var input = @"
+dim x(10)
+dim y(10)
+x(1) = 2
+
+x = y `acts as a FULL COPY of the array
+";
+        var parser = MakeParser(input);
+        var prog = parser.ParseProgram();
+        prog.AssertNoParseErrors();
+    }
+    
+    [Test]
+    public void ArrayAssign_Reassign_Structs()
+    {
+        var input = @"
+type egg
+    size
+endtype
+dim x(10) as egg
+dim y(10) as egg
+e as egg
+x(1) = e
+
+x = y `acts as a FULL COPY of the array
+";
+        var parser = MakeParser(input);
+        var prog = parser.ParseProgram();
+        prog.AssertNoParseErrors();
+    }
+
+    
+    [Test]
+    public void ArrayAssign_Reassign_ShouldErrorOnDiffType()
+    {
+        var input = @"
+dim x(10)
+dim y(10) as string
+x(1) = 2
+
+x = y `acts as a FULL COPY of the array
+";
+        var parser = MakeParser(input);
+        var prog = parser.ParseProgram();
+        prog.AssertParseErrors(1, out var errors);
+    }
+    
     [Test]
     public void ArrayAssignFlip()
     {

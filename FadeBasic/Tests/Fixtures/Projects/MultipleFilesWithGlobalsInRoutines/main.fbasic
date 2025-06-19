@@ -1,6 +1,4 @@
-goto fake_1
-    setup1:
-        global g1 = 4
-    return
-fake_1:
-end
+`gosub setup1:
+`gosub setup2:
+global g2 = 2
+n = sampleFunc(5)

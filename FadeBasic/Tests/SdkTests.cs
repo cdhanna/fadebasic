@@ -104,6 +104,27 @@ public partial class SdkTests
     }
     
     
+    
+    [Test]
+    public void FromProject_MultipleFilesWithGlobalsInRoutines()
+    {
+        var commands = new CommandCollection(
+            new ConsoleCommands(), new StandardCommands()
+        );
+        if (!Fade.TryCreateFromProject("Fixtures/Projects/MultipleFilesWithGlobalsInRoutines/prim.csproj", commands, out var ctx, out var err))
+        {
+            Assert.Fail(err.ToDisplay());
+        }
+        ctx.Run();
+
+        if (!ctx.TryGetInteger("n", out var i))
+        {
+            Assert.Fail("No variable found");
+        }
+        Assert.That(i, Is.EqualTo(5));
+    }
+
+    
     [Test]
     public void FromProject_Constants()
     {

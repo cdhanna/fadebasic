@@ -68,6 +68,7 @@ namespace FadeBasic.Virtual
         DIVIDE_BY_ZERO,
         INVALID_POWER,
         INVALID_ADDRESS,
+        INVALID_MEMORY_COPY,
         EXPLODE
     }
     
@@ -539,6 +540,27 @@ namespace FadeBasic.Virtual
                             VmUtil.ReadTwoValues(ref stack, out vTypeCode, out aSpan, out bSpan);
                             VmUtil.EqualTo(ref stack, ref heap, vTypeCode, aSpan, bSpan, out cSpan);
                             VmUtil.PushSpan(ref stack, cSpan, TypeCodes.INT);
+                            break;
+                        case OpCodes.COPY_HEAP_MEM:
+                            VmUtil.ReadAsVmPtr(ref stack, out var memReadPtr);
+                            if (!heap.TryGetAllocation(memReadPtr, out var allocation))
+                            {
+                                TriggerRuntimeError(new VirtualRuntimeError
+                                {
+                                    insIndex = instructionIndex,
+                                    type = VirtualRuntimeErrorType.INVALID_MEMORY_COPY,
+                                    message = $"ins=[{instructionIndex}] "
+                                });
+                                break;
+                            }
+                            
+                            heap.Allocate(ref allocation.format, allocation.length, out var memWritePtr);
+                            
+                            heap.Copy(memReadPtr, memWritePtr, allocation.length);
+                            
+                            bBytes = VmPtr.GetBytes(ref memWritePtr);
+                            VmUtil.PushSpan(ref stack, bBytes, TypeCodes.PTR_HEAP);
+
                             break;
                         case OpCodes.STORE:
                             // read a register location, which is always 1 byte.
