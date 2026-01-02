@@ -1758,6 +1758,44 @@ endfunction
     }
 
 
+    [Test]
+    public void ParseError_Function_CanUseGlobal3()
+    {
+        
+        /*
+         * The issue here is that the static type checker does not know that the prep: routine is verifiably called before the function invocation.
+         * Therefor, the arr reference IS mysterious... 
+         */
+        
+        var input = @"
+` file 1
+global dim arr(10) as bucket
+
+
+gosub prep
+peanut()
+` /file 1
+
+
+` file 2
+prep:
+return
+
+function peanut()
+    y = arr(2).x * 2
+endfunction
+` /file2
+
+type bucket
+    x
+endtype
+";
+        var parser = MakeParser(input);
+        var prog = parser.ParseProgram();
+
+        var errors = prog.GetAllErrors();
+        prog.AssertNoParseErrors();
+    }
     
     [Test]
     public void ParseError_Function_InvalidSymbol()

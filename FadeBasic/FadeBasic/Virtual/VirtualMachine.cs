@@ -69,7 +69,13 @@ namespace FadeBasic.Virtual
         INVALID_POWER,
         INVALID_ADDRESS,
         INVALID_MEMORY_COPY,
+        CANNOT_TOKENIZE_WITHOUT_HIGHER_CONTEXT,
         EXPLODE
+    }
+
+    public class TokenReplacement
+    {
+        public string line;
     }
     
     public class VirtualMachine
@@ -98,6 +104,8 @@ namespace FadeBasic.Virtual
 
         public int internedDataInstructionIndex;
         public bool shouldThrowRuntimeException;
+
+        public List<TokenReplacement> tokenReplacements;
 
         public VirtualMachine(IEnumerable<byte> program) : this(program.ToArray())
         {
@@ -743,6 +751,44 @@ namespace FadeBasic.Virtual
                             {
                                 type = VirtualRuntimeErrorType.EXPLODE
                             });
+                            break;
+                        case OpCodes.TOKENIZE:
+                            // hmm!
+
+                            if (tokenReplacements == null)
+                            {
+                                TriggerRuntimeError(new VirtualRuntimeError
+                                {
+                                    type = VirtualRuntimeErrorType.CANNOT_TOKENIZE_WITHOUT_HIGHER_CONTEXT
+                                });
+                                break;
+                            }
+                            
+                            // pull off the number of substitutions
+                            VmUtil.ReadAsInt(ref stack, out var substitutionCount);
+                            
+                            // read the line-replacement
+                            VmUtil.ReadValueString(this, "!", out var replacement, out var state, out var addr2);
+
+                            for (var x = 0; x < substitutionCount; x++)
+                            {
+                                // for each substitution, read where in the final string it will go
+                                VmUtil.ReadAsInt(ref stack, out var local);
+                                
+                                // then read the actual expression 
+                                VmUtil.ReadValueAny(this, null, out var val, out var valState, out var valAddr);
+
+                                var next = replacement.Insert(local, val.ToString());
+                                replacement = next;
+                            }
+                            
+                            tokenReplacements.Add(new TokenReplacement
+                            {
+                                line = replacement
+                            });
+                            // TODO: somehow, get the substituted token data and stick it into the tokenReplacements block.
+                            //  then it is up to some higher context to jam those tokens together, and re-render the program again. 
+                            
                             break;
                         case OpCodes.BREAKPOINT:
                             break;

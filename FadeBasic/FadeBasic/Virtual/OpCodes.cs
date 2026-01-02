@@ -370,5 +370,20 @@ namespace FadeBasic.Virtual
         /// pushes the resulting allocation back onto the stack
         /// </summary>
         public const byte COPY_HEAP_MEM = 60;
+
+        /// <summary>
+        /// pops the following data from the stack,
+        ///  - the index of the macro
+        ///  - the index of the tokenization block
+        ///  - the number of substitution expressions that must be eval'd
+        ///  - for each substitution, in order
+        ///    - the program-index for where to execute the value expression
+        ///    - the start-index into the string for where to replace the value
+        ///    - the end-index into the string for where to replace the value
+        ///
+        ///
+        /// When the VM finds a TOKENIZE opcode, it must have a token stream available. 
+        /// </summary>
+        public const byte TOKENIZE = 61;
     }
 }

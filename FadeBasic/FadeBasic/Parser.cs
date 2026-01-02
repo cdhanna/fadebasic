@@ -950,6 +950,7 @@ namespace FadeBasic
             program.endToken = _stream.Current;
             
             // program.AddTypeInfo();
+            program.FixNoopStatements();
             program.AddInitializerSugar();
             program.AddScopeRelatedErrors(options);
             
@@ -1557,6 +1558,8 @@ namespace FadeBasic
                         return new CommentStatement(token, token.caseInsensitiveRaw.Substring(1));
                     case LexemType.KeywordRem:
                         return new CommentStatement(token, token.caseInsensitiveRaw.Substring(3));
+                    case LexemType.ConstantTokenize:
+                        return ParseTokenization(token);
                     case LexemType.KeywordIf:
                         return ParseIfStatement(token);
                     case LexemType.KeywordWhile:
@@ -2686,6 +2689,78 @@ namespace FadeBasic
             }
 
             return whileStatement;
+        }
+
+        private MacroSubstitutionExpression ParseSubstitution(Token token)
+        {
+            if (!TryParseExpression(out var expr))
+            {
+                // TODO ? 
+                throw new NotImplementedException("idk");
+            }
+
+            return new MacroSubstitutionExpression
+            {
+                innerExpression = expr, startToken = token, endToken = expr.EndToken
+            };
+
+        }
+        
+        private MacroTokenizeStatement ParseTokenization(Token token)
+        {
+            var searching = true;
+            ParseError error = null;
+            var exprs = new List<MacroSubstitutionExpression>();
+            var tokenStartIndex = _stream.Index + 1;
+            var tokenEndIndex = tokenStartIndex;
+            var tokenBlock = new List<Token>();
+            // var next = _stream.Advance();
+            
+            while (searching)
+            { 
+                var next = _stream.Advance();
+                switch (next.type)
+                {
+                    case LexemType.EOF:
+                        // error = new ParseError(token, ErrorCodes.WhileStatementMissingEndWhile);
+                        // looking = false;
+                        throw new NotImplementedException(
+                            "need to emit an error for not closing the tokenization block");
+                        break;
+                    case LexemType.ConstantBracketOpen:
+                        // TODO: parse the substitution!
+                        // _stream.Advance();
+                        var sub = ParseSubstitution(_stream.Current);
+                        exprs.Add(sub);
+                        sub.substitutionIndex = tokenBlock.Count;
+                        break;
+                    case LexemType.ConstantBracketClose:
+                        // TODO: as long as a substitution was open, this is valid; otherwise error.
+                        
+                        
+                        break;
+                    case LexemType.EndStatement:
+                        tokenBlock.Add(_stream.Current);
+                        break;
+                    case LexemType.ConstantEndTokenize:
+                        searching = false;
+                        tokenEndIndex = _stream.Index - 1;
+                        // _stream.Advance();
+                        break;
+                    default:
+                        tokenBlock.Add(_stream.Current);
+                        break;
+                }
+
+            }
+            
+            var block = new MacroTokenizeStatement(token, _stream.Current, exprs, tokenBlock);
+            if (error != null)
+            {
+                block.Errors.Add(error);
+            }
+
+            return block;
         }
         
         private IfStatement ParseIfStatement(Token ifToken)

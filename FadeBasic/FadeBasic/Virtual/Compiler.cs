@@ -719,9 +719,104 @@ namespace FadeBasic.Virtual
                 case ExpressionStatement expressionStatement:
                     Compile(expressionStatement);
                     break;
+                case MacroTokenizeStatement tokenizeStatement: 
+                    Compile(tokenizeStatement);
+                    break;
                     
                 default:
                     throw new Exception("compiler exception: unhandled statement node " + statement);
+            }
+        }
+
+        void Compile(MacroTokenizeStatement tokenizeStatement)
+        {
+            // need to compile a set of substs, stick their stringified results back into the token stream. 
+            // TODO: only valid to do this when running with "higher context".
+            
+            // need to emit a new op-code that instructs the higher-context that tokenization is happening from X to Y, and this given moment.
+            //  because variable state can change between tokenization blocks, so the order is very important. 
+
+            var s = tokenizeStatement.startToken;
+            var e = tokenizeStatement.endToken;
+
+            var tokens = tokenizeStatement.tokens;
+            
+            // build up a To-String()-ified version of all the tokens. 
+            var raw = new StringBuilder();
+            var substIndex = 0;
+            var substIndexMap = new Dictionary<int, int>(); // convert the index of the substitution to the index in the final raw string.
+            for (var i = 0; i <= tokens.Count; i++)
+            {
+                if (tokenizeStatement.substitutions.Count > substIndex)
+                {
+                    var curr = tokenizeStatement.substitutions[substIndex];
+                    if (curr.substitutionIndex == i)
+                    {
+                        substIndexMap[substIndex] = raw.Length;
+                        substIndex++;
+                    }
+                }
+
+                if (i < tokens.Count)
+                {
+                    raw.Append(tokens[i].raw); // ignore white-space, who cares?
+                    raw.Append(" "); // force whitespace. Something is wrong here. 
+                }
+            }
+
+            var text = raw.ToString();
+            
+            // for each substitution...
+            for (var i = 0; i < tokenizeStatement.substitutions.Count; i++)
+            {
+                // also compile the expression value itself
+                Compile(tokenizeStatement.substitutions[i].innerExpression);
+                
+                // push the string index where the result should be inserted
+                AddPushInt(_buffer, substIndexMap[i]); // TODO: can this fail? 
+            }
+            
+            // by compiling in the string, it will get interned
+            Compile(new LiteralStringExpression(tokenizeStatement.startToken, text));
+            
+            // push the number of substitutions in this block. 
+            AddPushInt(_buffer, tokenizeStatement.substitutions.Count);
+            
+            // then push the op-code that tells the VM to special-case the macro
+            _buffer.Add(OpCodes.TOKENIZE);
+            
+            // compile the substitions
+            var replacementIndexes = new List<int>();
+            for (var i = 0; i < tokenizeStatement.substitutions.Count; i++)
+            {
+                var subst = tokenizeStatement.substitutions[i];
+                
+                // if execution ever reaches this subst, it is invalid, because it is just a value without any meaning. 
+                // so we would need to jump over it. 
+                // and then jump to the exit block
+                replacementIndexes.Add(_buffer.Count);
+                AddPushInt(_buffer, int.MaxValue);
+                _buffer.Add(OpCodes.JUMP);
+                
+                // compile the value of the expression onto the program stack. 
+                // Compile(subst.innerExpression);
+                
+                // TODO: the higher context needs to know how to get the values out of these compilations, and put them in the appropriate slots. 
+                // and log a 
+                
+                // TODO: in general, the higher context should know to stop executing by this point. Maybe it would be better to use a JUMP to end of program? 
+                _buffer.Add(OpCodes.EXPLODE);
+            }
+
+            // this is the end of the tokenization substitutions block, so execution can safely jump here. 
+            var exitAddr = _buffer.Count;
+            var exitAddrBytes = BitConverter.GetBytes(exitAddr);
+            foreach (var exitIns in replacementIndexes)
+            {
+                for (var i = 0; i < exitAddrBytes.Length; i++)
+                {
+                    _buffer[exitIns + 2 + i] = exitAddrBytes[i];
+                }
             }
         }
 

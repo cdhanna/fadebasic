@@ -139,5 +139,21 @@ namespace FadeBasic.Ast.Visitors
                 ApplyStatements(function.statements);
             }
         }
+
+        public static void FixNoopStatements(this ProgramNode node)
+        {
+
+            void RemoveNoops(List<IStatementNode> statements)
+            {
+                statements.RemoveAll(n => n is NoOpStatement);
+            }
+            RemoveNoops(node.statements);
+            foreach (var function in node.functions)
+            {
+                RemoveNoops(function.statements);
+            }
+        }
+        
+        
     }
 }

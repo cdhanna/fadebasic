@@ -105,6 +105,44 @@ namespace FadeBasic.Ast
         }
     }
 
+    public class MacroSubstitutionExpression : AstNode, IExpressionNode
+    {
+        public IExpressionNode innerExpression;
+        public int substitutionIndex;
+        protected override string GetString()
+        {
+            return $"subst ({innerExpression})";
+        }
+
+        public override IEnumerable<IAstVisitable> IterateChildNodes()
+        {
+            if (innerExpression != null)
+                yield return innerExpression;
+        }
+    }
+
+    public class MacroTokenizeStatement : AstNode, IStatementNode
+    {
+        public List<MacroSubstitutionExpression> substitutions = new List<MacroSubstitutionExpression>();
+        public List<Token> tokens;
+
+        public MacroTokenizeStatement(Token start, Token end, List<MacroSubstitutionExpression> statements, List<Token> tokens) : base(start, end)
+        {
+            this.tokens = tokens;
+            this.substitutions = statements;
+        }
+        
+        protected override string GetString()
+        {
+            return $"tokenize ({string.Join(",", substitutions.Select(x => x.ToString()))})";
+        }
+
+        public override IEnumerable<IAstVisitable> IterateChildNodes()
+        {
+            foreach (var statement in substitutions) yield return statement;
+        }
+    }
+
     public class ExpressionStatement : AstNode, IStatementNode
     {
         public IExpressionNode expression;

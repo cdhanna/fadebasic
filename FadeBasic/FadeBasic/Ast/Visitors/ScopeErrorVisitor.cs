@@ -413,6 +413,7 @@ namespace FadeBasic.Ast.Visitors
                         break;
                     case FunctionStatement _:
                     case FunctionReturnStatement _:
+                    case MacroTokenizeStatement _:
                         break;
                     case TypeDefinitionStatement invalidTypeStatement:
                         invalidTypeStatement.Errors.Add(new ParseError(invalidTypeStatement.name, ErrorCodes.TypeMustBeTopLevel));

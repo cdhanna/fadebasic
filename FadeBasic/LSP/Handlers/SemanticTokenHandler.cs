@@ -103,7 +103,7 @@ public class SemanticTokenHandler : SemanticTokensHandlerBase
                     
                 }
                 
-                if (token.flags.HasFlag(TokenFlags.IsMacro))
+                if (token.flags.HasFlag(TokenFlags.IsConstant))
                 {
                     // tokenType = SemanticTokenType.Macro;
                     continue;
