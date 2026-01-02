@@ -1679,8 +1679,28 @@ a = x";
         Assert.That(errors[0].Display, Is.EqualTo($"[3:4] - {ErrorCodes.InvalidReference} | unknown symbol, x"));
     }
     
-    
-    
+    [Test]
+    public void Bug_Nov24_2025_MultiLineWhileClause()
+    {
+        /*
+         * This is a pretty major issue. Multi-line expressions should work, but
+         * they get stuck on EndOfStatement tokens.
+         *
+         * The rest of the parser is written to use the EndOfStatement, so re-writing it
+         * is not ideal.
+         *
+         * This test/note is here for me to deal with this later. Sad Sauce.
+         */
+        var input = $@"
+while (3 
+    or 5)
+endwhile
+";
+        var parser = MakeParser(input);
+        var prog = parser.ParseProgram();
+
+        prog.AssertNoParseErrors();
+    }
     
     [Test]
     public void ParseError_StructCastToForLoopVariable()

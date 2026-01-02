@@ -3146,12 +3146,36 @@ namespace FadeBasic
         {
         
             var lookAhead = _stream.Peek;
+            
+            while (lookAhead.type == LexemType.EndStatement)
+            {
+                var x = _stream.Save();
+                _stream.Advance();
+                lookAhead = _stream.Peek;
+                if (lookAhead.type != LexemType.EndStatement && !IsBinaryOp(lookAhead))
+                {
+                    _stream.Restore(x);
+                }
+            }
+            
             while (IsBinaryOp(lookAhead) && GetOperatorOrder(lookAhead) >= minPrec)
             {
                 var op = lookAhead;
                 _stream.Advance();
                 var rhs = ParseWikiTerm();
                 lookAhead = _stream.Peek;
+
+                while (lookAhead.type == LexemType.EndStatement)
+                {
+                    var x = _stream.Save();
+                    _stream.Advance();
+                    lookAhead = _stream.Peek;
+                    if (lookAhead.type != LexemType.EndStatement && !IsBinaryOp(lookAhead))
+                    {
+                        _stream.Restore(x);
+                    }
+                }
+                
                 // while lookahead is a binary operator whose precedence is greater
                 //     than op's, or a right-associative operator
                 //     whose precedence is equal to op's
