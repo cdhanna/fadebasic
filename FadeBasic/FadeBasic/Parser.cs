@@ -1598,6 +1598,12 @@ namespace FadeBasic
                     case LexemType.VariableString:
                     case LexemType.VariableGeneral:
 
+                        if (token.type == LexemType.VariableReal && token.Length == 1)
+                        {
+                            // this is the special tokenize block case. 
+                            return ParseTokenization(token);
+                        }
+                        
                         var reference = ParseVariableReference(token);
                         
                         var secondToken = _stream.Advance();
@@ -2693,26 +2699,34 @@ namespace FadeBasic
 
         private MacroSubstitutionExpression ParseSubstitution(Token token)
         {
+            var startIndex = _stream.Index; // at [
             if (!TryParseExpression(out var expr))
             {
                 // TODO ? 
                 throw new NotImplementedException("idk");
             }
 
+            // TODO: we expect to find a closing 
+
+            var endIndex = _stream.Index;
+            
             return new MacroSubstitutionExpression
             {
-                innerExpression = expr, startToken = token, endToken = expr.EndToken
+                innerExpression = expr, startToken = token, endToken = expr.EndToken, tokenStartIndex = startIndex, tokenEndIndex = endIndex
             };
 
         }
-        
+
+        private int tokenBlockCount = 0;
         private MacroTokenizeStatement ParseTokenization(Token token)
         {
+            var isShortcut = token.lexem.type == LexemType.VariableReal;
+            
             var searching = true;
             ParseError error = null;
             var exprs = new List<MacroSubstitutionExpression>();
-            var tokenStartIndex = _stream.Index + 1;
-            var tokenEndIndex = tokenStartIndex;
+            var tokenStartIndex = _stream.Index + 1;// + (isShortcut ? 1 : 1);
+            var tokenEndIndex = tokenStartIndex;// + (isShortcut ? 1 : 0);
             var tokenBlock = new List<Token>();
             // var next = _stream.Advance();
             
@@ -2739,8 +2753,12 @@ namespace FadeBasic
                         
                         
                         break;
-                    case LexemType.EndStatement:
+                    case LexemType.EndStatement when !isShortcut:
                         tokenBlock.Add(_stream.Current);
+                        break;
+                    case LexemType.EndStatement when isShortcut:
+                        searching = false;
+                        tokenEndIndex = _stream.Index;
                         break;
                     case LexemType.ConstantEndTokenize:
                         searching = false;
@@ -2748,13 +2766,13 @@ namespace FadeBasic
                         // _stream.Advance();
                         break;
                     default:
-                        tokenBlock.Add(_stream.Current);
+                        // tokenBlock.Add(_stream.Current);
                         break;
                 }
 
             }
             
-            var block = new MacroTokenizeStatement(token, _stream.Current, exprs, tokenBlock);
+            var block = new MacroTokenizeStatement(token, _stream.Current, exprs, tokenStartIndex, tokenEndIndex, tokenBlockCount++);
             if (error != null)
             {
                 block.Errors.Add(error);

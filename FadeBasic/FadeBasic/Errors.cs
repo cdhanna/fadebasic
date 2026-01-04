@@ -135,6 +135,13 @@ namespace FadeBasic
         // 000 series represents lexer issues
         public static readonly ErrorCode LexerUnmatchedText = "[0001] Unknown text";
         public static readonly ErrorCode LexerStringNeedsEnd = "[0002] String must have closing quote";
+
+        public static readonly ErrorCode LexerInvalidNestedMacro =
+            "[0003] Cannot start new macro in existing macro block";
+        public static readonly ErrorCode LexerInvalidEndMacro =
+            "[0004] Cannot end macro outside of macro block";
+        public static readonly ErrorCode LexerInvalidNestedTokenize =
+            "[0005] Cannot start new tokenization in existing tokenize block";
         
         // 100 series represents parse issues
         public static readonly ErrorCode ExpressionMissingAfterOpenParen = "[0100] No expression after open paren";

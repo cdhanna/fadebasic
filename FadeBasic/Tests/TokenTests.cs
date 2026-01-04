@@ -127,6 +127,31 @@ public class TokenizeTests
 
     }
     
+    [Test]
+    public void Tokenize_WhatHappensWithALoneSigil()
+    {
+        var input = @"x
+#
+$
+y";
+
+        var lexer = new Lexer();
+        var tokens = lexer.Tokenize(input, TestCommands.CommandsForTesting);
+
+        var expectedLexemTypes = new LexemType[]
+        {
+            LexemType.VariableGeneral,
+            LexemType.EndStatement,
+            LexemType.VariableReal,
+            LexemType.EndStatement,
+            LexemType.VariableString,
+            LexemType.EndStatement,
+            LexemType.VariableGeneral,
+            LexemType.EndStatement,
+        };
+        CheckTokens(expectedLexemTypes, tokens);
+    }
+
     
     [Test]
     public void Tokenize_Constant_LiteralInt()

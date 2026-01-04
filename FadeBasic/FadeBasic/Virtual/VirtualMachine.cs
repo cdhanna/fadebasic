@@ -75,7 +75,19 @@ namespace FadeBasic.Virtual
 
     public class TokenReplacement
     {
-        public string line;
+
+        public int substitutionCount;
+        public int tokenStartIndex;
+        public int tokenEndIndex;
+        public int tokenBlockIndex;
+        public List<TokenSubstitutionReplacement> substitutionReplacements = new List<TokenSubstitutionReplacement>();
+    }
+
+    public class TokenSubstitutionReplacement
+    {
+        public int tokenIndex;
+        public int tokenStartIndex, tokenEndIndex;
+        public object raw;
     }
     
     public class VirtualMachine
@@ -763,29 +775,42 @@ namespace FadeBasic.Virtual
                                 });
                                 break;
                             }
-                            
+
+                            var replacement = new TokenReplacement();
+                            tokenReplacements.Add(replacement);
                             // pull off the number of substitutions
-                            VmUtil.ReadAsInt(ref stack, out var substitutionCount);
+                            VmUtil.ReadAsInt(ref stack, out replacement.substitutionCount);
                             
                             // read the line-replacement
-                            VmUtil.ReadValueString(this, "!", out var replacement, out var state, out var addr2);
+                            // VmUtil.ReadValueString(this, "!", out var replacement, out var state, out var addr2);
 
-                            for (var x = 0; x < substitutionCount; x++)
+                            // read the end-index and start-index of the tokenization expression
+                            VmUtil.ReadAsInt(ref stack, out replacement.tokenBlockIndex);
+                            VmUtil.ReadAsInt(ref stack, out replacement.tokenEndIndex);
+                            VmUtil.ReadAsInt(ref stack, out replacement.tokenStartIndex);
+                            
+                            
+                            for (var x = 0; x < replacement.substitutionCount; x++)
                             {
+                                var substitution = new TokenSubstitutionReplacement();
+                                
                                 // for each substitution, read where in the final string it will go
-                                VmUtil.ReadAsInt(ref stack, out var local);
+                                VmUtil.ReadAsInt(ref stack, out substitution.tokenEndIndex);
+                                VmUtil.ReadAsInt(ref stack, out substitution.tokenStartIndex);
+                                VmUtil.ReadAsInt(ref stack, out substitution.tokenIndex);
                                 
                                 // then read the actual expression 
-                                VmUtil.ReadValueAny(this, null, out var val, out var valState, out var valAddr);
+                                VmUtil.ReadValueAny(this, null, out substitution.raw, out var valState, out var valAddr);
 
-                                var next = replacement.Insert(local, val.ToString());
-                                replacement = next;
+                                replacement.substitutionReplacements.Add(substitution);
+                                // var next = replacement.Insert(local, val.ToString());
+                                // replacement = next;
                             }
                             
-                            tokenReplacements.Add(new TokenReplacement
-                            {
-                                line = replacement
-                            });
+                            // tokenReplacements.Add(new TokenReplacement
+                            // {
+                            //     line = replacement
+                            // });
                             // TODO: somehow, get the substituted token data and stick it into the tokenReplacements block.
                             //  then it is up to some higher context to jam those tokens together, and re-render the program again. 
                             

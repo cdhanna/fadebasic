@@ -109,6 +109,7 @@ namespace FadeBasic.Ast
     {
         public IExpressionNode innerExpression;
         public int substitutionIndex;
+        public int tokenStartIndex, tokenEndIndex;
         protected override string GetString()
         {
             return $"subst ({innerExpression})";
@@ -124,13 +125,25 @@ namespace FadeBasic.Ast
     public class MacroTokenizeStatement : AstNode, IStatementNode
     {
         public List<MacroSubstitutionExpression> substitutions = new List<MacroSubstitutionExpression>();
-        public List<Token> tokens;
 
-        public MacroTokenizeStatement(Token start, Token end, List<MacroSubstitutionExpression> statements, List<Token> tokens) : base(start, end)
+        public int startTokenIndex;
+        public int endTokenIndex;
+
+        public int tokenBlockIndex;
+        // public List<Token> tokens;
+
+        public MacroTokenizeStatement(Token start, Token end, List<MacroSubstitutionExpression> statements, int startTokenIndex, int endTokenIndex, int tokenBlockIndex) : base(start, end)
         {
-            this.tokens = tokens;
+            this.endTokenIndex = endTokenIndex;
+            this.startTokenIndex = startTokenIndex;
             this.substitutions = statements;
+            this.tokenBlockIndex = tokenBlockIndex;
         }
+        // public MacroTokenizeStatement(Token start, Token end, List<MacroSubstitutionExpression> statements, List<Token> tokens) : base(start, end)
+        // {
+        //     this.tokens = tokens;
+        //     this.substitutions = statements;
+        // }
         
         protected override string GetString()
         {

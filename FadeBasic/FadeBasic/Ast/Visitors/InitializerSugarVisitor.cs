@@ -146,6 +146,15 @@ namespace FadeBasic.Ast.Visitors
             void RemoveNoops(List<IStatementNode> statements)
             {
                 statements.RemoveAll(n => n is NoOpStatement);
+                foreach (var s in statements)
+                {
+                    switch (s)
+                    {
+                        case ForStatement fs:
+                            RemoveNoops(fs.statements);
+                            break;
+                    }
+                }
             }
             RemoveNoops(node.statements);
             foreach (var function in node.functions)

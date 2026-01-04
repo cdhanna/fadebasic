@@ -739,32 +739,32 @@ namespace FadeBasic.Virtual
             var s = tokenizeStatement.startToken;
             var e = tokenizeStatement.endToken;
 
-            var tokens = tokenizeStatement.tokens;
+            // var tokens = tokenizeStatement.tokens;
             
             // build up a To-String()-ified version of all the tokens. 
             var raw = new StringBuilder();
             var substIndex = 0;
-            var substIndexMap = new Dictionary<int, int>(); // convert the index of the substitution to the index in the final raw string.
-            for (var i = 0; i <= tokens.Count; i++)
-            {
-                if (tokenizeStatement.substitutions.Count > substIndex)
-                {
-                    var curr = tokenizeStatement.substitutions[substIndex];
-                    if (curr.substitutionIndex == i)
-                    {
-                        substIndexMap[substIndex] = raw.Length;
-                        substIndex++;
-                    }
-                }
+            // var substIndexMap = new Dictionary<int, int>(); // convert the index of the substitution to the index in the final raw string.
+            // for (var i = 0; i <= tokens.Count; i++)
+            // {
+            //     if (tokenizeStatement.substitutions.Count > substIndex)
+            //     {
+            //         var curr = tokenizeStatement.substitutions[substIndex];
+            //         if (curr.substitutionIndex == i)
+            //         {
+            //             substIndexMap[substIndex] = raw.Length;
+            //             substIndex++;
+            //         }
+            //     }
+            //
+            //     if (i < tokens.Count)
+            //     {
+            //         raw.Append(tokens[i].raw); // ignore white-space, who cares?
+            //         raw.Append(" "); // force whitespace. Something is wrong here. 
+            //     }
+            // }
 
-                if (i < tokens.Count)
-                {
-                    raw.Append(tokens[i].raw); // ignore white-space, who cares?
-                    raw.Append(" "); // force whitespace. Something is wrong here. 
-                }
-            }
-
-            var text = raw.ToString();
+            // var text = raw.ToString();
             
             // for each substitution...
             for (var i = 0; i < tokenizeStatement.substitutions.Count; i++)
@@ -773,11 +773,17 @@ namespace FadeBasic.Virtual
                 Compile(tokenizeStatement.substitutions[i].innerExpression);
                 
                 // push the string index where the result should be inserted
-                AddPushInt(_buffer, substIndexMap[i]); // TODO: can this fail? 
+                // AddPushInt(_buffer, substIndexMap[i]); // TODO: can this fail?
+                AddPushInt(_buffer, tokenizeStatement.substitutions[i].substitutionIndex);
+                AddPushInt(_buffer, tokenizeStatement.substitutions[i].tokenStartIndex);
+                AddPushInt(_buffer, tokenizeStatement.substitutions[i].tokenEndIndex);
             }
             
             // by compiling in the string, it will get interned
-            Compile(new LiteralStringExpression(tokenizeStatement.startToken, text));
+            // Compile(new LiteralStringExpression(tokenizeStatement.startToken, text));
+            AddPushInt(_buffer, tokenizeStatement.startTokenIndex);
+            AddPushInt(_buffer, tokenizeStatement.endTokenIndex);
+            AddPushInt(_buffer, tokenizeStatement.tokenBlockIndex);
             
             // push the number of substitutions in this block. 
             AddPushInt(_buffer, tokenizeStatement.substitutions.Count);
