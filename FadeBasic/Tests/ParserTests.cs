@@ -30,6 +30,7 @@ public static class ParserTestUtil
     public static void AssertParseErrors(this ProgramNode prog, int count, out List<ParseError> errors)
     {
         errors = prog.GetAllErrors();
+        
         Assert.That(errors.Count, Is.EqualTo(count), "parse errors: " + string.Join("\n", prog.GetAllErrors().Select(x => x.Display)));
     }
 }

@@ -947,6 +947,86 @@ namespace FadeBasic
 
             }
 
+            MacroBlock ParseReverseSubstitution()
+            {
+                // assumption is current token is [ 
+                
+                // search for closing ]. 
+                // and adjust the token stream such that it maps out to a 
+                //  #macro
+                //    #tokenize
+                //       ___
+                //    #endtokenize
+                //  #endmacro
+
+                var startIndex = stream.Index;
+                var endIndex = startIndex;
+                var searching = true;
+                stream.Advance();
+                while (searching)
+                {
+                    switch (stream.Current.type)
+                    {
+                        // TODO: handle EOS and EOF
+                        case LexemType.ConstantBracketClose:
+                            // hoozah, this is the actual end!
+                            endIndex = stream.Index;
+                            stream.Advance();
+                            searching = false;
+                            break;
+                        case LexemType.ConstantEndTokenize:
+                        case LexemType.ConstantTokenize:
+                        case LexemType.ConstantEnd:
+                        case LexemType.ConstantBegin:
+                        case LexemType.ConstantBracketOpen:
+                            throw new NotImplementedException("need to create valid error case");
+                            break;
+                        default:
+                            stream.Advance();
+                            break;
+                    }
+                }
+                
+                // TODO: this is not right.
+                //  need to RUN the program, and _THEN_ tokenize the _OUTPUT_
+                
+                // inject tokenize expression tokens...
+                
+                current.tokens.Insert(endIndex - 1, new Token
+                {
+                    lexem = new Lexem(LexemType.ConstantEndTokenize)
+                });
+                current.tokens.Insert(endIndex - 1, new Token
+                {
+                    lexem = new Lexem(LexemType.ConstantBracketClose)
+                });
+                
+                current.tokens.Insert(startIndex, new Token
+                {
+                    lexem = new Lexem(LexemType.ConstantBracketOpen)
+                });
+                current.tokens.Insert(startIndex, new Token
+                {
+                    lexem = new Lexem(LexemType.ConstantTokenize)
+                });
+                stream.Advance();
+                stream.Advance(); // skip ahead of tokens that were just inserted.
+                var mb =  new MacroBlock
+                {
+                    startTokenIndex = startIndex - 1,
+                    endTokenIndex = endIndex + 3,
+                    tokenizeBlocks = new List<TokenizeBlock>
+                    {
+                        new TokenizeBlock
+                        {
+                            startTokenIndex = startIndex,
+                            endTokenIndex = endIndex + 2,
+
+                        }
+                    }
+                };
+                return mb;
+            }
 
             var macroBlocks = new List<MacroBlock>();
             
@@ -955,6 +1035,10 @@ namespace FadeBasic
                 stream.Advance();
                 switch (stream.Current.type)
                 {
+                    case LexemType.ConstantBracketOpen:
+                        // parse until a close bracket. 
+                        macroBlocks.Add(ParseReverseSubstitution());
+                        break;
                     case LexemType.VariableReal when stream.Current.Length == 1:
                         macroBlocks.Add(ParseMacroBlock());
                         break;
@@ -1159,230 +1243,13 @@ namespace FadeBasic
                 }
                 
             }
-            RemoveMacro(0); // hard-code zero, because we should have processed all macro blocks EXCEPT we wouldn't have finished zero.
 
-            ///////// PREVIOUS ATTEMPT
-            // the token replacements have all of the index values to the original tokens used in the parse. 
-            //  so now the job is to re-write a token list IGNORING macro tokens EXCEPT for the tokenization blocks
-            //  need to go backwards, so index values do not blow each other up
-            
-            // first version of this algorithm will go one token at a time, but probably it should be written to do bulk writes
-            
-            // step 1. figure out how many tokens we are going to have...
-            
-            // start with the number of tokens that are NOT inside macros whatsoever, because those will stay unchanged.
-            // var tokenCount = current.tokens.Count - macroBlocks.Select(x => x.TokenCount).Sum();
-            // for (var i = 0; i < vm.tokenReplacements.Count; i++)
-            // {
-            //     var replacement = vm.tokenReplacements[i];
-            //     var entireTokenizationCount = replacement.tokenEndIndex - replacement.tokenStartIndex;
-            //
-            //     for (var j = 0; j < replacement.substitutionReplacements.Count; j++)
-            //     {
-            //         var subst = replacement.substitutionReplacements[j];
-            //         var substOriginalLength = subst.tokenEndIndex - subst.tokenStartIndex;
-            //         
-            //         
-            //     }
-            // }
-            //
+            for (var i = previousMacroBlockIndex; i >= 0; i--)
+            {
+                RemoveMacro(i); // hard-code zero, because we should have processed all macro blocks EXCEPT we wouldn't have finished zero.
+                
+            }
 
-            
-            
-            
-
-            // var substitutionTokenMap = new Dictionary<int, LexerResults>();
-            // var substList = new List<TokenSubstitutionReplacement>();
-            // var substTokenList = new List<Token>();
-            // var substCount = 0;
-            // for (var i = 0; i < vm.tokenReplacements.Count; i++)
-            // {
-            //     var replacement = vm.tokenReplacements[i];
-            //     substList.AddRange(replacement.substitutionReplacements); // flatten all replacements into a single list.
-            //     for (var j = 0; j < replacement.substitutionReplacements.Count; j++)
-            //     {
-            //         var subst = replacement.substitutionReplacements[j];
-            //         var text = subst.raw.ToString();
-            //         var tokenResults = TokenizeWithErrors(text, compileCommands);
-            //         substCount++;
-            //         substTokenList.Add(tokenResults.tokens[0]);
-            //         
-            //         // substitutionTokenMap[substCount++] = tokenResults;
-            //     }
-            //     
-            //     // var tokenResults = TokenizeWithErrors(replacement., commandNames);
-            //     // substitutionTokenMap[i] = tokenResults;
-            // }
-            //
-            // var finalTokens = new List<Token>();
-            //
-            // var macroIndex = macroBlocks.Count - 1;
-            // var tokenizationIndex = -1;
-            //
-            // if (macroIndex >= 0)
-            // {
-            //     tokenizationIndex = macroBlocks[macroIndex].tokenizeBlocks.Count - 1;
-            // }
-            //
-            // var replacementIndex = vm.tokenReplacements.Count - 1;
-            //
-            // // TODO: this algorithm inserts token by token, which is bad. 
-            // //       better solution would be to pre-allocate array and use exact index placement. 
-            // //       best solution would be to do that AND insert entire sections of tokens at once.
-            // for (var i = current.tokens.Count - 1; i >= 0; i--) // iterate backwards.
-            // {
-            //     // TODO: what if there are no macros left? 
-            //
-            //     void Add()
-            //     {
-            //         var token = current.tokens[i];
-            //         if (finalTokens.Count > 0)
-            //         {
-            //             // maybe the current token was an injected token, and needs to be concat'd. 
-            //             if (token.lexem.type == LexemType.VariableGeneral)
-            //             {
-            //                 var existing = finalTokens[0];
-            //                 
-            //                 if (existing.flags.HasFlag(TokenFlags.IsCompileTime))
-            //                 {
-            //                     // actually, concat the token.
-            //                     finalTokens[0] = new Token
-            //                     {
-            //                         caseInsensitiveRaw = token.caseInsensitiveRaw + existing.caseInsensitiveRaw,
-            //                         raw = token.raw + existing.raw,
-            //                         lexem = token.lexem,
-            //                         charNumber = token.charNumber,
-            //                         lineNumber = token.lineNumber,
-            //                         
-            //                     };
-            //                     return;
-            //                 }
-            //             }
-            //         }
-            //
-            //         switch (token.type)
-            //         {
-            //             case LexemType.ConstantTokenize:
-            //             case LexemType.ConstantBracketClose:
-            //             case LexemType.ConstantBracketOpen:
-            //             case LexemType.ConstantEndTokenize:
-            //                 return; // skip adding these tokens into the main stream, EVER. 
-            //                 // TODO: this is a hack.
-            //                 break;
-            //         }
-            //         finalTokens.Insert(0, token);
-            //         
-            //     }
-            //     
-            //     if (macroIndex < 0)
-            //     {
-            //         // there are no macros left, and we can just add all the tokens.
-            //         // finalTokens.Insert(0, current.tokens[i]);
-            //         Add();
-            //         
-            //         continue;
-            //     }
-            //     
-            //     var currMacro = macroBlocks[macroIndex];
-            //     var isBeforeMacroEnd = i <= currMacro.endTokenIndex;
-            //     var isBeforeMacroStart = i <= currMacro.startTokenIndex;
-            //
-            //     if (!isBeforeMacroEnd) // token is not yet part of the current macro.
-            //     {
-            //         // finalTokens.Insert(0, current.tokens[i]);
-            //         Add();
-            //         
-            //     }
-            //     
-            //     if (isBeforeMacroEnd && !isBeforeMacroStart) // token is inside the macro block!
-            //     {
-            //         // we do not want to insert any of these tokens into the final stream.
-            //         //  UNLESS! they are part of a tokenization block.
-            //
-            //         if (tokenizationIndex < 0)
-            //         {
-            //             // there are no tokenization blocks left in this macro, and we can skip everything.
-            //             
-            //         }
-            //         else
-            //         {
-            //             var currTokenizationBlock = currMacro.tokenizeBlocks[tokenizationIndex];
-            //
-            //             var isBeforeTokenizationEnd = i <= currTokenizationBlock.endTokenIndex;
-            //             var isBeforeTokenizationStart = i <= currTokenizationBlock.startTokenIndex;
-            //
-            //             if (isBeforeTokenizationEnd && !isBeforeTokenizationStart) // token is inside the tokenization block!
-            //             {
-            //                 // now we very much need to know about the substitutions.
-            //                 if (replacementIndex < 0)
-            //                 {
-            //                     // there are no known substs left. so we should just accept the current token.
-            //                     // finalTokens.Insert(0, current.tokens[i]);
-            //                     Add();
-            //                     
-            //                 }
-            //                 else
-            //                 {
-            //                     // var currReplacement = vm.tokenReplacements[tokenizationIndex].substitutionReplacements[replacementIndex];
-            //                     var currReplacement = substList[replacementIndex];
-            //                     var isBeforeReplacementEnd = i <= currReplacement.tokenEndIndex ; 
-            //                     var isBeforeReplacementStart = i <= currReplacement.tokenStartIndex;
-            //
-            //                     if (i > currReplacement.tokenEndIndex + 1) // token is not yet part of any substitution
-            //                     {
-            //                         Add();
-            //                     }
-            //                     
-            //                     if (isBeforeReplacementEnd && !isBeforeReplacementStart) // token is part of the substitution!
-            //                     {
-            //                         // which means we are NOT going to inject the token!
-            //                         // var replacementTokens = substitutionTokenMap[replacementIndex];
-            //                         var replacementToken = substTokenList[replacementIndex];
-            //                         
-            //                         // does the token get injected?
-            //                         //  or concat'd to the token on the right?
-            //                         //  or concat'd to the token on the left?
-            //                         //  or concat'd to the oktne on the right AND the left? 
-            //
-            //                         replacementToken.flags |= TokenFlags.IsCompileTime;
-            //                         finalTokens.Insert(0, replacementToken);                                    
-            //                         // for (var j = replacementTokens.tokens.Count - 1; j >= 0; j--)
-            //                         // {
-            //                         //     
-            //                         //     
-            //                         //     finalTokens.Insert(0, replacementTokens.tokens[j]);
-            //                         // }
-            //
-            //                         i = currReplacement.tokenStartIndex; // SKIP to the start of the subst
-            //                         replacementIndex -= 1; // we are done with this substitution. 
-            //                     }
-            //                 }
-            //             }
-            //
-            //             if (isBeforeTokenizationStart)
-            //             {
-            //                 tokenizationIndex -= 1; // we are done with this tokenization block in the macro.
-            //             }
-            //         }
-            //         
-            //
-            //     }
-            //
-            //     if (isBeforeMacroStart) // looking for next backwards macro
-            //     {
-            //         macroIndex -= 1;
-            //         
-            //         // reset the tokenizationIndex
-            //         tokenizationIndex = -1;
-            //         if (macroIndex >= 0)
-            //         {
-            //             tokenizationIndex = macroBlocks[macroIndex].tokenizeBlocks.Count - 1;
-            //         }
-            //     }
-            // }
-            //
-            //
-            // current.tokens = finalTokens;
         }
         
         void HandleMacros(LexerResults current)
@@ -1668,6 +1535,14 @@ namespace FadeBasic
         {
             while (Current.type != type && Current.type != LexemType.EOF)
             {
+                if (Index >= _tokens.Count)
+                {
+                    // hit end of stream.
+                    return new Token
+                    {
+                        lexem = new Lexem(LexemType.EndStatement)
+                    };
+                }
                 Current = _tokens[Index++];
             }
 

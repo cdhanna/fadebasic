@@ -447,7 +447,80 @@ next
         var prog = parser.ParseProgram();
         prog.AssertNoParseErrors();
     }
+    
+    [TestCase(@"
 
+a = 3
+", 
+        @"
+#macro
+#endmacro
+a = 3
+")]
+    public void Macro_TokenComparison(string a, string b)
+    {
+        var lexer = new Lexer();
+        var aResults = lexer.TokenizeWithErrors(a, TestCommands.CommandsForTesting);
+        var bResults = lexer.TokenizeWithErrors(b, TestCommands.CommandsForTesting);
+         
+        TokenizeTests.CheckTokens(aResults.tokens, bResults.tokens);   
+    }
+    
+    [Test]
+    public void Macro_Compile_ReverseSubst_BaseCase2()
+    {
+        var input = @"
+# a = 4
+#macro
+#tokenize
+b = [a]
+#endtokenize
+#endmacro
+";
+        var parser = BuildParser(input, out _);
+        var prog = parser.ParseProgram();
+        prog.AssertNoParseErrors();
+        var code = prog.ToString();
+        
+        Assert.That(code, Is.EqualTo("((= (ref b),(4)))"));
+    }
+    
+    [Test]
+    public void Macro_Compile_ReverseSubst_BaseCase()
+    {
+        var input = @"
+`# a = 4
+#macro
+a = 4
+#endmacro
+#macro
+#tokenize
+b = [a]
+#endtokenize
+#endmacro
+";
+        var parser = BuildParser(input, out _);
+        var prog = parser.ParseProgram();
+        prog.AssertNoParseErrors();
+        var code = prog.ToString();
+        
+        Assert.That(code, Is.EqualTo("((= (ref b),(4)))"));
+    }
+    [Test]
+    public void Macro_Compile_ReverseSubst()
+    {
+        var input = @"
+# a = 4
+b = [a]
+";
+        var parser = BuildParser(input, out _);
+        var prog = parser.ParseProgram();
+        prog.AssertNoParseErrors();
+        var code = prog.ToString();
+        
+        Assert.That(code, Is.EqualTo("((= (ref b),(4)))"));
+    }
+    
     [Test]
     public void Macro_Compile_BigArrays_Literal()
     {

@@ -258,8 +258,11 @@ y = x";
         CheckTokens(expectedLexemTypes, tokens);
     }
 
-
-    private static void CheckTokens(LexemType[] expectedLexemTypes, List<Token> tokens)
+    public static void CheckTokens(List<Token> someTokens, List<Token> tokens)
+    {
+        CheckTokens(someTokens.Select(x => x.type).ToArray(), tokens);
+    }
+    public static void CheckTokens(LexemType[] expectedLexemTypes, List<Token> tokens)
     {
         
         for (var i = 0; i < expectedLexemTypes.Length && i < tokens.Count; i++)
