@@ -2725,7 +2725,11 @@ namespace FadeBasic
             var searching = true;
             ParseError error = null;
             var exprs = new List<MacroSubstitutionExpression>();
-            var tokenStartIndex = _stream.Index + 1;// + (isShortcut ? 1 : 1);
+            
+            // TODO: this is not right. The token index needs to be the index
+            //  into the actual program tokens, NOT the compileTokens. 
+            //  but at this point, we do not HAVE the real tokens :( 
+            var tokenStartIndex = _stream.Index + 1;
             var tokenEndIndex = tokenStartIndex;// + (isShortcut ? 1 : 0);
             var tokenBlock = new List<Token>();
             // var next = _stream.Advance();

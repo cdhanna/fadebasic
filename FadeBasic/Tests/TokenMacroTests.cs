@@ -91,7 +91,7 @@ c = b `b should be 3, because of the tokenization
         var prog = parser.ParseProgram();
         prog.AssertNoParseErrors();
         var code = prog.ToString();
-        Assert.That(code, Is.EqualTo("((= (ref b),(3)),(= (ref c),(ref b)))"));
+        Assert.That(code, Is.EqualTo("((= (ref b),(3)),(= (ref b2),(4)),(= (ref c),(ref b)))"));
     }
 
     
@@ -448,8 +448,24 @@ next
         prog.AssertNoParseErrors();
     }
     
-    [TestCase(@"
-
+    [TestCase("single-line macro", @"
+a = 3
+", 
+        @"
+# b = 2
+a = 3
+")]
+    [TestCase("single-line tokenize",@"
+a = 3
+c = 1
+", 
+        @"
+#macro
+# c = 1
+#endmacro
+a = 3
+")]
+    [TestCase("blank macro",@"
 a = 3
 ", 
         @"
@@ -457,7 +473,103 @@ a = 3
 #endmacro
 a = 3
 ")]
-    public void Macro_TokenComparison(string a, string b)
+    [TestCase("no tokenization",@"
+a = 3
+", 
+        @"
+#macro
+` these tokens should not appear in the output
+b = 2
+c = 1
+#endmacro
+a = 3
+")]
+    [TestCase("tokenize",@"
+a = 3
+c = 1
+", 
+        @"
+#macro
+b = 2
+#tokenize
+c = 1
+#endtokenize
+#endmacro
+a = 3
+")]
+    [TestCase("empty tokenize maps to nothing",@"
+", 
+        @"
+#macro
+b = 2
+#tokenize
+#endtokenize
+#endmacro
+")]
+    [TestCase("substitution",@"
+c = 2
+", 
+        @"
+#macro
+b = 2
+#tokenize
+c = [b]
+#endtokenize
+#endmacro
+")]
+    [TestCase("double macro",@"
+c = 2
+", 
+        @"
+#macro
+b = 2
+#endmacro
+
+#macro
+#tokenize
+c = [b]
+#endtokenize
+#endmacro
+")]
+    [TestCase("double macro with single line tokenize",@"
+c = 2
+", 
+        @"
+#macro
+b = 2
+#endmacro
+
+#macro
+# c = [b]
+#endmacro
+")]
+    [TestCase("double macro function",@"
+c = 2
+", 
+        @"
+#macro
+function decl(x)
+    # c = [x]
+endfunction
+#endmacro
+
+#macro
+decl(2)
+#endmacro
+")]
+    [TestCase("double macro function on single line",@"
+c = 2
+", 
+        @"
+#macro
+function decl(x)
+    # c = [x]
+endfunction
+#endmacro
+
+# decl(2)
+")]
+    public void Macro_TokenComparison(string explanation, string a, string b)
     {
         var lexer = new Lexer();
         var aResults = lexer.TokenizeWithErrors(a, TestCommands.CommandsForTesting);
@@ -590,11 +702,10 @@ c = sparky(0) + sparky(1)
         var output = lexer.TokenizeWithErrors(input);
         output.AssertNoLexErrors();
         var tokens = output.allTokens; 
-        Assert.That(tokens.Count, Is.EqualTo(4));
+        Assert.That(tokens.Count, Is.EqualTo(3));
         Assert.That(tokens[0].type, Is.EqualTo(LexemType.ConstantBegin));
         Assert.That(tokens[1].type, Is.EqualTo(LexemType.EndStatement));
         Assert.That(tokens[2].type, Is.EqualTo(LexemType.ConstantEnd));
-        Assert.That(tokens[3].type, Is.EqualTo(LexemType.EndStatement));
     }
     [Test]
     public void Macro_CommitEndCommit()

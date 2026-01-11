@@ -163,15 +163,15 @@ namespace FadeBasic
         {
             new Lexem(LexemType.Constant, new Regex("^\\s*#constant\\s+([a-zA-Z][a-zA-Z0-9_]*)\\s+(.*)\\s*$")),
             new Lexem(LexemType.ConstantBegin, new Regex("^#macro\\b")),
-            new Lexem(LexemType.ConstantEnd, new Regex("^#endmacro\\b")),
-            new Lexem(LexemType.ConstantTokenize, new Regex("^#tokenize\\b")),
+            new Lexem(LexemType.ConstantEnd, new Regex("^#endmacro\\b"), LexemFlags.PreventEos),
+            new Lexem(LexemType.ConstantTokenize, new Regex("^#tokenize\\b"), LexemFlags.PreventEos),
             new Lexem(LexemType.ConstantEndTokenize, new Regex("^#endtokenize\\b")),
             new Lexem(LexemType.ConstantBracketOpen, new Regex("^\\[")),
             new Lexem(LexemType.ConstantBracketClose, new Regex("^\\]")),
             
             
             new Lexem(LexemType.EndStatement, new Regex("^:")),
-            new Lexem(LexemType.ArgSplitter, new Regex("^,")),
+            new Lexem(LexemType.ArgSplitter, new Regex("^,"), LexemFlags.PreventEos),
             new Lexem(LexemType.FieldSplitter, new Regex("^\\.")),
             
             new Lexem(-10,LexemType.WhiteSpace, new Regex("^(\\s|\\t|\\n)+")),
@@ -302,31 +302,13 @@ namespace FadeBasic
             var combined = new List<Token>();
             var all = new List<Token>();
             var macroTokens = new List<Token>();
-
-
-            var compileTokens = new List<Token>();
-            // var compileTimeStartIndex = -1;
             
             void AddToken(Token t)
             {
-                // if (compileTimeStartIndex >= 0)
-                // {
-                //     all.Add(t);
-                //
-                //     // do not bother adding in the signal constant begin/end flags, because they are not compilable.
-                //     if (t.type != LexemType.ConstantBegin && t.type != LexemType.ConstantEnd)
-                //     {
-                //         compileTokens.Add(t);
-                //         
-                //     }
-                //     // do not add it YET to the regular tokens, because it has not been executed.
-                // }
-                // else
-                {
-                    tokens.Add(t);
-                    combined.Add(t);
-                    all.Add(t);
-                }
+                tokens.Add(t);
+                combined.Add(t);
+                all.Add(t);
+            
             }
 
             void AddComment(Token t)
@@ -644,77 +626,8 @@ namespace FadeBasic
                                     });
                                 }
 
-                                
-                                // if (bestToken.type == LexemType.ConstantBegin)
-                                // {
-                                //     // this is where we will insert tokens later.
-                                //     compileTimeStartIndex = tokens.Count;
-                                // }
-
                                 AddToken(bestToken);
                                 
-
-                                
-                                // if (bestToken.type == LexemType.ConstantEnd)
-                                // {
-                                //    // compileTokens.Add(bestToken);
-                                //     var compileTimeCommands = new CommandCollection();// TODO: pass in a custom command collection here!
-                                //    
-                                //     var parser = new Parser(new TokenStream(compileTokens), compileTimeCommands); 
-                                //     var node = parser.ParseProgram();
-                                //     
-                                //     var macroErrors = node.GetAllErrors();
-                                //     foreach (var macroError in macroErrors)
-                                //     {
-                                //         errors.Add(new LexerError
-                                //         {
-                                //             charNumber = macroError.location.start.charNumber,
-                                //             lineNumber = macroError.location.start.lineNumber,
-                                //             error = macroError.errorCode,
-                                //             text = $"(macro error) {macroError.message}"
-                                //         });
-                                //     }
-                                //     
-                                //     // TODO: do not compile if there are errors, instead, render the errors.
-                                //     if (macroErrors.Count == 0)
-                                //     {
-                                //
-                                //
-                                //         var compiler = new Compiler(compileTimeCommands);
-                                //         compiler.Compile(node);
-                                //
-                                //         var vm = new VirtualMachine(compiler.Program);
-                                //         
-                                //         vm.tokenReplacements = new List<TokenReplacement>();
-                                //         vm.hostMethods = compiler.methodTable;
-                                //
-                                //
-                                //         vm.Execute2(0);
-                                //
-                                //         // by this time, the tokenReplacements should be filled out, so we can 
-                                //         //  1. remove this macro from the actual program, and
-                                //         //  2. inject any tokens that were created. 
-                                //         //  3. also, any created tokens should have their substitutions handled by now. 
-                                //
-                                //         // TODO: insert a blank line...
-                                //         for (var replacementIndex = 0;
-                                //              replacementIndex < vm.tokenReplacements.Count;
-                                //              replacementIndex++)
-                                //         {
-                                //             var replacement = vm.tokenReplacements[replacementIndex];
-                                //             lines.Insert(lineNumber + 1, replacement.line);
-                                //             // TODO: how to preserve the original token source for all tokens created from this? 
-                                //             // TODO: how to flag that this line is a macro-based line, and therefor doesn't really EXIST in the IDE? 
-                                //         }
-                                //     }
-                                //
-                                //     compileTimeStartIndex = -1;
-                                //     
-                                //     // erase the contents of this macro.
-                                //     // TODO: figure out how to make all macros live inside the same headspace. 
-                                //     compileTokens.Clear();
-                                // }
-
                                 break;
                         }
 
@@ -747,9 +660,18 @@ namespace FadeBasic
                 
                 var previousTokenWasNotEoS = all.Count > 0 ? all[all.Count - 1].type != LexemType.EndStatement : false;
                 var previousTokenWasNotArgSplitter = all.Count > 0 ? all[all.Count - 1].type != LexemType.ArgSplitter : true;
+
+                var previousTokenDoesNotPreventEos = true;
+                if (all.Count > 0)
+                {
+                    if (all[all.Count - 1].lexem.flags.HasFlag(LexemFlags.PreventEos))
+                    {
+                        previousTokenDoesNotPreventEos = false;
+                    }
+                }
                 
                 // if the next token is an arg splitter, than we don't want an EoS either...
-                if (previousTokenWasNotEoS && previousTokenWasNotArgSplitter)
+                if (previousTokenWasNotEoS && previousTokenWasNotArgSplitter && previousTokenDoesNotPreventEos)
                 {
                     requestEoS = true;
                     requestEoSCharNumber = line.Length;
@@ -877,13 +799,83 @@ namespace FadeBasic
 
                 return block;
             }
+
+            MacroBlock ParseMacroShortcut()
+            {
+                // assumption, we are on a # start token.
+                var start = stream.Current;
+                var startIndex = stream.Index;
+                var endIndex = stream.Index;
+                stream.Advance(); // move past #
+                LexerError error = null;
+                var searching = true;
+                var tokenBlocks = new List<TokenizeBlock>();
+                while (searching)
+                {
+                    switch (stream.Current.type)
+                    {
+                        case LexemType.ConstantBegin:
+                            // error, we cannot have a nested macro block.
+                            error = new LexerError
+                            {
+                                charNumber = stream.Current.charNumber,
+                                lineNumber = stream.Current.lineNumber,
+                                error = ErrorCodes.LexerInvalidNestedMacro,
+                                text = "invalid nested macro"
+                            };
+                            stream.Advance();
+                            break;
+                        case LexemType.VariableReal:
+                        case LexemType.ConstantTokenize:
+                            var tokenBlock = ParseTokenizationBlock();
+                            tokenBlocks.Add(tokenBlock);
+                            
+                            break;
+                        case LexemType.EndStatement:
+                            // hoozah!
+                            searching = false;
+                            endIndex = stream.Index;
+                            current.tokens.Insert(endIndex, new Token
+                            {
+                              lexem = new Lexem(LexemType.EndStatement)
+                            });
+                            stream.Advance();
+                            break;
+                        case LexemType.ConstantEnd:
+                            error = new LexerError
+                            {
+                                charNumber = stream.Current.charNumber,
+                                lineNumber = stream.Current.lineNumber,
+                                error = ErrorCodes.LexerInvalidEndMacro,
+                                text = "invalid end macro"
+                            };
+                            stream.Advance();
+                            break;
+                        default:
+                            stream.Advance();
+                            break;
+                    }
+                }
+
+                var block = new MacroBlock
+                {
+                    startTokenIndex = startIndex - 1,
+                    endTokenIndex = endIndex,
+                    tokenizeBlocks = tokenBlocks
+                };
+                if (error != null)
+                {
+                    block.errors.Add(error);
+                }
+                return block;
+
+            }
             
             MacroBlock ParseMacroBlock()
             {
                 
                 // assumption, we are on a #macro start token.
                 var start = stream.Current;
-                var isShortcut = start.type == LexemType.VariableReal;
                 var startIndex = stream.Index;
                 var endIndex = stream.Index;
                 stream.Advance();
@@ -910,16 +902,6 @@ namespace FadeBasic
                             var tokenBlock = ParseTokenizationBlock();
                             tokenBlocks.Add(tokenBlock);
                             
-                            break;
-                        case LexemType.EndStatement when isShortcut:
-                            // hoozah!
-                            searching = false;
-                            endIndex = stream.Index + 1;
-                            current.tokens.Insert(endIndex - 1, new Token
-                            {
-                              lexem = new Lexem(LexemType.EndStatement)
-                            });
-                            stream.Advance();
                             break;
                         case LexemType.ConstantEnd:
                             // hoozah!
@@ -1010,6 +992,7 @@ namespace FadeBasic
                     lexem = new Lexem(LexemType.ConstantTokenize)
                 });
                 stream.Advance();
+                stream.Advance();
                 stream.Advance(); // skip ahead of tokens that were just inserted.
                 var mb =  new MacroBlock
                 {
@@ -1029,23 +1012,25 @@ namespace FadeBasic
             }
 
             var macroBlocks = new List<MacroBlock>();
-            
+
+            stream.Advance();
             while (!stream.IsEof)
             {
-                stream.Advance();
+                // stream.Advance();
                 switch (stream.Current.type)
                 {
                     case LexemType.ConstantBracketOpen:
                         // parse until a close bracket. 
+                        // stream.Advance();
                         macroBlocks.Add(ParseReverseSubstitution());
                         break;
                     case LexemType.VariableReal when stream.Current.Length == 1:
-                        macroBlocks.Add(ParseMacroBlock());
+                        // stream.Advance();
+                        macroBlocks.Add(ParseMacroShortcut());
                         break;
                     case LexemType.ConstantBegin:
-                        // parse the macro block.
-                        var block = ParseMacroBlock();
-                        macroBlocks.Add(block);
+                        // stream.Advance();
+                        macroBlocks.Add(ParseMacroBlock());
                         break;
                     
                     // TODO all of these need to result in errors.
@@ -1054,13 +1039,19 @@ namespace FadeBasic
                     case LexemType.ConstantTokenize:
                         throw new NotImplementedException("need to make better error");
                         break;
+                    default:
+                        stream.Advance();
+                        break;
                 }
             }
 
             // bundle up all the macro blocks next to each other. 
             var compileTokens = new List<Token>();
+            
+            var macroIndexToCompileTokenIndexStart = new List<int>(); 
             foreach (var macro in macroBlocks)
             { 
+                macroIndexToCompileTokenIndexStart.Add(compileTokens.Count);
                 var tokenSlice = current.tokens
                     .Skip(macro.startTokenIndex + 1)
                     .Take((macro.endTokenIndex - macro.startTokenIndex) - 1)
@@ -1084,7 +1075,34 @@ namespace FadeBasic
             };
             vm.Execute2(0);
 
-            
+            // TODO: the issue is that the compileTokens do not
+            //  share an index-space with the original tokens. 
+            for (var i = 0; i < vm.tokenReplacements.Count; i++)
+            {
+                var repl = vm.tokenReplacements[i];
+                for (var m = macroBlocks.Count - 1; m >= 0; m--)
+                {
+                    var index = macroIndexToCompileTokenIndexStart[m];
+                    if (repl.tokenStartIndex >= index)
+                    {
+                        var diff = macroBlocks[m].startTokenIndex - index;
+                        repl.tokenStartIndex += diff;
+                        repl.tokenEndIndex += diff;
+                        foreach (var sub in repl.substitutionReplacements)
+                        {
+                            sub.tokenStartIndex += diff;
+                            sub.tokenEndIndex += diff;
+                        }
+                        break;
+                    }
+                }
+            }
+            // var replIndex = 0;
+            // for (var i = 0; i < macroBlocks.Count; i++)
+            // {
+            //     var compileTokenIndex = macroIndexToCompileTokenIndexStart[i];
+            //     
+            // }
             
             /*
              * removing all of the macro blocks means the token coordinates in the vm will not match
@@ -1118,6 +1136,12 @@ namespace FadeBasic
                 // 3. neither. 
 
                 var isCompilerToken = t.flags.HasFlag(TokenFlags.IsCompileTime);
+                var hasNeighbor = current.tokens.Count > index;
+                if (!hasNeighbor)
+                {
+                    current.tokens.Insert(index, t);
+                    return;
+                }
                 var neighborToken = current.tokens[index];
                 var isNextToCompilerToken = neighborToken.flags.HasFlag(TokenFlags.IsCompileTime);
                 var bothConcatable = neighborToken.lexem.flags.HasFlag(LexemFlags.MacroConcatable) &&
@@ -1182,7 +1206,7 @@ namespace FadeBasic
                 // walk backwards through all the tokens and handle the replacements. 
                 // var substIndex = replacement.substitutionReplacements.Count - 1;
                 var substIndex = 0;
-                for (var x = replacement.tokenEndIndex - 1; x >= replacement.tokenStartIndex; x--)
+                for (var x = replacement.tokenEndIndex; x >= replacement.tokenStartIndex; x--)
                 {
                     var token = current.tokens[x];
                     if (substIndex >= replacement.substitutionReplacements.Count)
@@ -1357,8 +1381,8 @@ namespace FadeBasic
     public enum LexemFlags
     {
         None = 0,
-        MacroConcatable = 1 << 0 // 1
-        // 1 << 2 // 2
+        MacroConcatable = 1 << 0, // 1
+        PreventEos = 1 << 2 // 2
         // 1 << 3 // 4
     }
     
@@ -1437,9 +1461,8 @@ namespace FadeBasic
         /// used for macro handling, included when the substitution's end token was right next to the following token in the stream.
         /// this is used to decide if concat should happen
         /// </summary>
-        IsAdjacentToRightSib = 1 << 3
+        IsAdjacentToRightSib = 1 << 3,
         
-        // Third  = 1 << 2,
         // Fourth = 1 << 3
     }
     
@@ -1528,6 +1551,13 @@ namespace FadeBasic
 
         public Token Advance()
         {
+            if (Index >= _tokens.Count)
+            {
+                return new Token
+                {
+                    lexem = new Lexem(LexemType.EOF, null)
+                };
+            }
             return Current = _tokens[Index++];
         }
 
