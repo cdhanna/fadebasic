@@ -8,7 +8,27 @@ public class TokenizeTests
     public void Setup()
     {
     }
-    
+
+    [TestCase("egg", @"variablegeneral
+endstatement")]
+    [TestCase("rnd", @"commandword
+endstatement")]
+    [TestCase("get last", @"commandword
+endstatement")]
+    [TestCase("write", @"variablegeneral
+endstatement")]
+    [TestCase("write byte", @"commandword
+endstatement")]
+    [TestCase("get dir$ x", @"commandword
+variablegeneral
+endstatement")]
+    public void Tokenize_Command_Remap(string x, string expected)
+    {
+        var lexer = new Lexer();
+        var tokens = lexer.TokenizeWithErrors(x, TestCommands.CommandsForTesting);
+        var output = string.Join(Environment.NewLine, tokens.allTokens.Select(x => x.type.ToString().ToLowerInvariant()));
+        Assert.That(output, Is.EqualTo(expected));
+    }
     
     [Test]
     public void Tokenize_RealsHalf()

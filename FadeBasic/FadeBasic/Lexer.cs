@@ -6,6 +6,7 @@ using System.Text;
 using System.Text.RegularExpressions;
 using FadeBasic.Ast;
 using FadeBasic.Json;
+using FadeBasic.Sdk;
 using FadeBasic.Virtual;
 
 namespace FadeBasic
@@ -151,6 +152,12 @@ namespace FadeBasic
         public string text;
 
         public string Display => $"[{lineNumber}:{charNumber}:{text}] - {error}";
+
+        public LexerError()
+        {
+            
+        }
+
     }
     
     public class Lexer
@@ -293,16 +300,20 @@ namespace FadeBasic
             return res.tokens;
         }
 
-        public LexerResults TokenizeWithErrors(string input, CommandCollection commands) =>
-            TokenizeWithErrors(input, commands?.Commands?.Select(c => c.name).ToList());
-        public LexerResults TokenizeWithErrors(string input, List<string> commandNames=null)
+        public LexerResults TokenizeWithErrors(string input, CommandCollection commands, CommandCollection macroCommands=null) =>
+            TokenizeWithErrors(input, commands?.Commands?.Select(c => c.name).ToList(), macroCommands);
+        public LexerResults TokenizeWithErrors(string input, List<string> commandNames=null, CommandCollection macroCommands=null)
         {
             var tokens = new List<Token>();
             var comments = new List<Token>();
             var combined = new List<Token>();
             var all = new List<Token>();
             var macroTokens = new List<Token>();
+            commandNames ??= new List<string>();
+            macroCommands ??= new CommandCollection();
             
+            var commandTree = CommandNameTree.Create(commandNames);
+            var macroMacroTree = CommandNameTree.Create(macroCommands.Commands.Select(x => x.name).ToList());
             void AddToken(Token t)
             {
                 tokens.Add(t);
@@ -316,10 +327,6 @@ namespace FadeBasic
                 comments.Add(t);
                 combined.Add(t);
                 all.Add(t);
-            }
-            if (commandNames == null)
-            {
-                commandNames = new List<string>();
             }
 
             var errors = new List<LexerError>();
@@ -347,7 +354,7 @@ namespace FadeBasic
               
                 // pattern += "(\\b|$)";
                 var commandLexem = new Lexem(-((pattern.Length) * 100), LexemType.CommandWord, new Regex(pattern));
-                lexems.Add(commandLexem);
+                //lexems.Add(commandLexem);
             }
 
             lexems.Sort((a, b) =>
@@ -709,8 +716,10 @@ namespace FadeBasic
                 tokenErrors = errors,
                 macroTokens = macroTokens
             };
+
+            HandleMacros2(results, commandNames, macroCommands, macroMacroTree);
+            HandleCommandNames(results, commandTree);
             
-            HandleMacros2(results);
             return results;
         }
 
@@ -718,7 +727,7 @@ namespace FadeBasic
         {
             public int startTokenIndex, endTokenIndex;
             public List<TokenizeBlock> tokenizeBlocks = new List<TokenizeBlock>();
-            public List<LexerError> errors = new List<LexerError>();
+            public List<ParseError> errors = new List<ParseError>();
 
             public int TokenCount => endTokenIndex - startTokenIndex;
 
@@ -730,8 +739,73 @@ namespace FadeBasic
             public int startTokenIndex, endTokenIndex;
             public List<LexerError> errors = new List<LexerError>();
         }
+
+
+        void HandleCommandNames(LexerResults results, CommandNameTree tree)
+        {
+            HandleCommandNames(results.tokens, tree);
+            HandleCommandNames(results.combinedTokens, tree);
+            HandleCommandNames(results.allTokens, tree);
+        }
+        void HandleCommandNames(List<Token> tokens, CommandNameTree tree)
+        {
+            /*
+             * The goal is to find token spans that match the command names,
+             *  and then replace the token span with a single token representing
+             *  the commandWord token.
+             *
+             * It would be helpful to have the commands in a tree-format
+             */
+            for (var i = 0; i < tokens.Count; i++)
+            {
+                var token = tokens[i];
+                var curr = tree;
+                var j = i;
+                while (tokens[j].caseInsensitiveRaw != null && curr.sub.TryGetValue(tokens[j].caseInsensitiveRaw, out var next))
+                {
+                    curr = next;
+                    j++;
+                }
+
+                if (j != i && curr.isValidCommand)
+                {
+                    // re-write tokens from i to j as a single token.
+                    var subset = tokens.Skip(i).Take(j - i);
+                    var raw = string.Join(" ", subset.Select(x => x.raw));
+                    tokens[i] = new Token
+                    {
+                        raw = raw,
+                        caseInsensitiveRaw = raw.ToLowerInvariant(),
+                        lexem = new Lexem(LexemType.CommandWord),
+                        charNumber = tokens[i].charNumber,
+                        lineNumber = tokens[i].lineNumber,
+                        flags = tokens[i].flags,
+                    };
+                    tokens.RemoveRange(i + 1, (j - i) - 1);
+                }
+                
+            }
+
+            // var t = new Trie<string>(' ');
+            // foreach (var command in commandNames)
+            // {
+            //     t.Insert(command.ToLowerInvariant(), command.ToLowerInvariant());
+            // }
+            //
+            // for (var i = 0; i < tokens.Count; i++)
+            // {
+            //     switch (tokens[i].type)
+            //     {
+            //         case LexemType.VariableString:
+            //         case LexemType.VariableGeneral:
+            //             var matching = t.GetAll(tokens[i].caseInsensitiveRaw);
+            //            
+            //             break;
+            //     }
+            // }
+        }
         
-        void HandleMacros2(LexerResults current, List<string> commandNames=null)
+        void HandleMacros2(LexerResults current, List<string> commandNames, CommandCollection macroCommands, CommandNameTree macroCommandTree)
         {
             var stream = new TokenStream(current.tokens);
 
@@ -807,7 +881,7 @@ namespace FadeBasic
                 var startIndex = stream.Index;
                 var endIndex = stream.Index;
                 stream.Advance(); // move past #
-                LexerError error = null;
+                ParseError error = null;
                 var searching = true;
                 var tokenBlocks = new List<TokenizeBlock>();
                 while (searching)
@@ -816,13 +890,7 @@ namespace FadeBasic
                     {
                         case LexemType.ConstantBegin:
                             // error, we cannot have a nested macro block.
-                            error = new LexerError
-                            {
-                                charNumber = stream.Current.charNumber,
-                                lineNumber = stream.Current.lineNumber,
-                                error = ErrorCodes.LexerInvalidNestedMacro,
-                                text = "invalid nested macro"
-                            };
+                            error = new ParseError(stream.Current, ErrorCodes.LexerInvalidNestedMacro);
                             stream.Advance();
                             break;
                         case LexemType.VariableReal:
@@ -842,13 +910,7 @@ namespace FadeBasic
                             stream.Advance();
                             break;
                         case LexemType.ConstantEnd:
-                            error = new LexerError
-                            {
-                                charNumber = stream.Current.charNumber,
-                                lineNumber = stream.Current.lineNumber,
-                                error = ErrorCodes.LexerInvalidEndMacro,
-                                text = "invalid end macro"
-                            };
+                            error = new ParseError(stream.Current, ErrorCodes.LexerInvalidEndMacro);
                             stream.Advance();
                             break;
                         default:
@@ -879,22 +941,20 @@ namespace FadeBasic
                 var startIndex = stream.Index;
                 var endIndex = stream.Index;
                 stream.Advance();
-                LexerError error = null;
+                ParseError error = null;
                 var searching = true;
                 var tokenBlocks = new List<TokenizeBlock>();
                 while (searching)
                 {
                     switch (stream.Current.type)
                     {
+                        case LexemType.EOF:
+                            error = new ParseError(start, ErrorCodes.LexerExpectedEndMacro);
+                            searching = false;
+                            break;
                         case LexemType.ConstantBegin:
                             // error, we cannot have a nested macro block.
-                            error = new LexerError
-                            {
-                                charNumber = stream.Current.charNumber,
-                                lineNumber = stream.Current.lineNumber,
-                                error = ErrorCodes.LexerInvalidNestedMacro,
-                                text = "invalid nested macro"
-                            };
+                            error = new ParseError(stream.Current, ErrorCodes.LexerInvalidNestedMacro);
                             stream.Advance();
                             break;
                         case LexemType.VariableReal:
@@ -1060,12 +1120,13 @@ namespace FadeBasic
                 compileTokens.AddRange(tokenSlice);
             }
 
+            HandleCommandNames(compileTokens, macroCommandTree);
             var compileStream = new TokenStream(compileTokens);
-            var compileCommands = new CommandCollection();
-            var parser = new Parser(compileStream, compileCommands);
+            // TODO: need to re-handle this stream with macro-level commands. 
+            var parser = new Parser(compileStream, macroCommands);
             var program = parser.ParseProgram();
 
-            var compiler = new Compiler(compileCommands);
+            var compiler = new Compiler(macroCommands);
             compiler.Compile(program);
 
             var vm = new VirtualMachine(compiler.Program)
@@ -1236,7 +1297,7 @@ namespace FadeBasic
                         // oh oh oh , this is the substitution itself! which means we are not inserting the raw token, we are using the final value. 
                         substIndex += 1;
                         var text = subst.raw.ToString();
-                        var tokenResults = TokenizeWithErrors(text, compileCommands);
+                        var tokenResults = TokenizeWithErrors(text, commandNames, macroCommands);
                          
                        // for (var n = tokenResults.tokens.Count - 1; n >= 0; n--)
                         {
@@ -1276,107 +1337,41 @@ namespace FadeBasic
 
         }
         
-        void HandleMacros(LexerResults current)
-        {
-            // 1. find all macro blocks
-            //    when we find one, find the associated closing macro block. 
-            // 2. append all macro blocks into a single program, compile and run
-            // 3. report errors if there are interlaced macro blocks. 
-            // 4. ignore tokenization blocks 
-
-
-            var macroBlocks = new List<(int startIndex, int endIndex)>(); // start/end indexes
-            var startMacroIndex = -1;
-            var endMacroIndex = -1;
-
-            var startTokenizeIndex = -1;
-            var endTokenizeIndex = -1;
-            
-            for (var i = 0; i < current.tokens.Count; i++)
-            {
-                var token = current.tokens[i];
-                switch (token.type)
-                {
-                    case LexemType.ConstantTokenize:
-                        // we need to force read until we get to the end tokenize, and ignore everything in between.
-
-                        if (startTokenizeIndex != -1)
-                        {
-                            current.tokenErrors.Add(new LexerError
-                            {
-                                charNumber = token.charNumber,
-                                lineNumber = token.lineNumber,
-                                error = ErrorCodes.LexerInvalidNestedTokenize,
-                                text = ""
-                            });
-                            return;
-                        }
-
-                        startTokenizeIndex = i;
-                        endTokenizeIndex = -1;
-                        for (var j = i; j < current.tokens.Count; j++)
-                        {
-                            //  must find the first closing tokenize
-                            var token2 = current.tokens[j];
-                            if (token2.type == LexemType.ConstantEndTokenize)
-                            {
-                                endTokenizeIndex = j;
-                                break;
-                            }
-                        }
-
-                        if (endTokenizeIndex == -1)
-                        {
-                            // TODO: throw error about not finding closing tokenize block.
-                        }
-                        i = endTokenizeIndex;
-                        
-                        break;
-                    case LexemType.ConstantBegin:
-                        // we found a macro start!
-
-                        if (startMacroIndex != -1)
-                        {
-                            // error! we cannot have a start block inside an existing block.
-                            current.tokenErrors.Add(new LexerError
-                            {
-                                charNumber = token.charNumber,
-                                lineNumber = token.lineNumber,
-                                error = ErrorCodes.LexerInvalidNestedMacro,
-                                text = ""
-                            });
-                            return;
-                        }
-
-                        startMacroIndex = i;
-                        
-                        break;
-                    case LexemType.ConstantEnd:
-                        
-                        if (startMacroIndex == -1)
-                        {
-                            current.tokenErrors.Add(new LexerError
-                            {
-                                charNumber = token.charNumber,
-                                lineNumber = token.lineNumber,
-                                error = ErrorCodes.LexerInvalidEndMacro,
-                                text = ""
-                            });
-                            return;
-                        }
-
-                        endMacroIndex = i;
-                        macroBlocks.Add((startMacroIndex, endMacroIndex));
-                        startMacroIndex = -1;
-                        endMacroIndex = -1;                        
-                        break;
-                }
-            }
-            
-        }
-
     }
 
+    public class CommandNameTree
+    {
+        public bool isValidCommand;
+        public Dictionary<string, CommandNameTree> sub = new Dictionary<string, CommandNameTree>();
+        
+        public CommandNameTree(){}
+
+        public static CommandNameTree Create(List<string> commands)
+        {
+            var root = new CommandNameTree();
+            foreach (var command in commands)
+            {
+                var parts = command.Split(' ');
+                var curr = root;
+                foreach (var part in parts)
+                {
+                    var caseInsensitivePart = part.ToLowerInvariant();
+                    if (!curr.sub.TryGetValue(caseInsensitivePart, out var existing))
+                    {
+                        curr.sub[caseInsensitivePart] = existing = new CommandNameTree();
+                    }
+                    curr = existing;
+                }
+
+                curr.isValidCommand = true;
+            }
+
+            return root;
+        }
+        
+      
+    }
+    
     [Flags]
     public enum LexemFlags
     {
@@ -1553,7 +1548,7 @@ namespace FadeBasic
         {
             if (Index >= _tokens.Count)
             {
-                return new Token
+                return Current = new Token
                 {
                     lexem = new Lexem(LexemType.EOF, null)
                 };

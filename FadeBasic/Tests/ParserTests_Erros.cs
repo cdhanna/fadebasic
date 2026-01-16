@@ -2559,6 +2559,21 @@ endwhile
 
     
     [Test]
+    public void ParseError_Macro_NoEnd()
+    {
+        var input = @"
+#macro
+";
+        var parser = MakeParser(input);
+        var prog = parser.ParseProgram();
+
+        var errors = prog.GetAllErrors();
+        Assert.That(errors.Count, Is.EqualTo(1));
+        Assert.That(errors[0].Display, Is.EqualTo($"[1:0] - {ErrorCodes.ExpressionMissing}"));
+    }
+
+    
+    [Test]
     public void ParseError_RepeatUntil_MissingUntil()
     {
         var input = @"

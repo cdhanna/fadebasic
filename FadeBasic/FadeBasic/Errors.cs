@@ -142,6 +142,10 @@ namespace FadeBasic
             "[0004] Cannot end macro outside of macro block";
         public static readonly ErrorCode LexerInvalidNestedTokenize =
             "[0005] Cannot start new tokenization in existing tokenize block";
+        public static readonly ErrorCode LexerExpectedEndMacro =
+            "[0006] Every macro block needs an #endmacro statement";
+
+        
         
         // 100 series represents parse issues
         public static readonly ErrorCode ExpressionMissingAfterOpenParen = "[0100] No expression after open paren";

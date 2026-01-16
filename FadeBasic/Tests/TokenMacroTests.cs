@@ -12,7 +12,7 @@ public class TokenMacroTests
     public Parser BuildParser(string src, out List<Token> tokens)
     {
         var lexer = new Lexer();
-        var results = lexer.TokenizeWithErrors(src, TestCommands.CommandsForTesting);
+        var results = lexer.TokenizeWithErrors(src, TestCommands.CommandsForTesting, TestMacroCommands.CommandsForTesting);
         results.AssertNoLexErrors();
         tokens = results.tokens;
         var stream = new TokenStream(tokens);
@@ -484,19 +484,22 @@ c = 1
 #endmacro
 a = 3
 ")]
+    
     [TestCase("tokenize",@"
 a = 3
 c = 1
 ", 
         @"
 #macro
-b = 2
-#tokenize
-c = 1
-#endtokenize
+    b = 2
+    #tokenize
+        c = 1
+    #endtokenize
 #endmacro
+
 a = 3
 ")]
+    
     [TestCase("empty tokenize maps to nothing",@"
 ", 
         @"
@@ -511,10 +514,10 @@ c = 2
 ", 
         @"
 #macro
-b = 2
-#tokenize
-c = [b]
-#endtokenize
+    b = 2
+    #tokenize
+        c = [b]
+    #endtokenize
 #endmacro
 ")]
     [TestCase("double macro",@"
@@ -522,13 +525,13 @@ c = 2
 ", 
         @"
 #macro
-b = 2
+    b = 2
 #endmacro
 
 #macro
-#tokenize
-c = [b]
-#endtokenize
+    #tokenize
+        c = [b]
+    #endtokenize
 #endmacro
 ")]
     [TestCase("double macro with single line tokenize",@"
@@ -540,7 +543,7 @@ b = 2
 #endmacro
 
 #macro
-# c = [b]
+    # c = [b]
 #endmacro
 ")]
     [TestCase("double macro function",@"
@@ -618,6 +621,62 @@ b = [a]
         
         Assert.That(code, Is.EqualTo("((= (ref b),(4)))"));
     }
+    
+    
+    [Test]
+    public void Macro_ErrorsAppear()
+    {
+        var input = @"
+
+#macro
+this is invalid code
+#endmacro
+";
+        var parser = BuildParser(input, out _);
+        var prog = parser.ParseProgram();
+        prog.AssertParseErrors(1);// NOTE: at least.
+        var code = prog.ToString();
+        
+    }
+
+    
+    [Test]
+    public void Macro_Constant()
+    {
+        var input = @"
+#constant x 1
+#macro
+a = x
+#endmacro
+b = [a] + x
+";
+        var parser = BuildParser(input, out _);
+        var prog = parser.ParseProgram();
+        prog.AssertNoParseErrors();
+        var code = prog.ToString();
+        
+        Assert.That(code, Is.EqualTo("((= (ref b),(+ (1),(1))))"));
+    }
+    
+    
+    [Test]
+    public void Macro_Commands()
+    {
+        var input = @"
+
+#macro
+macroFuncTest 6, myImage
+#endmacro
+a = [myImage]
+";
+        var parser = BuildParser(input, out _);
+        var prog = parser.ParseProgram();
+        prog.AssertNoParseErrors();
+        var code = prog.ToString();
+        
+        Assert.That(code, Is.EqualTo("((= (ref a),(12)))"));
+    }
+    
     [Test]
     public void Macro_Compile_ReverseSubst()
     {

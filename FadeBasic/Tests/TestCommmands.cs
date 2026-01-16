@@ -7,6 +7,16 @@ using FadeBasic.Virtual;
 namespace Tests
 {
 
+    public partial class TestMacroCommands
+    {
+        public static readonly CommandCollection CommandsForTesting = new CommandCollection(new TestMacroCommands());
+        [FadeBasicCommand("macroFuncTest")]
+        public static void Example(int x, ref int id)
+        {
+            id = x * 2;
+        }
+    }
+    
     public partial class TestCommands
     {
         public static readonly CommandCollection CommandsForTesting = new CommandCollection(new TestCommands());
