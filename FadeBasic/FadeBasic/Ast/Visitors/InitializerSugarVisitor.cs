@@ -145,7 +145,7 @@ namespace FadeBasic.Ast.Visitors
 
             void RemoveNoops(List<IStatementNode> statements)
             {
-                statements.RemoveAll(n => n is NoOpStatement);
+                statements.RemoveAll(n => n is NoOpStatement && n.Errors.Count == 0);
                 foreach (var s in statements)
                 {
                     switch (s)

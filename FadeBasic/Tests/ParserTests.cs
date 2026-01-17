@@ -259,7 +259,7 @@ ENDFUNCTION
         var parser = MakeParser(input);
         _lexerResults.AssertLexErrorCount(1);
         var prog = parser.ParseProgram();
-        prog.AssertNoParseErrors();
+        prog.AssertParseErrors(1);
         var code = prog.ToString();
         Assert.That(code, Is.EqualTo("((= (ref x$),(\"\")))"));
     }
@@ -296,7 +296,7 @@ ENDFUNCTION
         var parser = MakeParser(input);
         _lexerResults.AssertLexErrorCount(1);
         var prog = parser.ParseProgram();
-        prog.AssertNoParseErrors();
+        prog.AssertParseErrors(1);
         var code = prog.ToString();
         Assert.That(code, Is.EqualTo("((= (ref x$),(\"\\)))"));
     }

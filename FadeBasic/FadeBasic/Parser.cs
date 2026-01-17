@@ -913,14 +913,14 @@ namespace FadeBasic
             _commands = commands;
         }
 
-        public List<LexerError> GetLexingErrors() => _stream.Errors;
+        public List<ParseError> GetLexingErrors() => _stream.Errors;
 
         public ProgramNode ParseProgram(ParseOptions options = null)
         {
             if (options == null) options = ParseOptions.Default;
             
             var program = new ProgramNode(_stream.Current);
-
+            program.Errors.AddRange(_stream.Errors);
             while (!_stream.IsEof)
             {
                 var statement = ParseStatement(program.statements);

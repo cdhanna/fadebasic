@@ -156,6 +156,7 @@ namespace FadeBasic.Ast
         public static List<ParseError> GetAllErrors(this IAstVisitable visitable)
         {
             var errors = new List<ParseError>();
+            
             visitable.Visit(child =>
             {
                 if (child.Errors != null && child.Errors.Count > 0)

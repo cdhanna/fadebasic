@@ -110,7 +110,7 @@ namespace FadeBasic.Sdk
         public bool AnyErrors => SystemErrors.Count > 0 || LexicalErrors.Count > 0 || ParserErrors.Count > 0;
         
         public List<string> SystemErrors = new List<string>();
-        public List<LexerError> LexicalErrors = new List<LexerError>();
+        public List<ParseError> LexicalErrors = new List<ParseError>();
         public List<ParseError> ParserErrors = new List<ParseError>();
 
         public SourceMap SourceMap;

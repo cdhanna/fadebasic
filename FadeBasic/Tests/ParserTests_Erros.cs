@@ -539,6 +539,20 @@ endfunction foo()
     
     
     [Test]
+    public void ParseError_TypeCheck_Function_Recursive2_Works_Wtf()
+    {
+        var input = @"
+function foo(c$)
+    a$ = c$ + ""a""
+endfunction a$
+";
+        var parser = MakeParser(input);
+        var prog = parser.ParseProgram();
+        prog.AssertNoParseErrors();
+    }
+
+    
+    [Test]
     public void ParseError_TypeCheck_Function_Recursive2_Works()
     {
         var input = @"
@@ -2559,6 +2573,36 @@ endwhile
 
     
     [Test]
+    public void ParseError_SimpleUnknown()
+    {
+        var input = @"
+x = b
+";
+        var parser = MakeParser(input);
+        var prog = parser.ParseProgram();
+
+        prog.AssertParseErrors(1, out var errors);
+        Assert.That(errors[0].errorCode, Is.EqualTo(ErrorCodes.InvalidReference));
+    }
+    
+    
+    [Test]
+    public void ParseError_Macro_MidError()
+    {
+        var input = @"
+#macro
+x = b
+#endmacro
+";
+        var parser = MakeParser(input);
+        var prog = parser.ParseProgram();
+
+        prog.AssertParseErrors(1, out var errors);
+        Assert.That(errors[0].Display, Is.EqualTo($"[1:0] - {ErrorCodes.LexerExpectedEndMacro}"));
+    }
+
+    
+    [Test]
     public void ParseError_Macro_NoEnd()
     {
         var input = @"
@@ -2567,9 +2611,8 @@ endwhile
         var parser = MakeParser(input);
         var prog = parser.ParseProgram();
 
-        var errors = prog.GetAllErrors();
-        Assert.That(errors.Count, Is.EqualTo(1));
-        Assert.That(errors[0].Display, Is.EqualTo($"[1:0] - {ErrorCodes.ExpressionMissing}"));
+        prog.AssertParseErrors(1, out var errors);
+        Assert.That(errors[0].Display, Is.EqualTo($"[1:0] - {ErrorCodes.LexerExpectedEndMacro}"));
     }
 
     
@@ -2654,6 +2697,8 @@ endselect
         Assert.That(errors[0].Display, Is.EqualTo($"[2:4] - {ErrorCodes.SelectStatementUnknownCase}"));
     }
 
+    
+    
     
     
     [Test]
@@ -3414,8 +3459,8 @@ x = |
         
         Assert.That(lexingErrors.Count, Is.EqualTo(1));
 
-        Assert.That(errors.Count, Is.EqualTo(1));
-        Assert.That(errors[0].Display, Is.EqualTo($"[1:2] - {ErrorCodes.ExpressionMissing}"));
+        Assert.That(errors.Count, Is.EqualTo(2));
+        Assert.That(errors[1].Display, Is.EqualTo($"[1:2] - {ErrorCodes.ExpressionMissing}"));
     }
     
     [Test]

@@ -11,7 +11,6 @@ namespace FadeBasic.Ast
         }
 
         public Scope scope;
-        public List<ParseError> errors = new List<ParseError>();
         public List<IStatementNode> statements = new List<IStatementNode>();
         public List<TypeDefinitionStatement> typeDefinitions = new List<TypeDefinitionStatement>();
         public List<FunctionStatement> functions = new List<FunctionStatement>();

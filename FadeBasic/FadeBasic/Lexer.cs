@@ -135,7 +135,7 @@ namespace FadeBasic
         public List<Token> combinedTokens; // tokens and comments.
         public List<Token> allTokens; // tokens and macros and comments.
         public TokenStream stream;
-        public List<LexerError> tokenErrors;
+        public List<ParseError> tokenErrors;
         public List<Token> macroTokens = new List<Token>();
 
         public LexerResults()
@@ -144,22 +144,6 @@ namespace FadeBasic
         }
     }
 
-    [DebuggerDisplay("{Display}")]
-    public class LexerError
-    {
-        public int lineNumber, charNumber;
-        public ErrorCode error;
-        public string text;
-
-        public string Display => $"[{lineNumber}:{charNumber}:{text}] - {error}";
-
-        public LexerError()
-        {
-            
-        }
-
-    }
-    
     public class Lexer
     {
         private static Lexem LexemString = new Lexem(LexemType.LiteralString, new Regex("^\""));
@@ -168,8 +152,8 @@ namespace FadeBasic
         // private static Lexem LexemConstant = new Lexem(LexemType.Constant);
         public static List<Lexem> Lexems = new List<Lexem>
         {
-            new Lexem(LexemType.Constant, new Regex("^\\s*#constant\\s+([a-zA-Z][a-zA-Z0-9_]*)\\s+(.*)\\s*$")),
-            new Lexem(LexemType.ConstantBegin, new Regex("^#macro\\b")),
+            new Lexem(LexemType.Constant, new Regex("^\\s*#constant\\s+([a-zA-Z][a-zA-Z0-9_]*)\\s+(.*)\\s*$"), LexemFlags.PreventEos),
+            new Lexem(LexemType.ConstantBegin, new Regex("^#macro\\b"), LexemFlags.PreventEos),
             new Lexem(LexemType.ConstantEnd, new Regex("^#endmacro\\b"), LexemFlags.PreventEos),
             new Lexem(LexemType.ConstantTokenize, new Regex("^#tokenize\\b"), LexemFlags.PreventEos),
             new Lexem(LexemType.ConstantEndTokenize, new Regex("^#endtokenize\\b")),
@@ -248,14 +232,14 @@ namespace FadeBasic
             // new Lexem(LexemType.KeywordUnDeclareArray, new Regex("^undim")),
             new Lexem(LexemType.KeywordReDimArray, new Regex("^redim")),
 
-            new Lexem(LexemType.KeywordRem, new Regex("^`(.*)$")),
-            new Lexem(LexemType.KeywordRem, new Regex("^rem(.*)$")),
+            new Lexem(LexemType.KeywordRem, new Regex("^`(.*)$"), LexemFlags.PreventEos),
+            new Lexem(LexemType.KeywordRem, new Regex("^rem(.*)$"), LexemFlags.PreventEos),
             // new Lexem(LexemType.WhiteSpace, new Regex("^remstart(.*)remend")),
             
             // new Lexem(LexemType.KeywordRem, new Regex("^(rem)(.*)$")),
             // new Lexem(LexemType.KeywordRem, new Regex("^`(.*)$")),
-            new Lexem(-2, LexemType.KeywordRemStart, new Regex("^remstart(.)$")),
-            new Lexem(-2, LexemType.KeywordRemEnd, new Regex("^remend")),
+            new Lexem(-2, LexemType.KeywordRemStart, new Regex("^remstart(.)$"), LexemFlags.PreventEos),
+            new Lexem(-2, LexemType.KeywordRemEnd, new Regex("^remend"), LexemFlags.PreventEos),
             //
             new Lexem(LexemType.KeywordType, new Regex("^type")),
             new Lexem(LexemType.KeywordEndType, new Regex("^endtype")),
@@ -329,7 +313,7 @@ namespace FadeBasic
                 all.Add(t);
             }
 
-            var errors = new List<LexerError>();
+            var errors = new List<ParseError>();
 
             var constantTable = new Dictionary<string, string>();
 
@@ -400,7 +384,7 @@ namespace FadeBasic
                     {
                         charNumber = 0,
                         lineNumber = lineNumber,
-                        lexem = new Lexem(LexemType.KeywordRem, null),
+                        lexem = new Lexem(LexemType.KeywordRem, null, LexemFlags.PreventEos),
 
                     };
                 }
@@ -426,7 +410,7 @@ namespace FadeBasic
                         // we are remmin'
                         remBlockToken = new Token
                         {
-                            lexem = new Lexem(LexemType.KeywordRem, null),
+                            lexem = new Lexem(LexemType.KeywordRem, null, LexemFlags.PreventEos),
                             charNumber = charNumber,
                             lineNumber = lineNumber,
                         };
@@ -438,7 +422,7 @@ namespace FadeBasic
                         remBlockToken.raw = line.Substring(remBlockToken.charNumber,
                             (charNumber - remBlockToken.charNumber) + "remend".Length);
                         remBlockToken.caseInsensitiveRaw = remBlockToken.raw.ToLowerInvariant();
-                        
+                       
                         AddComment(remBlockToken);
                         remBlockToken = null;
                         charNumber += "remend".Length;
@@ -510,13 +494,15 @@ namespace FadeBasic
 
                         if (!matchedEnd)
                         {
-                            errors.Add(new LexerError
+                            var text = line.Substring(charNumber);
+                            errors.Add(new ParseError(new Token
                             {
-                                charNumber = charNumber,
+                                raw = text,
+                                caseInsensitiveRaw = text.ToLowerInvariant(),
                                 lineNumber = lineNumber,
-                                error = ErrorCodes.LexerStringNeedsEnd,
-                                text = line.Substring(charNumber),
-                            });
+                                charNumber = charNumber,
+                            }, ErrorCodes.LexerStringNeedsEnd, text));
+
                         }
 
                         var insensitiveRaw = line.Substring(charNumber, strIndex - charNumber);
@@ -644,13 +630,14 @@ namespace FadeBasic
 
                     if (!foundMatch)
                     {
-                        errors.Add(new LexerError
+                        errors.Add(new ParseError(new Token
                         {
-                            charNumber = charNumber,
+                            raw = sub,
+                            caseInsensitiveRaw = sub.ToLowerInvariant(),
                             lineNumber = lineNumber,
-                            text = sub,
-                            error = ErrorCodes.LexerUnmatchedText
-                        });
+                            charNumber = charNumber,
+                        }, ErrorCodes.LexerUnmatchedText, sub));
+                       
                         charNumber += sub.Length;
                         // throw new Exception($"Token exception! No match for {subStr} at {lineNumber}:{charNumber}");
                     }
@@ -671,6 +658,7 @@ namespace FadeBasic
                 var previousTokenDoesNotPreventEos = true;
                 if (all.Count > 0)
                 {
+                    // previousTokenDoesNotPreventEos = true;
                     if (all[all.Count - 1].lexem.flags.HasFlag(LexemFlags.PreventEos))
                     {
                         previousTokenDoesNotPreventEos = false;
@@ -737,7 +725,7 @@ namespace FadeBasic
         class TokenizeBlock
         {
             public int startTokenIndex, endTokenIndex;
-            public List<LexerError> errors = new List<LexerError>();
+            public List<ParseError> errors = new List<ParseError>();
         }
 
 
@@ -817,7 +805,7 @@ namespace FadeBasic
                 var endIndex = stream.Index;
                 stream.Advance();
                 var searching = true;
-                LexerError error = null;
+                ParseError error = null;
                 while (searching)
                 {
                     switch (stream.Current.type)
@@ -828,23 +816,12 @@ namespace FadeBasic
                             stream.Advance();
                             break;
                         case LexemType.ConstantTokenize:
-                            error = new LexerError
-                            {
-                                charNumber = stream.Current.charNumber,
-                                lineNumber = stream.Current.lineNumber,
-                                error = ErrorCodes.LexerInvalidNestedTokenize,
-                                text = "invalid nested tokenize"
-                            };
+                            error = new ParseError(stream.Current, ErrorCodes.LexerInvalidNestedTokenize);
+
                             stream.Advance();
                             break;
                         case LexemType.ConstantBegin:
-                            error = new LexerError
-                            {
-                                charNumber = stream.Current.charNumber,
-                                lineNumber = stream.Current.lineNumber,
-                                error = ErrorCodes.LexerInvalidNestedMacro,
-                                text = "invalid nested macro"
-                            };
+                            error = new ParseError(stream.Current, ErrorCodes.LexerInvalidNestedMacro);
                             stream.Advance();
                             break;
                         case LexemType.ConstantEndTokenize:
@@ -1108,9 +1085,12 @@ namespace FadeBasic
             // bundle up all the macro blocks next to each other. 
             var compileTokens = new List<Token>();
             
-            var macroIndexToCompileTokenIndexStart = new List<int>(); 
+            var macroIndexToCompileTokenIndexStart = new List<int>();
+            var errorCount = 0;
             foreach (var macro in macroBlocks)
             { 
+                current.tokenErrors.AddRange(macro.errors);
+                errorCount += macro.errors.Count;
                 macroIndexToCompileTokenIndexStart.Add(compileTokens.Count);
                 var tokenSlice = current.tokens
                     .Skip(macro.startTokenIndex + 1)
@@ -1119,13 +1099,32 @@ namespace FadeBasic
                 
                 compileTokens.AddRange(tokenSlice);
             }
-
+            if (errorCount > 0)
+            {
+                return;
+            }
+            // TODO: these endstatement tokens are the bane of my existence. 
             HandleCommandNames(compileTokens, macroCommandTree);
             var compileStream = new TokenStream(compileTokens);
             // TODO: need to re-handle this stream with macro-level commands. 
             var parser = new Parser(compileStream, macroCommands);
+            
             var program = parser.ParseProgram();
-
+            var macroErrors = program.GetAllErrors();
+            
+            // TODO: adjust the position of the errors so they match the original text. 
+            // current.tokenErrors.AddRange(macroErrors);
+            // if (macroErrors.Count > 0)
+            // {
+            //     // remove all macro blocks so errors are not double reported. 
+            //     for (var i = macroBlocks.Count - 1; i >= 0; i--)
+            //     {
+            //         RemoveMacro(i);
+            //     }
+            //     return;
+            // }
+            
+            
             var compiler = new Compiler(macroCommands);
             compiler.Compile(program);
 
@@ -1500,7 +1499,7 @@ namespace FadeBasic
 
     public class TokenStream
     {
-        public List<LexerError> Errors { get; }
+        public List<ParseError> Errors { get; }
         private readonly List<Token> _tokens;
         
 
@@ -1524,11 +1523,11 @@ namespace FadeBasic
             return res;
         }
 
-        public TokenStream(List<Token> tokens) : this(tokens, new List<LexerError>())
+        public TokenStream(List<Token> tokens) : this(tokens, new List<ParseError>())
         {
         }
 
-        public TokenStream(List<Token> tokens, List<LexerError> errors)
+        public TokenStream(List<Token> tokens, List<ParseError> errors)
         {
             Errors = errors;
             _tokens = tokens;
