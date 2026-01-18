@@ -20,36 +20,202 @@ public class TokenMacroTests
         return parser;
     }
     
-    [Test]
-    public void Macro_Parse_Subst_CanExist()
-    {
-        var input = @"
-[ ]
-";
-        var parser = BuildParser(input, out _);
-        var prog = parser.ParseProgram();
-        prog.AssertNoParseErrors();
 
-        var str = prog.ToString();
-        
-    }
-
+    
     [Test]
-    public void Macro_Parse ()
+    public void Macro_Simple_SingleLine_Tokenize1 ()
     {
         var input = @"
 a = 3
-#tokenize
-b = [a]
-#endtokenize
+#macro
+    # b = 1
+#endmacro
+c = 2
 ";
         var parser = BuildParser(input, out _);
         var prog = parser.ParseProgram();
         prog.AssertNoParseErrors();
         var code = prog.ToString();
-        Assert.That(code, Is.EqualTo("((= (ref a),(3)),(tokenize ((subst ((ref a))))))"));
+        Assert.That(code, Is.EqualTo("((= (ref a),(3)),(= (ref b),(1)),(= (ref c),(2)))"));
     }
 
+    
+    [Test]
+    public void Macro_Simple_Subst ()
+    {
+        var input = @"
+#macro
+    #tokenize
+        a = [1]
+    #endtokenize
+#endmacro
+";
+        var parser = BuildParser(input, out _);
+        var prog = parser.ParseProgram();
+        prog.AssertNoParseErrors();
+        var code = prog.ToString();
+        Assert.That(code, Is.EqualTo("((= (ref a),(1)))"));
+    }
+
+    
+    [Test]
+    public void Macro_Simple_Tokenize1 ()
+    {
+        var input = @"
+a = 3
+#macro
+    #tokenize
+        b = 1
+    #endtokenize
+#endmacro
+c = 2
+";
+        var parser = BuildParser(input, out _);
+        var prog = parser.ParseProgram();
+        prog.AssertNoParseErrors();
+        var code = prog.ToString();
+        Assert.That(code, Is.EqualTo("((= (ref a),(3)),(= (ref b),(1)),(= (ref c),(2)))"));
+    }
+    
+    
+    [Test]
+    public void Macro_Simple_Tokenize2 ()
+    {
+        var input = @"
+a = 3
+#macro
+    #tokenize
+        b = 1
+    #endtokenize
+    x = 1
+    #tokenize
+        c = 2
+    #endtokenize
+#endmacro
+c = 3
+";
+        var parser = BuildParser(input, out _);
+        var prog = parser.ParseProgram();
+        prog.AssertNoParseErrors();
+        var code = prog.ToString();
+        Assert.That(code, Is.EqualTo("((= (ref a),(3)),(= (ref b),(1)),(= (ref c),(2)),(= (ref c),(3)))"));
+    }
+    
+    
+    [Test]
+    public void Macro_Simple_Tokenize2_WithSomeSingle ()
+    {
+        var input = @"
+a = 3
+#macro
+    #tokenize
+        b = 1
+    #endtokenize
+    x = 1
+    #c=2
+#endmacro
+c = 3
+";
+        var parser = BuildParser(input, out _);
+        var prog = parser.ParseProgram();
+        prog.AssertNoParseErrors();
+        var code = prog.ToString();
+        Assert.That(code, Is.EqualTo("((= (ref a),(3)),(= (ref b),(1)),(= (ref c),(2)),(= (ref c),(3)))"));
+    }
+
+    
+    [Test]
+    public void Macro_Simple_Tokenize2_WithBothSingle ()
+    {
+        var input = @"
+a = 3
+#macro
+    # b = 1
+    x = 1
+    #c=2
+#endmacro
+c = 3
+";
+        var parser = BuildParser(input, out _);
+        var prog = parser.ParseProgram();
+        prog.AssertNoParseErrors();
+        var code = prog.ToString();
+        Assert.That(code, Is.EqualTo("((= (ref a),(3)),(= (ref b),(1)),(= (ref c),(2)),(= (ref c),(3)))"));
+    }
+    
+    [Test]
+    public void Macro_Multiple_Tokenize_1 ()
+    {
+        var input = @"
+a = 3
+#macro
+    ` intentionally blank
+#endmacro
+c = 3
+#macro
+# x = 1
+#endmacro
+";
+        var parser = BuildParser(input, out _);
+        var prog = parser.ParseProgram();
+        prog.AssertNoParseErrors();
+        var code = prog.ToString();
+        Assert.That(code, Is.EqualTo("((= (ref a),(3)),(= (ref c),(3)),(= (ref x),(1)))"));
+    }
+
+    
+    [Test]
+    public void Macro_Multiple_Tokenize_2 ()
+    {
+        var input = @"
+a = 3
+#macro
+    # b = 1
+#endmacro
+c = 3
+#macro
+# x = 1
+#endmacro
+";
+        var parser = BuildParser(input, out _);
+        var prog = parser.ParseProgram();
+        prog.AssertNoParseErrors();
+        var code = prog.ToString();
+        Assert.That(code, Is.EqualTo("((= (ref a),(3)),(= (ref b),(1)),(= (ref c),(3)),(= (ref x),(1)))"));
+    }
+
+    
+    [Test]
+    public void Macro_Multiple_Tokenize_3 ()
+    {
+        var input = @"
+a = 3
+#macro
+    # b = 1
+    ignore = 1
+    #tokenize
+    c = 2
+    d = 3
+    #endtokenize
+#endmacro
+e = 4
+
+#macro
+ignore = 2
+if 2 = 2
+    #tokenize
+        f = 5
+    #endtokenize
+endif
+# g = 1
+#endmacro
+";
+        var parser = BuildParser(input, out _);
+        var prog = parser.ParseProgram();
+        prog.AssertNoParseErrors();
+        var code = prog.ToString();
+        Assert.That(code, Is.EqualTo("((= (ref a),(3)),(= (ref b),(1)),(= (ref c),(2)),(= (ref d),(3)),(= (ref e),(4)),(= (ref f),(5)),(= (ref g),(1)))"));
+    }
     
     [Test]
     public void Macro_Compile ()
@@ -740,6 +906,7 @@ c = sparky(0) + sparky(1)
         var input = @"
 [ ]
 ";
+        Assert.Fail("Eventually, this needs to work for compile time access");
         var lexer = new Lexer();
         var output = lexer.TokenizeWithErrors(input);
         output.AssertNoLexErrors();
@@ -760,11 +927,16 @@ c = sparky(0) + sparky(1)
         var lexer = new Lexer();
         var output = lexer.TokenizeWithErrors(input);
         output.AssertNoLexErrors();
-        var tokens = output.allTokens; 
-        Assert.That(tokens.Count, Is.EqualTo(3));
-        Assert.That(tokens[0].type, Is.EqualTo(LexemType.ConstantBegin));
-        Assert.That(tokens[1].type, Is.EqualTo(LexemType.EndStatement));
-        Assert.That(tokens[2].type, Is.EqualTo(LexemType.ConstantEnd));
+        var allTokens = output.allTokens; 
+        Assert.That(allTokens.Count, Is.EqualTo(4));
+        Assert.That(allTokens[0].type, Is.EqualTo(LexemType.ConstantBegin));
+        Assert.That(allTokens[1].type, Is.EqualTo(LexemType.EndStatement));
+        Assert.That(allTokens[2].type, Is.EqualTo(LexemType.ConstantEnd));
+        Assert.That(allTokens[3].type, Is.EqualTo(LexemType.EndStatement));
+
+        var tokens = output.tokens;
+        Assert.That(tokens.Count, Is.EqualTo(0));
+
     }
     [Test]
     public void Macro_CommitEndCommit()

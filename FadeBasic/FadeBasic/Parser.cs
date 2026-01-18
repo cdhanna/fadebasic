@@ -2699,7 +2699,7 @@ namespace FadeBasic
 
         private MacroSubstitutionExpression ParseSubstitution(Token token)
         {
-            var startIndex = _stream.Index; // at [
+            var startIndex = _stream.Index - 1; // at [
             if (!TryParseExpression(out var expr))
             {
                 // TODO ? 
@@ -2726,12 +2726,11 @@ namespace FadeBasic
             ParseError error = null;
             var exprs = new List<MacroSubstitutionExpression>();
             
-            // TODO: this is not right. The token index needs to be the index
-            //  into the actual program tokens, NOT the compileTokens. 
-            //  but at this point, we do not HAVE the real tokens :( 
-            var tokenStartIndex = _stream.Index + 1;
+            var tokenStartIndex = _stream.Index - 1;
             var tokenEndIndex = tokenStartIndex;// + (isShortcut ? 1 : 0);
             var tokenBlock = new List<Token>();
+            var endPadding = 2;
+            var startPadding = 1;
             // var next = _stream.Advance();
             
             while (searching)
@@ -2762,11 +2761,11 @@ namespace FadeBasic
                         break;
                     case LexemType.EndStatement when isShortcut:
                         searching = false;
-                        tokenEndIndex = _stream.Index;
+                        tokenEndIndex = _stream.Index - 1;
                         break;
                     case LexemType.ConstantEndTokenize:
                         searching = false;
-                        tokenEndIndex = _stream.Index - 1;
+                        tokenEndIndex = _stream.Index;
                         // _stream.Advance();
                         break;
                     default:

@@ -652,21 +652,30 @@ namespace FadeBasic
                     AddComment(remBlockToken);
                 }
                 
-                var previousTokenWasNotEoS = all.Count > 0 ? all[all.Count - 1].type != LexemType.EndStatement : false;
-                var previousTokenWasNotArgSplitter = all.Count > 0 ? all[all.Count - 1].type != LexemType.ArgSplitter : true;
-
-                var previousTokenDoesNotPreventEos = true;
-                if (all.Count > 0)
-                {
-                    // previousTokenDoesNotPreventEos = true;
-                    if (all[all.Count - 1].lexem.flags.HasFlag(LexemFlags.PreventEos))
-                    {
-                        previousTokenDoesNotPreventEos = false;
-                    }
-                }
+                var previousTokenWasNotEoS = tokens.Count > 0 
+                    ? tokens[tokens.Count - 1].type != LexemType.EndStatement 
+                    : false;
+                var previousTokenWasNotArgSplitter = tokens.Count > 0 
+                    ? tokens[tokens.Count - 1].type != LexemType.ArgSplitter 
+                    : true;
+                var previousTokenWasNotTokenize = tokens.Count > 0 
+                    ? tokens[tokens.Count - 1].type != LexemType.ConstantTokenize 
+                    : true;
+                // var previousTokenWasNotTokenize = all.Count > 0 
+                //     ? all[all.Count - 1].type != LexemType.ConstantEndTokenize 
+                //     : true;
+                // var previousTokenDoesNotPreventEos = true;
+                // if (all.Count > 0)
+                // {
+                //     // previousTokenDoesNotPreventEos = true;
+                //     if (all[all.Count - 1].lexem.flags.HasFlag(LexemFlags.PreventEos))
+                //     {
+                //         //previousTokenDoesNotPreventEos = false;
+                //     }
+                // }
                 
                 // if the next token is an arg splitter, than we don't want an EoS either...
-                if (previousTokenWasNotEoS && previousTokenWasNotArgSplitter && previousTokenDoesNotPreventEos)
+                if (previousTokenWasNotEoS && previousTokenWasNotArgSplitter && previousTokenWasNotTokenize)
                 {
                     requestEoS = true;
                     requestEoSCharNumber = line.Length;
@@ -714,17 +723,19 @@ namespace FadeBasic
         class MacroBlock
         {
             public int startTokenIndex, endTokenIndex;
+            public int removeExtra;
+            public int startPadding;
             public List<TokenizeBlock> tokenizeBlocks = new List<TokenizeBlock>();
             public List<ParseError> errors = new List<ParseError>();
 
             public int TokenCount => endTokenIndex - startTokenIndex;
-
-            
+            public int OutsideEndTokenIndex => endTokenIndex + 1 + startPadding;
         }
 
         class TokenizeBlock
         {
             public int startTokenIndex, endTokenIndex;
+            public bool isShortcut;
             public List<ParseError> errors = new List<ParseError>();
         }
 
@@ -842,6 +853,7 @@ namespace FadeBasic
                 {
                     startTokenIndex = startIndex - 1,
                     endTokenIndex = endIndex - 1,
+                    isShortcut = isShortcut
                 };
                 if (error != null)
                 {
@@ -955,8 +967,10 @@ namespace FadeBasic
                 var block = new MacroBlock
                 {
                     startTokenIndex = startIndex - 1,
+                    startPadding = 1,
                     endTokenIndex = endIndex - 1,
-                    tokenizeBlocks = tokenBlocks
+                    tokenizeBlocks = tokenBlocks,
+                    removeExtra = 1
                 };
                 if (error != null)
                 {
@@ -1093,8 +1107,8 @@ namespace FadeBasic
                 errorCount += macro.errors.Count;
                 macroIndexToCompileTokenIndexStart.Add(compileTokens.Count);
                 var tokenSlice = current.tokens
-                    .Skip(macro.startTokenIndex + 1)
-                    .Take((macro.endTokenIndex - macro.startTokenIndex) - 1)
+                    .Skip(macro.startTokenIndex + 1 + macro.startPadding)
+                    .Take((macro.endTokenIndex - macro.startTokenIndex) - (1 + macro.startPadding))
                     .ToList();
                 
                 compileTokens.AddRange(tokenSlice);
@@ -1137,6 +1151,7 @@ namespace FadeBasic
 
             // TODO: the issue is that the compileTokens do not
             //  share an index-space with the original tokens. 
+            //var tokenReplacementIndex = 0;
             for (var i = 0; i < vm.tokenReplacements.Count; i++)
             {
                 var repl = vm.tokenReplacements[i];
@@ -1145,9 +1160,13 @@ namespace FadeBasic
                     var index = macroIndexToCompileTokenIndexStart[m];
                     if (repl.tokenStartIndex >= index)
                     {
-                        var diff = macroBlocks[m].startTokenIndex - index;
+                        var diff = (macroBlocks[m].startPadding + 1) + macroBlocks[m].startTokenIndex - index;
                         repl.tokenStartIndex += diff;
                         repl.tokenEndIndex += diff;
+                            //var localIndex = repl.tokenBlockIndex - tokenReplacementIndex;
+                        //var t = macroBlocks[m].tokenizeBlocks[localIndex];
+                        
+                        //repl.endPadding += t.isShortcut ? 0 : 2;
                         foreach (var sub in repl.substitutionReplacements)
                         {
                             sub.tokenStartIndex += diff;
@@ -1155,7 +1174,10 @@ namespace FadeBasic
                         }
                         break;
                     }
+
+                    //tokenReplacementIndex += macroBlocks[m].tokenizeBlocks.Count;
                 }
+               
             }
             // var replIndex = 0;
             // for (var i = 0; i < macroBlocks.Count; i++)
@@ -1188,8 +1210,9 @@ namespace FadeBasic
                 return token;
             }
 
-            void InsertToken(int index, Token t)
+            void InsertToken(int macroBlockIndex, Token t)
             {
+                var index = macroBlocks[macroBlockIndex].OutsideEndTokenIndex;
                 // three cases
                 // 1. the token being added is a compiler-generated token
                 // 2. the token being added is adjacent to a compiler-generated token
@@ -1244,7 +1267,7 @@ namespace FadeBasic
             {
                 if (macroBlockIndex >= macroBlocks.Count) return;
                 var mb = macroBlocks[macroBlockIndex];
-                current.tokens.RemoveRange(mb.startTokenIndex, (mb.endTokenIndex - mb.startTokenIndex) +1 );
+                current.tokens.RemoveRange(mb.startTokenIndex, (mb.endTokenIndex - mb.startTokenIndex) +1+mb.removeExtra );
             }
             
             // now the assumption is that the tokenizationMap aligns with the vm replacements. 
@@ -1262,31 +1285,33 @@ namespace FadeBasic
                     RemoveMacro(previousMacroBlockIndex);
                 }
                 previousMacroBlockIndex = macroIndex;
-                
+
+                var tokenEndPadding = tokenBlock.isShortcut ? 0 : 2;
+                var tokenStartPadding = 1;
                 // walk backwards through all the tokens and handle the replacements. 
                 // var substIndex = replacement.substitutionReplacements.Count - 1;
                 var substIndex = 0;
-                for (var x = replacement.tokenEndIndex; x >= replacement.tokenStartIndex; x--)
+                for (var x = replacement.tokenEndIndex - tokenEndPadding; x >= replacement.tokenStartIndex + tokenStartPadding; x--)
                 {
                     var token = current.tokens[x];
                     if (substIndex >= replacement.substitutionReplacements.Count)
                     {
                         // there are no more replacements, which means we can just take all of these tokens.
                         //current.tokens.Insert(macroBlock.endTokenIndex + 1, token); // stick it at the end of the macro.
-                        InsertToken(macroBlock.endTokenIndex + 1, token);
+                        InsertToken(macroIndex, token);
                         continue;
                     }
 
                     var subst = replacement.substitutionReplacements[substIndex];
 
-                    var isTokenBeforeSubstEnd = x <= subst.tokenEndIndex + 1;
+                    var isTokenBeforeSubstEnd = x <= subst.tokenEndIndex ;
                     var isTokenBeforeSubstStart = x <= subst.tokenStartIndex + 1;
 
                     if (!isTokenBeforeSubstEnd)
                     {
                         // the token is not being substituted, so we can just add it. 
                         //current.tokens.Insert(macroBlock.endTokenIndex + 1, token); // stick it at the end of the macro.
-                        InsertToken(macroBlock.endTokenIndex + 1, token);
+                        InsertToken(macroIndex, token);
                         
                         continue;
                     }
@@ -1309,8 +1334,8 @@ namespace FadeBasic
 
                             if (current.tokens.Count > subst.tokenEndIndex + 2)
                             {
-                                var closeBracketToken = current.tokens[subst.tokenEndIndex + 1];
-                                var nextToken = current.tokens[subst.tokenEndIndex + 2];
+                                var closeBracketToken = current.tokens[subst.tokenEndIndex ];
+                                var nextToken = current.tokens[subst.tokenEndIndex + 1];
                                 if (closeBracketToken.lineNumber == nextToken.lineNumber &&
                                     closeBracketToken.EndCharNumber == nextToken.charNumber)
                                 {
@@ -1318,7 +1343,7 @@ namespace FadeBasic
                                 }
                             }
 
-                            InsertToken(macroBlock.endTokenIndex + 1, fakeToken);
+                            InsertToken(macroIndex, fakeToken);
 
                         }
 
