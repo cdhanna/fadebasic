@@ -79,6 +79,9 @@ namespace FadeBasic.Virtual
         public int substitutionCount;
         public int tokenStartIndex;
         public int tokenEndIndex;
+
+        // public int endPadding = 0; //2 for regular block
+        // public int startPadding = 1;
         public int tokenBlockIndex;
         public List<TokenSubstitutionReplacement> substitutionReplacements = new List<TokenSubstitutionReplacement>();
     }

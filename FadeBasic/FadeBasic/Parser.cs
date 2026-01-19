@@ -1534,6 +1534,12 @@ namespace FadeBasic
                 IStatementNode subStatement = null;
                 switch (token.type)
                 {
+                    case LexemType.ConstantBegin:
+                    case LexemType.ConstantEnd:
+                        _stream.AdvanceUntil(LexemType.EndStatement);
+                        // note: this no-op statement just gets totally ignored, because this will 
+                        //  have already been caught during the lexing phase. 
+                        return new NoOpStatement();
                     case LexemType.KeywordRemStart:
 
                         var remToken = _stream.Peek;
@@ -2723,7 +2729,7 @@ namespace FadeBasic
             var isShortcut = token.lexem.type == LexemType.VariableReal;
             
             var searching = true;
-            ParseError error = null;
+            var errors = new List<ParseError>();
             var exprs = new List<MacroSubstitutionExpression>();
             
             var tokenStartIndex = _stream.Index - 1;
@@ -2741,8 +2747,9 @@ namespace FadeBasic
                     case LexemType.EOF:
                         // error = new ParseError(token, ErrorCodes.WhileStatementMissingEndWhile);
                         // looking = false;
-                        throw new NotImplementedException(
-                            "need to emit an error for not closing the tokenization block");
+                        // errors.Add(new ParseError(next, ErrorCodes.LexerExpectedEndTokenize));
+                        searching = false;
+                       
                         break;
                     case LexemType.ConstantBracketOpen:
                         // TODO: parse the substitution!
@@ -2776,9 +2783,9 @@ namespace FadeBasic
             }
             
             var block = new MacroTokenizeStatement(token, _stream.Current, exprs, tokenStartIndex, tokenEndIndex, tokenBlockCount++);
-            if (error != null)
+            if (errors.Count > 0)
             {
-                block.Errors.Add(error);
+                block.Errors.AddRange(errors);
             }
 
             return block;

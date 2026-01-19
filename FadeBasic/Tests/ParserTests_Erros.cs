@@ -2598,9 +2598,95 @@ x = b
         var prog = parser.ParseProgram();
 
         prog.AssertParseErrors(1, out var errors);
-        Assert.That(errors[0].Display, Is.EqualTo($"[1:0] - {ErrorCodes.LexerExpectedEndMacro}"));
+        Assert.That(errors[0].Display, Is.EqualTo($"[2:4] - {ErrorCodes.InvalidReference} | unknown symbol, b"));
     }
 
+    
+    [Test]
+    public void ParseError_Macro_NoEnd_And_MidError()
+    {
+        var input = @"
+#macro
+x = b
+";
+        var parser = MakeParser(input);
+        var prog = parser.ParseProgram();
+
+        prog.AssertParseErrors(2, out var errors);
+        Assert.That(errors[0].Display, Is.EqualTo($"[1:0] - {ErrorCodes.LexerExpectedEndMacro}"));
+        Assert.That(errors[1].Display, Is.EqualTo($"[2:4] - {ErrorCodes.InvalidReference} | unknown symbol, b"));
+    }
+
+    
+    [Test]
+    public void ParseError_Macro_Shortcut()
+    {
+        var input = @"
+# if 1 = 0
+";
+        var parser = MakeParser(input);
+        var prog = parser.ParseProgram();
+
+        prog.AssertParseErrors(1, out var errors);
+        Assert.That(errors[0].Display, Is.EqualTo($"[1:2] - {ErrorCodes.IfStatementMissingEndIf}"));
+    }
+    
+    
+    
+    [Test]
+    public void ParseError_Macro_Shortcut_Nested()
+    {
+        var input = @"
+# #macro x = 1
+";
+        var parser = MakeParser(input);
+        var prog = parser.ParseProgram();
+
+        prog.AssertParseErrors(1, out var errors);
+        Assert.That(errors[0].Display, Is.EqualTo($"[1:2] - {ErrorCodes.LexerInvalidNestedMacro}"));
+    }
+
+    [Test]
+    public void ParseError_Macro_Shortcut_End()
+    {
+        var input = @"
+# #endmacro
+";
+        var parser = MakeParser(input);
+        var prog = parser.ParseProgram();
+
+        prog.AssertParseErrors(1, out var errors);
+        Assert.That(errors[0].Display, Is.EqualTo($"[1:2] - {ErrorCodes.LexerInvalidEndMacro}"));
+    }
+    
+    
+    [Test]
+    public void ParseError_Macro_TokenOutOfMacro()
+    {
+        var input = @"
+#tokenize
+";
+        var parser = MakeParser(input);
+        var prog = parser.ParseProgram();
+
+        prog.AssertParseErrors(2, out var errors);
+        Assert.That(errors[0].Display, Is.EqualTo($"[1:0] - {ErrorCodes.LexerTokenizeMustAppearInMacro}"));
+        Assert.That(errors[1].Display, Is.EqualTo($"[1:0] - {ErrorCodes.LexerExpectedEndTokenize}"));
+    }
+    
+    [Test]
+    public void ParseError_Macro_ShortcutBlank()
+    {
+        var input = @"
+#
+";
+        Assert.Fail("idk how to handle this yet. It should be fine");
+        var parser = MakeParser(input);
+        var prog = parser.ParseProgram();
+
+        prog.AssertParseErrors(1, out var errors);
+        Assert.That(errors[0].Display, Is.EqualTo($"[1:2] - {ErrorCodes.IfStatementMissingEndIf}"));
+    }
     
     [Test]
     public void ParseError_Macro_NoEnd()
@@ -2613,6 +2699,37 @@ x = b
 
         prog.AssertParseErrors(1, out var errors);
         Assert.That(errors[0].Display, Is.EqualTo($"[1:0] - {ErrorCodes.LexerExpectedEndMacro}"));
+    }
+
+    
+    [Test]
+    public void ParseError_Macro_Nested()
+    {
+        var input = @"
+#macro
+    #macro
+    #endmacro
+#endmacro
+";
+        var parser = MakeParser(input);
+        var prog = parser.ParseProgram();
+
+        prog.AssertParseErrors(1, out var errors);
+        Assert.That(errors[0].Display, Is.EqualTo($"[2:4] - {ErrorCodes.LexerInvalidNestedMacro}"));
+    }
+    
+    
+    [Test]
+    public void ParseError_Macro_NoStart()
+    {
+        var input = @"
+#endmacro
+";
+        var parser = MakeParser(input);
+        var prog = parser.ParseProgram();
+
+        prog.AssertParseErrors(1, out var errors);
+        Assert.That(errors[0].Display, Is.EqualTo($"[1:0] - {ErrorCodes.LexerInvalidEndMacro}"));
     }
 
     
@@ -3022,8 +3139,8 @@ x = %3
         var parser = MakeParser(input);
         var prog = parser.ParseProgram();
 
-        prog.AssertParseErrors(1, out var errors);
-        Assert.That(errors[0].Display, Is.EqualTo($"[1:2] - {ErrorCodes.ExpressionMissing}"));
+        prog.AssertParseErrors(2, out var errors);
+        Assert.That(errors[1].Display, Is.EqualTo($"[1:2] - {ErrorCodes.ExpressionMissing}"));
     }
     
     [Test]
@@ -3035,8 +3152,8 @@ x = %for
         var parser = MakeParser(input);
         var prog = parser.ParseProgram();
 
-        prog.AssertParseErrors(1, out var errors);
-        Assert.That(errors[0].Display, Is.EqualTo($"[1:2] - {ErrorCodes.ExpressionMissing}"));
+        prog.AssertParseErrors(2, out var errors);
+        Assert.That(errors[1].Display, Is.EqualTo($"[1:2] - {ErrorCodes.ExpressionMissing}"));
     }
     
     [Test]

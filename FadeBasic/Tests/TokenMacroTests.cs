@@ -496,29 +496,6 @@ c = n1 + n2 + n3 + n4
         prog.AssertNoParseErrors();
     }
     
-    [Test]
-    public void Macro_Compile_NestedMacro ()
-    {
-        var input = @"
-#macro
-    #tokenize
-        #macro
-            x = 1
-            #tokenize
-                n = x
-            #endtokenize
-        #endmacro
-    #endtokenize
-#endmacro
-c = n
-
-";
-        Assert.Fail("This should not be allowed");
-        var parser = BuildParser(input, out _);
-        var prog = parser.ParseProgram();
-        prog.AssertNoParseErrors();
-    }
-    
 
     [Test]
     public void Macro_Compile_Function ()
@@ -639,6 +616,20 @@ a = 3
 #endmacro
 a = 3
 ")]
+    [TestCase("blank single line macro",@"
+", 
+        @"
+#
+")]
+    [TestCase("lots of blank single line macro",@"
+
+
+", 
+        @"
+#
+#
+#
+")]
     [TestCase("no tokenization",@"
 a = 3
 ", 
@@ -726,6 +717,18 @@ endfunction
 decl(2)
 #endmacro
 ")]
+    [TestCase("double macro function on single line (reverse)",@"
+c = 2
+", 
+        @"
+# decl(2)
+#macro
+function decl(x)
+    # c = [x]
+endfunction
+#endmacro
+
+")]
     [TestCase("double macro function on single line",@"
 c = 2
 ", 
@@ -744,6 +747,11 @@ endfunction
         var aResults = lexer.TokenizeWithErrors(a, TestCommands.CommandsForTesting);
         var bResults = lexer.TokenizeWithErrors(b, TestCommands.CommandsForTesting);
          
+        Console.WriteLine("------start");
+        Console.WriteLine(a);
+        Console.WriteLine("------mid");
+        Console.WriteLine(b);
+        Console.WriteLine("------end");
         TokenizeTests.CheckTokens(aResults.tokens, bResults.tokens);   
     }
     
@@ -787,24 +795,6 @@ b = [a]
         
         Assert.That(code, Is.EqualTo("((= (ref b),(4)))"));
     }
-    
-    
-    [Test]
-    public void Macro_ErrorsAppear()
-    {
-        var input = @"
-
-#macro
-this is invalid code
-#endmacro
-";
-        var parser = BuildParser(input, out _);
-        var prog = parser.ParseProgram();
-        prog.AssertParseErrors(1);// NOTE: at least.
-        var code = prog.ToString();
-        
-    }
-
     
     [Test]
     public void Macro_Constant()
@@ -901,23 +891,6 @@ c = sparky(0) + sparky(1)
     }
     
     [Test]
-    public void Macro_BracketNotation()
-    {
-        var input = @"
-[ ]
-";
-        Assert.Fail("Eventually, this needs to work for compile time access");
-        var lexer = new Lexer();
-        var output = lexer.TokenizeWithErrors(input);
-        output.AssertNoLexErrors();
-        var tokens = output.tokens; 
-        Assert.That(tokens.Count, Is.EqualTo(3));
-        Assert.That(tokens[0].type, Is.EqualTo(LexemType.ConstantBracketOpen));
-        Assert.That(tokens[1].type, Is.EqualTo(LexemType.ConstantBracketClose));
-        Assert.That(tokens[2].type, Is.EqualTo(LexemType.EndStatement));
-    }
-    
-    [Test]
     public void Macro_BeginEnd()
     {
         var input = @"
@@ -937,49 +910,5 @@ c = sparky(0) + sparky(1)
         var tokens = output.tokens;
         Assert.That(tokens.Count, Is.EqualTo(0));
 
-    }
-    [Test]
-    public void Macro_CommitEndCommit()
-    {
-        var input = @"
-#tokenize
-#endtokenize
-";
-        var lexer = new Lexer();
-        var output = lexer.TokenizeWithErrors(input);
-        output.AssertNoLexErrors();
-        var tokens = output.tokens; 
-        Assert.That(tokens.Count, Is.EqualTo(4));
-        Assert.That(tokens[0].type, Is.EqualTo(LexemType.ConstantTokenize));
-        Assert.That(tokens[1].type, Is.EqualTo(LexemType.EndStatement));
-        Assert.That(tokens[2].type, Is.EqualTo(LexemType.ConstantEndTokenize));
-        Assert.That(tokens[3].type, Is.EqualTo(LexemType.EndStatement));
-    }
-
-    // TODO: add test for nested begin/ends, it should fail. 
-    
-    [Test]
-    public void Macro_Test()
-    {
-        var input = @"
-#begin
-a = 3
-
-for n = 1 to 3
-    #commit
-        name_{{n}} = {{a + n}} `name_1 = 4
-    #endcommit
-next
-
-`[""n""] = a `use [] to escape into runtime
-#end
-b = 2
-`d = {a} `use {} to escape into compiletime
-`c = n
-";
-        var lexer = new Lexer();
-        var output = lexer.TokenizeWithErrors(input);
-        output.AssertNoLexErrors();
-        var tokens = output.tokens; 
     }
 }

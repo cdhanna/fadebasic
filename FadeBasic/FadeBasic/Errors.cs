@@ -144,7 +144,10 @@ namespace FadeBasic
             "[0005] Cannot start new tokenization in existing tokenize block";
         public static readonly ErrorCode LexerExpectedEndMacro =
             "[0006] Every macro block needs an #endmacro statement";
-
+        public static readonly ErrorCode LexerTokenizeMustAppearInMacro =
+            "[0007] Tokenize block must appear in macro block";
+        public static readonly ErrorCode LexerExpectedEndTokenize =
+            "[0008] Every tokenize block needs an #endtokenize statement";
         
         
         // 100 series represents parse issues

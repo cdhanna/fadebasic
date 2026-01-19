@@ -162,8 +162,8 @@ y";
         {
             LexemType.VariableGeneral,
             LexemType.EndStatement,
-            LexemType.VariableReal,
-            LexemType.EndStatement,
+            // LexemType.VariableReal, `these do not exist because it is macro.
+            // LexemType.EndStatement,
             LexemType.VariableString,
             LexemType.EndStatement,
             LexemType.VariableGeneral,
@@ -553,7 +553,6 @@ minX";
         Assert.That(tokens[1].type, Is.EqualTo(LexemType.EndStatement));
 
     }
-
     
     [Test]
     public void Tokenize_Word()
