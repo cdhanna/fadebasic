@@ -834,6 +834,10 @@ namespace FadeBasic
                             errors.Add(new ParseError(stream.Current, ErrorCodes.LexerInvalidNestedMacro));
                             stream.Advance();
                             break;
+                        case LexemType.ConstantEnd:
+                            errors.Add(new ParseError(start, ErrorCodes.LexerExpectedEndTokenize));
+                            searching = false;
+                            break;
                         case LexemType.ConstantEndTokenize:
                             endIndex = stream.Index;
                             searching = false;
@@ -946,7 +950,7 @@ namespace FadeBasic
                 var startIndex = stream.Index;
                 var endIndex = stream.Index;
                 stream.Advance();
-                ParseError error = null;
+                var errors = new List<ParseError>();
                 var searching = true;
                 var tokenBlocks = new List<TokenizeBlock>();
                 while (searching)
@@ -954,11 +958,11 @@ namespace FadeBasic
                     switch (stream.Current.type)
                     {
                         case LexemType.EOF:
-                            error = new ParseError(start, ErrorCodes.LexerExpectedEndMacro);
+                            errors.Add(new ParseError(start, ErrorCodes.LexerExpectedEndMacro));
                             searching = false;
                             break;
                         case LexemType.ConstantBegin:
-                            error = new ParseError(stream.Current, ErrorCodes.LexerInvalidNestedMacro);
+                            errors.Add(new ParseError(stream.Current, ErrorCodes.LexerInvalidNestedMacro));
                             var _ = ParseMacroBlock();
                             
                             // error, we cannot have a nested macro block.
@@ -968,7 +972,11 @@ namespace FadeBasic
                         case LexemType.ConstantTokenize:
                             var tokenBlock = ParseTokenizationBlock();
                             tokenBlocks.Add(tokenBlock);
-                            
+                            errors.AddRange(tokenBlock.errors);
+                            break;
+                        case LexemType.ConstantEndTokenize:
+                            errors.Add(new ParseError(stream.Current, ErrorCodes.LexerInvalidEndTokenize));
+                            stream.Advance();
                             break;
                         case LexemType.ConstantEnd:
                             // hoozah!
@@ -990,10 +998,8 @@ namespace FadeBasic
                     tokenizeBlocks = tokenBlocks,
                     removeExtra = 1
                 };
-                if (error != null)
-                {
-                    block.errors.Add(error);
-                }
+                block.errors.AddRange(errors);
+                
                 return block;
 
             }
@@ -1118,8 +1124,10 @@ namespace FadeBasic
                     
                     // TODO all of these need to result in errors.
                     case LexemType.ConstantEndTokenize:
-                        
-                        throw new NotImplementedException("need to make better error");
+                        macroParseErrors.Add(new ParseError(stream.Current, ErrorCodes.LexerTokenizeMustAppearInMacro));
+                        macroParseErrors.Add(new ParseError(stream.Current, ErrorCodes.LexerInvalidEndTokenize));
+                        stream.Advance();
+                        //throw new NotImplementedException("need to make better error");
                         break;
                     default:
                         stream.Advance();
@@ -1603,6 +1611,14 @@ namespace FadeBasic
             _maxIndex = maxIndex;
         }
 
+        public void SkipEos()
+        {
+            while (Peek.type == LexemType.EndStatement)
+            {
+                Advance();
+            }
+        }
+        
         public Token Advance()
         {
             if (Index >= _tokens.Count)

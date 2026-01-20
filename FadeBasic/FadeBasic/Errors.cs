@@ -148,7 +148,8 @@ namespace FadeBasic
             "[0007] Tokenize block must appear in macro block";
         public static readonly ErrorCode LexerExpectedEndTokenize =
             "[0008] Every tokenize block needs an #endtokenize statement";
-        
+        public static readonly ErrorCode LexerInvalidEndTokenize =
+            "[0009] Cannot end tokenize outside of tokenize block";
         
         // 100 series represents parse issues
         public static readonly ErrorCode ExpressionMissingAfterOpenParen = "[0100] No expression after open paren";

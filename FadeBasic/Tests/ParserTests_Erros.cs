@@ -2600,6 +2600,47 @@ x = b
         prog.AssertParseErrors(1, out var errors);
         Assert.That(errors[0].Display, Is.EqualTo($"[2:4] - {ErrorCodes.InvalidReference} | unknown symbol, b"));
     }
+    
+    
+    [Test]
+    public void ParseError_Macro_Tokenize_TokensCauseErr()
+    {
+        var input = @"
+#macro
+#tokenize
+    x = 
+#endtokenize
+#endmacro
+";
+        var parser = MakeParser(input);
+        var prog = parser.ParseProgram();
+
+        prog.AssertParseErrors(1, out var errors);
+        Assert.That(errors[0].Display, Is.EqualTo($"[3:6] - {ErrorCodes.ExpressionMissing}"));
+    }
+
+    [Test]
+    public void ParseError_Macro_Tokenize_TokensCanBeOkay()
+    {
+        /*
+         * x =
+         * 1
+         */
+        var x = 1
+                + 2;
+        var input = @"
+#macro
+#tokenize
+    x = 1 +
+#endtokenize
+#endmacro
+2
+";
+        var parser = MakeParser(input);
+        var prog = parser.ParseProgram();
+
+        prog.AssertNoParseErrors();
+    }
 
     
     [Test]
@@ -2674,19 +2715,81 @@ x = b
         Assert.That(errors[1].Display, Is.EqualTo($"[1:0] - {ErrorCodes.LexerExpectedEndTokenize}"));
     }
     
+    
+    [Test]
+    public void ParseError_Macro_Tokenize_NoEnd()
+    {
+        var input = @"
+#macro
+#tokenize
+#endmacro
+";
+        var parser = MakeParser(input);
+        var prog = parser.ParseProgram();
+
+        prog.AssertParseErrors(1, out var errors);
+        Assert.That(errors[0].Display, Is.EqualTo($"[2:0] - {ErrorCodes.LexerExpectedEndTokenize}"));
+    }
+    
+    [Test]
+    public void ParseError_Macro_Tokenize_NoStart()
+    {
+        var input = @"
+#macro
+#endtokenize
+#endmacro
+";
+        var parser = MakeParser(input);
+        var prog = parser.ParseProgram();
+
+        prog.AssertParseErrors(1, out var errors);
+        Assert.That(errors[0].Display, Is.EqualTo($"[2:0] - {ErrorCodes.LexerInvalidEndTokenize}"));
+    }
+
+    
+    [Test]
+    public void ParseError_Macro_Tokenize_Blank()
+    {
+        var input = @"
+#macro
+# 
+#endmacro
+";
+        Assert.Fail("ugh, need to think about this. This shouldn't fail. ");
+        var parser = MakeParser(input);
+        var prog = parser.ParseProgram();
+
+        prog.AssertParseErrors(1, out var errors);
+        Assert.That(errors[0].Display, Is.EqualTo($"[2:0] - {ErrorCodes.LexerInvalidEndTokenize}"));
+    }
+    
+    [Test]
+    public void ParseError_Macro_EndTokenOutOfMacro()
+    {
+        var input = @"
+#endtokenize
+";
+        var parser = MakeParser(input);
+        var prog = parser.ParseProgram();
+
+        prog.AssertParseErrors(2, out var errors);
+        Assert.That(errors[0].Display, Is.EqualTo($"[1:0] - {ErrorCodes.LexerTokenizeMustAppearInMacro}"));
+        Assert.That(errors[1].Display, Is.EqualTo($"[1:0] - {ErrorCodes.LexerInvalidEndTokenize}"));
+    }
+
+    
     [Test]
     public void ParseError_Macro_ShortcutBlank()
     {
         var input = @"
 #
 ";
-        Assert.Fail("idk how to handle this yet. It should be fine");
         var parser = MakeParser(input);
         var prog = parser.ParseProgram();
 
-        prog.AssertParseErrors(1, out var errors);
-        Assert.That(errors[0].Display, Is.EqualTo($"[1:2] - {ErrorCodes.IfStatementMissingEndIf}"));
+        prog.AssertNoParseErrors();
     }
+    
     
     [Test]
     public void ParseError_Macro_NoEnd()

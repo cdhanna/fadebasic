@@ -741,6 +741,43 @@ endfunction
 
 # decl(2)
 ")]
+    [TestCase("blank tokenize",@"
+", 
+        @"
+#macro
+#tokenize
+#endtokenize
+#endmacro
+")]
+    [TestCase("blank single line tokenize",@"
+", 
+        @"
+#macro
+#
+#endmacro
+")]
+    [TestCase("token patching",@"
+x = 
+1
+", 
+        @"
+#macro
+# x = 
+#endmacro
+1
+")]
+    [TestCase("token patching 2",@"
+x = 
+1
+", 
+        @"
+#macro
+    #tokenize
+        x = 
+    #endtokenize
+#endmacro
+1
+")]
     public void Macro_TokenComparison(string explanation, string a, string b)
     {
         var lexer = new Lexer();

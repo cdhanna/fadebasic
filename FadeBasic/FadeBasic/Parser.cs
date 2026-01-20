@@ -1534,6 +1534,7 @@ namespace FadeBasic
                 IStatementNode subStatement = null;
                 switch (token.type)
                 {
+                    case LexemType.ConstantEndTokenize:
                     case LexemType.ConstantBegin:
                     case LexemType.ConstantEnd:
                         _stream.AdvanceUntil(LexemType.EndStatement);
@@ -3282,8 +3283,6 @@ namespace FadeBasic
 
         private IExpressionNode ParseWikiTerm()
         {
-
-
             if (!TryParseWikiTerm(out var expr, out var error))
             {
                 _stream.Patch(error.index, error.correctiveTokens);
@@ -3302,6 +3301,8 @@ namespace FadeBasic
         
         private bool TryParseWikiTerm(out IExpressionNode outputExpression, out ProgramRecovery recovery)
         {
+            // _stream.SkipEos();
+            
             var token = _stream.Peek;
             recovery = null;
             switch (token.type)
