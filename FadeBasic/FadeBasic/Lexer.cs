@@ -1168,15 +1168,15 @@ namespace FadeBasic
             
             // TODO: adjust the position of the errors so they match the original text. 
             current.tokenErrors.AddRange(macroErrors);
-            // if (macroErrors.Count > 0)
-            // {
-            //     // remove all macro blocks so errors are not double reported. 
-            //     for (var i = macroBlocks.Count - 1; i >= 0; i--)
-            //     {
-            //         RemoveMacro(i);
-            //     }
-            //     return;
-            // }
+            if (macroErrors.Count > 0)
+            {
+                // remove all macro blocks so errors are not double reported. 
+                for (var i = macroBlocks.Count - 1; i >= 0; i--)
+                {
+                    RemoveMacro(i);
+                }
+                return;
+            }
 
             if (macroErrors.Count > 0)
             {

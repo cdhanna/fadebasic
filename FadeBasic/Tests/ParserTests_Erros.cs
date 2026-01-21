@@ -2755,12 +2755,26 @@ x = b
 # 
 #endmacro
 ";
-        Assert.Fail("ugh, need to think about this. This shouldn't fail. ");
         var parser = MakeParser(input);
         var prog = parser.ParseProgram();
 
-        prog.AssertParseErrors(1, out var errors);
-        Assert.That(errors[0].Display, Is.EqualTo($"[2:0] - {ErrorCodes.LexerInvalidEndTokenize}"));
+        prog.AssertNoParseErrors();
+    }
+    
+    [Test]
+    public void ParseError_Macro_Tokenize_MultipleSingleLines()
+    {
+        var input = @"
+#macro
+# x = 1
+# y = 2
+#endmacro
+z = x + y
+";
+        var parser = MakeParser(input);
+        var prog = parser.ParseProgram();
+
+        prog.AssertNoParseErrors();
     }
     
     [Test]
@@ -2777,6 +2791,121 @@ x = b
         Assert.That(errors[1].Display, Is.EqualTo($"[1:0] - {ErrorCodes.LexerInvalidEndTokenize}"));
     }
 
+    
+    [Test]
+    public void ParseError_Macro_Subst_Object()
+    {
+        var input = @"
+#macro
+type egg 
+endtype
+e as egg
+# x = [e]
+#endmacro
+";
+        var parser = MakeParser(input);
+        var prog = parser.ParseProgram();
+
+        prog.AssertParseErrors(1, out var errors);
+        Assert.That(errors[0].Display, Is.EqualTo($"[5:6,5:7] - {ErrorCodes.SubstitutionMustBePrimitive}"));
+    }
+    
+    
+    [Test]
+    public void ParseError_Macro_Subst_Array()
+    {
+        var input = @"
+#macro
+dim n(3)
+# x = [n]
+#endmacro
+";
+        var parser = MakeParser(input);
+        var prog = parser.ParseProgram();
+
+        prog.AssertParseErrors(1, out var errors);
+        Assert.That(errors[0].Display, Is.EqualTo($"[3:6,3:7] - {ErrorCodes.SubstitutionMustBePrimitive}"));
+    }
+
+    
+    [Test]
+    public void ParseError_Macro_Subst_InvalidRef()
+    {
+        var input = @"
+#macro
+# x = [e]
+#endmacro
+";
+        var parser = MakeParser(input);
+        var prog = parser.ParseProgram();
+
+        prog.AssertParseErrors(1, out var errors);
+        Assert.That(errors[0].Display, Is.EqualTo($"[2:7] - {ErrorCodes.InvalidReference} | unknown symbol, e"));
+    }
+    
+    
+    [Test]
+    public void ParseError_Macro_Subst_InvalidExpr()
+    {
+        var input = @"
+#macro
+# x = [1 + ]
+#endmacro
+";
+        var parser = MakeParser(input);
+        var prog = parser.ParseProgram();
+
+        prog.AssertParseErrors(1, out var errors);
+        Assert.That(errors[0].Display, Is.EqualTo($"[2:9] - {ErrorCodes.ExpressionMissing}"));
+    }
+    
+    
+    [Test]
+    public void ParseError_Macro_Subst_MissingClose()
+    {
+        var input = @"
+#macro
+# x = [1
+#endmacro
+";
+        var parser = MakeParser(input);
+        var prog = parser.ParseProgram();
+
+        prog.AssertParseErrors(1, out var errors);
+        Assert.That(errors[0].Display, Is.EqualTo($"[2:9] - {ErrorCodes.ExpressionMissing}"));
+    }
+    
+    
+    [Test]
+    public void ParseError_Macro_Subst_MissingOpen()
+    {
+        var input = @"
+#macro
+# x = 1]
+#endmacro
+";
+        var parser = MakeParser(input);
+        var prog = parser.ParseProgram();
+
+        prog.AssertParseErrors(1, out var errors);
+        Assert.That(errors[0].Display, Is.EqualTo($"[2:9] - {ErrorCodes.ExpressionMissing}"));
+    }
+    
+    
+    [Test]
+    public void ParseError_Macro_Subst_Nested()
+    {
+        var input = @"
+#macro
+# x = [[1]]
+#endmacro
+";
+        var parser = MakeParser(input);
+        var prog = parser.ParseProgram();
+
+        prog.AssertParseErrors(1, out var errors);
+        Assert.That(errors[0].Display, Is.EqualTo($"[2:9] - {ErrorCodes.ExpressionMissing}"));
+    }
     
     [Test]
     public void ParseError_Macro_ShortcutBlank()

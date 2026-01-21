@@ -231,6 +231,7 @@ namespace FadeBasic
         public static readonly ErrorCode UnknowableFunctionReturnType = "[0303] Function has no inferable return type";
         public static readonly ErrorCode InvalidFunctionReturnType = "[0304] Functions cannot return arrays";
         public static readonly ErrorCode ArrayRankMismatch = "[0305] Arrays must have the same rank";
+        public static readonly ErrorCode SubstitutionMustBePrimitive = "[0306] Substitution expressions must be primitives";
     }
 
     public struct ErrorCode

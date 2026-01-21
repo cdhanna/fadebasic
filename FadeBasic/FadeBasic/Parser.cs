@@ -2714,7 +2714,7 @@ namespace FadeBasic
             }
 
             // TODO: we expect to find a closing 
-
+            
             var endIndex = _stream.Index;
             
             return new MacroSubstitutionExpression
@@ -2758,6 +2758,7 @@ namespace FadeBasic
                         var sub = ParseSubstitution(_stream.Current);
                         exprs.Add(sub);
                         sub.substitutionIndex = tokenBlock.Count;
+                        
                         break;
                     case LexemType.ConstantBracketClose:
                         // TODO: as long as a substitution was open, this is valid; otherwise error.
@@ -2770,6 +2771,10 @@ namespace FadeBasic
                     case LexemType.EndStatement when isShortcut:
                         searching = false;
                         tokenEndIndex = _stream.Index - 1;
+                        if (tokenStartIndex + 1 == tokenEndIndex)
+                        {
+                            tokenEndIndex--;
+                        }
                         break;
                     case LexemType.ConstantEndTokenize:
                         searching = false;

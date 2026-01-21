@@ -237,6 +237,24 @@ namespace FadeBasic.Ast.Visitors
                 var statement = statements[i];
                 switch (statement)
                 {
+                    case MacroTokenizeStatement tokenizeStatement:
+                        // need to validate that substitutions are valid primitive types.
+                        foreach (var sub in tokenizeStatement.substitutions)
+                        {
+                            sub.innerExpression.EnsureVariablesAreDefined(scope, ctx);
+                            if (sub.innerExpression.ParsedType.type == VariableType.Struct || sub.innerExpression.ParsedType.IsArray)
+                            {
+                                // uh oh.
+                                sub.Errors.Add(new ParseError(sub, ErrorCodes.SubstitutionMustBePrimitive));
+                            } 
+                            // switch (sub.innerExpression)
+                            // {
+                            //     case ILiteralNode literal:
+                            //         // literals are good! 
+                            //         break;
+                            // }
+                        }
+                        break;
                     case CommandStatement commandStatement:
                         scope.AddCommand(commandStatement.command, commandStatement.args, commandStatement.argMap, ctx);
                         
@@ -413,7 +431,6 @@ namespace FadeBasic.Ast.Visitors
                         break;
                     case FunctionStatement _:
                     case FunctionReturnStatement _:
-                    case MacroTokenizeStatement _:
                         break;
                     case TypeDefinitionStatement invalidTypeStatement:
                         invalidTypeStatement.Errors.Add(new ParseError(invalidTypeStatement.name, ErrorCodes.TypeMustBeTopLevel));
