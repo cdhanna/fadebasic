@@ -194,7 +194,7 @@ public class CompilerService
 
                 foreach (var err in unit.lexerResults.tokenErrors)
                 {
-                    var location = sourceMap.GetOriginalLocation(err.lineNumber, err.charNumber);
+                    var location = sourceMap.GetOriginalRange(err.location);
                     if (!fileToDiags.TryGetValue(location.fileName, out var diags))
                     {
                         throw new InvalidOperationException("all files must already have empty diags");
@@ -202,14 +202,14 @@ public class CompilerService
                     }
                     diags.Add(new Diagnostic()
                     {
-                        Code = err.error.ToString(),
+                        Code = err.errorCode.code,
                         Severity = DiagnosticSeverity.Error,
                         Message = err.Display,
                         Range = new Range(
                             startLine: location.startLine,
                             startCharacter: location.startChar,
-                            endLine: location.startLine,
-                            endCharacter: location.startChar + err.text.Length),
+                            endLine: location.endLine,
+                            endCharacter: location.endChar),
                         Source = FadeBasicConstants.FadeBasicLanguage,
                         Tags = new Container<DiagnosticTag>()
                     });

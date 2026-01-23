@@ -255,13 +255,14 @@ export async function discoverServers(): Promise<any[]> {
 	const DISCOVERY_MESSAGE = "FADE_DEBUG_DISCOVERY";
     return new Promise((resolve) => {
         const client = dgram.createSocket('udp4');
-        const requestData = Buffer.from(DISCOVERY_MESSAGE);
+		const requestBytes = new TextEncoder().encode(DISCOVERY_MESSAGE);
+
         const messages :any[] = [];
 
         client.bind(() => {
             client.setBroadcast(true);
 
-            client.send(requestData, 0, requestData.length, DEBUG_SERVER_DISCOVERY_PORT, '255.255.255.255', (err) => {
+            client.send(requestBytes, 0, requestBytes.length, DEBUG_SERVER_DISCOVERY_PORT, '255.255.255.255', (err) => {
                 if (err) {
                     console.error('Failed to send discovery message:', err);
                     client.close();
