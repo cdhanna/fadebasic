@@ -245,7 +245,7 @@ namespace FadeBasic.Ast.Visitors
                             if (sub.innerExpression.ParsedType.type == VariableType.Struct || sub.innerExpression.ParsedType.IsArray)
                             {
                                 // uh oh.
-                                sub.Errors.Add(new ParseError(sub, ErrorCodes.SubstitutionMustBePrimitive));
+                                sub.Errors.Add(new ParseError(sub.innerExpression, ErrorCodes.SubstitutionMustBePrimitive));
                             } 
                             // switch (sub.innerExpression)
                             // {

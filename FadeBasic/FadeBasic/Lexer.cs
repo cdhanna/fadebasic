@@ -1015,8 +1015,9 @@ namespace FadeBasic
                 //       ___
                 //    #endtokenize
                 //  #endmacro
-
+                var errors = new List<ParseError>();
                 var startIndex = stream.Index;
+                var startToken = stream.Current;
                 var endIndex = startIndex;
                 var searching = true;
                 stream.Advance();
@@ -1025,6 +1026,21 @@ namespace FadeBasic
                     switch (stream.Current.type)
                     {
                         // TODO: handle EOS and EOF
+                        case LexemType.EOF:
+                        case LexemType.EndStatement:
+                            // searching = false;
+                            errors.Add(new ParseError(startToken, ErrorCodes.SubstitutionMissingCloseBracket));
+                            // endIndex = stream.Index;
+                            // insert a fake close bracket, and add an error.
+                            current.tokens.Insert(stream.Index -1 , new Token
+                            {
+                                lexem = new Lexem(LexemType.ConstantBracketClose)
+                            });
+                            // stream.Restore(stream.Index - 1);
+                            endIndex = stream.Index;
+                            stream.Advance();
+                            searching = false;
+                            break;
                         case LexemType.ConstantBracketClose:
                             // hoozah, this is the actual end!
                             endIndex = stream.Index;
@@ -1069,8 +1085,10 @@ namespace FadeBasic
                 stream.Advance();
                 stream.Advance();
                 stream.Advance(); // skip ahead of tokens that were just inserted.
+                stream.Advance(); // skip ahead of tokens that were just inserted.
                 var mb =  new MacroBlock
                 {
+                    errors = errors,
                     startTokenIndex = startIndex - 1,
                     endTokenIndex = endIndex + 3,
                     tokenizeBlocks = new List<TokenizeBlock>
@@ -1100,6 +1118,10 @@ namespace FadeBasic
                         // stream.Advance();
                         macroBlocks.Add(ParseReverseSubstitution());
                         break;
+                    case LexemType.ConstantBracketClose:
+                        macroParseErrors.Add(new ParseError(stream.Current, ErrorCodes.SubstitutionMissingOpenBracket));
+                        stream.Advance();
+                        break;
                     case LexemType.VariableReal when stream.Current.Length == 1:
                         // stream.Advance();
                         macroBlocks.Add(ParseMacroShortcut());
@@ -1122,7 +1144,6 @@ namespace FadeBasic
                         macroParseErrors.AddRange(badBlock.errors);
                         break;
                     
-                    // TODO all of these need to result in errors.
                     case LexemType.ConstantEndTokenize:
                         macroParseErrors.Add(new ParseError(stream.Current, ErrorCodes.LexerTokenizeMustAppearInMacro));
                         macroParseErrors.Add(new ParseError(stream.Current, ErrorCodes.LexerInvalidEndTokenize));
@@ -1153,10 +1174,15 @@ namespace FadeBasic
                 
                 compileTokens.AddRange(tokenSlice);
             }
-            if (errorCount > 0)
-            {
-                return;
-            }
+            // if (errorCount > 0)
+            // {
+            //     // remove all macro blocks so errors are not double reported. 
+            //     for (var i = macroBlocks.Count - 1; i >= 0; i--)
+            //     {
+            //         RemoveMacro(i);
+            //     }
+            //     return;
+            // }
             // TODO: these endstatement tokens are the bane of my existence. 
             HandleCommandNames(lines, compileTokens, macroCommandTree);
             var compileStream = new TokenStream(compileTokens);
@@ -1168,7 +1194,7 @@ namespace FadeBasic
             
             // TODO: adjust the position of the errors so they match the original text. 
             current.tokenErrors.AddRange(macroErrors);
-            if (macroErrors.Count > 0)
+            if (errorCount > 0 || macroErrors.Count > 0)
             {
                 // remove all macro blocks so errors are not double reported. 
                 for (var i = macroBlocks.Count - 1; i >= 0; i--)

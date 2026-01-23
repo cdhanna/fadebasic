@@ -282,31 +282,6 @@ c = b
         Assert.That(code, Is.EqualTo("((= (ref b),(5)),(= (ref c),(ref b)))"));
     }
 
-    [Test]
-    public void Macro_Compile_InjectObject ()
-    {
-        var input = @"
-#macro
-    a = 3
-    type egg
-        n
-    endtype
-    e as egg
-    e.n = a
-    #tokenize
-        [e] `what would this even do!? How does one inject an object into a macro? 
-    #endtokenize
-#endmacro
-
-";
-      //  Assert.Fail("come back and think about this case. I think probably there needs to be an error case where you can only inject literals");
-        var parser = BuildParser(input, out _);
-        var prog = parser.ParseProgram();
-        prog.AssertNoParseErrors();
-        var code = prog.ToString();
-        Assert.That(code, Is.EqualTo("((= (ref b_3),(12)),(= (ref c),(ref b_3)))"));
-    }
-    
     
     [Test]
     public void Macro_Compile_CustomVariable_Float ()

@@ -202,6 +202,11 @@ namespace FadeBasic
         public static readonly ErrorCode ExitStatementFoundOutsideOfLoop = "[0154] An EXIT statement must exist within a loop control statement";
         public static readonly ErrorCode SkipStatementFoundOutsideOfLoop = "[0155] A SKIP statement must exist within a loop control statement";
         public static readonly ErrorCode PointersAreNotSupported = "[0156] Pointers are not supported";
+        public static readonly ErrorCode SubstitutionMissingCloseBracket = "[0157] Substitution missing closing bracket";
+        public static readonly ErrorCode SubstitutionMissingOpenBracket = "[0158] Substitution missing open bracket";
+        public static readonly ErrorCode SubstitutionInvalidNested = "[0159] Substitutions cannot be nested";
+        public static readonly ErrorCode SubstitutionRequiresExpression = "[0160] Substitutions needs inner expression";
+        public static readonly ErrorCode SubstitutionNotAllowedHere = "[0161] Substitutions not allowed here";
 
         // 200 series represents post-parse issues
         public static readonly ErrorCode InvalidReference = "[0200] Invalid reference";

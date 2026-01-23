@@ -1534,6 +1534,11 @@ namespace FadeBasic
                 IStatementNode subStatement = null;
                 switch (token.type)
                 {
+                    case LexemType.ConstantBracketOpen:
+                    case LexemType.ConstantBracketClose:
+                        _stream.Advance();
+                        // note: this no-op also gets ignored
+                        return new NoOpStatement();
                     case LexemType.ConstantEndTokenize:
                     case LexemType.ConstantBegin:
                     case LexemType.ConstantEnd:
@@ -2704,23 +2709,35 @@ namespace FadeBasic
             return whileStatement;
         }
 
-        private MacroSubstitutionExpression ParseSubstitution(Token token)
+        private MacroSubstitutionExpression ParseSubstitution(Token token, bool withinTokenization)
         {
             var startIndex = _stream.Index - 1; // at [
-            if (!TryParseExpression(out var expr))
+            var errors = new List<ParseError>();
+            Token endToken = token;
+            if (!TryParseExpression(out var expr, true))
             {
-                // TODO ? 
-                throw new NotImplementedException("idk");
+                // expr = null;
+                expr = new LiteralIntExpression(Token.Blank, 1);
+                errors.Add(new ParseError(token, ErrorCodes.SubstitutionRequiresExpression));
             }
 
-            // TODO: we expect to find a closing 
-            
             var endIndex = _stream.Index;
             
-            return new MacroSubstitutionExpression
+            if (_stream.Peek.type != LexemType.ConstantBracketClose)
             {
-                innerExpression = expr, startToken = token, endToken = expr.EndToken, tokenStartIndex = startIndex, tokenEndIndex = endIndex
+                errors.Add(new ParseError(token, ErrorCodes.SubstitutionMissingCloseBracket));
+            }
+            else
+            {
+                _stream.Advance(); // skip past the close bracket
+                endToken = _stream.Current;
+            }
+            var subst = new MacroSubstitutionExpression
+            {
+                innerExpression = expr, startToken = token, endToken = endToken, tokenStartIndex = startIndex, tokenEndIndex = endIndex, Errors = errors
             };
+            
+            return subst;
 
         }
 
@@ -2755,15 +2772,13 @@ namespace FadeBasic
                     case LexemType.ConstantBracketOpen:
                         // TODO: parse the substitution!
                         // _stream.Advance();
-                        var sub = ParseSubstitution(_stream.Current);
+                        var sub = ParseSubstitution(_stream.Current, true);
                         exprs.Add(sub);
                         sub.substitutionIndex = tokenBlock.Count;
                         
                         break;
                     case LexemType.ConstantBracketClose:
-                        // TODO: as long as a substitution was open, this is valid; otherwise error.
-                        
-                        
+                        errors.Add(new ParseError(next, ErrorCodes.SubstitutionMissingOpenBracket));
                         break;
                     case LexemType.EndStatement when !isShortcut:
                         tokenBlock.Add(_stream.Current);
@@ -3155,15 +3170,15 @@ namespace FadeBasic
             }
         }
 
-        public bool TryParseExpression(out IExpressionNode expr)
+        public bool TryParseExpression(out IExpressionNode expr, bool withinTokenization=false)
         {
-            return TryParseExpression(out expr, out _);
+            return TryParseExpression(out expr, out _, withinTokenization);
         }
         
-        public bool TryParseExpression(out IExpressionNode expr, out ProgramRecovery recovery)
+        public bool TryParseExpression(out IExpressionNode expr, out ProgramRecovery recovery, bool withinTokenization=false)
         {
             expr = null;
-            if (!TryParseWikiTerm(out var term, out recovery))
+            if (!TryParseWikiTerm(out var term, out recovery, withinTokenization))
             {
                 return false;
             }
@@ -3304,7 +3319,7 @@ namespace FadeBasic
             return expr;
         }
         
-        private bool TryParseWikiTerm(out IExpressionNode outputExpression, out ProgramRecovery recovery)
+        private bool TryParseWikiTerm(out IExpressionNode outputExpression, out ProgramRecovery recovery, bool withinTokenization=false)
         {
             // _stream.SkipEos();
             
@@ -3312,6 +3327,18 @@ namespace FadeBasic
             recovery = null;
             switch (token.type)
             {
+                case LexemType.ConstantBracketOpen:
+                    var open = _stream.Advance();
+                    outputExpression = ParseSubstitution(open, withinTokenization);
+                    if (withinTokenization)
+                    {
+                        outputExpression.Errors.Add(new ParseError(open, ErrorCodes.SubstitutionInvalidNested));
+                    }
+                    else
+                    {
+                        outputExpression.Errors.Add(new ParseError(open, ErrorCodes.SubstitutionNotAllowedHere));
+                    }
+                    break;
                 case LexemType.KeywordCaseDefault:
                     _stream.Advance();
                     outputExpression = new DefaultValueExpression

@@ -2793,6 +2793,79 @@ z = x + y
 
     
     [Test]
+    public void ParseError_Macro_OutterSubst_MissingClose()
+    {
+        var input = @"
+#macro
+x = 1
+#endmacro
+a = [x
+";
+        var parser = MakeParser(input);
+        var prog = parser.ParseProgram();
+
+        prog.AssertParseErrors(2, out var errors);
+        
+        Assert.That(errors[0].Display, Is.EqualTo($"[4:4] - {ErrorCodes.SubstitutionMissingCloseBracket}"));
+        Assert.That(errors[1].Display, Is.EqualTo($"[4:2] - {ErrorCodes.ExpressionMissing}"));
+    }
+    
+    
+    [Test]
+    public void ParseError_Macro_OutterSubst_MissingClose_InvalidRef()
+    {
+        var input = @"
+#macro
+x = 1
+#endmacro
+a = [y
+";
+        var parser = MakeParser(input);
+        var prog = parser.ParseProgram();
+
+        prog.AssertParseErrors(3, out var errors);
+        
+        Assert.That(errors[0].Display, Is.EqualTo($"[4:4] - {ErrorCodes.SubstitutionMissingCloseBracket}"));
+        Assert.That(errors[2].Display, Is.EqualTo($"[4:2] - {ErrorCodes.ExpressionMissing}"));
+        Assert.That(errors[1].Display, Is.EqualTo($"[4:5] - {ErrorCodes.InvalidReference} | unknown symbol, y"));
+    }
+
+    
+    [Test]
+    public void ParseError_Macro_OutterSubst_MissingOpen()
+    {
+        var input = @"
+#macro
+x = 1
+#endmacro
+a = x]
+";
+        var parser = MakeParser(input);
+        var prog = parser.ParseProgram();
+
+        prog.AssertParseErrors(2, out var errors);
+        Assert.That(errors[0].Display, Is.EqualTo($"[4:5] - {ErrorCodes.SubstitutionMissingOpenBracket}"));
+        Assert.That(errors[1].Display, Is.EqualTo($"[4:4] - {ErrorCodes.InvalidReference} | unknown symbol, x"));
+        
+    }
+
+    
+    [Test]
+    public void ParseError_Macro_OutterSubst()
+    {
+        var input = @"
+#macro
+x = 1
+#endmacro
+a = [x]
+";
+        var parser = MakeParser(input);
+        var prog = parser.ParseProgram();
+
+        prog.AssertNoParseErrors();
+    }
+    
+    [Test]
     public void ParseError_Macro_Subst_Object()
     {
         var input = @"
@@ -2807,7 +2880,7 @@ e as egg
         var prog = parser.ParseProgram();
 
         prog.AssertParseErrors(1, out var errors);
-        Assert.That(errors[0].Display, Is.EqualTo($"[5:6,5:7] - {ErrorCodes.SubstitutionMustBePrimitive}"));
+        Assert.That(errors[0].Display, Is.EqualTo($"[5:7] - {ErrorCodes.SubstitutionMustBePrimitive}"));
     }
     
     
@@ -2824,7 +2897,7 @@ dim n(3)
         var prog = parser.ParseProgram();
 
         prog.AssertParseErrors(1, out var errors);
-        Assert.That(errors[0].Display, Is.EqualTo($"[3:6,3:7] - {ErrorCodes.SubstitutionMustBePrimitive}"));
+        Assert.That(errors[0].Display, Is.EqualTo($"[3:7] - {ErrorCodes.SubstitutionMustBePrimitive}"));
     }
 
     
@@ -2872,7 +2945,7 @@ dim n(3)
         var prog = parser.ParseProgram();
 
         prog.AssertParseErrors(1, out var errors);
-        Assert.That(errors[0].Display, Is.EqualTo($"[2:9] - {ErrorCodes.ExpressionMissing}"));
+        Assert.That(errors[0].Display, Is.EqualTo($"[2:6] - {ErrorCodes.SubstitutionMissingCloseBracket}"));
     }
     
     
@@ -2888,7 +2961,7 @@ dim n(3)
         var prog = parser.ParseProgram();
 
         prog.AssertParseErrors(1, out var errors);
-        Assert.That(errors[0].Display, Is.EqualTo($"[2:9] - {ErrorCodes.ExpressionMissing}"));
+        Assert.That(errors[0].Display, Is.EqualTo($"[2:7] - {ErrorCodes.SubstitutionMissingOpenBracket}"));
     }
     
     
@@ -2904,8 +2977,56 @@ dim n(3)
         var prog = parser.ParseProgram();
 
         prog.AssertParseErrors(1, out var errors);
+        Assert.That(errors[0].Display, Is.EqualTo($"[2:7] - {ErrorCodes.SubstitutionInvalidNested}"));
+    }
+    
+    [Test]
+    public void ParseError_Macro_Subst_InvalidExpr_Blank()
+    {
+        var input = @"
+#macro
+# x = []
+#endmacro
+";
+        var parser = MakeParser(input);
+        var prog = parser.ParseProgram();
+
+        prog.AssertParseErrors(1, out var errors);
+        Assert.That(errors[0].Display, Is.EqualTo($"[2:6] - {ErrorCodes.SubstitutionRequiresExpression}"));
+    }
+    
+    
+    [Test]
+    public void ParseError_Macro_Subst_InvalidExpr_BadMath()
+    {
+        var input = @"
+#macro
+# x = [1 + ]
+#endmacro
+";
+        var parser = MakeParser(input);
+        var prog = parser.ParseProgram();
+
+        prog.AssertParseErrors(1, out var errors);
         Assert.That(errors[0].Display, Is.EqualTo($"[2:9] - {ErrorCodes.ExpressionMissing}"));
     }
+
+    
+    [Test]
+    public void ParseError_Macro_SubstBad()
+    {
+        var input = @"
+#macro
+x = [1]
+#endmacro
+";
+        var parser = MakeParser(input);
+        var prog = parser.ParseProgram();
+
+        prog.AssertParseErrors(1, out var errors);
+        Assert.That(errors[0].Display, Is.EqualTo($"[2:4] - {ErrorCodes.SubstitutionNotAllowedHere}"));
+    }
+
     
     [Test]
     public void ParseError_Macro_ShortcutBlank()
