@@ -29,19 +29,31 @@ namespace FadeBasic.Lib.Standard
             }
         }
         
-        [FadeBasicCommand("randomize")]
+        [FadeBasicCommand("test build", FadeBasicCommandUsage.Macro)]
+        public static int BuildTest()
+        {
+            return 42;
+        }
+        
+        [FadeBasicCommand("machine name$", FadeBasicCommandUsage.Both)]
+        public static void GetMachineName(ref string machineName)
+        {
+            machineName = Environment.MachineName;
+        }
+        
+        [FadeBasicCommand("randomize", FadeBasicCommandUsage.Both)]
         public static void RandomSeed(int seed)
         {
             _rand = new Random(seed);
         }
         
-        [FadeBasicCommand("rnd")]
+        [FadeBasicCommand("rnd", FadeBasicCommandUsage.Both)]
         public static int Random(int max)
         {
             return _rand.Next(max);
         }
         
-        [FadeBasicCommand("timer")]
+        [FadeBasicCommand("timer", FadeBasicCommandUsage.Both)]
         public static long Timer()
         {
             var now = DateTimeOffset.Now;
@@ -49,13 +61,13 @@ namespace FadeBasic.Lib.Standard
             return (long)delta.TotalMilliseconds;
         }
         
-        [FadeBasicCommand("inc")]
+        [FadeBasicCommand("inc", FadeBasicCommandUsage.Both)]
         public static void Increment(ref int value, int amount = 1)
         {
             value += amount;
         }
                 
-        [FadeBasicCommand("dec")]
+        [FadeBasicCommand("dec", FadeBasicCommandUsage.Both)]
         public static void Decrement(ref int value, int amount = 1)
         {
             value -= amount;

@@ -15,6 +15,12 @@ namespace FadeBasic
         {
             
         }
+        
+        [FadeBasicCommand( "super test", FadeBasicCommandUsage.Macro)]
+        public static int MacroLand()
+        {
+            return 101;
+        }
     }
     
     

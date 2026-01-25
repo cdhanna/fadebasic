@@ -1,7 +1,10 @@
+using System.Text.Json;
 using FadeBasic;
+using FadeBasic.ApplicationSupport.Project;
 using FadeBasic.Launch;
 using FadeBasic.Lib.Standard;
 using FadeBasic.Sdk;
+using FadeBasic.SourceGenerators;
 using FadeCommandsViaNuget;
 
 namespace Tests;
@@ -39,6 +42,20 @@ public partial class SdkTests
 }
 public partial class SdkTests
 {
+    [Test]
+    public void SerializeProject()
+    {
+        var metadataJson = TestCommandsMetaData.COMMANDS_JSON;
+        var metadata = JsonSerializer.Deserialize<CommandMetadata>(metadataJson, new JsonSerializerOptions
+        {
+            IncludeFields = true,
+            PropertyNameCaseInsensitive = true,
+        });
+
+        var command = metadata.commands.FirstOrDefault(x => string.Equals(x.callName, nameof(TestCommands.Now), StringComparison.InvariantCultureIgnoreCase));
+        Assert.IsTrue(command.usage.HasFlag(FadeBasicCommandUsage.Macro));
+        Assert.IsTrue(command.usage.HasFlag(FadeBasicCommandUsage.Runtime));
+    }
 
     [Test]
     public void Debug()
@@ -120,6 +137,29 @@ public partial class SdkTests
 
         ctx.TryGetInteger("x", out var i);
         Assert.That(i, Is.EqualTo(32));
+    }
+    
+    
+    [Test]
+    public void FromProject_Macro()
+    {
+        ProjectLoader.Initialize();
+        var filePath = "Fixtures/Projects/Macros/prim.csproj";
+        // TODO: run restore as part of test?
+        var ctx = ProjectLoader.LoadCsProject(filePath);
+        var commands = ProjectBuilder.LoadCommandMetadata(ctx);
+        
+        // var commands = new CommandCollection(
+        //     new ConsoleCommands(), new StandardCommands(), new FadeBasicCommands()
+        // );
+        // if (!Fade.TryCreateFromProject("Fixtures/Projects/Macros/prim.csproj", commands, out var ctx, out _))
+        // {
+        //     Assert.Fail("no file");
+        // }
+        // ctx.Run();
+        //
+        // ctx.TryGetInteger("x", out var i);
+        // Assert.That(i, Is.EqualTo(101));
     }
     
     [Test]

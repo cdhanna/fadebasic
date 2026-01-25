@@ -114,15 +114,15 @@ namespace FadeBasic.Build
                 {
                     foreach (var error in lexErrors)
                     {
-                        var local = map.GetOriginalLocation(error.lineNumber, error.charNumber);
+                        var local = map.GetOriginalRange(error.location);
                         Log.LogError(subcategory: "fade",
-                            errorCode: "FADE:" + error.error.code,
+                            errorCode: "FADE:" + error.errorCode.code,
                             helpKeyword: null,
                             file: local.fileName,
                             lineNumber: local.startLine,
                             columnNumber: local.startChar,
-                            endLineNumber: local.startLine,
-                            endColumnNumber: local.startChar + error.text.Length,
+                            endLineNumber: local.endLine,
+                            endColumnNumber: local.endChar,
                             message: error.Display);
                     }
 

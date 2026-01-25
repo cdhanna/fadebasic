@@ -1,3 +1,5 @@
+using FadeBasic.SourceGenerators;
+
 namespace FadeBasic.ApplicationSupport.Project;
 
 public class CommandMetadata
@@ -29,6 +31,8 @@ public class ProjectCommandMetadata
     public int returnTypeCode;
 
     public string callName;
+
+    public FadeBasicCommandUsage usage; 
 
     public string sig;
 

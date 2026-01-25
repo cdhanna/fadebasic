@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
+using FadeBasic.SourceGenerators;
 
 namespace FadeBasic.Virtual
 {
@@ -33,6 +34,7 @@ namespace FadeBasic.Virtual
         public int methodIndex; // how to run this command.
         public CommandArgInfo[] args;
         public CommandExecution executor;
+        public FadeBasicCommandUsage usage;
         public byte returnType;
         
         public string UniqueName => name + sig;

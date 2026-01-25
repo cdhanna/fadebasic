@@ -6,27 +6,37 @@ using FadeBasic.Virtual;
 
 namespace Tests
 {
-
-    public partial class TestMacroCommands
-    {
-        public static readonly CommandCollection CommandsForTesting = new CommandCollection(new TestMacroCommands());
-        [FadeBasicCommand("macroFuncTest")]
-        public static void Example(int x, ref int id)
-        {
-            id = x * 2;
-        }
-    }
     
     public partial class TestCommands
     {
         public static readonly CommandCollection CommandsForTesting = new CommandCollection(new TestCommands());
 
+        [FadeBasicCommand("macroFuncTest", FadeBasicCommandUsage.Macro)]
+        public static void Example(int x, ref int id)
+        {
+            id = x * 2;
+        }
+        [FadeBasicCommand("macro return test", FadeBasicCommandUsage.Macro)]
+        public static int Example()
+        {
+            return 42;
+        }
+        
         [FadeBasicCommand("rnd")]
         public static int Random(int max=10)
         {
             var r = new Random();
             return r.Next(max);
         }
+        
+        
+        [FadeBasicCommand("now", FadeBasicCommandUsage.Both)]
+        public static long Now()
+        {
+            var now = DateTimeOffset.Now;
+            return (long)now.ToUnixTimeMilliseconds();
+        }
+
         
         [FadeBasicCommand("Jerk")]
         public static void Dbjerkl(int dbl)

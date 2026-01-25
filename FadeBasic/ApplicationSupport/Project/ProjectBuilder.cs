@@ -21,7 +21,7 @@ namespace FadeBasic.ApplicationSupport.Project
         public VirtualCommandProvider(CommandMetadata metadata)
         {
             _metadata = metadata;
-
+            
             Count = _metadata.commands.Count;
             Commands = new CommandInfo[Count];
             for (var i = 0; i < Count; i++)
@@ -45,11 +45,13 @@ namespace FadeBasic.ApplicationSupport.Project
                 {
                     methodIndex = command.methodIndex,
                     name = command.callName,
+                    usage = command.usage,
                     sig = command.sig,
                     returnType = (byte)command.returnTypeCode, // todo; range check?
                     executor = (_) =>
                     {
                         // no-op.
+                        throw new InvalidOperationException("cannot invoke a command on a virtual provider.");
                     },
                     args = args
                 };
@@ -65,6 +67,9 @@ namespace FadeBasic.ApplicationSupport.Project
     
     public class ProjectBuilder
     {
+        
+        
+        
         public static ProjectCommandInfo LoadCommandMetadata(ProjectContext context)
         {
             return LoadCommandMetadata(context.projectLibraries);
@@ -111,15 +116,18 @@ namespace FadeBasic.ApplicationSupport.Project
                 }
 
                 
-                
                 loadContext.Unload();
                 
+                Console.WriteLine("uh oh");
                 // foreach (var )
                 // assembly.GetType()
                 // var userAssembly = loadContext.LoadFromAssemblyPath(fullPath);
             }
 
             var docs = ProjectDocMethods.LoadDocs<MarkdownDocParser>(metaDatas);
+            // TODO: this is a bug! 
+            //  macro DLLs are not loaded at this time, so we cannot actually invoke into them :( 
+            //  we need to load the macro DLL's once per compilation? and pray they don't explode? 
             var sources = metaDatas.Select(x => (IMethodSource)new VirtualCommandProvider(x)).ToArray();
             return new ProjectCommandInfo
             {

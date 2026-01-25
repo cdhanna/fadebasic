@@ -26,7 +26,7 @@ namespace FadeBasic.Lib.Standard
         /// </para>
         /// </summary>
         /// <param name="elements">The elements to be printed. Each element will be printed on its own line</param>
-        [FadeBasicCommand("print")]
+        [FadeBasicCommand("print", FadeBasicCommandUsage.Both)]
         public static void PrintLines(params object[] elements)
         {
             foreach (var element in elements)
@@ -35,7 +35,7 @@ namespace FadeBasic.Lib.Standard
             }
         }
         
-        [FadeBasicCommand("write")]
+        [FadeBasicCommand("write", FadeBasicCommandUsage.Both)]
         public static void Print(params object[] elements)
         {
             foreach (var element in elements)

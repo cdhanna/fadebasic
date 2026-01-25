@@ -5,6 +5,7 @@ using System.Reflection;
 using System.Text;
 using FadeBasic.Ast;
 using FadeBasic.Ast.Visitors;
+using FadeBasic.SourceGenerators;
 using FadeBasic.Virtual;
 using TypeInfo = FadeBasic.Ast.TypeInfo;
 
@@ -907,8 +908,9 @@ namespace FadeBasic
         private readonly CommandCollection _commands;
 
 
-        public Parser(TokenStream stream, CommandCollection commands)
+        public Parser(TokenStream stream, CommandCollection commands, FadeBasicCommandUsage commandUsage = FadeBasicCommandUsage.Runtime)
         {
+            _commandUsage = commandUsage;
             _stream = stream;
             _commands = commands;
         }
@@ -2008,7 +2010,7 @@ namespace FadeBasic
              * 
              * 
              */
-            if (!_commands.TryGetCommandDescriptor(token, out var possibleCommands))
+            if (!_commands.TryGetCommandDescriptor(_commandUsage, token, out var possibleCommands))
             {
                 throw new Exception("Parser exception! unknown command " + token.caseInsensitiveRaw);
             }
@@ -2120,7 +2122,7 @@ namespace FadeBasic
         
         private void ParseCommandOverload(Token token, out CommandInfo command, out List<IExpressionNode> commandArgs)
         {
-            if (!_commands.TryGetCommandDescriptor(token, out var possibleCommands))
+            if (!_commands.TryGetCommandDescriptor(_commandUsage, token, out var possibleCommands))
             {
                 throw new Exception("Parser exception! unknown command " + token.caseInsensitiveRaw);
             }
@@ -2742,6 +2744,8 @@ namespace FadeBasic
         }
 
         private int tokenBlockCount = 0;
+        private FadeBasicCommandUsage _commandUsage;
+
         private MacroTokenizeStatement ParseTokenization(Token token)
         {
             var isShortcut = token.lexem.type == LexemType.VariableReal;

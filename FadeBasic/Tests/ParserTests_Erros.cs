@@ -2702,6 +2702,37 @@ x = b
     
     
     [Test]
+    public void ParseError_Macro_ReturnWorks()
+    {
+        var input = @"
+#macro
+    n = macro return test()
+#endmacro
+x = [n]
+";
+        var parser = MakeParser(input);
+        var prog = parser.ParseProgram();
+
+        prog.AssertNoParseErrors();
+    }
+
+    [Test]
+    public void ParseError_Macro_StringWorks()
+    {
+        var input = @"
+#macro
+    name$ = ""toast""
+#endmacro
+x$ = [name$]
+";
+        var parser = MakeParser(input);
+        var prog = parser.ParseProgram();
+
+        prog.AssertNoParseErrors();
+    }
+
+    
+    [Test]
     public void ParseError_Macro_TokenOutOfMacro()
     {
         var input = @"

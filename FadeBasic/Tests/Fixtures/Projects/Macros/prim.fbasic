@@ -1,0 +1,4 @@
+#macro
+    y = rnd(100)
+#endmacro
+x = [y]

@@ -12,7 +12,7 @@ public class TokenMacroTests
     public Parser BuildParser(string src, out List<Token> tokens)
     {
         var lexer = new Lexer();
-        var results = lexer.TokenizeWithErrors(src, TestCommands.CommandsForTesting, TestMacroCommands.CommandsForTesting);
+        var results = lexer.TokenizeWithErrors(src, TestCommands.CommandsForTesting);
         results.AssertNoLexErrors();
         tokens = results.tokens;
         var stream = new TokenStream(tokens);
@@ -833,7 +833,7 @@ b = [a] + x
         var input = @"
 
 #macro
-macroFuncTest 6, myImage
+    macroFuncTest 6, myImage
 #endmacro
 a = [myImage]
 ";

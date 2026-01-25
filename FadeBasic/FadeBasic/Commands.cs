@@ -1,11 +1,13 @@
 using System.Collections.Generic;
 using System.Linq;
 using System.Text.RegularExpressions;
+using FadeBasic.SourceGenerators;
 using FadeBasic.Virtual;
 
 namespace FadeBasic
 {
-
+    
+    
     public class CommandCollection
     {
         public readonly List<CommandInfo> Commands;
@@ -41,12 +43,19 @@ namespace FadeBasic
             }
         }
         
-        public bool TryGetCommandDescriptor(Token token, out List<CommandInfo> commandDescriptor)
+        public bool TryGetCommandDescriptor(FadeBasicCommandUsage usage, Token token, out List<CommandInfo> commandDescriptor)
         {
             
             var lookup = Regex.Replace(token.caseInsensitiveRaw.Trim(), "(\\s)+", " ");
             // var lookup = Regex.Replace(token.raw, "(\\s||\\t)*", " ");
-            return Lookup.TryGetValue(lookup, out commandDescriptor);
+            commandDescriptor = new List<CommandInfo>();
+            if (Lookup.TryGetValue(lookup, out var matchName))
+            {
+                commandDescriptor = matchName.Where(x => x.usage.HasFlag(usage)).ToList();
+                return commandDescriptor.Count > 0;
+            }
+
+            return false;
         }
     }
 

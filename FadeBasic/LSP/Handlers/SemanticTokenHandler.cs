@@ -95,7 +95,7 @@ public class SemanticTokenHandler : SemanticTokensHandlerBase
                     continue;
                 }
 
-                var tokenType = ConvertSymbol(token.type);
+                var tokenType = ConvertSymbol(token);
                
                 if (token.flags.HasFlag(TokenFlags.FunctionCall))
                 {
@@ -139,9 +139,9 @@ public class SemanticTokenHandler : SemanticTokensHandlerBase
         }
     }
 
-    static SemanticTokenType ConvertSymbol(LexemType lexem)
+    static SemanticTokenType ConvertSymbol(Token token)
     {
-        switch (lexem)
+        switch (token.type)
         {
             case LexemType.KeywordRem:
             case LexemType.KeywordRemStart:
@@ -154,8 +154,14 @@ public class SemanticTokenHandler : SemanticTokensHandlerBase
             case LexemType.KeywordEndFunction:
                 return SemanticTokenType.Function;
             
-            
+            case LexemType.ConstantBegin:
+            case LexemType.ConstantEnd:
+            case LexemType.ConstantTokenize:
+            case LexemType.ConstantEndTokenize:
+            case LexemType.ConstantBracketClose:
+            case LexemType.ConstantBracketOpen:
             case LexemType.Constant:
+            case LexemType.VariableReal when token.raw?.Length == 1:
                 return SemanticTokenType.Macro;
             case LexemType.VariableString:
             case LexemType.VariableReal:

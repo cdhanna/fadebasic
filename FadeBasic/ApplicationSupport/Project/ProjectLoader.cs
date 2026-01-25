@@ -83,7 +83,7 @@ public static class ProjectLoader
         {
             var fullClassName = command.GetMetadataValue("FullName");
             var referenceName = command.GetMetadataValue("Identity");
-
+            
             if (!refMap.TryGetValue(referenceName, out var expectedDllPath))
             {
                 var searchingForLibrary = true;

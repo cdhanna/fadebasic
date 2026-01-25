@@ -2778,6 +2778,24 @@ next
     
     
     [Test]
+    public void Macro_CommandCall()
+    {
+        var src = @"
+#macro
+x = macro return test()
+#endmacro
+n = [x]
+";
+        Setup(src, out _, out var prog);
+        
+        var vm = new VirtualMachine(prog);
+        vm.Execute2();
+        Assert.That(vm.dataRegisters[0], Is.EqualTo(42));
+        Assert.That(vm.typeRegisters[0], Is.EqualTo(TypeCodes.INT));
+    }
+
+    
+    [Test]
     public void Math_Ints_Add()
     {
         var src = @"x = 1 + 2";

@@ -52,6 +52,7 @@ namespace FadeBasic.SourceGenerators
 
             return new CommandDescriptor
             {
+                model = context.SemanticModel,
                 methodSyntax = methodNode,
                 classSyntax = classNode,
                 attributeSyntax = attributeNode
@@ -161,6 +162,7 @@ namespace {namespaceStr}
 ""{nameof(info.returnType)}"": {info.returnType},
 ""{nameof(info.methodIndex)}"": {info.methodIndex},
 ""{nameof(info.name)}"": ""{info.name}"",
+""{nameof(info.usage)}"": ""{info.usage}"", // usage hint
 ""{nameof(info.sig)}"": ""{info.sig}"",
 ""{nameof(info.UniqueName)}"": ""{info.UniqueName}"",
 ""{nameof(info.args)}"": [{string.Join(",", info.args.Select(ToJson))}
@@ -287,6 +289,7 @@ namespace {namespaceStr}
     ""{nameof(descriptor.ReturnType)}"": ""{descriptor.ReturnType}"",
     ""{nameof(descriptor.ReturnTypeCode)}"": {descriptor.ReturnTypeCode},
     ""{nameof(descriptor.CallName)}"": {descriptor.CallName},
+    ""{nameof(descriptor.Usage)}"": {descriptor.Usage},
     ""{nameof(descriptor.Sig)}"": ""{descriptor.Sig}"",
     ""{nameof(descriptor.Parameters)}"": [{string.Join(",", descriptor.Parameters.Select(GetArgJson))}]
 }}";
@@ -313,6 +316,7 @@ namespace {namespaceStr}
             return $@"new {nameof(CommandInfo)}()
 {{
     {nameof(CommandInfo.name)} = {descriptor.CallName},
+    {nameof(CommandInfo.usage)} = (FadeBasicCommandUsage){descriptor.Usage},
     {nameof(CommandInfo.sig)} = ""{descriptor.Sig}"",
     {nameof(CommandInfo.methodIndex)} = {index},
     {nameof(CommandInfo.executor)} = {descriptor.MethodName},
@@ -580,7 +584,7 @@ public static void {descriptor.MethodName}({nameof(VirtualMachine)} {VM})
                                   $"out {stateVariable}," +
                                   $"out {addrVariable}" +
                                   $");");
-                    break;
+                    
                 case "byte":
                 case "long":
                 case "float":
@@ -597,7 +601,7 @@ public static void {descriptor.MethodName}({nameof(VirtualMachine)} {VM})
                                   $"out {stateVariable}," +
                                   $"out {addrVariable}" +
                                   $");");
-                    break;
+                    
                 case ("string"):
                     return ($"{nameof(VmUtil)}.{nameof(VmUtil.ReadValueString)}(" +
                                   $"{VM}, " +
@@ -606,7 +610,7 @@ public static void {descriptor.MethodName}({nameof(VirtualMachine)} {VM})
                                   $"out {stateVariable}," +
                                   $"out {addrVariable}" +
                                   $");");
-                    break;
+                    
                 default:
                     throw new NotImplementedException("that type isn't supported for reading " + typeName);
             }
@@ -619,6 +623,7 @@ public static void {descriptor.MethodName}({nameof(VirtualMachine)} {VM})
         public ClassDeclarationSyntax classSyntax;
         public MethodDeclarationSyntax methodSyntax;
         public AttributeSyntax attributeSyntax;
+        public SemanticModel model;
         public string TargetClassName
         {
             get
@@ -658,6 +663,24 @@ public static void {descriptor.MethodName}({nameof(VirtualMachine)} {VM})
                     throw new Exception(
                         $"cannot create command descriptor namespace class syntax is of type=[{classSyntax.Parent.GetType().Name}], which is not a known.");
                 }
+            }
+        }
+
+        public int Usage
+        {
+            get
+            {
+                var args = attributeSyntax.ArgumentList.Arguments;
+                if (args.Count == 1) return 1;
+                var expr = attributeSyntax.ArgumentList.Arguments[1].Expression;
+
+                var constant = model.GetConstantValue(expr);
+                if (constant.HasValue)
+                {
+                    return (int)constant.Value;
+                }
+                
+                return 1;
             }
         }
 

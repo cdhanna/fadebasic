@@ -7,6 +7,7 @@ using System.Text.RegularExpressions;
 using FadeBasic.Ast;
 using FadeBasic.Json;
 using FadeBasic.Sdk;
+using FadeBasic.SourceGenerators;
 using FadeBasic.Virtual;
 
 namespace FadeBasic
@@ -280,30 +281,25 @@ namespace FadeBasic
 
         public List<Token> Tokenize(string input, CommandCollection commands = default)
         {
-            var res = TokenizeWithErrors(input, commands?.Commands?.Select(c => c.name).ToList());
+            var res = TokenizeWithErrors(input, commands);
             return res.tokens;
         }
 
-        public LexerResults TokenizeWithErrors(string input, CommandCollection commands, CommandCollection macroCommands=null) =>
-            TokenizeWithErrors(input, commands?.Commands?.Select(c => c.name).ToList(), macroCommands);
-        public LexerResults TokenizeWithErrors(string input, List<string> commandNames=null, CommandCollection macroCommands=null)
+        public LexerResults TokenizeWithErrors(string input, CommandCollection commands=default)
         {
             var tokens = new List<Token>();
             var comments = new List<Token>();
             var combined = new List<Token>();
             var all = new List<Token>();
             var macroTokens = new List<Token>();
-            commandNames ??= new List<string>();
-            macroCommands ??= new CommandCollection();
-            
-            var commandTree = CommandNameTree.Create(commandNames);
-            var macroMacroTree = CommandNameTree.Create(macroCommands.Commands.Select(x => x.name).ToList());
+            commands ??= new CommandCollection();
+            var runtimeCommandNames = commands.Commands?.Where(x => x.usage.HasFlag(FadeBasicCommandUsage.Runtime)).Select(c => c.name).ToList() ?? new List<string>();
+            var runtimeCommandTree = CommandNameTree.Create(runtimeCommandNames);
             void AddToken(Token t)
             {
                 tokens.Add(t);
                 combined.Add(t);
                 all.Add(t);
-            
             }
 
             void AddComment(Token t)
@@ -318,29 +314,6 @@ namespace FadeBasic
             var constantTable = new Dictionary<string, string>();
 
             var lexems = Lexems.ToList();
-            // commands
-            foreach (var commandName in commandNames)
-            {
-                // var pattern = "";
-                var components = commandName.Select(x =>
-                {
-                    switch (x)
-                    {
-                        case ' ':
-                            return "(\\s|\\t)+";
-                        case '$':
-                            return "\\$";
-                        default:
-                            return $"({char.ToLower(x)}|{char.ToUpper(x)})";
-                    }
-                });
-                var pattern = "^" + string.Join("", components);
-              
-                // pattern += "(\\b|$)";
-                var commandLexem = new Lexem(-((pattern.Length) * 100), LexemType.CommandWord, new Regex(pattern));
-                //lexems.Add(commandLexem);
-            }
-
             lexems.Sort((a, b) =>
             {
                 var prioCompare = a.priority.CompareTo(b.priority);
@@ -694,8 +667,8 @@ namespace FadeBasic
                 macroTokens = macroTokens
             };
 
-            HandleMacros2(lines, results, commandNames, macroCommands, macroMacroTree);
-            HandleCommandNames(lines, results, commandTree);
+            HandleMacros2(lines, results, commands);
+            HandleCommandNames(lines, results, runtimeCommandTree);
             
             return results;
         }
@@ -777,27 +750,9 @@ namespace FadeBasic
                 }
                 
             }
-
-            // var t = new Trie<string>(' ');
-            // foreach (var command in commandNames)
-            // {
-            //     t.Insert(command.ToLowerInvariant(), command.ToLowerInvariant());
-            // }
-            //
-            // for (var i = 0; i < tokens.Count; i++)
-            // {
-            //     switch (tokens[i].type)
-            //     {
-            //         case LexemType.VariableString:
-            //         case LexemType.VariableGeneral:
-            //             var matching = t.GetAll(tokens[i].caseInsensitiveRaw);
-            //            
-            //             break;
-            //     }
-            // }
         }
         
-        void HandleMacros2(string[] lines, LexerResults current, List<string> commandNames, CommandCollection macroCommands, CommandNameTree macroCommandTree)
+        void HandleMacros2(string[] lines, LexerResults current, CommandCollection commands)
         {
             var stream = new TokenStream(current.tokens);
 
@@ -1184,10 +1139,12 @@ namespace FadeBasic
             //     return;
             // }
             // TODO: these endstatement tokens are the bane of my existence. 
+            var macroCommandNames = commands.Commands.Where(c => c.usage.HasFlag(FadeBasicCommandUsage.Macro)).Select(c => c.name).ToList();
+            var macroCommandTree = CommandNameTree.Create(macroCommandNames);
             HandleCommandNames(lines, compileTokens, macroCommandTree);
             var compileStream = new TokenStream(compileTokens);
             // TODO: need to re-handle this stream with macro-level commands. 
-            var parser = new Parser(compileStream, macroCommands);
+            var parser = new Parser(compileStream, commands, FadeBasicCommandUsage.Macro);
             
             var program = parser.ParseProgram();
             var macroErrors = program.GetAllErrors();
@@ -1208,7 +1165,7 @@ namespace FadeBasic
             {
                 return;
             }
-            var compiler = new Compiler(macroCommands);
+            var compiler = new Compiler(commands);
             compiler.Compile(program);
 
             var vm = new VirtualMachine(compiler.Program)
@@ -1272,7 +1229,7 @@ namespace FadeBasic
 
             Token Concat(Token left, Token right)
             {
-                var res = TokenizeWithErrors(left.raw + right.raw, commandNames);
+                var res = TokenizeWithErrors(left.raw + right.raw, commands);
                 var token = res.tokens[0];
                 token.charNumber = left.charNumber;
                 token.lineNumber = left.lineNumber;
@@ -1389,8 +1346,17 @@ namespace FadeBasic
                     {
                         // oh oh oh , this is the substitution itself! which means we are not inserting the raw token, we are using the final value. 
                         substIndex += 1;
-                        var text = subst.raw.ToString();
-                        var tokenResults = TokenizeWithErrors(text, commandNames, macroCommands);
+                        string text = null;
+                        switch (subst.raw)
+                        {
+                            case string str:
+                                text = "\"" + str + "\"";
+                                break;
+                            default:
+                                text = subst.raw.ToString();
+                                break;
+                        }
+                        var tokenResults = TokenizeWithErrors(text, commands);
                          
                        // for (var n = tokenResults.tokens.Count - 1; n >= 0; n--)
                         {
