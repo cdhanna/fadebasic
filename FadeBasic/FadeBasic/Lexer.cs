@@ -1349,9 +1349,10 @@ namespace FadeBasic
                         string text = null;
                         switch (subst.raw)
                         {
-                            case string str:
-                                text = "\"" + str + "\"";
-                                break;
+                            // TODO: string handling breaks variableGeneral concat
+                            // case string str:
+                            //     text = "\"" + str + "\"";
+                            //     break;
                             default:
                                 text = subst.raw.ToString();
                                 break;
