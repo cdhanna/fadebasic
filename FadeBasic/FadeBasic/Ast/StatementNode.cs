@@ -508,4 +508,37 @@ namespace FadeBasic.Ast
         }
     }
 
+    /// <summary>
+    /// Represents a defer statement that executes its contained statements at the end of the current scope.
+    /// </summary>
+    public class DeferStatement : AstNode, IStatementNode
+    {
+        /// <summary>
+        /// The statements to be executed at the end of the scope.
+        /// </summary>
+        public List<IStatementNode> statements = new List<IStatementNode>();
+
+        /// <summary>
+        /// Whether this is a single-line defer (defer statement) or block defer (defer...enddefer)
+        /// </summary>
+        public bool isSingleLine;
+
+        public DeferStatement(Token start, Token end, List<IStatementNode> statements, bool isSingleLine) : base(start, end)
+        {
+            this.statements = statements;
+            this.isSingleLine = isSingleLine;
+        }
+
+        protected override string GetString()
+        {
+            return $"defer ({string.Join(",", statements.Select(x => x.ToString()))})";
+        }
+
+        public override IEnumerable<IAstVisitable> IterateChildNodes()
+        {
+            foreach (var statement in statements)
+                yield return statement;
+        }
+    }
+
 }

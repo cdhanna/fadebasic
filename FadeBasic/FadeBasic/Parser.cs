@@ -1602,6 +1602,8 @@ namespace FadeBasic
                         return new ExitLoopStatement(token);
                     case LexemType.KeywordSkip:
                         return new SkipLoopStatement(token);
+                    case LexemType.KeywordDefer:
+                        return ParseDeferStatement(token);
                     case LexemType.KeywordScope:
                         return ParseStatementThatStartsWithScope(token);
                     case LexemType.KeywordDeclareArray:
@@ -2709,6 +2711,59 @@ namespace FadeBasic
             }
 
             return whileStatement;
+        }
+
+        private DeferStatement ParseDeferStatement(Token deferToken)
+        {
+            var statements = new List<IStatementNode>();
+            ParseError error = null;
+            
+            // Check if there is a statement on the same line as defer (single-line defer)
+            var nextToken = _stream.Peek;
+            
+            if (nextToken.type == LexemType.EndStatement)
+            {
+                // This is a block defer: defer ... enddefer
+                _stream.Advance(); // consume the end statement
+                var looking = true;
+                while (looking)
+                {
+                    nextToken = _stream.Peek;
+                    switch (nextToken.type)
+                    {
+                        case LexemType.EOF:
+                            error = new ParseError(deferToken, ErrorCodes.DeferStatementMissingEndDefer);
+                            looking = false;
+                            break;
+                        case LexemType.EndStatement:
+                            _stream.Advance();
+                            break;
+                        case LexemType.KeywordEndDefer:
+                            _stream.Advance();
+                            looking = false;
+                            break;
+                        default:
+                            var member = ParseStatement(statements);
+                            statements.Add(member);
+                            break;
+                    }
+                }
+
+                var deferStatement = new DeferStatement(deferToken, _stream.Current, statements, false);
+                if (error != null)
+                {
+                    deferStatement.Errors.Add(error);
+                }
+                return deferStatement;
+            }
+            else
+            {
+                // This is a single-line defer: defer <statement>
+                var statement = ParseStatement(statements, consumeEndOfStatement: false);
+                statements.Add(statement);
+                
+                return new DeferStatement(deferToken, _stream.Current, statements, true);
+            }
         }
 
         private MacroSubstitutionExpression ParseSubstitution(Token token, bool withinTokenization)

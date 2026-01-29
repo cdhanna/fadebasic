@@ -207,6 +207,7 @@ namespace FadeBasic
         public static readonly ErrorCode SubstitutionInvalidNested = "[0159] Substitutions cannot be nested";
         public static readonly ErrorCode SubstitutionRequiresExpression = "[0160] Substitutions needs inner expression";
         public static readonly ErrorCode SubstitutionNotAllowedHere = "[0161] Substitutions not allowed here";
+        public static readonly ErrorCode DeferStatementMissingEndDefer = "[0162] Defer statement is missing a closing EndDefer clause";
 
         // 200 series represents post-parse issues
         public static readonly ErrorCode InvalidReference = "[0200] Invalid reference";

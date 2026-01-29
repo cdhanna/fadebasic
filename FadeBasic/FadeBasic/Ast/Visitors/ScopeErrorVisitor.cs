@@ -412,6 +412,9 @@ namespace FadeBasic.Ast.Visitors
                         exprStatement.expression.EnsureVariablesAreDefined(scope, ctx);
                         break;
                     
+                    case DeferStatement deferStatement:
+                        deferStatement.statements?.CheckStatements(scope, ctx);
+                        break;
                     case NoOpStatement _:
                     case ReturnStatement _:
                     case LabelDeclarationNode _:

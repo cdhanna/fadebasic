@@ -204,6 +204,8 @@ public class SemanticTokenHandler : SemanticTokensHandlerBase
             case LexemType.KeywordReturn:
             case LexemType.KeywordEndCase:
             case LexemType.KeywordExit:
+            case LexemType.KeywordDefer:
+            case LexemType.KeywordEndDefer:
                 return SemanticTokenType.Keyword;
                 
             case LexemType.KeywordType:
