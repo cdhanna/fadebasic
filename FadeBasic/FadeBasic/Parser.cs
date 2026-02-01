@@ -2305,6 +2305,7 @@ namespace FadeBasic
                         if (member is LabelDeclarationNode lbl)
                         {
                             labels.Add(lbl);
+                            statements.Add(member);
                         }
                         else
                         {

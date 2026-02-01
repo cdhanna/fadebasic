@@ -4304,6 +4304,36 @@ x$ = concat( 1, ""hello"", 2)
 
     
     [Test]
+    public void CallHost_RefType_String_Bug117()
+    {
+        var src = @"
+tuna_echo 1, x$
+tuna_echo 2, y$
+";
+        Setup(src, out var compiler, out var prog);
+        var vm = new VirtualMachine(prog);
+        vm.hostMethods = compiler.methodTable;
+        vm.Execute2();
+        Assert.That(vm.typeRegisters[0], Is.EqualTo(TypeCodes.STRING));
+        if (!vm.heap.TryGetAllocation(vm.dataRegisters[0].ToPtr(), out var xPtr))
+        {
+            Assert.Fail("Unable to get x1 ptr");
+        }
+        vm.heap.Read(xPtr.ptr, xPtr.length, out var xMem);
+        var xStr = VmConverter.ToString(xMem);
+        Assert.That(xStr, Is.EqualTo("t1"));
+        
+        if (!vm.heap.TryGetAllocation(vm.dataRegisters[1].ToPtr(), out var yPtr))
+        {
+            Assert.Fail("Unable to get y1 ptr");
+        }
+        vm.heap.Read(yPtr.ptr, yPtr.length, out var yMem);
+        var yStr = VmConverter.ToString(yMem);
+        Assert.That(yStr, Is.EqualTo("t2"));
+    }
+
+    
+    [Test]
     public void CallHost_RefType_String()
     {
         var src = "x$ = \"a\": tuna x$ ";

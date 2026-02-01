@@ -51,7 +51,6 @@ namespace FadeBasic.ApplicationSupport.Project
                     executor = (_) =>
                     {
                         // no-op.
-                        throw new InvalidOperationException("cannot invoke a command on a virtual provider.");
                     },
                     args = args
                 };
@@ -118,10 +117,6 @@ namespace FadeBasic.ApplicationSupport.Project
                 
                 loadContext.Unload();
                 
-                Console.WriteLine("uh oh");
-                // foreach (var )
-                // assembly.GetType()
-                // var userAssembly = loadContext.LoadFromAssemblyPath(fullPath);
             }
 
             var docs = ProjectDocMethods.LoadDocs<MarkdownDocParser>(metaDatas);

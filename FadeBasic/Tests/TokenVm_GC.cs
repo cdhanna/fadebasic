@@ -78,6 +78,13 @@ FUNCTION blargh(x$)
     print x$
 ENDFUNCTION
 ", 1)]
+    [TestCase(@"
+tuna_echo 1, a$
+", 2)]
+    [TestCase(@"
+tuna_echo 1, a$
+a$ = ""toast""
+", 2)]
     public void GC_Simple(string src, int allocationCount)
     {
         Setup(src, out var compiler, out var prog);

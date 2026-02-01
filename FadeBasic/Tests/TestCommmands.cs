@@ -254,6 +254,11 @@ namespace Tests
             x = "tuna";
         }
         
+        [FadeBasicCommand("tuna_echo")]
+        public static void TunaEcho(int a, ref string x)
+        {
+            x = "t" + a;
+        }
         
         //
         [FadeBasicCommand("upper$")]

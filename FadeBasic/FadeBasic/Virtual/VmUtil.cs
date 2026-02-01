@@ -284,6 +284,7 @@ namespace FadeBasic.Virtual
                     VmConverter.FromString(value, out strBytes);
                     vm.heap.Allocate(ref HeapTypeFormat.STRING_FORMAT, strBytes.Length, out strPtr);
                     vm.heap.Write(strPtr, strBytes.Length, strBytes);
+                    vm.heap.IncrementRefCount(strPtr);
                     vm.dataRegisters[address] = VmPtr.GetRaw(ref strPtr);
                     vm.typeRegisters[address] = typeCode;
                     break;
