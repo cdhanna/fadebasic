@@ -722,9 +722,118 @@ namespace FadeBasic.Virtual
                 case MacroTokenizeStatement tokenizeStatement: 
                     Compile(tokenizeStatement);
                     break;
+                case DeferStatement deferStatement:
+                    Compile(deferStatement);
+                    break;
                     
                 default:
                     throw new Exception("compiler exception: unhandled statement node " + statement);
+            }
+        }
+
+        /// <summary>
+        /// this stack represents nested scope PUSH/POPS
+        /// </summary>
+        private Stack<DeferGroup> deferredStatementStack = new Stack<DeferGroup>();
+
+        public class DeferGroup
+        {
+            // public int pushMetaDataIndex;
+            // public List<int> deferJumpIndexes;
+            public int count;
+        }
+        
+        
+        void HandleDeferExit()
+        {
+            
+            // keep track of the start of the loop by remembering this address
+            var loopStartAddress = _buffer.Count;
+            
+            // pull the defer site
+            _buffer.Add(OpCodes.POP_DEFER);
+            
+            // duplicate that address, so that we can use it in the jump_zero
+            _buffer.Add(OpCodes.DUPE);
+            
+            // push the site of the end of the loop (fill this in later)
+            var replaceExitIndex = _buffer.Count;
+            AddPushInt(_buffer, int.MaxValue);
+            
+            // if zero, then jump to end of this loop
+            _buffer.Add(OpCodes.JUMP_ZERO);
+            
+            // if we did not jump, then we can jump to the defer site
+            //  use history, because the defer will RETURN here. 
+            _buffer.Add(OpCodes.JUMP_HISTORY);
+            
+            // jump back to start
+            AddPushInt(_buffer, loopStartAddress);
+            _buffer.Add(OpCodes.JUMP);
+            
+            // this is the end
+            var loopEndAddress = _buffer.Count;
+            
+            // discard the lagging 0 from the duped defer stack.
+            _buffer.Add(OpCodes.DISCARD_TYPED);
+            
+            // fix the end value
+            var exitAddrBytes = BitConverter.GetBytes(loopEndAddress);
+            for (var i = 0; i < exitAddrBytes.Length; i++)
+            {
+                _buffer[replaceExitIndex + 2 + i] = exitAddrBytes[i];
+            }
+        }
+        void CompilePopScope()
+        {
+            HandleDeferExit();
+            _buffer.Add(OpCodes.POP_SCOPE);
+        }
+
+        void CompilePushScope()
+        {
+            _buffer.Add(OpCodes.PUSH_SCOPE);
+        }
+        
+        void Compile(DeferStatement deferStatement)
+        {
+            // add some data that says we will jump to this location
+            var deferAddrIndex = _buffer.Count;
+            AddPushInt(_buffer, int.MaxValue);
+            _buffer.Add(OpCodes.PUSH_DEFER);
+            
+            // Jump over the actual deferred statement!
+            // push a temporary address that we will replace with the ending of this statement
+            var exitAddrIndex = _buffer.Count;
+            AddPushInt(_buffer, int.MaxValue);
+            _buffer.Add(OpCodes.JUMP);
+            
+            var deferAddrValue = _buffer.Count;
+            { // we are executing the defer at this point. 
+                // then compile all of the statements inside this label
+                foreach (var statement in deferStatement.statements)
+                {
+                    Compile(statement);
+                }
+
+                // return to the caller, so we can move to the next defer if it exists
+                _buffer.Add(OpCodes.RETURN);
+            }
+            
+            // this location is the place the defer should jump execution to. 
+            var exitAddr = _buffer.Count;
+            _buffer.Add(OpCodes.NOOP);
+            var exitAddrBytes = BitConverter.GetBytes(exitAddr);
+            for (var i = 0; i < exitAddrBytes.Length; i++)
+            {
+                _buffer[exitAddrIndex + 2 + i] = exitAddrBytes[i];
+            }
+            
+            // fix up the defer add
+            var deferAddrBytes = BitConverter.GetBytes(deferAddrValue);
+            for (var i = 0; i < deferAddrBytes.Length; i++)
+            {
+                _buffer[deferAddrIndex + 2 + i] = deferAddrBytes[i];
             }
         }
 
@@ -853,7 +962,7 @@ namespace FadeBasic.Virtual
             }
 
             // pop a scope
-            _buffer.Add(OpCodes.POP_SCOPE);
+            CompilePopScope();
             
             // and then jump home
             _buffer.Add(OpCodes.RETURN);
@@ -893,7 +1002,7 @@ namespace FadeBasic.Virtual
             _dbg?.AddFunction(ptr, functionStatement.nameToken);
 
             // push a new scope
-            _buffer.Add(OpCodes.PUSH_SCOPE);
+            CompilePushScope();
             
             // now, we need to pull values off the stack and put them into variable declarations...
             // foreach (var arg in functionStatement.parameters)
@@ -942,7 +1051,7 @@ namespace FadeBasic.Virtual
             
             // at the end of the function, we need to jump home
             // pop a scope
-            _buffer.Add(OpCodes.POP_SCOPE);
+            CompilePopScope();
             
             // and then jump home
             _buffer.Add(OpCodes.RETURN);
@@ -1465,7 +1574,7 @@ namespace FadeBasic.Virtual
             _buffer.Add(OpCodes.NOOP);
         }
 
-        private void Compile(ReturnStatement returnStatement)
+        private void Compile(ReturnStatement _)
         {
             _buffer.Add(OpCodes.RETURN);
         }
@@ -1477,6 +1586,7 @@ namespace FadeBasic.Virtual
 
         private void CompileEnd()
         {
+            HandleDeferExit();
             // jump to the end of the instruction pointer space, a hack?
             AddPushInt(_buffer, int.MaxValue);
             _buffer.Add(OpCodes.JUMP);

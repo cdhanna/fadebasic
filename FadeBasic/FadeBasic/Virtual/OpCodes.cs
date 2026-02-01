@@ -372,18 +372,19 @@ namespace FadeBasic.Virtual
         public const byte COPY_HEAP_MEM = 60;
 
         /// <summary>
-        /// pops the following data from the stack,
-        ///  - the index of the macro
-        ///  - the index of the tokenization block
-        ///  - the number of substitution expressions that must be eval'd
-        ///  - for each substitution, in order
-        ///    - the program-index for where to execute the value expression
-        ///    - the start-index into the string for where to replace the value
-        ///    - the end-index into the string for where to replace the value
-        ///
-        ///
-        /// When the VM finds a TOKENIZE opcode, it must have a token stream available. 
+        /// TODO: These docs are wrong- go read the vm
         /// </summary>
         public const byte TOKENIZE = 61;
+
+        /// <summary>
+        /// pop a value off the stack, and push it into the defer stack
+        /// </summary>
+        public const byte PUSH_DEFER = 62;
+
+        /// <summary>
+        /// pull a value off the defer stack, and push it into the main stack.
+        /// If the defer stack is empty, a 0 is used. 
+        /// </summary>
+        public const byte POP_DEFER = 63; 
     }
 }

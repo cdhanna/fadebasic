@@ -39,6 +39,8 @@ namespace FadeBasic.Virtual
         
         public int[] insIndexes;
         public byte[] flags;
+
+        public FastStack<int> deferredJumps;
         
         public VirtualScope(ulong initialCapacity)
         {
@@ -46,6 +48,7 @@ namespace FadeBasic.Virtual
             typeRegisters = new byte[initialCapacity];
             insIndexes = new int[initialCapacity];
             flags = new byte[initialCapacity];
+            deferredJumps = new FastStack<int>(4);
         }
     }
 
@@ -288,6 +291,7 @@ namespace FadeBasic.Virtual
 
                         case OpCodes.PUSH_SCOPE:
                             var newScope = new VirtualScope(internedData.maxRegisterAddress);
+                            scopeStack.buffer[scopeStack.ptr - 1].deferredJumps = scope.deferredJumps; // recommit scope memory.
                             scopeStack.Push(newScope);
                             scope = newScope;
                             break;
@@ -367,6 +371,21 @@ namespace FadeBasic.Virtual
                             {
                                 instructionIndex = insPtr;
                             }
+                            break;
+                        case OpCodes.POP_DEFER:
+                            int jumpSite = 0;
+                            if (scope.deferredJumps.Count > 0)
+                            {
+                                jumpSite = scope.deferredJumps.Pop();
+                            }
+                            stack.PushSpanAndType(new ReadOnlySpan<byte>(BitConverter.GetBytes(jumpSite)), TypeCodes.INT, TypeCodes.GetByteSize(TypeCodes.INT));
+                            break;
+                        case OpCodes.PUSH_DEFER:
+                            // read the place we should jump to when the scope is popped. 
+                            VmUtil.ReadAsInt(ref stack, out var a);
+
+                            scope.deferredJumps.Push(a);
+                            
                             break;
                         case OpCodes.JUMP_HISTORY:
                             // the next instruction is the instruction ptr

@@ -41,6 +41,45 @@ public class DeferTests
         program = compiler.Program;
     }
 
+
+    
+    
+    
+    [Test]
+    public void GosubInFunction()
+    {
+        var src = @"
+ghost:
+a = 1
+function test()
+
+    static print ""a""
+
+    gosub rest
+    static print ""c""
+	
+    exitfunction
+    rest:
+        static print ""b""
+        return 
+
+    endfunction
+        test()
+";
+        Setup(src, out var compiler, out var prog);
+
+        var vm = new VirtualMachine(prog);
+        vm.hostMethods = compiler.methodTable;
+        vm.Execute2(0);
+
+        // Expected output: b, c, a
+        Assert.That(TestCommands.staticPrintBuffer.Count, Is.EqualTo(3));
+        Assert.That(TestCommands.staticPrintBuffer[0], Is.EqualTo("a"));
+        Assert.That(TestCommands.staticPrintBuffer[1], Is.EqualTo("b"));
+        Assert.That(TestCommands.staticPrintBuffer[2], Is.EqualTo("c"));
+    }
+
+    
     [Test]
     public void Defer_SingleLine_InFunction()
     {
@@ -102,14 +141,71 @@ example2()
         vm.hostMethods = compiler.methodTable;
         vm.Execute2(0);
 
-        // Expected output: b, d, a, c (defers execute in order at end of scope)
+        // Expected output: b, d, c, a (defers execute in order LIFO)
         Assert.That(TestCommands.staticPrintBuffer.Count, Is.EqualTo(4));
         Assert.That(TestCommands.staticPrintBuffer[0], Is.EqualTo("b"));
         Assert.That(TestCommands.staticPrintBuffer[1], Is.EqualTo("d"));
-        Assert.That(TestCommands.staticPrintBuffer[2], Is.EqualTo("a"));
-        Assert.That(TestCommands.staticPrintBuffer[3], Is.EqualTo("c"));
+        Assert.That(TestCommands.staticPrintBuffer[2], Is.EqualTo("c"));
+        Assert.That(TestCommands.staticPrintBuffer[3], Is.EqualTo("a"));
     }
 
+    
+    [Test]
+    public void Defer_GlobalNested()
+    {
+        var src = @"
+    defer static print ""0""
+
+function example1()
+    defer static print ""1""
+    example2()
+endfunction
+
+function example2()
+    defer static print ""2""
+endfunction
+
+example1()
+";
+        Setup(src, out var compiler, out var prog);
+
+        var vm = new VirtualMachine(prog);
+        vm.hostMethods = compiler.methodTable;
+        vm.Execute2(0);
+
+        Assert.That(TestCommands.staticPrintBuffer.Count, Is.EqualTo(3));
+        Assert.That(TestCommands.staticPrintBuffer[0], Is.EqualTo("2"));
+        Assert.That(TestCommands.staticPrintBuffer[1], Is.EqualTo("1"));
+        Assert.That(TestCommands.staticPrintBuffer[2], Is.EqualTo("0"));
+    }
+
+    
+    [Test]
+    public void Defer_Function_Nested()
+    {
+        var src = @"
+function example1()
+    defer static print ""1""
+    example2()
+endfunction
+
+function example2()
+    defer static print ""2""
+endfunction
+
+example1()
+";
+        Setup(src, out var compiler, out var prog);
+
+        var vm = new VirtualMachine(prog);
+        vm.hostMethods = compiler.methodTable;
+        vm.Execute2(0);
+
+        Assert.That(TestCommands.staticPrintBuffer.Count, Is.EqualTo(2));
+        Assert.That(TestCommands.staticPrintBuffer[0], Is.EqualTo("2"));
+        Assert.That(TestCommands.staticPrintBuffer[1], Is.EqualTo("1"));
+    }
+    
     [Test]
     public void Defer_BlockSyntax()
     {
