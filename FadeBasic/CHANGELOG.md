@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- `defer` functionality 
+
 ### Fixed
 - `gosub` and `goto` work inside functions
 - memory ref-counts strings returned from commands 
