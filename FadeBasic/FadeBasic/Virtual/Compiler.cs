@@ -750,6 +750,9 @@ namespace FadeBasic.Virtual
             // keep track of the start of the loop by remembering this address
             var loopStartAddress = _buffer.Count;
             
+            // leave the return address on the stack to come back to.
+            AddPushInt(_buffer, loopStartAddress);
+            
             // pull the defer site
             _buffer.Add(OpCodes.POP_DEFER);
             
@@ -763,18 +766,16 @@ namespace FadeBasic.Virtual
             // if zero, then jump to end of this loop
             _buffer.Add(OpCodes.JUMP_ZERO);
             
-            // if we did not jump, then we can jump to the defer site
-            //  use history, because the defer will RETURN here. 
-            _buffer.Add(OpCodes.JUMP_HISTORY);
-            
-            // jump back to start
-            AddPushInt(_buffer, loopStartAddress);
+            // if we did not jump, then we can jump to the start of the loop
             _buffer.Add(OpCodes.JUMP);
+            
+            // NOTE: the defer statement itself is going to jump back to the start of the loop.
             
             // this is the end
             var loopEndAddress = _buffer.Count;
             
             // discard the lagging 0 from the duped defer stack.
+            _buffer.Add(OpCodes.DISCARD_TYPED);
             _buffer.Add(OpCodes.DISCARD_TYPED);
             
             // fix the end value
@@ -817,7 +818,9 @@ namespace FadeBasic.Virtual
                 }
 
                 // return to the caller, so we can move to the next defer if it exists
-                _buffer.Add(OpCodes.RETURN);
+                //  note: this is expecting to pull a value from the stack that was pushed
+                //        before this defer statement started executing. (HandleDeferExit)
+                _buffer.Add(OpCodes.JUMP);
             }
             
             // this location is the place the defer should jump execution to. 
