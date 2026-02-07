@@ -299,8 +299,8 @@ namespace FadeBasic
             var all = new List<Token>();
             var macroTokens = new List<Token>();
             commands ??= new CommandCollection();
-            var runtimeCommandNames = commands.Commands?.Where(x => x.usage.HasFlag(FadeBasicCommandUsage.Runtime)).Select(c => c.name).ToList() ?? new List<string>();
-            var runtimeCommandTree = CommandNameTree.Create(runtimeCommandNames);
+            // var runtimeCommandNames = commands.Commands?.Where(x => x.usage.HasFlag(FadeBasicCommandUsage.Runtime)).Select(c => c.name).ToList() ?? new List<string>();
+            var runtimeCommandTree = CommandNameTree.Create(commands.Commands);
             void AddToken(Token t)
             {
                 tokens.Add(t);
@@ -673,8 +673,10 @@ namespace FadeBasic
                 macroTokens = macroTokens
             };
 
-            HandleMacros2(lines, results, commands);
+            // add the runtime commands in. 
             HandleCommandNames(lines, results, runtimeCommandTree);
+
+            HandleMacros2(lines, results, commands);
             
             return results;
         }
@@ -752,6 +754,15 @@ namespace FadeBasic
                         lineNumber = tokens[i].lineNumber,
                         flags = tokens[i].flags,
                     };
+                    
+                    if (curr.usage.HasFlag(FadeBasicCommandUsage.Macro))
+                    {
+                        tokens[i].flags |= TokenFlags.IsMacroCommand;
+                    }
+                    if (curr.usage.HasFlag(FadeBasicCommandUsage.Runtime))
+                    {
+                        tokens[i].flags |= TokenFlags.IsRuntimeCommand;
+                    }
                     tokens.RemoveRange(i + 1, (j - i) - 1);
                 }
                 
@@ -762,6 +773,13 @@ namespace FadeBasic
         {
             var stream = new TokenStream(current.tokens);
 
+            // var macroCommandNames = commands.Commands.Where(c => c.usage.HasFlag(FadeBasicCommandUsage.Macro)).Select(c => c.name).ToList();
+            // var macroCommandTree = CommandNameTree.Create(macroCommandNames);
+            //
+            // modify the entire token stream to use macro command names... 
+            //  if any command names appear outside of a macro block, that is invalid. 
+            // HandleCommandNames(lines, current, macroCommandTree, FadeBasicCommandUsage.Macro);
+            
             TokenizeBlock ParseTokenizationBlock()
             {
                 // assumption is that we are on a start tokenize
@@ -1135,19 +1153,7 @@ namespace FadeBasic
                 
                 compileTokens.AddRange(tokenSlice);
             }
-            // if (errorCount > 0)
-            // {
-            //     // remove all macro blocks so errors are not double reported. 
-            //     for (var i = macroBlocks.Count - 1; i >= 0; i--)
-            //     {
-            //         RemoveMacro(i);
-            //     }
-            //     return;
-            // }
-            // TODO: these endstatement tokens are the bane of my existence. 
-            var macroCommandNames = commands.Commands.Where(c => c.usage.HasFlag(FadeBasicCommandUsage.Macro)).Select(c => c.name).ToList();
-            var macroCommandTree = CommandNameTree.Create(macroCommandNames);
-            HandleCommandNames(lines, compileTokens, macroCommandTree);
+            
             var compileStream = new TokenStream(compileTokens);
             // TODO: need to re-handle this stream with macro-level commands. 
             var parser = new Parser(compileStream, commands, FadeBasicCommandUsage.Macro);
@@ -1181,42 +1187,33 @@ namespace FadeBasic
             };
             vm.Execute2(0);
 
-            // TODO: the issue is that the compileTokens do not
-            //  share an index-space with the original tokens. 
-            //var tokenReplacementIndex = 0;
-            for (var i = 0; i < vm.tokenReplacements.Count; i++)
+            
             {
-                var repl = vm.tokenReplacements[i];
-                for (var m = macroBlocks.Count - 1; m >= 0; m--)
+                // the compileTokens do not
+                //  share an index-space with the original tokens. 
+                for (var i = 0; i < vm.tokenReplacements.Count; i++)
                 {
-                    var index = macroIndexToCompileTokenIndexStart[m];
-                    if (repl.tokenStartIndex >= index)
+                    var repl = vm.tokenReplacements[i];
+                    for (var m = macroBlocks.Count - 1; m >= 0; m--)
                     {
-                        var diff = (macroBlocks[m].startPadding + 1) + macroBlocks[m].startTokenIndex - index;
-                        repl.tokenStartIndex += diff;
-                        repl.tokenEndIndex += diff;
-                            //var localIndex = repl.tokenBlockIndex - tokenReplacementIndex;
-                        //var t = macroBlocks[m].tokenizeBlocks[localIndex];
-                        
-                        //repl.endPadding += t.isShortcut ? 0 : 2;
-                        foreach (var sub in repl.substitutionReplacements)
+                        var index = macroIndexToCompileTokenIndexStart[m];
+                        if (repl.tokenStartIndex >= index)
                         {
-                            sub.tokenStartIndex += diff;
-                            sub.tokenEndIndex += diff;
-                        }
-                        break;
-                    }
+                            var diff = (macroBlocks[m].startPadding + 1) + macroBlocks[m].startTokenIndex - index;
+                            repl.tokenStartIndex += diff;
+                            repl.tokenEndIndex += diff;
+                            foreach (var sub in repl.substitutionReplacements)
+                            {
+                                sub.tokenStartIndex += diff;
+                                sub.tokenEndIndex += diff;
+                            }
 
-                    //tokenReplacementIndex += macroBlocks[m].tokenizeBlocks.Count;
+                            break;
+                        }
+
+                    }
                 }
-               
             }
-            // var replIndex = 0;
-            // for (var i = 0; i < macroBlocks.Count; i++)
-            // {
-            //     var compileTokenIndex = macroIndexToCompileTokenIndexStart[i];
-            //     
-            // }
             
             /*
              * removing all of the macro blocks means the token coordinates in the vm will not match
@@ -1408,16 +1405,17 @@ namespace FadeBasic
     public class CommandNameTree
     {
         public bool isValidCommand;
+        public FadeBasicCommandUsage usage;
         public Dictionary<string, CommandNameTree> sub = new Dictionary<string, CommandNameTree>();
         
         public CommandNameTree(){}
 
-        public static CommandNameTree Create(List<string> commands)
+        public static CommandNameTree Create(List<CommandInfo> commands)
         {
             var root = new CommandNameTree();
             foreach (var command in commands)
             {
-                var parts = command.Split(' ');
+                var parts = command.name.Split(' ');
                 var curr = root;
                 foreach (var part in parts)
                 {
@@ -1430,6 +1428,7 @@ namespace FadeBasic
                 }
 
                 curr.isValidCommand = true;
+                curr.usage |= command.usage;
             }
 
             return root;
@@ -1523,7 +1522,17 @@ namespace FadeBasic
         /// </summary>
         IsAdjacentToRightSib = 1 << 3,
         
-        // Fourth = 1 << 3
+        // TODO: flag the tokens with their usage, so the correct error message can be parsed. 
+        
+        /// <summary>
+        /// true when the token was inserted due to a command that had the <see cref="FadeBasicCommandUsage.Macro"/>
+        /// </summary>
+        IsMacroCommand = 1 << 4,
+        
+        /// <summary>
+        /// true when the token was inserted due to a command that had the <see cref="FadeBasicCommandUsage.Runtime"/>
+        /// </summary>
+        IsRuntimeCommand = 1 << 5,
     }
     
     [Serializable]

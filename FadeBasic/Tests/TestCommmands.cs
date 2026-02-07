@@ -21,6 +21,11 @@ namespace Tests
         {
             return 42;
         }
+        [FadeBasicCommand("macroReturnTest", FadeBasicCommandUsage.Macro)]
+        public static int Example2()
+        {
+            return 42;
+        }
         
         [FadeBasicCommand("rnd")]
         public static int Random(int max=10)

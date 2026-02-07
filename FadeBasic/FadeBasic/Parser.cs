@@ -41,6 +41,7 @@ namespace FadeBasic
         public string text;
         public TypeInfo typeInfo;
         public IAstNode source;
+        public TransitiveTypeFlags transitiveTypeFlags;
 
         public Symbol()
         {
@@ -192,6 +193,8 @@ namespace FadeBasic
             var lht = expr.lhs.ParsedType;
             var rht = expr.rhs.ParsedType;
 
+            expr.ApplyTransitiveTypeFlags(expr.lhs);
+            expr.ApplyTransitiveTypeFlags(expr.rhs);
        
             if (lht.type == rht.type && lht.structName == rht.structName)
             {
@@ -426,6 +429,7 @@ namespace FadeBasic
                         }
                         
                         EnforceTypeAssignment(variableRef, assignment.expression.ParsedType, existingSymbol.typeInfo, false, out _);
+                        existingSymbol.transitiveTypeFlags = assignment.expression.TransitiveFlags; // RESET the transitive flags on assignemtn
                         variableRef.DeclaredFromSymbol = existingSymbol;
                         
                         if (existingSymbol.typeInfo.IsArray && assignment.expression is DefaultValueExpression)
@@ -461,7 +465,8 @@ namespace FadeBasic
                         {
                             text = variableRef.variableName,
                             typeInfo = foundType,
-                            source = assignment
+                            source = assignment,
+                            transitiveTypeFlags = variableRef.TransitiveFlags | assignment.expression.TransitiveFlags
                         };
                         locals.Add(variableRef.variableName, symbol);
 
@@ -497,9 +502,11 @@ namespace FadeBasic
                             type = existingArrSymbol.typeInfo.type,
                         };
 
+                        existingArrSymbol.transitiveTypeFlags |= assignment.expression.TransitiveFlags;
                         foreach (var arg in indexRef.rankExpressions)
                         {
                             arg.EnsureVariablesAreDefined(this, ctx);
+                            existingArrSymbol.transitiveTypeFlags |= arg.TransitiveFlags;
                             if (arg.ParsedType.type != VariableType.Integer)
                             {
                                 arg.Errors.Add(new ParseError(arg, ErrorCodes.ArrayRankMustBeInteger));
@@ -521,10 +528,15 @@ namespace FadeBasic
 
                     break;
                 case DeReference deRef: // *x = 3
+                    deRef.TransitiveFlags |= assignment.expression.TransitiveFlags;
+                    
                     // it isn't possible to de-ref a vairable without declaring it first- 
                     //  which means no new scopes need to be added.
                     break;
                 case StructFieldReference structRef: // a.x.y = 1
+                    structRef.left.TransitiveFlags |= assignment.expression.TransitiveFlags;
+                    structRef.right.TransitiveFlags |= assignment.expression.TransitiveFlags;
+                    structRef.TransitiveFlags |= assignment.expression.TransitiveFlags;
                     // it isn't possible to assign to a struct field without declaring it first- 
                     //  which means no new scopes need to be added.
                     // but on the other hand, we do need to validate that the variable exists!
@@ -802,7 +814,10 @@ namespace FadeBasic
                 {
                     if (argExpr is VariableRefNode variableRefNode)
                     {
-                        TryAddVariable(variableRefNode, out _);
+                        TryAddVariable(variableRefNode, out var refSymbol);
+                        
+                        // all ref arguments are always haunted.
+                        refSymbol.transitiveTypeFlags |= TransitiveTypeFlags.Haunted;
                     }
                 }
             }
@@ -829,7 +844,7 @@ namespace FadeBasic
         }
         public void SetFunctionType(FunctionStatement function, TypeInfo type, IAstNode srcNode, Token token=null)
         {
-           
+            function.TransitiveFlags |= srcNode.TransitiveFlags;
             
             if (!functionReturnTypeTable.TryGetValue(function.name, out var types))
             {
@@ -896,9 +911,12 @@ namespace FadeBasic
     {
         public bool ignoreChecks = false;
 
+        // public bool haunt = false;
+
         public static readonly ParseOptions Default = new ParseOptions
         {
-            ignoreChecks = false
+            ignoreChecks = false,
+            // haunt = false,
         };
     }
     
@@ -2012,9 +2030,27 @@ namespace FadeBasic
              * 
              * 
              */
+            errors = new List<ParseError>();
+            
             if (!_commands.TryGetCommandDescriptor(_commandUsage, token, out var possibleCommands))
             {
-                throw new Exception("Parser exception! unknown command " + token.caseInsensitiveRaw);
+                var otherUsage = _commandUsage switch
+                {
+                    FadeBasicCommandUsage.Runtime => FadeBasicCommandUsage.Macro,
+                    FadeBasicCommandUsage.Macro => FadeBasicCommandUsage.Runtime,
+                    _ => throw new Exception("cannot handle this usage type.")
+                };
+                if (_commands.TryGetCommandDescriptor(otherUsage, token, out possibleCommands))
+                {
+                    var code = otherUsage == FadeBasicCommandUsage.Macro
+                        ? ErrorCodes.CommandNotInRuntime
+                        : ErrorCodes.CommandNotInMacro;
+                    errors.Add(new ParseError(token, code));
+                }
+                else
+                {
+                    throw new Exception("Parser exception! unknown command " + token.caseInsensitiveRaw);
+                }
             }
 
             // var possibleArgs = new List<IExpressionNode>[possibleCommands.Count];
@@ -2022,7 +2058,6 @@ namespace FadeBasic
             var found = false;
             commandArgs = new List<IExpressionNode>();
             argMap = new List<int>();
-            errors = new List<ParseError>();
             int foundJump = -1;
             for (var i = 0 ; i < possibleCommands.Count; i ++)
             {

@@ -227,14 +227,26 @@ namespace FadeBasic.Ast.Visitors
                 }
             }
         }
-        
-        
-        static void CheckStatements(this List<IStatementNode> statements, Scope scope, EnsureTypeContext ctx)
+
+        static void CheckStatements(this List<IStatementNode> statements, Scope scope, EnsureTypeContext ctx, IAstNode[] inheritTransitiveTypeFlagsFrom=null)
         {
             // foreach (var statement in statements)
             for (var i = 0 ; i < statements.Count; i ++)
             {
                 var statement = statements[i];
+
+                if (inheritTransitiveTypeFlagsFrom != null)
+                {
+                    statement.Visit(v =>
+                    {
+                        foreach (var x in inheritTransitiveTypeFlagsFrom)
+                        {
+                            if (x == null) continue;
+                            v.ApplyTransitiveTypeFlags(x);
+                        }
+                    });
+                }
+                
                 switch (statement)
                 {
                     case MacroTokenizeStatement tokenizeStatement:
@@ -286,15 +298,22 @@ namespace FadeBasic.Ast.Visitors
 
                         // and THEN register LHS of the assignemnt (otherwise you can get self-referential stuff)
                         scope.AddAssignment(assignment, ctx, out var implicitDecl);
-                        
+
                         if (implicitDecl != null)
                         {
                             statements.Insert(i, implicitDecl);
                         }
+                        
+                        // an assignment statement RESETS the transitive nature. 
+                        
+                        assignment.variable.TransitiveFlags = assignment.expression.TransitiveFlags;
                         switch (assignment.variable)
                         {
                             case StructFieldReference fieldRef:
-                                fieldRef.EnsureStructField(scope, ctx);
+                                
+                                
+                                
+                                fieldRef.EnsureStructField(scope, ctx, assignment: true);
                                 break;
                             case ArrayIndexReference indexRef:
                                 indexRef.EnsureArrayReferenceIsValid(scope, ctx);
@@ -338,10 +357,10 @@ namespace FadeBasic.Ast.Visitors
                     case SwitchStatement switchStatement:
                         switchStatement.expression.EnsureVariablesAreDefined(scope, ctx);
                         foreach (var caseGroup in switchStatement.cases )
-                            CheckStatements(caseGroup.statements, scope, ctx);
+                            CheckStatements(caseGroup.statements, scope, ctx, inheritTransitiveTypeFlagsFrom: new IAstNode[]{switchStatement.expression});
                         if (switchStatement.defaultCase != null)
                         {
-                            CheckStatements(switchStatement.defaultCase.statements, scope, ctx);
+                            CheckStatements(switchStatement.defaultCase.statements, scope, ctx, new IAstNode[]{switchStatement.expression});
                         }
                         break;
                     case ForStatement forStatement:
@@ -352,6 +371,7 @@ namespace FadeBasic.Ast.Visitors
                             {
                             }
                             forVariable.ParsedType = existingSymbol.typeInfo;
+                            // TODO: remove any existing transitive properties?? 
                         }
                         else
                         {
@@ -369,7 +389,10 @@ namespace FadeBasic.Ast.Visitors
                         }
                         
                         scope.BeginLoop();
-                        forStatement.statements.CheckStatements(scope, ctx);
+                        forStatement.statements.CheckStatements(scope, ctx, inheritTransitiveTypeFlagsFrom: new IAstNode[]
+                        {
+                            forStatement.startValueExpression, forStatement.endValueExpression, forStatement.stepValueExpression
+                        });
                         scope.EndLoop();
                         
                         break;
@@ -377,8 +400,8 @@ namespace FadeBasic.Ast.Visitors
                         ifStatement.condition.EnsureVariablesAreDefined(scope, ctx);
                         scope.EnforceTypeAssignment(ifStatement.condition, ifStatement.condition.ParsedType, TypeInfo.Int, false, out _);
 
-                        ifStatement.positiveStatements?.CheckStatements(scope, ctx);
-                        ifStatement.negativeStatements?.CheckStatements(scope, ctx);
+                        ifStatement.positiveStatements?.CheckStatements(scope, ctx, inheritTransitiveTypeFlagsFrom: new IAstNode[]{ifStatement.condition});
+                        ifStatement.negativeStatements?.CheckStatements(scope, ctx, inheritTransitiveTypeFlagsFrom: new IAstNode[]{ifStatement.condition});
                         break;
                     case DoLoopStatement doStatement:
                         scope.BeginLoop();
@@ -391,16 +414,17 @@ namespace FadeBasic.Ast.Visitors
                         scope.EnforceTypeAssignment(whileStatement.condition, whileStatement.condition.ParsedType, TypeInfo.Int, false, out _);
 
                         scope.BeginLoop();
-                        whileStatement.statements.CheckStatements(scope, ctx);
+                        whileStatement.statements.CheckStatements(scope, ctx, inheritTransitiveTypeFlagsFrom: new IAstNode[]{whileStatement.condition});
                         scope.EndLoop();
                         break;
                     case RepeatUntilStatement repeatStatement:
-                        scope.BeginLoop();
-                        repeatStatement.statements.CheckStatements(scope, ctx);
-                        scope.EndLoop();
                         repeatStatement.condition.EnsureVariablesAreDefined(scope, ctx);
                         scope.EnforceTypeAssignment(repeatStatement.condition, repeatStatement.condition.ParsedType, TypeInfo.Int, false, out _);
-
+                       
+                        scope.BeginLoop();
+                        repeatStatement.statements.CheckStatements(scope, ctx, inheritTransitiveTypeFlagsFrom: new IAstNode[]{repeatStatement.condition});
+                        scope.EndLoop();
+                       
                         break;
                     case GoSubStatement goSub:
                         EnsureLabel(scope, goSub.label, goSub);
@@ -467,7 +491,8 @@ namespace FadeBasic.Ast.Visitors
         }
         static void EnsureStructRefRight(StructFieldReference fieldRef, Symbol symbol, Scope scope, EnsureTypeContext ctx)
         {
-
+            // symbol.transitiveTypeFlags |= fieldRef.TransitiveFlags;
+            // symbol.source.TransitiveFlags |= fieldRef.TransitiveFlags;
             // now that we have a symbol for the left side...
             if (symbol.typeInfo.type != VariableType.Struct)
             {
@@ -513,7 +538,12 @@ namespace FadeBasic.Ast.Visitors
 
         }
 
-        static void EnsureStructField(this StructFieldReference fieldRef, Scope scope, EnsureTypeContext ctx)
+        public static void ApplyTransitiveTypeFlags(this IAstNode node, IAstNode other)
+        {
+            node.TransitiveFlags |= other.TransitiveFlags;
+        }
+
+        static void EnsureStructField(this StructFieldReference fieldRef, Scope scope, EnsureTypeContext ctx, bool assignment=false)
         {
             // the left most thing needs to exist in the scope, 
             switch (fieldRef.left)
@@ -561,6 +591,20 @@ namespace FadeBasic.Ast.Visitors
                         }
                         break; // no hook into the symbol table, the rest of this expression is unknown...
                     }
+
+                    if (assignment)
+                    {
+                        // fieldRef.TransitiveFlags = symbol.transitiveTypeFlags;
+                        symbol.transitiveTypeFlags |= fieldRef.TransitiveFlags;
+                    }
+                    else
+                    {
+                        fieldRef.TransitiveFlags |= symbol.transitiveTypeFlags;
+                        // symbol.transitiveTypeFlags |= fieldRef.TransitiveFlags;
+                    }
+                    // fieldRef.TransitiveFlags |= symbol.transitiveTypeFlags;
+                    // symbol.source.TransitiveFlags |= fieldRef.TransitiveFlags;
+                    // fieldRef.TransitiveFlags = symbol.transitiveTypeFlags;
                     EnsureStructRefRight(fieldRef, symbol, scope, ctx);
                     
                     // we need to know what the left side _is_ in order to create a scope for the right side.
@@ -618,13 +662,23 @@ namespace FadeBasic.Ast.Visitors
                 case UnaryOperationExpression unaryOpExpr:
                     unaryOpExpr.rhs.EnsureVariablesAreDefined(scope, ctx);
                     unaryOpExpr.ParsedType = unaryOpExpr.rhs.ParsedType;
+                    unaryOpExpr.ApplyTransitiveTypeFlags(unaryOpExpr.rhs);
                     break;
                 case StructFieldReference structRef:
                     structRef.EnsureStructField(scope, ctx);
+                    structRef.ApplyTransitiveTypeFlags(structRef.left);
+                    structRef.ApplyTransitiveTypeFlags(structRef.right);
                     break;
                 case CommandExpression commandExpr: // commandExprs have the ability to declare variables!
                     scope.AddCommand(commandExpr, ctx);
 
+                    // all command return values are haunted, because we cannot know the value without running the program. 
+                    commandExpr.TransitiveFlags |= TransitiveTypeFlags.Haunted;
+                    // foreach (var arg in commandExpr.args)
+                    // {
+                    //     commandExpr.ApplyTransitiveTypeFlags(arg);
+                    // }
+                    
                     if (commandExpr.command.returnType != TypeCodes.VOID && VmUtil.TryGetVariableType(commandExpr.command.returnType, out var tc))
                     {
                         commandExpr.ParsedType = TypeInfo.FromVariableType(tc);
@@ -632,12 +686,14 @@ namespace FadeBasic.Ast.Visitors
                    
                     break;
                 case ArrayIndexReference arrayRef:
+                    
+                    
                     if (!scope.TryGetSymbol(arrayRef.variableName, out var arraySymbol) && arrayRef.variableName != "_")
                     {
                         if (scope.functionTable.TryGetValue(arrayRef.variableName, out var function))
                         {
                             TypeInfo functionType = default;
-
+                            arrayRef.TransitiveFlags |= function.TransitiveFlags;
                             if (ctx.functionHistory.Contains(function.name))
                             {
                                 // we've already seen this before.
@@ -679,6 +735,7 @@ namespace FadeBasic.Ast.Visitors
                                 arrayRef.ParsedType = functionType;
                                 arrayRef.DeclaredFromSymbol = arraySymbol;
                             
+                                arrayRef.TransitiveFlags |= function.TransitiveFlags;
 
 
                                 // ah, this is a function!
@@ -716,6 +773,7 @@ namespace FadeBasic.Ast.Visitors
                                     }
 
 
+                                    arrayRef.TransitiveFlags |= argExr.TransitiveFlags;
                                     // var _ = GetFunctionTypeInfo(function, scope);
                                     scope.AddDelayedTypeCheck(argExr, argExr, parameter);
                                     // scope.EnforceTypeAssignment(argExr, argExr.ParsedType, parameter.ParsedType, false,
@@ -736,9 +794,10 @@ namespace FadeBasic.Ast.Visitors
                         }
                     }
 
-                    arrayRef.DeclaredFromSymbol = arraySymbol;
                     if (arraySymbol != null)
                     {
+                        arrayRef.DeclaredFromSymbol = arraySymbol;
+                        arrayRef.TransitiveFlags |= arraySymbol.transitiveTypeFlags;
                         if (arraySymbol.typeInfo.IsArray && arrayRef.rankExpressions.Count != arraySymbol.typeInfo.rank)
                         {
                             if (arrayRef.Errors.All(x => x.errorCode.code != ErrorCodes.VariableIndexMissingCloseParen.code))
@@ -756,6 +815,7 @@ namespace FadeBasic.Ast.Visitors
                     foreach (var rankExpr in arrayRef.rankExpressions)
                     {
                         rankExpr.EnsureVariablesAreDefined(scope, ctx);
+                        arrayRef.TransitiveFlags |= rankExpr.TransitiveFlags;
                         if (rankExpr.ParsedType.type != VariableType.Integer)
                         {
                             rankExpr.Errors.Add(new ParseError(rankExpr, ErrorCodes.ArrayRankMustBeInteger));

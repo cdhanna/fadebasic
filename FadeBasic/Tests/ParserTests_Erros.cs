@@ -2949,6 +2949,34 @@ dim n(3)
     
     
     [Test]
+    public void ParseError_Macro_CommandAppearsOutsideOfMacro()
+    {
+        var input = @"
+x = macro return test()
+";
+        var parser = MakeParser(input);
+        var prog = parser.ParseProgram();
+
+        prog.AssertParseErrors(1, out var errors);
+        Assert.That(errors[0].Display, Is.EqualTo($"[1:4] - {ErrorCodes.CommandNotInRuntime}"));
+    }
+    
+    [Test]
+    public void ParseError_Macro_CommandAppearsInsideOfMacro()
+    {
+        var input = @"
+#macro
+x = screen width()
+#endmacro
+";
+        var parser = MakeParser(input);
+        var prog = parser.ParseProgram();
+
+        prog.AssertParseErrors(1, out var errors);
+        Assert.That(errors[0].Display, Is.EqualTo($"[2:4] - {ErrorCodes.CommandNotInMacro}"));
+    }
+    
+    [Test]
     public void ParseError_Macro_Subst_InvalidExpr()
     {
         var input = @"

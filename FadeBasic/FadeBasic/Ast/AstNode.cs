@@ -9,10 +9,23 @@ namespace FadeBasic.Ast
         Token StartToken { get; }
         Token EndToken { get; }
         TypeInfo ParsedType { get; }
-
+        TransitiveTypeFlags TransitiveFlags { get; set; }
         Symbol DeclaredFromSymbol { get; }
     }
 
+    [Flags]
+    public enum TransitiveTypeFlags
+    {
+        None = 0,
+        
+        // a haunted variable has an unknown value
+        //  and is treated as 0 during execution.
+        //  a haunted variable cannot be used to generate tokens
+        Haunted = 1 << 0, // 1
+        // 1 << 1 // 2
+        // 1 << 2 // 4
+    }
+    
     public struct TypeInfo
     {
         public bool unset;
@@ -44,7 +57,6 @@ namespace FadeBasic.Ast
             return true;
         }
         
-        
         public static readonly TypeInfo Unset = new TypeInfo { type = VariableType.Void, unset = true};
         public static readonly TypeInfo Void = new TypeInfo { type = VariableType.Void };
         public static readonly TypeInfo Int = new TypeInfo { type = VariableType.Integer };
@@ -65,11 +77,13 @@ namespace FadeBasic.Ast
         public Symbol DeclaredFromSymbol { get; set; }
         
         public TypeInfo ParsedType { get; set; } = TypeInfo.Unset;
+        public TransitiveTypeFlags TransitiveFlags { get; set; } = TransitiveTypeFlags.None;
 
         public void ApplyTypeFromSymbol(Symbol symbol)
         {
             if (symbol == null) return;
             ParsedType = symbol.typeInfo;
+            TransitiveFlags |= symbol.transitiveTypeFlags;
         }
         
         protected AstNode()

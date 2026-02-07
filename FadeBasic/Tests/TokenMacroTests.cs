@@ -753,6 +753,24 @@ x =
 #endmacro
 1
 ")]
+    [TestCase("function call parse bug (multi token commands)",@"
+a = 1
+", 
+        @"
+#macro
+    x = macro return test()
+    # a = 1
+#endmacro
+")]
+    [TestCase("function call parse bug (single token commands)",@"
+a = 1
+", 
+        @"
+#macro
+    x = macroReturnTest()
+    # a = 1
+#endmacro
+")]
     public void Macro_TokenComparison(string explanation, string a, string b)
     {
         var lexer = new Lexer();
@@ -843,6 +861,25 @@ a = [myImage]
         var code = prog.ToString();
         
         Assert.That(code, Is.EqualTo("((= (ref a),(12)))"));
+    }
+    
+    
+    [Test]
+    public void Macro_Command_2_ParseIssue()
+    {
+        var input = @"
+
+#macro
+    x = macro return test()
+    # a = 1
+#endmacro
+";
+        var parser = BuildParser(input, out _);
+        var prog = parser.ParseProgram();
+        prog.AssertNoParseErrors();
+        var code = prog.ToString();
+        
+        Assert.That(code, Is.EqualTo("((= (ref a),(1)))"));
     }
     
     [Test]

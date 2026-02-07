@@ -208,6 +208,8 @@ namespace FadeBasic
         public static readonly ErrorCode SubstitutionRequiresExpression = "[0160] Substitutions needs inner expression";
         public static readonly ErrorCode SubstitutionNotAllowedHere = "[0161] Substitutions not allowed here";
         public static readonly ErrorCode DeferStatementMissingEndDefer = "[0162] Defer statement is missing a closing EndDefer clause";
+        public static readonly ErrorCode CommandNotInRuntime = "[0163] This command is only available inside a macro";
+        public static readonly ErrorCode CommandNotInMacro = "[0163] This command is only available outside of a macro";
 
         // 200 series represents post-parse issues
         public static readonly ErrorCode InvalidReference = "[0200] Invalid reference";
