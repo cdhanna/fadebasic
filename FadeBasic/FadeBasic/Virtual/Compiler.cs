@@ -889,6 +889,16 @@ namespace FadeBasic.Virtual
                 AddPushInt(_buffer, tokenizeStatement.substitutions[i].substitutionIndex);
                 AddPushInt(_buffer, tokenizeStatement.substitutions[i].tokenStartIndex);
                 AddPushInt(_buffer, tokenizeStatement.substitutions[i].tokenEndIndex);
+                
+                // push a number saying if the expression should be stringified
+                AddPushInt(_buffer, (tokenizeStatement.substitutions[i].isStringify 
+                    ? 1 
+                    : 0));
+                
+                // push a number saying if the expression was using a haunted variable or not. 
+                AddPushInt(_buffer, (tokenizeStatement.substitutions[i].innerExpression.TransitiveFlags.HasFlag(TransitiveTypeFlags.Haunted) 
+                    ? 1 
+                    : 0));
             }
             
             // by compiling in the string, it will get interned

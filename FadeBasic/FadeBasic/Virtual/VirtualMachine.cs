@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Runtime.CompilerServices;
 using System.Text;
+using FadeBasic.Ast;
 using FadeBasic.Json;
 
 namespace FadeBasic.Virtual
@@ -93,6 +94,9 @@ namespace FadeBasic.Virtual
     {
         public int tokenIndex;
         public int tokenStartIndex, tokenEndIndex;
+        public byte typeCode;
+        public bool isStringify;
+        public TransitiveTypeFlags transitiveTypeFlags;
         public object raw;
     }
     
@@ -817,10 +821,20 @@ namespace FadeBasic.Virtual
                                 var substitution = new TokenSubstitutionReplacement();
                                 
                                 // for each substitution, read where in the final string it will go
+                                // var wasHaunted = stack.Pop();
+                                VmUtil.ReadAsInt(ref stack, out a);
+                                substitution.transitiveTypeFlags = (TransitiveTypeFlags)a;
+                                
+                                // check if the substitution should be stringified. 
+                                VmUtil.ReadAsInt(ref stack, out a);
+                                substitution.isStringify = a > 0;
+                                
                                 VmUtil.ReadAsInt(ref stack, out substitution.tokenEndIndex);
                                 VmUtil.ReadAsInt(ref stack, out substitution.tokenStartIndex);
                                 VmUtil.ReadAsInt(ref stack, out substitution.tokenIndex);
                                 
+                                // peek the type code to stick into the replacement...
+                                substitution.typeCode = stack.Peek(); 
                                 // then read the actual expression 
                                 VmUtil.ReadValueAny(this, null, out substitution.raw, out var valState, out var valAddr);
 

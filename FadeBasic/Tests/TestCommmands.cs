@@ -140,6 +140,7 @@ namespace Tests
             return a + b;
         }
         
+        
         //
         [FadeBasicCommand("screen width")]
         public static int ScreenWidth()
@@ -329,7 +330,7 @@ namespace Tests
             throw new NotImplementedException("get the working directory");
         }
         
-        [FadeBasicCommand("str$")]
+        [FadeBasicCommand("str$", FadeBasicCommandUsage.Both)]
         public static string Str(object x)
         {
             return x?.ToString() ?? "";

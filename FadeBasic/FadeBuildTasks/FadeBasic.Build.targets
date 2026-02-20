@@ -18,6 +18,7 @@
 
     <Target Name="GenerateFadeBasic" BeforeTargets="CoreCompile" Inputs="@(FadeSource);@(Commands);@(ReferencePath)" Outputs="$(FadeGeneratedLaunchFile)">
         <FadeProjectTask 
+                OutputPath="$(TargetDir)"
                 GenerateDebugData="$(FadeBasicDebug)"
                 GeneratedClassName="$(FadeGeneratedLaunchType)" 
                 SourceFiles="@(FadeSource)"

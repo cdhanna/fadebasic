@@ -141,7 +141,7 @@ namespace FadeBasic
         public TokenStream stream;
         public List<ParseError> tokenErrors;
         public List<Token> macroTokens = new List<Token>();
-
+        public ProgramNode macroProgram;
         public LexerResults()
         {
             
@@ -150,7 +150,7 @@ namespace FadeBasic
 
     public class Lexer
     {
-        private static Lexem LexemString = new Lexem(LexemType.LiteralString, new Regex("^\""));
+        private static Lexem LexemString = new Lexem(LexemType.LiteralString, new Regex("^\""), LexemFlags.MacroConcatable);
         private static Lexem LexemConstant = new Lexem(LexemType.Constant);
         // private static Lexem LexemConstantBegin = new Lexem(LexemType.Constant);
         // private static Lexem LexemConstant = new Lexem(LexemType.Constant);
@@ -772,7 +772,6 @@ namespace FadeBasic
         void HandleMacros2(string[] lines, LexerResults current, CommandCollection commands)
         {
             var stream = new TokenStream(current.tokens);
-
             // var macroCommandNames = commands.Commands.Where(c => c.usage.HasFlag(FadeBasicCommandUsage.Macro)).Select(c => c.name).ToList();
             // var macroCommandTree = CommandNameTree.Create(macroCommandNames);
             //
@@ -1158,8 +1157,9 @@ namespace FadeBasic
             // TODO: need to re-handle this stream with macro-level commands. 
             var parser = new Parser(compileStream, commands, FadeBasicCommandUsage.Macro);
             
-            var program = parser.ParseProgram();
-            var macroErrors = program.GetAllErrors();
+            var macroProgram = parser.ParseProgram();
+            current.macroProgram = macroProgram;
+            var macroErrors = macroProgram.GetAllErrors();
             
             // TODO: adjust the position of the errors so they match the original text. 
             current.tokenErrors.AddRange(macroErrors);
@@ -1178,7 +1178,7 @@ namespace FadeBasic
                 return;
             }
             var compiler = new Compiler(commands);
-            compiler.Compile(program);
+            compiler.Compile(macroProgram);
 
             var vm = new VirtualMachine(compiler.Program)
             {
@@ -1232,8 +1232,14 @@ namespace FadeBasic
 
             Token Concat(Token left, Token right)
             {
-                var res = TokenizeWithErrors(left.raw + right.raw, commands);
+                
+                var combined = left.raw + right.raw;
+                
+                var res = TokenizeWithErrors(combined, commands);
+                
                 var token = res.tokens[0];
+                token.flags |= left.flags;
+                token.flags |= right.flags;
                 token.charNumber = left.charNumber;
                 token.lineNumber = left.lineNumber;
                 return token;
@@ -1350,21 +1356,25 @@ namespace FadeBasic
                         // oh oh oh , this is the substitution itself! which means we are not inserting the raw token, we are using the final value. 
                         substIndex += 1;
                         string text = null;
-                        switch (subst.raw)
+                        if (subst.isStringify)
                         {
-                            // TODO: string handling breaks variableGeneral concat
-                            // case string str:
-                            //     text = "\"" + str + "\"";
-                            //     break;
-                            default:
-                                text = subst.raw.ToString();
-                                break;
+                            text = "\"" + subst.raw.ToString() + "\"";
                         }
+                        else
+                        {
+                            text = subst.raw.ToString();
+                        }
+                        
                         var tokenResults = TokenizeWithErrors(text, commands);
                          
                        // for (var n = tokenResults.tokens.Count - 1; n >= 0; n--)
                         {
                             var fakeToken = tokenResults.tokens[0];
+                            if (subst.transitiveTypeFlags.HasFlag(TransitiveTypeFlags.Haunted))
+                            {
+                                fakeToken.flags |= TokenFlags.IsHauntedGenerated;
+                            }
+                            
                             fakeToken.flags |= TokenFlags.IsCompileTime;
                             // this token needs to adopt the position of the substitution
 
@@ -1533,6 +1543,11 @@ namespace FadeBasic
         /// true when the token was inserted due to a command that had the <see cref="FadeBasicCommandUsage.Runtime"/>
         /// </summary>
         IsRuntimeCommand = 1 << 5,
+        
+        /// <summary>
+        /// true when the token was generated from a substitution, where the substitution included haunted variables. 
+        /// </summary>
+        IsHauntedGenerated = 1 << 6,
     }
     
     [Serializable]

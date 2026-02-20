@@ -110,6 +110,7 @@ namespace FadeBasic.Ast
         public IExpressionNode innerExpression;
         public int substitutionIndex;
         public int tokenStartIndex, tokenEndIndex;
+        public bool isStringify = false;
         protected override string GetString()
         {
             return $"subst ({innerExpression})";

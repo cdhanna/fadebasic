@@ -973,7 +973,7 @@ namespace FadeBasic
             program.FixNoopStatements();
             program.AddInitializerSugar();
             program.AddScopeRelatedErrors(options);
-            
+            program.AddHaunting(options);
             return program;
         }
         
@@ -2806,7 +2806,14 @@ namespace FadeBasic
         {
             var startIndex = _stream.Index - 1; // at [
             var errors = new List<ParseError>();
+            var isStringify = false;
             Token endToken = token;
+            if (_stream.Peek.type == LexemType.VariableString && _stream.Peek.Length == 1)
+            {
+                // consume the sigil
+                isStringify = true;
+                _stream.Advance();
+            }
             if (!TryParseExpression(out var expr, true))
             {
                 // expr = null;
@@ -2827,7 +2834,13 @@ namespace FadeBasic
             }
             var subst = new MacroSubstitutionExpression
             {
-                innerExpression = expr, startToken = token, endToken = endToken, tokenStartIndex = startIndex, tokenEndIndex = endIndex, Errors = errors
+                innerExpression = expr, 
+                startToken = token, 
+                endToken = endToken, 
+                tokenStartIndex = startIndex, 
+                tokenEndIndex = endIndex, 
+                isStringify = isStringify,
+                Errors = errors
             };
             
             return subst;

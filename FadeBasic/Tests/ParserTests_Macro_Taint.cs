@@ -401,6 +401,91 @@ y = e.x
 ", new List<string>());
     }
     
+    
+    [Test]
+    public void Haunted_Error_None_CanTokenize()
+    {
+        HauntedErrorCheck(@"
+#macro
+    x = macro return test()
+    y = x
+    # a = [x]
+#endmacro
+", new List<string>());
+    }
+
+    
+    [Test]
+    public void Haunted_Error_InvalidAssignment()
+    {
+        HauntedErrorCheck(@"
+#macro
+    x = macro return test()
+    y$ = ""a"" + str$(x)
+    # [y$] = 1
+#endmacro
+", new List<string>()
+        {
+            $"[4:6] - {ErrorCodes.VariableUsesHaunted}"
+        });
+    }
+
+    
+    [Test]
+    public void Haunted_Error_Concat()
+    {
+        HauntedErrorCheck(@"
+#macro
+    x = macro return test()
+    y = x
+    # a[x] = 1
+#endmacro
+", new List<string>()
+        {
+            $"[4:6] - {ErrorCodes.VariableUsesHaunted}"
+        });
+    }
+    
+    [Test]
+    public void Haunted_Error_InsideNestedIf2()
+    {
+        HauntedErrorCheck(@"
+#macro
+    x = macro return test()
+    y = x
+    x2 = 3
+    if y
+        if x2
+            # a = 1
+        endif
+    endif
+#endmacro
+", new List<string>
+        {
+            $"[7:12] - {ErrorCodes.TokenizationContainsHaunted}"
+        });
+    }
+    
+    [Test]
+    public void Haunted_Error_InsideNestedIf()
+    {
+        HauntedErrorCheck(@"
+#macro
+    x = macro return test()
+    y = x
+    x2 = 3
+    if x2
+        if y
+            # a = 1
+        endif
+    endif
+#endmacro
+", new List<string>
+        {
+            $"[7:12] - {ErrorCodes.TokenizationContainsHaunted}"
+        });
+    }
+    
     [Test]
     public void Haunted_Error_InsideIf()
     {
@@ -408,13 +493,13 @@ y = e.x
 #macro
     x = macro return test()
     y = x
-#tokenize
-a = 1
-#endtokenize
+    if y 
+        # a = 1
+    endif
 #endmacro
 ", new List<string>
         {
-            "!"
+            $"[5:8] - {ErrorCodes.TokenizationContainsHaunted}"
         });
     }
 

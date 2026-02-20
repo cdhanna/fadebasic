@@ -18,6 +18,16 @@ namespace FadeBasic.Lib.Standard
             var _ = System.Console.ReadKey();
         }
 
+        public static Action<int, string> msBuildLogger;
+        [FadeBasicCommand("print", FadeBasicCommandUsage.Macro)]
+        public static void PrintLines_MsBuild(params object[] elements)
+        {
+            foreach (var line in elements)
+            {
+                msBuildLogger?.Invoke(0, line.ToString());
+            }
+        }
+        
         /// <summary>
         /// print the given arguments to the console.
         ///
@@ -26,7 +36,7 @@ namespace FadeBasic.Lib.Standard
         /// </para>
         /// </summary>
         /// <param name="elements">The elements to be printed. Each element will be printed on its own line</param>
-        [FadeBasicCommand("print", FadeBasicCommandUsage.Both)]
+        [FadeBasicCommand("print", FadeBasicCommandUsage.Runtime)]
         public static void PrintLines(params object[] elements)
         {
             foreach (var element in elements)

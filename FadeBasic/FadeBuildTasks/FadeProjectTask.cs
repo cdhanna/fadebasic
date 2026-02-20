@@ -1,10 +1,12 @@
 ﻿using System;
 using System.Collections.Generic;
+using System.ComponentModel.Design;
 using System.IO;
 using ApplicationSupport.Code;
 using ApplicationSupport.Launch;
 using FadeBasic.ApplicationSupport.Project;
 using FadeBasic.Ast;
+using FadeBasic.Lib.Standard;
 using FadeBasic.Sdk;
 using FadeBasic.Virtual;
 using Microsoft.Build.Framework;
@@ -16,6 +18,7 @@ namespace FadeBasic.Build
     //https://learn.microsoft.com/en-us/visualstudio/msbuild/tutorial-custom-task-code-generation?view=vs-2022
     public class FadeProjectTask : Task
     {
+        public string OutputPath { get; set; }
         public bool GenerateEntryPoint { get; set; } = true;
         public bool IgnoreSafetyChecks { get; set; } = false;
         public bool GenerateDebugData { get; set; }
@@ -56,6 +59,7 @@ namespace FadeBasic.Build
 
                 var dllTable = PrepareAssemblyToDllMap(References);
 
+                
                 Log.LogMessage(MessageImportance.Low, $"[FADE] there are {Commands.Length} commands...");
                 for (var i = 0; i < Commands.Length; i++)
                 {
@@ -88,9 +92,8 @@ namespace FadeBasic.Build
                         $"[FADE] IDENTIFIED SOURCE: {string.Join(",", source.commandClasses)} dll=[{source.absoluteOutputDllPath}]");
                 }
 
-                var commandCollection = ProjectBuilder.LoadCommandMetadata(libraries);
-
-
+                var (commandCollection, loadContext) = ProjectBuilder.LoadCommands(OutputPath, libraries, msg=>Log.LogMessage(MessageImportance.High, msg));
+                
                 Log.LogMessage(MessageImportance.Low, $"[FADE] there are {SourceFiles.Length} source files");
 
                 var sourcePaths = new List<string>(SourceFiles.Length);
@@ -101,6 +104,10 @@ namespace FadeBasic.Build
                     Log.LogMessage(MessageImportance.Low, $"[FADE] file: {settingFile} meta=[{item.MetadataCount}]");
                 }
 
+                ConsoleCommands.msBuildLogger = (lvl, msg) =>
+                {
+                    Log.LogMessage(MessageImportance.High, msg);
+                };
                 var map = SourceMap.CreateSourceMap(sourcePaths);
 
                 // to generate the command collection, we need to load up the metadata for those dlls...
@@ -109,6 +116,10 @@ namespace FadeBasic.Build
                 {
                     ignoreChecks = IgnoreSafetyChecks
                 });
+        
+                // after the parsing has been done, we can nix the load context
+                loadContext.Unload();
+                
                 var lexErrors = unit.lexerResults.tokenErrors;
                 if (lexErrors.Count > 0)
                 {

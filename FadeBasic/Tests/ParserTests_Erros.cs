@@ -2716,14 +2716,33 @@ x = [n]
         prog.AssertNoParseErrors();
     }
 
+    
+    
     [Test]
-    public void ParseError_Macro_StringWorks()
+    public void ParseError_Macro_StringTokenization()
     {
         var input = @"
 #macro
-    name$ = ""toast""
+    a = 4
+    #tokenize
+    x$ = ""[a]"" `this still produces the actual string '[a]', not the value of a
+    #endtokenize
 #endmacro
-x$ = [name$]
+";
+        var parser = MakeParser(input);
+        var prog = parser.ParseProgram();
+
+        prog.AssertNoParseErrors();
+    }
+    
+    [Test]
+    public void ParseError_Macro_DoNotTokenizeInString()
+    {
+        var input = @"
+#macro
+    a = 4
+#endmacro
+x$ = "" [a] ""
 ";
         var parser = MakeParser(input);
         var prog = parser.ParseProgram();
@@ -2731,6 +2750,38 @@ x$ = [name$]
         prog.AssertNoParseErrors();
     }
 
+    
+    [Test]
+    public void ParseError_Macro_StringWorks()
+    {
+        var input = @"
+#macro
+    name$ = ""toast""
+#endmacro
+x$ = [$name$]
+";
+        var parser = MakeParser(input);
+        var prog = parser.ParseProgram();
+
+        prog.AssertNoParseErrors();
+    }
+
+    [Test]
+    public void ParseError_Macro_Tokenization_StringWorks()
+    {
+        var input = @"
+#macro
+    name$ = ""toast""
+    #tokenize
+        x$ = [$ name$ ]
+    #endtokenize
+#endmacro
+";
+        var parser = MakeParser(input);
+        var prog = parser.ParseProgram();
+
+        prog.AssertNoParseErrors();
+    }
     
     [Test]
     public void ParseError_Macro_TokenOutOfMacro()

@@ -26,6 +26,8 @@ print ""igloo""";
         var map = SourceMap.CreateSourceMap(new List<string> { fileName }, _ => file.SplitNewLines());
         var unit = map.Parse(TestCommands.CommandsForTesting);
 
+        map.ProvideTokens(unit.lexerResults);
+        
         var expr = unit.program.statements[2];
         var range = map.GetOriginalRange(new TokenRange { start = expr.StartToken, end = expr.EndToken });
         

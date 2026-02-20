@@ -4,6 +4,7 @@ using System.Globalization;
 using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 using FadeBasic.Ast;
+using FadeBasic.Sdk;
 
 namespace FadeBasic.Virtual
 {
@@ -385,6 +386,49 @@ namespace FadeBasic.Virtual
                     break;
             }
         }
+
+        public static void ReadNoopValue(VirtualMachine vm, object defaultValue, out object value,
+            out CommandArgRuntimeState state, out ulong address)
+        {
+            value = defaultValue;
+            ReadSpan(ref vm.stack, out var typeCode, out var span);
+            switch (typeCode)
+            {
+                case TypeCodes.VOID:
+                    address = 0;
+                    state = CommandArgRuntimeState.Value;
+                    value = defaultValue;
+                    break;
+                case TypeCodes.PTR_REG:
+                    state = CommandArgRuntimeState.RegisterRef;
+                    address = MemoryMarshal.Read<ulong>(span);
+                    
+                    break;
+                case TypeCodes.PTR_GLOBAL_REG:
+                    state = CommandArgRuntimeState.GlobalRegisterRef;
+                    address = MemoryMarshal.Read<ulong>(span);
+                    break;
+                case TypeCodes.PTR_HEAP:
+                    state = CommandArgRuntimeState.HeapRef;
+                    address = MemoryMarshal.Read<ulong>(span);
+                    
+                    // the heap does not store type info, which means we need to assume the next value on the stack is the type code.
+                    typeCode = vm.stack.Pop();
+                    
+                    // if it is a string, then the de-dupe happens later, but if it is a string, then we need to actually go do the lookup
+                    // if (typeCode != TypeCodes.STRING)
+                    {
+                        var size = TypeCodes.GetByteSize(typeCode);
+                        // vm.heap.Read(address, size, out bytes);
+                        vm.heap.ReadSpan(VmPtr.FromRaw(address), size, out span);
+                    }
+                    break;
+                default:
+                    state = CommandArgRuntimeState.Value;
+                    address = 0;
+                    break;
+            }
+        }
         
         public static void ReadValue<T>(VirtualMachine vm, T defaultValue, out T value, out CommandArgRuntimeState state, out ulong address) where T : struct
         {
@@ -403,6 +447,7 @@ namespace FadeBasic.Virtual
                     typeCode = vm.typeRegisters[address];
                     var bytes = BitConverter.GetBytes(data);
                     value = MemoryMarshal.Read<T>(bytes);
+                    
                     break;
                 case TypeCodes.PTR_GLOBAL_REG:
                     state = CommandArgRuntimeState.GlobalRegisterRef;
@@ -436,9 +481,32 @@ namespace FadeBasic.Virtual
                     break;
             }
         }
+
+        public static void HandleValueAny(VirtualMachine vm, byte[] valueBytes, byte typeCode, CommandArgRuntimeState state, ulong address)
+        {
+            switch (state)
+            {
+                case CommandArgRuntimeState.GlobalRegisterRef:
+                    // GetBytes(value, out var regBytes);
+                    vm.globalScope.dataRegisters[address] = BitConverter.ToUInt32(valueBytes, 0);
+                    break;
+                case CommandArgRuntimeState.RegisterRef:
+                    // GetBytes(value, out regBytes);
+                    vm.dataRegisters[address] = BitConverter.ToUInt32(valueBytes, 0);
+                    break;
+                case CommandArgRuntimeState.HeapRef:
+                    var size = TypeCodes.GetByteSize(typeCode);
+                    // GetBytes(value, out var heapBytes);
+                    var ptrAddr = VmPtr.FromRaw(address);
+                    vm.heap.Write(ptrAddr, size, valueBytes);
+                    break;
+                case CommandArgRuntimeState.Value:
+                    // do nothing.
+                    break;
+            }
+        }
         
-        
-        public static void ReadValueAny(VirtualMachine vm, object defaultValue, out object value, out CommandArgRuntimeState state, out ulong address)
+        public static void ReadValueAny(VirtualMachine vm, object defaultValue, out object value, out CommandArgRuntimeState state, out ulong address, bool allowOptional=false)
         {
             // peek the type code...
             var peekTypeCode = vm.stack.Peek();
@@ -477,8 +545,16 @@ namespace FadeBasic.Virtual
                     ReadValue<long>(vm, default, out var dintValue, out state, out address);
                     value = dintValue;
                     break;
+                case TypeCodes.VOID when allowOptional:
+                    // need to burn the bad data!
+                    vm.stack.Pop(); // remove the void typecode.
+                   // ReadSpan(ref vm.stack, out _, out _);
+                    address = 0;
+                    state = CommandArgRuntimeState.Value;
+                    value = defaultValue;
+                    break;
                 default:
-                    throw new Exception("uh oh, the any type isn't supported for the actual read type");
+                    throw new Exception($"uh oh, the any type isn't supported for the actual read type=[{peekTypeCode}] optional=[{allowOptional}]");
             }
         }
         

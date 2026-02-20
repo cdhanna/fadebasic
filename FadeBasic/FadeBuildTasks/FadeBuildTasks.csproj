@@ -40,6 +40,7 @@
 
     <ItemGroup>
       <ProjectReference Include="..\ApplicationSupport\ApplicationSupport.csproj" PrivateAssets="all" />
+      <ProjectReference Include="..\FadeBasic.Lib.Standard\FadeBasic.Lib.Standard.csproj" />
       <ProjectReference Include="..\FadeBasic\FadeBasic.csproj" PrivateAssets="all"/>
         
 <!--        <PackageReference Include="FadeBasic.Lang.ApplicationSupport" Version="0.0.2.16" PrivateAssets="all"/>-->

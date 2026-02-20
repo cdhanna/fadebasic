@@ -231,6 +231,8 @@ namespace FadeBasic
         public static readonly ErrorCode SymbolNotDeclaredYet = "[0216] Reference has not been declared yet";
         public static readonly ErrorCode ReDimHasIncorrectNumberOfRanks = "[0217] Must have same rank as declaration";
         public static readonly ErrorCode ArrayCannotAssignFromDefault = "[0218] Cannot assign default to array";
+        public static readonly ErrorCode TokenizationContainsHaunted = "[0219] Tokenization cannot be resolved without running the program ";
+        public static readonly ErrorCode VariableUsesHaunted = "[0220] Variable cannot include tokens generated from a non deterministic macro";
     
         // 300 series represents type issues
         public static readonly ErrorCode SymbolAlreadyDeclared = "[0300] Symbol already declared";
