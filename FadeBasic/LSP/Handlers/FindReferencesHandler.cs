@@ -64,7 +64,8 @@ public class FindReferencesHandler : ReferencesHandlerBase
 
         var referencedNodes = new List<IAstNode>();
         // var x = unit.program.scope.functionTable;
-        unit.program.Visit(x =>
+
+        void Visit(IAstVisitable x)
         {
             bool isMatch = false;
             if (x is VariableRefNode or DeclarationStatement or ArrayIndexReference or LabelDeclarationNode or GoSubStatement or GotoStatement)
@@ -80,7 +81,10 @@ public class FindReferencesHandler : ReferencesHandlerBase
             {
                 referencedNodes.Add(x);
             }
-        });
+        }
+        
+        unit.program.Visit(Visit);
+        unit.macroProgram?.Visit(Visit);
 
         if (referencedNodes.Count == 0)
         {

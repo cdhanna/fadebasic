@@ -71,11 +71,14 @@ public class GotoDefinitionHandler : DefinitionHandlerBase
             typeof(GoSubStatement),
             typeof(GotoStatement),
         };
-        var node = unit.program.FindFirst(x =>
+
+        bool Visit(IAstVisitable x)
         {
             if (!allowedTypes.Contains(x.GetType())) return false;
             return x.StartToken == token || x.EndToken == token;
-        }); 
+        }
+        var node = unit.program.FindFirst(Visit) 
+                   ?? unit.macroProgram?.FindFirst(Visit);
         _logger.LogInformation($"looking for {node}");
 
         LocationOrLocationLink location = null;
