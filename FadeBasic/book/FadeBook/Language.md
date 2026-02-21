@@ -44,7 +44,8 @@
         - [End](#end)
         - [Goto](#goto)
         - [Gosub](#gosub)
-        - [Select](#select)
+        - [Select](#select-statements)
+        - [Defer](#defer-statements)
     - [Constants](#compile-time-constants)
     - [Memory](#memory)
 
@@ -376,7 +377,7 @@ v AS VECTOR = {
 }
 ```
 
-This syntax is equivelent to writing the assignments out one by one. The declaration above is equivelent to the following code snippet, 
+This syntax is equivalent to writing the assignments out one by one. The declaration above is equivalent to the following code snippet, 
 ```basic
 v AS VECTOR
 v.x = 1
@@ -955,6 +956,116 @@ ENDSELECT
 
 The `SELECT` keyword must be followed by a numeric expression. This expression is called the control value.
 A `SELECT` statement is made up of many `CASE` statements. The `CASE` keyword must be followed by a constant numeric literal. Each `CASE` statement has a set of inner statements that will only be executed if it is equal to the control value. Each `SELECT` statement is allowed one special `CASE` statement that has the keyword, `DEFAULT` instead of a numeric literal. If none of the cases' values match the control value, then the `DEFAULT` case is selected. If no case is selected, the program execution moves onto the closing `ENDSELECT` keyword. 
+
+----
+#### Defer Statements
+
+The `DEFER` statement allows a statement to be executed at the end of the current scope. _Fade Basic_ only has a single GLOBAL scope, and a LOCAL scope per function invocation. The `DEFER` keyword may be followed with a statement on the same line, or be followed by the `ENDDEFER` statement on a later line. 
+
+```basic
+DEFER PRINT "b" `this line executes at the end of the scope
+PRINT "a"
+
+`output is
+` a
+` b
+```
+
+When multiple `DEFER` statements are used in the same scope, they execute in a _Last In First Out_ (LIFO) stack order. 
+```basic
+DEFER PRINT "a"
+DEFER PRINT "b"
+DEFER PRINT "c"
+
+`output is
+` c
+` b
+` a
+```
+
+When a `DEFER` is used inside a function, the deferred statements will run immediately before the function exits.
+```basic
+FUNCTION example()
+    DEFER PRINT "a"
+    PRINT "b"
+ENDFUNCTION
+example()
+
+`output is
+` b
+` a
+```
+
+If the function has an early `EXITFUNCTION` statement, the deferred statements are still run before the function exits. 
+```basic
+FUNCTION example(a)
+    DEFER PRINT "a"
+    IF a > 0
+        EXITFUNCTION
+    ENDIF
+    PRINT "b"
+ENDFUNCTION
+example(1)
+
+`output is
+` a
+```
+
+It is possible to group multiple statements into a single `DEFER` block by using the `ENDDEFER` keyword. 
+```basic
+DEFER
+    PRINT "a"
+    PRINT "b"
+ENDDEFER
+
+`output is
+` a
+` b
+```
+
+If a `DEFER` statement appears within a `DEFER` and `ENDDEFER` block, then the nested deferred statements execute after all of the statements in the `DEFER` block. 
+```basic
+DEFER 
+	print "a"
+	DEFER print "b"
+	print "c"
+ENDDEFER
+`output is
+` a
+` c
+` b
+```
+
+Deferred statements do not capture any lexical or scope state. If a deferred statement references a variable, the variable's state at the end of the scope will be used in the deferred statement. 
+```basic
+a = 5
+DEFER PRINT a
+a = 12
+
+`output is
+` 12
+```
+
+If a fatal error occurs (such as an invalid array index operation), then deferred statements are _not_ executed, as the program exits immediately.  
+```basic
+DEFER PRINT "a"
+DIM x(3)
+a = x(4)
+
+`a fatal exception is thrown, and "a" is not printed. 
+```
+
+Deferred statements _are_ executed when the program is explicitly terminated with the `END` keyword. 
+```basic
+DEFER PRINT "a"
+END
+`output is 
+` a
+```
+
+----
+## Macro Systems
+
 
 
 ## Compile Time Constants
