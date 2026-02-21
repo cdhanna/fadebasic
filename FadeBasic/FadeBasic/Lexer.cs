@@ -279,9 +279,9 @@ namespace FadeBasic
             // new Lexem(LexemType.LiteralString, new Regex(@"^(?<!\\)"".*?(?<!\\)""")),
             // new Lexem(LexemType.LiteralString, new Regex(@"^@?""(?:\""\""|[^""])*""")),
             
-            new Lexem(-2, LexemType.VariableString, new Regex("^([a-zA-Z]?[a-zA-Z0-9_]*)\\$"), LexemFlags.MacroConcatable),
-            new Lexem(-2, LexemType.VariableReal, new Regex("^([a-zA-Z]?[a-zA-Z0-9_]*)#"), LexemFlags.MacroConcatable),
-            new Lexem( 2, LexemType.VariableGeneral, new Regex("^[a-zA-Z][a-zA-Z0-9_]*"), LexemFlags.MacroConcatable),
+            new Lexem(-2, LexemType.VariableString, new Regex("^([a-zA-Z_]?[a-zA-Z0-9_]*)\\$"), LexemFlags.MacroConcatable),
+            new Lexem(-2, LexemType.VariableReal, new Regex("^([a-zA-Z_]?[a-zA-Z0-9_]*)#"), LexemFlags.MacroConcatable),
+            new Lexem( 2, LexemType.VariableGeneral, new Regex("^[a-zA-Z_][a-zA-Z0-9_]*"), LexemFlags.MacroConcatable),
             // new Lexem(-2, LexemType.Label, new Regex("^[a-zA-Z][a-zA-Z0-9_]*:")),
         };
 

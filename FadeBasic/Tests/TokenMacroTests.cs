@@ -450,6 +450,28 @@ c = bxa
         Assert.That(code, Is.EqualTo("((= (ref bxa),(12)),(= (ref c),(ref bxa)))"));
     }
 
+    
+    [Test]
+    public void Macro_Compile_CustomVariable_Center_Underscore ()
+    {
+        var input = @"
+#macro
+    a = 3
+    #tokenize
+        b[""x""]_ = 12
+    #endtokenize
+#endmacro
+c = bx_
+
+";
+        var parser = BuildParser(input, out _);
+        var prog = parser.ParseProgram();
+        prog.AssertNoParseErrors();
+        var code = prog.ToString();
+        Assert.That(code, Is.EqualTo("((= (ref bx_),(12)),(= (ref c),(ref bx_)))"));
+    }
+
+
 
     
     [Test]
