@@ -26,6 +26,7 @@
     - [Arrays](#arrays)
         - [Multidimensions](#multidimensional-arrays)
         - [Arrays of Types](#arrays-of-udt)
+        - [Resize an Array](#resize-an-array)
         - [Out of Bounds](#array-out-of-bounds)
         - [Return Values](#cannot-return-arrays-from-functions)
         - [Assignment](#cannot-assign-an-array)
@@ -46,6 +47,11 @@
         - [Gosub](#gosub)
         - [Select](#select-statements)
         - [Defer](#defer-statements)
+    - [Compile Time Execution](#compile-time-constants)
+        - [Structures](#program-structure)
+        - [Substitutions](#Substitutions)
+        - [Shorthands](#shorthands)
+        - [Haunted Variables](#haunted-code)
     - [Constants](#compile-time-constants)
     - [Memory](#memory)
 
@@ -503,6 +509,17 @@ ENDTYPE
 
 DIM vecs(5) AS VECTOR
 vecs(0).x# = 1.2 `sets the x# field on the first element
+```
+
+----
+#### Resize an Array
+
+It is possible to re-size an array. The `REDIM` keyword can be used to re-size an array once it has been declared. This also clears all elements in the array. 
+```basic
+DIM nums(4) `there are 4 elements
+nums(2) = 3
+REDIM nums(10) `now there are 10 elements
+x = nums(2) `x is zero
 ```
 
 ----
@@ -1063,10 +1080,256 @@ END
 ` a
 ```
 
+
+## Compile Time Execution
+
+_Fade Basic_ allows compile time code generation. 
+
 ----
-## Macro Systems
+#### Program Structure 
 
+`#MACRO` blocks define parts of the program that will be executed at compile time. The `#MACRO` keyword must be followed by a closing `#ENDMACRO` keyword. It is invalid to have nested `#MACRO` blocks. 
 
+```basic
+#MACRO
+    PRINT "compile time"
+#ENDMACRO
+
+PRINT "run time"
+
+`compile time output:
+` "compile time"
+`
+`runtime output:
+` "run time"
+```
+
+> [!TIP]
+> When using `dotnet` 9 or above, be sure to [disable terminal logger](https://learn.microsoft.com/en-us/dotnet/core/compatibility/sdk/9.0/terminal-logger) by passing the `--tl:off` flag. Otherwise, your compile time `PRINT` statements may be erased by `msbuild`. 
+
+It is possible to have several `#MACRO` blocks throughout the program. Their contents are concatenated and executed as a singular program during compile time. 
+```basic
+#MACRO
+    PRINT "a"
+#ENDMACRO
+PRINT "1"
+#MACRO
+    PRINT "b"
+#ENDMACRO
+PRINT "2"
+
+`compile time output: 
+` a
+` b
+` 
+`runtime output:
+` 1
+` 2
+```
+
+The compile time program has a completely independent lifetime from the runtime program. None of the scope, state, or functions are shared between the compile time and runtime programs. 
+```basic
+#MACRO
+    a = 12 
+#ENDMACRO
+PRINT a `invalid, because the variable does not exist in the runtime program. 
+```
+
+However, it _is_ possible to emit code from within a compile time block that will be included in the regular program. This is called _tokenization_. The `#TOKENIZE` statement may appear within a `#MACRO` block. The `#TOKENIZE` keyword must be followed with an `#ENDTOKENIZE` statement on a later line. It is invalid to have nested `#TOKENIZE` blocks. Any tokens within a `#TOKENIZE` block will be inserted into the runtime program's code model. Tokens emitted by a `#TOKENIZE` block are inserted at the location of the enclosing `#MACRO` block in the original source.
+```basic
+#MACRO
+    #TOKENIZE
+        PRINT "a"
+    #ENDTOKENIZE
+#ENDMACRO
+
+`there is no compile time output.
+`
+`runtime output:
+` a
+```
+
+Order is kept when multiple `#TOKENIZE` blocks appear in a `#MACRO` block.
+```basic
+#MACRO
+    #TOKENIZE
+        PRINT "a"
+    #ENDTOKENIZE
+    #TOKENIZE
+        PRINT "b"
+    #ENDTOKENIZE
+#ENDMACRO
+
+`there is no compile time output.
+`
+`runtime output:
+` a
+` b
+```
+
+`#TOKENIZE` blocks only insert tokens into the runtime program if they are evaluated during the compile time execution. 
+```basic
+#MACRO
+    a = 12
+    IF a > 0
+        #TOKENIZE
+            PRINT "a was greater than zero"
+        #ENDTOKENIZE
+    ELSE
+        #TOKENIZE
+            PRINT "a was not greater than zero"
+        #ENDTOKENIZE
+    ENDIF
+#ENDMACRO
+
+`there is no compile time output.
+`
+`runtime output:
+` a was greater than zero
+```
+
+Tokenization can occur within any of _Fade Basic_'s regular control flows. It is valid to put `#TOKENIZE` after a `DEFER`, or in a loop, or within a function.  
+
+----
+#### Substitutions
+
+Tokenization blocks are able to reference compile time state by using substitution syntax. A substitution uses the square brackets, `[` and `]`. A valid compile time expression is required between the square brackets. The expression will be evaluated and the resulting value will be used in place of the substitution.
+```basic
+#MACRO
+    a = 12
+    #TOKENIZE
+        PRINT [a]
+    #ENDTOKENIZE
+#ENDMACRO
+
+`there is no compile time output.
+`
+`runtime output:
+` 12
+```
+
+Any value from a substitution is inserted _as a token_. 
+```basic
+#MACRO
+    x$ = "tuna"
+    #TOKENIZE
+        [x$] = 12
+    #ENDTOKENIZE
+#ENDMACRO
+
+print tuna
+`there is no compile time output.
+`
+`runtime output:
+` 12
+```
+
+It is possible to modify the substitution syntax to output [strings](#strings) instead of tokens. Immediately after the opening square bracket, if a `$` symbol is used, the output value of the substitution will be added as a string literal. This is called a stringified substitution. 
+```basic
+#MACRO
+    x$ = "abc"
+    #TOKENIZE
+        print [$ x$ ]
+    #ENDTOKENIZE
+#ENDMACRO
+`there is no compile time output.
+`
+`runtime output:
+` abc
+```
+
+When a substitution is placed _exactly_ adjacent to an existing token, then the output of the substitution will be added to the _existing_ token. 
+```basic
+#MACRO
+    a = 12
+    #TOKENIZE
+        x[a] = 12
+    #ENDTOKENIZE
+#ENDMACRO
+
+PRINT x12
+`there is no compile time output.
+`
+`runtime output:
+` 12
+```
+
+It is invalid to place stringified substitutions adjacent to existing tokens. 
+
+----
+#### Shorthands
+
+There are several short hands to be aware of. 
+
+Within a `#MACRO` block, starting a line with the `#` token will create a single line `#TOKENIZE` block. 
+```basic
+#MACRO
+    # a = 12
+#ENDMACRO
+PRINT a
+
+`there is no compile time output.
+`
+`runtime output:
+` 12
+```
+
+Outside of a `#MACRO` block, starting a line with the `#` token will create a single line `#MACRO` block. 
+```basic
+# PRINT "12"
+
+`compile time output:
+` 12
+`
+`there is no runtime output.
+```
+
+Outside of a `#MACRO` block, substitution syntax can be used to access compile time state. 
+```basic
+#MACRO
+    a = 12
+#ENDMACRO
+PRINT [a]
+
+`there is no compile time output.
+`
+`runtime output:
+` 12
+```
+
+----
+#### Haunted Code
+
+Any code that the compile time program emits must be done so deterministically. Non-determinism may appear when the compile time program makes calls to [commands](#commands). Any variable that is the output of a command is considered to have a non deterministic value. These variables are called "haunted". 
+
+Any variable that is assigned from an expression including haunted variables will become haunted. 
+
+It is invalid to create tokenization statements within a haunted statement. 
+```basic
+#MACRO
+    x = rnd(10) `the rnd command returns a random number up to 10. 
+    if x
+        #TOKENIZE
+            `this tokenization block is invalid.
+        #ENDTOKENIZE
+    endif
+#ENDMACRO
+```
+
+It is invalid to use haunted variables to create tokens that are part of an assignment statement. 
+```basic
+#MACRO
+    x = rnd(10) `the rnd command returns a random number up to 10. 
+    #TOKENIZE
+        a[x] = 12 `this is invalid
+    #ENDTOKENIZE
+#ENDMACRO
+```
+
+When a haunted variable is re-assigned to an non-haunted value, the variable becomes un-haunted. 
+However, once an array variable becomes haunted, it cannot be un-haunted. 
+
+Any part of an array or a [UDT](#user-defined-types) that becomes haunted causes the entire structure to become haunted. 
 
 ## Compile Time Constants
 
