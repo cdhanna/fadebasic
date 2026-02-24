@@ -143,6 +143,35 @@ ENDFUNCTION
     }
     
     
+    
+    [Test]
+    public void Bug_0_0_47_1_RepeatDecl()
+    {
+        var input = @"
+repeat
+    x = 3
+until x = 0
+";
+        var parser = MakeParser(input);
+        var prog = parser.ParseProgram();
+        prog.AssertNoParseErrors();
+    }
+    
+    
+    [Test]
+    public void Bug_0_0_47_1_RepeatDecl_Clarification_onlyOnce()
+    {
+        var input = @"
+repeat
+    x = `only 1 error should appear
+until 1
+";
+        var parser = MakeParser(input);
+        var prog = parser.ParseProgram();
+        prog.AssertParseErrors(1);
+    }
+
+    
     [Test]
     public void Function_Docs_Trivia_MultiLine_Blank()
     {

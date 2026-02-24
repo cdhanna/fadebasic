@@ -5,6 +5,11 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.0.48] - 2026-02-24
+
+### Fixed
+- able to use variable in `REPEAT` conditionals that was defined within the `REPEAT` block
+
 ## [0.0.47] - 2026-02-22
 
 ### Added

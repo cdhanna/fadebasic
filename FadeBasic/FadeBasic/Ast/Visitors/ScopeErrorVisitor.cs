@@ -418,13 +418,17 @@ namespace FadeBasic.Ast.Visitors
                         scope.EndLoop();
                         break;
                     case RepeatUntilStatement repeatStatement:
+                        
+                        scope.BeginLoop();
+                        repeatStatement.statements.CheckStatements(scope, ctx);
+                        scope.EndLoop();
                         repeatStatement.condition.EnsureVariablesAreDefined(scope, ctx);
                         scope.EnforceTypeAssignment(repeatStatement.condition, repeatStatement.condition.ParsedType, TypeInfo.Int, false, out _);
                        
                         scope.BeginLoop();
                         repeatStatement.statements.CheckStatements(scope, ctx, inheritTransitiveTypeFlagsFrom: new IAstNode[]{repeatStatement.condition});
                         scope.EndLoop();
-                       
+                        
                         break;
                     case GoSubStatement goSub:
                         EnsureLabel(scope, goSub.label, goSub);
