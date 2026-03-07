@@ -17,26 +17,8 @@
     </PropertyGroup>
 
     <Target Name="GenerateFadeBasic" BeforeTargets="CoreCompile" Inputs="@(FadeSource);@(Commands);@(ReferencePath)" Outputs="$(FadeGeneratedLaunchFile)">
-
-
-        <PropertyGroup>
-            <ShadowCopyDir>$(IntermediateOutputPath)fadeShadow\</ShadowCopyDir>
-        </PropertyGroup>
-
-        <MakeDir Directories="$(ShadowCopyDir)" />
-
-        <ItemGroup>
-            <OutputFiles Include="$(TargetDir)**\*.*" />
-        </ItemGroup>
-
-        <Copy
-                SourceFiles="@(OutputFiles)"
-                DestinationFiles="@(OutputFiles->'$(ShadowCopyDir)%(RecursiveDir)%(Filename)%(Extension)')"
-                SkipUnchangedFiles="true" />
-
-
         <FadeProjectTask 
-                OutputPath="$(ShadowCopyDir)"
+                OutputPath="$(TargetDir)"
                 GenerateDebugData="$(FadeBasicDebug)"
                 GeneratedClassName="$(FadeGeneratedLaunchType)" 
                 SourceFiles="@(FadeSource)"

@@ -5,6 +5,13 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.0.50] - 2026-03-06
+
+### Fixed
+- `not` appears highlighted as keyword instead of comment
+- command help appears again in LSP
+- load `.dll` files into memory before streaming, to avoid file locking
+
 ## [0.0.49] - 2026-02-24
 
 ### Fixed

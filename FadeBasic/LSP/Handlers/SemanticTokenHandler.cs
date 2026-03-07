@@ -181,6 +181,7 @@ public class SemanticTokenHandler : SemanticTokensHandlerBase
             case LexemType.KeywordRepeat:
             case LexemType.KeywordUntil:
             case LexemType.KeywordAnd:
+            case LexemType.KeywordNot:
             case LexemType.KeywordXor:
             case LexemType.KeywordAs:
             case LexemType.OpMod:

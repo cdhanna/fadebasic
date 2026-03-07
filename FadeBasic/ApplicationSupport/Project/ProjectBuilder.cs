@@ -6,7 +6,6 @@ using FadeBasic.Virtual;
 using Microsoft.Build.Evaluation;
 using Microsoft.Build.Locator;
 
-// using System.Runtime.Loader;
 
 namespace FadeBasic.ApplicationSupport.Project
 {
@@ -157,12 +156,20 @@ namespace FadeBasic.ApplicationSupport.Project
         public CommandCollection collection;
         public ProjectDocs docs;
     }
+
+    public static class AssemblyLoadContextExtensions
+    {
+        public static Assembly LoadIntoMemory(this AssemblyLoadContext ctx, string absoluteDllPath)
+        {
+            byte[] dllBytes = File.ReadAllBytes(absoluteDllPath);
+            using var ms = new MemoryStream(dllBytes);
+            return ctx.LoadFromStream(ms);
+        }
+    }
     
     public class ProjectBuilder
     {
-        
-        
-        
+
         public static ProjectCommandInfo LoadCommandMetadata(ProjectContext context)
         {
             return LoadCommandMetadata(context.projectLibraries);
@@ -184,11 +191,11 @@ namespace FadeBasic.ApplicationSupport.Project
                     {
                         throw new Exception($"Unable to load any more dlls other than the metadata type. invalid=[{assemblyName.FullName}]");
                     }
-                    var loadedDependentAsm = assemblyContext.LoadFromAssemblyPath(projectLib.absoluteOutputDllPath);
+                    var loadedDependentAsm = assemblyContext.LoadIntoMemory(projectLib.absoluteOutputDllPath);
                     return loadedDependentAsm;
                 };
 
-                var assembly = loadContext.LoadFromAssemblyPath(projectLib.absoluteOutputDllPath);
+                var assembly = loadContext.LoadIntoMemory(projectLib.absoluteOutputDllPath);
 
                 foreach (var commandSubset in projectLib.commandClasses)
                 {
@@ -264,14 +271,14 @@ namespace FadeBasic.ApplicationSupport.Project
                     return null;
 
                 // log($"!!! Proxied: [{candidatePath}]");
-                return assemblyContext.LoadFromAssemblyPath(candidatePath);
+                return assemblyContext.LoadIntoMemory(candidatePath);
             };
             using var _ = loadContext.EnterContextualReflection();
             
             foreach (var projectLib in libraries)
             {
                 // var assembly = Assembly.GetAssembly()
-                var assembly = loadContext.LoadFromAssemblyPath(projectLib.absoluteOutputDllPath);
+                var assembly = loadContext.LoadIntoMemory(projectLib.absoluteOutputDllPath);
                 // assembly.
                 foreach (var commandSubset in projectLib.commandClasses)
                 {

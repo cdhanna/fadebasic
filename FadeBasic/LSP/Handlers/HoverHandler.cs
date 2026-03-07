@@ -186,15 +186,18 @@ public class HoverHandler : HoverHandlerBase
 
         var referencedNodes = new List<IAstNode>();
         // var x = unit.program.scope.functionTable;
-        unit.program.Visit(x =>
+
+        void VisitFunc(IAstVisitable x)
         {
-            var isMatch = x.StartToken == token || x.EndToken == token;
+            var isMatch = Token.AreLocationsEqual(x.StartToken, token) || Token.AreLocationsEqual(x.EndToken, token);
             var isInvalidNode = x is ProgramNode;
             if (isMatch && !isInvalidNode)
             {
                 referencedNodes.Add(x);
             }
-        });
+        }
+        unit.program.Visit(VisitFunc);
+        unit.macroProgram?.Visit(VisitFunc);
 
         // var markdown = $"test [this]({request.TextDocument.Uri.ToString()}#L2%2C4)";
         var markdown = "";

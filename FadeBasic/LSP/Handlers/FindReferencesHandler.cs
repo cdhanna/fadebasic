@@ -57,7 +57,12 @@ public class FindReferencesHandler : ReferencesHandlerBase
         if (!unit.sourceMap.GetMappedPosition(request.TextDocument.Uri.GetFileSystemPath(), request.Position.Line,
                 request.Position.Character, out var token))
         {
-            return null; // no token found
+            // try one character to the left... sort of a hail marry, but this happens if the user's cursor is not ON the token, but in the immediate white space on the other side. 
+            if (!unit.sourceMap.GetMappedPosition(request.TextDocument.Uri.GetFileSystemPath(), request.Position.Line,
+                    request.Position.Character - 1, out token))
+            {
+                return null; // no token found
+            }
         }
         
         // use the token to resolve the variable
@@ -70,7 +75,7 @@ public class FindReferencesHandler : ReferencesHandlerBase
             bool isMatch = false;
             if (x is VariableRefNode or DeclarationStatement or ArrayIndexReference or LabelDeclarationNode or GoSubStatement or GotoStatement)
             {
-                isMatch = x.StartToken == token || x.EndToken == token;
+                isMatch = Token.AreLocationsEqual(token, x.StartToken) || Token.AreLocationsEqual(token, x.EndToken);
                
             } else if (x is FunctionStatement funcStatement)
             {
