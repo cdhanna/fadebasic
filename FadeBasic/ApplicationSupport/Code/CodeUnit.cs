@@ -10,4 +10,5 @@ public class CodeUnit
     public ProgramNode program;
     public ProgramNode macroProgram => lexerResults.macroProgram;
     public SourceMap sourceMap;
+    public CommandCollection commands;
 }

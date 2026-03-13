@@ -73,6 +73,7 @@ namespace FadeBasic
         public SymbolTable globalVariables = new SymbolTable();
         public SymbolTable allGlobalVariables = new SymbolTable();
         public Stack<SymbolTable> localVariables = new Stack<SymbolTable>();
+        public TokenTable<(SymbolTable, string)> positionedVariables = new TokenTable<(SymbolTable, string)>();
         public Stack<string> currentFunctionName = new Stack<string>();
         public Dictionary<string, Symbol> functionSymbolTable = new Dictionary<string, Symbol>();
         public Dictionary<string, FunctionStatement> functionTable = new Dictionary<string, FunctionStatement>();
@@ -132,6 +133,7 @@ namespace FadeBasic
             var parameters = function.parameters;
             var table = new SymbolTable();
             localVariables.Push(table);
+            positionedVariables.Add(new TokenTable<(SymbolTable, string)>.Entry(function, (table, function.name)));
 
             foreach (var parameter in parameters)
             {

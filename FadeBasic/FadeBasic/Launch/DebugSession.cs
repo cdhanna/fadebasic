@@ -86,6 +86,20 @@ namespace FadeBasic.Launch
         private int stepStackDepth;
 
         public HashSet<DebugToken> breakpointTokens = new HashSet<DebugToken>();
+      
+        class DebugTokenComparer : IComparer<DebugToken>
+        {
+            public int Compare(DebugToken x, DebugToken y)
+            {
+                if (ReferenceEquals(x, y)) return 0;
+                if (y is null) return 1;
+                if (x is null) return -1;
+                var insIndexComparison = x.insIndex.CompareTo(y.insIndex);
+                if (insIndexComparison != 0) return insIndexComparison;
+                return x.isComputed.CompareTo(y.isComputed);
+            }
+        }
+        
         public DebugToken hitBreakpointToken;
         public IndexCollection instructionMap;
         
@@ -150,7 +164,7 @@ namespace FadeBasic.Launch
             _vm.logger = logger;
             variableDb = new DebugVariableDatabase(vm, dbg, logger);
 
-            logger.Log("Starting debug session...");
+            logger.Log("Starting debug session... version=" + typeof(DebugSession).Assembly.GetName().Version);
 
             foreach (var token in _dbg.statementTokens)
             {
@@ -334,7 +348,6 @@ namespace FadeBasic.Launch
                         
                         logger.Log($"Handling breakpoint resolution... breakpoint-count=[{detail.breakpoints.Count}]");
                         breakpointTokens.Clear();
-
                         var verifiedBreakpoints = new List<Breakpoint>();
                         for (var i = 0; i < detail.breakpoints.Count; i++)
                         {
@@ -1171,7 +1184,11 @@ namespace FadeBasic.Launch
                         logger.Error("Due to runtime exception, breaking out of exection");
                         break;
                     }
-                    _vm.Execute2(1);
+                    
+                    // execute to the next breakpoint. 
+                    var breakpointInsIndexes = new HashSet<int>(breakpointTokens.Select(t => t.insIndex)); // TODO: move this to cache
+                    _vm.Execute2(0, breakpointInsIndexes);
+                    
                     if (_vm.error.type != VirtualRuntimeErrorType.NONE)
                     {
                         logger.Error($"Hit a runtime exception! message=[{_vm.error.message}]");

@@ -147,6 +147,27 @@ full-source=[{fullSource}]
             return GetMappedPosition(file, lineNumber, charNumber, out foundToken, out _, strict);
         }
 
+        public bool TryGetMappedLocation(string file, int lineNumber, int charNumber, out string error, out int mappedLineNumber, out int mappedCharNumber, bool strict=false)
+        {
+            // map the lineNumber and charNumber forward to their position in the concat'd program. 
+            file = file.NormalizePathString();
+            mappedLineNumber = -1;
+            mappedCharNumber = -1;
+            error = null;
+            if (!_fileToRange.TryGetValue(file, out var fileRange))
+            {
+                error =
+                    $"given file=[{file}] is not included in source map. available files=[{string.Join(",", _fileToRange.Keys)}]";
+                if (!strict) return false;
+                throw new ArgumentOutOfRangeException(nameof(file), error);
+            }
+            
+            var startLine = fileRange.Start.Value;
+            mappedLineNumber = startLine + lineNumber;
+            mappedCharNumber = charNumber;
+            return true;
+        }
+
         public bool GetMappedPosition(string file, int lineNumber, int charNumber, out Token foundToken,
             out string error, bool strict = true)
         {

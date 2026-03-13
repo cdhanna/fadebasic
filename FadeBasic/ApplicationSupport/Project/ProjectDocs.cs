@@ -266,6 +266,7 @@ public static class ProjectDocMethods
             {
                 var doc = new CommandDocs();
                 group.commands.Add(doc);
+                docs.map[command.sig] = doc;
                 doc.command = command;
                 doc.commandName = command.callName;
                 doc.methodDocs = ParseMethodDocs<T>(command.docString);
@@ -280,6 +281,7 @@ public static class ProjectDocMethods
 public class ProjectDocs
 {
     public List<CommandGroupDocs> groups = new List<CommandGroupDocs>();
+    public Dictionary<string, CommandDocs> map = new Dictionary<string, CommandDocs>();
 }
 
 public class CommandGroupDocs

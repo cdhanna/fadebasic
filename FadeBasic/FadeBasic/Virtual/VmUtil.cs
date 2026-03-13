@@ -62,6 +62,9 @@ namespace FadeBasic.Virtual
             type = VariableType.Void;
             switch (typeCode)
             {
+                case TypeCodes.VOID:
+                    type = VariableType.Void;
+                    return true;
                 case TypeCodes.INT:
                     type = VariableType.Integer;
                     return true;

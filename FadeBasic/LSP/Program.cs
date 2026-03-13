@@ -1,4 +1,4 @@
-﻿// See https://aka.ms/new-console-template for more information
+// See https://aka.ms/new-console-template for more information
 
 using System;
 using System.IO.Pipes;
@@ -146,6 +146,8 @@ public static class Program
                             // .WithHandler<FoldingRangeHandler>()
                             // .WithHandler<DocumentSymbolHandler>()
                             .WithHandler<SemanticTokenHandler>()
+                            .WithHandler<CompletionHandler2>()
+                            .WithHandler<SignatureHelpHandler>()
                             // .WithHandler<DiagnosticsHandler>()
                             .OnStarted((languageServer, token) =>
                             {

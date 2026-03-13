@@ -19,6 +19,10 @@ namespace FadeBasic.Ast.Visitors
             }
 
             var scope = program.scope = new Scope();
+            
+            // add the main program variables. 
+            scope.positionedVariables.Add(new TokenTable<(SymbolTable, string)>.Entry(program, (scope.localVariables.Peek(), null)));
+            
             foreach (var label in program.labels)
             {
                 scope.AddLabel(null, label.node);

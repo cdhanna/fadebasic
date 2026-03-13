@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Text;
 using FadeBasic.Virtual;
 
 namespace FadeBasic.Ast
@@ -63,6 +64,35 @@ namespace FadeBasic.Ast
         public static readonly TypeInfo String = new TypeInfo { type = VariableType.String };
         public static readonly TypeInfo Real = new TypeInfo { type = VariableType.Float };
 
+        public string ToDisplay()
+        {
+            var sb = new StringBuilder();
+            switch (type)
+            {
+                case VariableType.Struct:
+                    sb.Append(structName);
+                    break;
+                case VariableType.Void:
+                    sb.Append("VOID");
+                    break;
+                default:
+                    sb.Append(type);
+                    break;
+            }
+
+            if (IsArray)
+            {
+                sb.Append("(");
+                for (var i = 0; i < rankExpressions.Length- 1; i++)
+                {
+                    sb.Append(",");
+                }
+
+                sb.Append(")");
+            }
+          
+            return sb.ToString();
+        }
     } 
     
     public abstract class AstNode : IAstNode, IAstVisitable
@@ -112,8 +142,30 @@ namespace FadeBasic.Ast
 
         public abstract IEnumerable<IAstVisitable> IterateChildNodes();
 
+        public void Where(Func<IAstVisitable, bool> predicate, List<IAstVisitable> buffer)
+        {
+            if (predicate(this))
+            {
+                buffer.Add(this);
+            }
+            var nodes = IterateChildNodes();
+            foreach (var node in nodes)
+            {
+                if (node == null) continue;
+                var found = node.Where(predicate);
+                if (found != null)
+                {
+                    buffer.AddRange(found);
+                }
+            }
 
-
+        }
+        public List<IAstVisitable> Where(Func<IAstVisitable, bool> predicate)
+        {
+            var output = new List<IAstVisitable>();
+            Where(predicate, output);
+            return output;
+        }
         public IAstVisitable FindFirst(Func<IAstVisitable, bool> predicate)
         {
             if (predicate(this))
@@ -154,6 +206,8 @@ namespace FadeBasic.Ast
 
         public void Visit(Action<IAstVisitable> onVisit, Action<IAstVisitable> onExit=null);
         public IAstVisitable FindFirst(Func<IAstVisitable, bool> predicate);
+        public List<IAstVisitable> Where(Func<IAstVisitable, bool> predicate);
+        public void Where(Func<IAstVisitable, bool> predicate, List<IAstVisitable> buffer);
         // {
         //     onVisit(this);
         //     var nodes = IterateChildNodes();

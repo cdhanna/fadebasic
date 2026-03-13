@@ -1570,7 +1570,31 @@ namespace FadeBasic
         public TokenFlags flags = TokenFlags.None;
         public Lexem lexem;
 
+        public static long GetTokenDistance(Token a, Token b)
+        {
+            // TODO: handle character distance as well? 
+            return 1000 * Math.Abs(b.lineNumber - a.lineNumber) + (Math.Abs(b.charNumber - a.charNumber));
+        }
+        
+        /// <summary>
+        /// is a before b?
+        /// </summary>
+        /// <param name="a"></param>
+        /// <param name="b"></param>
+        /// <returns></returns>
+        public static bool IsLocationBefore(Token a, Token b)
+        {
+            if (a == null || b == null) return false;
 
+            return a.lineNumber < b.lineNumber || (a.lineNumber == b.lineNumber && a.charNumber < b.charNumber);
+        }
+        public static bool IsLocationBeforeOrEqual(Token a, Token b)
+        {
+            if (a == null || b == null) return false;
+
+            return AreLocationsEqual(a, b) || a.lineNumber < b.lineNumber || (a.lineNumber == b.lineNumber && a.charNumber < b.charNumber);
+        }
+        
         public static bool AreLocationsEqual(Token a, Token b)
         {
             if (a == null || b == null) return false;

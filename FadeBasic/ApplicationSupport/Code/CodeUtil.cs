@@ -20,7 +20,8 @@ public static class CodeUtil
         var lexer = new Lexer();
         var unit = new CodeUnit
         {
-            sourceMap = sourceMap
+            sourceMap = sourceMap,
+            commands = commandCollection
         };
 
         var source = sourceMap.fullSource;

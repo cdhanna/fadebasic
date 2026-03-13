@@ -249,7 +249,7 @@ namespace FadeBasic.Virtual
             }
         }
 
-        public void Execute2(int instructionBatchCount=1000)
+        public void Execute2(int instructionBatchCount=1000, HashSet<int> breakpointInsIndexes=null)
         {
             isSuspendRequested = false;
 
@@ -856,6 +856,12 @@ namespace FadeBasic.Virtual
                         default:
                             throw new Exception("Unknown op code: " + ins);
                     }
+                    
+                    // allow debuggers to pause at known instruction locations. 
+                    if (breakpointInsIndexes?.Contains(instructionIndex) ?? false)
+                    {
+                        isSuspendRequested = true;
+                    }
                 }
 
                 state.vTypeCode = vTypeCode;
@@ -863,6 +869,7 @@ namespace FadeBasic.Virtual
                 state.data = data;
                 state.size = size;
                 state.insPtr = insPtr;
+
             }
             
 
