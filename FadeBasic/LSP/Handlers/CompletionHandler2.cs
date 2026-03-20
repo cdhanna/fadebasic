@@ -566,7 +566,7 @@ public class CompletionHandler2 : CompletionHandlerBase
         }
         
         // get the curren type
-        (var type = statement.variable.ParsedType;
+        var type = statement.variable.ParsedType;
         
         // if the token is a patch token, then the type is not _real_...
         // var isFake = statement.expression.StartToken.flags.HasFlag(TokenFlags.IsPatchToken);
