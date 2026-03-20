@@ -24,7 +24,7 @@ namespace FadeBasic.Ast
         }
     }
 
-    public class TypeDefinitionMember : AstNode, IAstVisitable
+    public class TypeDefinitionMember : AstNode, IAstVisitable, IHasTriviaNode
     {
         public VariableRefNode name;
         public ITypeReferenceNode type;
@@ -46,6 +46,8 @@ namespace FadeBasic.Ast
             yield return name;
             yield return type;
         }
+
+        public string Trivia { get; set; }
     }
 
     public class TypeDefinitionStatement : AstNode, IStatementNode

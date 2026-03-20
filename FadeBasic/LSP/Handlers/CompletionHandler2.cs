@@ -7,7 +7,9 @@ using System.Threading.Tasks;
 using FadeBasic;
 using FadeBasic.Ast;
 using FadeBasic.SourceGenerators;
+using FadeBasic.Virtual;
 using LSP.Services;
+using MediatR;
 using Microsoft.Extensions.Logging;
 using OmniSharp.Extensions.LanguageServer.Protocol.Client.Capabilities;
 using OmniSharp.Extensions.LanguageServer.Protocol.Document;
@@ -36,7 +38,7 @@ public class CompletionHandler2 : CompletionHandlerBase
         ClientCapabilities clientCapabilities) => new CompletionRegistrationOptions
     {
         DocumentSelector = TextDocumentSelector.ForLanguage(FadeBasicConstants.FadeBasicLanguage),
-        TriggerCharacters = new Container<string>(" "),
+        TriggerCharacters = new Container<string>(" ", ".", "("),
         ResolveProvider = false
     };
 
@@ -67,7 +69,7 @@ public class CompletionHandler2 : CompletionHandlerBase
         //  need to capture scopes by lexical position. 
 
         if (!unit.sourceMap.TryGetMappedLocation(request.TextDocument.Uri.GetFileSystemPath(), request.Position.Line,
-                request.Position.Character - 1, out var error, out var mappedLineNumber, out var mappedCharNumber))
+                request.Position.Character, out var error, out var mappedLineNumber, out var mappedCharNumber))
         {
             _logger.LogError($"source document=[{request.TextDocument.Uri}] did not map to any file");
             return null;
@@ -80,10 +82,15 @@ public class CompletionHandler2 : CompletionHandlerBase
         
         // need to find the nearest token to the left. 
         Token leftToken = null;
-        for (var i = unit.lexerResults.allTokens.Count - 1; i >= 0; i --)
+        for (var i = unit.lexerResults.tokens.Count - 1; i >= 0; i --)
         {
-            var token = unit.lexerResults.allTokens[i];
-            if (token.lineNumber <= mappedLineNumber && token.charNumber <= mappedCharNumber)
+            var token = unit.lexerResults.tokens[i];
+            if (token.lineNumber < mappedLineNumber)
+            {
+                leftToken = token;
+                break;
+            }
+            if (token.lineNumber == mappedLineNumber && token.charNumber <= mappedCharNumber)
             {
                 leftToken = token;
                 break;
@@ -112,7 +119,10 @@ public class CompletionHandler2 : CompletionHandlerBase
 
         var items = GetCompletions(new CompletionContext
         {
+            fakeToken = fakeToken,
+            leftToken = leftToken,
             program = unit.program, 
+            commands = unit.commands,
             functionName = entry.value.Item2, 
             group = programGroup,
             localScope = entry.value.Item1
@@ -122,11 +132,133 @@ public class CompletionHandler2 : CompletionHandlerBase
 
     record CompletionContext
     {
+        public CommandCollection commands;
         public ProgramNode program;
+        public Token fakeToken;
+        public Token leftToken;
         public Scope scope => program.scope;
         public List<IAstVisitable> group;
         public SymbolTable localScope;
         public string functionName;
+
+        
+    }
+
+    public IEnumerable<(CompletionItem item, CommandInfo command)> GetCompletionsForCommandCalls(TypeInfo forType, CommandCollection commands)
+    {
+        foreach (var command in commands.Commands)
+        {
+            if (!TypeInfo.TryGetFromTypeCode(command.returnType, out var commandType))
+            {
+                continue;
+            }
+            if (!commandType.IsAssignable(forType))
+                continue;
+
+            var hasReturn = command.returnType != TypeCodes.VOID;
+            // TODO: add command documentation. 
+            // TODO: show overload sigs? 
+            
+            yield return (new CompletionItem
+            {
+                InsertTextFormat = InsertTextFormat.Snippet,
+                InsertTextMode = InsertTextMode.AdjustIndentation,
+                Kind = CompletionItemKind.Interface,
+                Label = command.name,
+                InsertText = command.name + (hasReturn ? "($0)" : ""),
+                SortText = "c",
+                Detail = $"{commandType.ToDisplay()}",
+                // Documentation = new MarkupContent()
+                // {
+                //     Kind = MarkupKind.Markdown,
+                //     Value = func.Trivia
+                // },
+                Command = new Command
+                {
+                    Name = "editor.action.triggerParameterHints",
+                    Title = "Trigger Parameter Hints"
+                } 
+            }, command);
+        }
+    }
+
+    public IEnumerable<(CompletionItem item, Symbol func)> GetCompletionsForFunctionCalls(TypeInfo forType, Scope scope)
+    {
+        foreach (var (name, funcSymbol) in scope.functionSymbolTable)
+        {
+            var func = scope.functionTable[name];
+            if (!func.ParsedType.IsAssignable(forType))
+                continue;
+
+            if (name == "_") continue; // skip invalid function name.
+            
+            yield return (new CompletionItem
+            {
+                InsertTextFormat = InsertTextFormat.Snippet,
+                InsertTextMode = InsertTextMode.AdjustIndentation,
+                Kind = CompletionItemKind.Function,
+                Label = name,
+                InsertText = name + "($0)",
+                SortText = "b",
+                Detail = $"{func.ParsedType.ToDisplay()}",
+                Documentation = new MarkupContent()
+                {
+                    Kind = MarkupKind.Markdown,
+                    Value = func.Trivia
+                },
+                Command = new Command
+                {
+                    Name = "editor.action.triggerParameterHints",
+                    Title = "Trigger Parameter Hints"
+                } 
+            }, funcSymbol);
+        }
+    }
+    
+    public IEnumerable<(CompletionItem item, Symbol symbol)> GetCompletionsForSymbols(Token fakeToken, TypeInfo forType, SymbolTable symbolTable)
+    {
+        // var output = new List<CompletionItem>();
+        foreach (var (name, symbol) in symbolTable)
+        {
+            if (Token.IsLocationBefore(fakeToken, symbol.source.StartToken))
+            {
+                // the symbol is defined AFTER the cursor position, so it would be invalid to look at. 
+                continue; 
+            }
+            
+            
+            // TODO: handle arrays. Maybe it is assignable if we grab an index? 
+            if (!symbol.typeInfo.IsAssignable(forType))
+                continue;
+                
+                
+            var docMarkdown = string.Empty;
+            switch (symbol.source)
+            {
+                case AssignmentStatement assignmentStatement:
+                    docMarkdown = assignmentStatement.Trivia;
+                    break;
+                case DeclarationStatement declarationStatement:
+                    docMarkdown = declarationStatement.Trivia;
+                    break;
+            }
+            
+            yield return (new CompletionItem
+            {
+                InsertTextFormat = InsertTextFormat.Snippet,
+                InsertTextMode = InsertTextMode.AdjustIndentation,
+                Kind = CompletionItemKind.Variable,
+                Label = name,
+                InsertText = name,
+                SortText = "a",
+                Detail = $"{symbol.typeInfo.ToDisplay()}",
+                Documentation = new MarkupContent()
+                {
+                    Kind = MarkupKind.Markdown,
+                    Value = docMarkdown
+                }
+            }, symbol);
+        }
     }
 
     List<CompletionItem> GetCompletions(CompletionContext context)
@@ -136,20 +268,340 @@ public class CompletionHandler2 : CompletionHandlerBase
 
         switch (node)
         {
+            case StructFieldReference fieldRef:
+                return GetStructCompletions(fieldRef, context);
+            case CommandExpression commandExpression:
+                return GetCommandParameterCompletions(commandExpression.command, commandExpression.argMap, commandExpression.args, context);
+            case CommandStatement commandStatement:
+                return GetCommandParameterCompletions(commandStatement.command, commandStatement.argMap, commandStatement.args, context);
+            case ArrayIndexReference arrayIndexRefence when arrayIndexRefence?.DeclaredFromSymbol?.source is FunctionStatement func:
+                return GetFunctionParameterCompletions(arrayIndexRefence, func, context);
             case GoSubStatement:
             case GotoStatement:
                 return GetLabelCompletions(context);
             case AssignmentStatement assignment:
                 return GetAssignmentCompletions(assignment, context);
+            case DeclarationStatement declaration when context.leftToken.type == LexemType.OpEqual:
+                return GetDeclarationCompletion(declaration, context);
+            case TypeReferenceNode trn when trn.startToken.flags.HasFlag(TokenFlags.IsPatchToken):
+            case DeclarationStatement when context.leftToken.type == LexemType.KeywordAs:
+                return GetTypeNameCompletions(context);
+                
+            case FunctionStatement when context.leftToken.type == LexemType.KeywordExitFunction:
+            case ProgramNode when context.leftToken.type == LexemType.KeywordEndFunction || context.leftToken.type == LexemType.KeywordExitFunction:
+                return GetExitFunctionCompletions(context);
+            case ProgramNode when context.leftToken.type == LexemType.EndStatement || context.leftToken.type == LexemType.KeywordRem:
+                // ah, at this point, we are on a top level statement!
+                return GetStatementCompletions(context);
         }
         
         return new List<CompletionItem>();
     }
 
+    List<CompletionItem> GetStructCompletions(StructFieldReference reference, CompletionContext context)
+    {
+        var list = new List<CompletionItem>();
+        
+        // get the type of the left
+        var type = reference.left.ParsedType;
+
+        var symTable = context.scope.typeNameToTypeMembers[type.structName];
+        
+        foreach (var (name, symbol) in symTable)
+        {
+
+            var t = symbol.source is IHasTriviaNode triviaNode
+                ? triviaNode.Trivia
+                : "";
+            var item = new CompletionItem
+            {
+                InsertTextFormat = InsertTextFormat.Snippet,
+                InsertTextMode = InsertTextMode.AdjustIndentation,
+                Kind = CompletionItemKind.Field,
+                Label = name,
+                InsertText = name,
+                SortText = "a",
+                Detail = $"{symbol.typeInfo.ToDisplay()}",
+                Documentation = new MarkupContent()
+                {
+                    Kind = MarkupKind.Markdown,
+                    Value = t
+                }
+            };
+            
+            list.Add(item);
+        }
+        
+        return list;
+    }
+    
+    List<CompletionItem> GetCommandParameterCompletions(CommandInfo command,
+        List<int> argMap, List<IExpressionNode> expressions,
+        CompletionContext context)
+    {
+        var list = new List<CompletionItem>();
+
+        // match the expressions through the args until we run out of expressions. 
+        var exprIndex = 0;
+        var argIndex = 0;
+
+        // TODO: we need to handle command overloads here... 
+        //  because it is very possible to type out one, and be wanting ot type the next one. 
+        if (command.args == null || command.args.Length == 0)
+        {
+            // there are no args, so no completions required. 
+            return list;
+        }
+        
+        for (var i = 0; i < command.args.Length; i++)
+        {
+            var arg = command.args[i];
+            if (arg.isVmArg)
+            {
+                continue; 
+            }
+            
+            if (arg.isParams)
+            {
+                // as soon as we hit this, all following expressions are this type of arg.
+                break;
+            }
+            
+            // if we have an expression, move the arg along. 
+            if (expressions.Count >= i)
+            {
+                argIndex = i;
+            }
+        }
+
+        var theArg = command.args[argIndex];
+        TypeInfo.TryGetFromTypeCode(theArg.typeCode, out var type);
+
+        
+        bool SymbolPredicate((CompletionItem item, Symbol symbol) x)
+        {
+            // if (statement == x.symbol.source)
+            // {
+            //     // cannot handle self reference. 
+            //     return false;
+            // }
+            return true;
+        }
+        list.AddRange(GetCompletionsForSymbols(context.fakeToken, type, context.localScope).Where(SymbolPredicate).Select(x => x.item));
+        list.AddRange(GetCompletionsForSymbols(context.fakeToken, type, context.scope.globalVariables).Where(SymbolPredicate).Select(x => x.item));
+        list.AddRange(GetCompletionsForFunctionCalls(type, context.scope).Select(x => x.item));
+        list.AddRange(GetCompletionsForCommandCalls(type, context.commands).Select(x => x.item));
+
+
+        return list;
+    }
+    List<CompletionItem> GetFunctionParameterCompletions(ArrayIndexReference index, FunctionStatement func, CompletionContext context)
+    {
+        var list = new List<CompletionItem>();
+
+        if (func.parameters.Count <= index.rankExpressions.Count)
+        {
+            return list;
+        }
+        
+        var requiredParam = func.parameters[(index.rankExpressions.Count)];
+        var type = TypeInfo.FromVariableType(requiredParam.type.variableType);
+
+        bool SymbolPredicate((CompletionItem item, Symbol symbol) x)
+        {
+            // if (statement == x.symbol.source)
+            // {
+            //     // cannot handle self reference. 
+            //     return false;
+            // }
+            return true;
+        }
+        list.AddRange(GetCompletionsForSymbols(context.fakeToken, type, context.localScope).Where(SymbolPredicate).Select(x => x.item));
+        list.AddRange(GetCompletionsForSymbols(context.fakeToken, type, context.scope.globalVariables).Where(SymbolPredicate).Select(x => x.item));
+        list.AddRange(GetCompletionsForFunctionCalls(type, context.scope).Select(x => x.item));
+        list.AddRange(GetCompletionsForCommandCalls(type, context.commands).Select(x => x.item));
+
+        
+        
+        return list;
+    }
+    List<CompletionItem> GetExitFunctionCompletions(CompletionContext context)
+    {
+        var list = new List<CompletionItem>();
+
+        // look up the function we are next to. 
+        if (!context.scope.positionedVariables.TryFindEntry(context.leftToken, out var entry))
+        {
+            return list;
+        }
+
+        var (table, funcName) = entry.value;
+        if (!context.scope.functionTable.TryGetValue(funcName, out var func))
+        {
+            return list;
+        }
+
+        if (!context.scope.functionReturnTypeTable.TryGetValue(funcName, out var funcTypes))
+        {
+            return list;
+        }
+        var type = func.ParsedType;
+        
+        // if the function just has one type,
+        //  and it is VOID, then the user could just be typing out the normal flow. 
+        //  but if there is already a non void type, then that MUST be the type. 
+        if (funcTypes.Count == 1)
+        {
+            if (funcTypes[0].type == VariableType.Void)
+            {
+                type = TypeInfo.FromVariableType(VariableType.Any);
+            }
+            else
+            {
+                type = funcTypes[0];
+            }
+        }
+        // if the function has more than one type, then they are in lexical order
+        //  and we should pick the "last" one. 
+        else if (funcTypes.Count > 1)
+        {
+            type = funcTypes.Last();
+        }
+        
+        list.AddRange(GetCompletionsForSymbols(context.fakeToken, type, table).Select(x => x.item));
+        list.AddRange(GetCompletionsForSymbols(context.fakeToken, type, context.scope.globalVariables).Select(x => x.item));
+        list.AddRange(GetCompletionsForFunctionCalls(type, context.scope).Select(x => x.item));
+        list.AddRange(GetCompletionsForCommandCalls(type, context.commands).Select(x => x.item));
+
+        // TODO: add things that return things that COULD match the type? 
+        
+        return list;
+    }
+
+    List<CompletionItem> GetStatementCompletions(CompletionContext context)
+    {
+        var list = new List<CompletionItem>();
+        // offer up keywords
+        
+        // offer up function invocations that do not return anything. 
+        list.AddRange(GetCompletionsForFunctionCalls(TypeInfo.Void, context.scope).Select(x => x.item));
+        
+        // offer up commands that do not return anything. 
+
+        list.AddRange(GetCompletionsForCommandCalls(TypeInfo.Void, context.commands).Select(x => x.item));
+        return list;
+    }
+
+    List<CompletionItem> GetTypeNameCompletions(CompletionContext context)
+    {
+        var list = new List<CompletionItem>();
+        foreach (var (name, _) in context.scope.typeNameToDecl)
+        {
+            list.Add(new CompletionItem
+            {
+                InsertTextFormat = InsertTextFormat.Snippet,
+                InsertTextMode = InsertTextMode.AdjustIndentation,
+                Kind = CompletionItemKind.Class,
+                Label = name,
+                InsertText = name,
+                SortText = "a"
+            });
+        }
+
+        var keywordTypes = new List<string>()
+        {
+            "int", "integer", "bool", "boolean", "string", "char", "word", "dword", "byte", "float", "double float", "double integer", "ushort", "uint", "long", "double"
+        };
+        foreach (var keyword in keywordTypes)
+        {
+            list.Add(new CompletionItem
+            {
+                InsertTextFormat = InsertTextFormat.Snippet,
+                InsertTextMode = InsertTextMode.AdjustIndentation,
+                Kind = CompletionItemKind.Keyword,
+                Label = keyword.ToUpperInvariant(),
+                InsertText = keyword.ToUpperInvariant(),
+                SortText = "b"
+            });
+        }
+       
+        return list;
+    }
+    
+    List<CompletionItem> GetDeclarationCompletion(DeclarationStatement statement, CompletionContext context)
+    {
+        var list = new List<CompletionItem>();
+        
+        // get the curren type
+        var type = statement.ParsedType;
+        
+        // load up all the symbols in the scope, and all global functions.
+        bool SymbolPredicate((CompletionItem item, Symbol symbol) x)
+        {
+            if (statement == x.symbol.source)
+            {
+                // cannot handle self reference. 
+                return false;
+            }
+            return true;
+        }
+        list.AddRange(GetCompletionsForSymbols(context.fakeToken, type, context.localScope).Where(SymbolPredicate).Select(x => x.item));
+        list.AddRange(GetCompletionsForSymbols(context.fakeToken, type, context.scope.globalVariables).Where(SymbolPredicate).Select(x => x.item));
+        list.AddRange(GetCompletionsForFunctionCalls(type, context.scope).Select(x => x.item));
+        list.AddRange(GetCompletionsForCommandCalls(type, context.commands).Select(x => x.item));
+        // list.AddRange(GetCompletionsForSymbols(context.fakeToken, type, context.scope.allGlobalVariables));
+        
+        return list;
+    }
+    
+    
     List<CompletionItem> GetAssignmentCompletions(AssignmentStatement statement, CompletionContext context)
     {
         var list = new List<CompletionItem>();
         
+        // left token must be the equal token, otherwise we are not actually on the assignment. 
+        if (context.leftToken.type != LexemType.OpEqual)
+        {
+            return list; // early return
+        }
+        
+        // get the curren type
+        (var type = statement.variable.ParsedType;
+        
+        // if the token is a patch token, then the type is not _real_...
+        // var isFake = statement.expression.StartToken.flags.HasFlag(TokenFlags.IsPatchToken);
+        // if (isFake)
+        // {
+        //     type = new TypeInfo
+        //     {
+        //         unset = true,
+        //         type = VariableType.Any
+        //     };
+        // }
+
+        if (statement.variable.DeclaredFromSymbol != null)
+        {
+            type = statement.variable.DeclaredFromSymbol.typeInfo;
+        }
+        
+        // load up all the symbols in the scope, and all global functions.
+        
+        _logger.LogInformation($"handling assignment... {type}");
+
+        bool SymbolPredicate((CompletionItem item, Symbol symbol) x)
+        {
+            if (statement == x.symbol.source)
+            {
+                // cannot handle self reference. 
+                return false;
+            }
+            return true;
+        }
+        list.AddRange(GetCompletionsForSymbols(context.fakeToken, type, context.localScope).Where(SymbolPredicate).Select(x => x.item));
+        list.AddRange(GetCompletionsForSymbols(context.fakeToken, type, context.scope.globalVariables).Where(SymbolPredicate).Select(x => x.item));
+        list.AddRange(GetCompletionsForFunctionCalls(type, context.scope).Select(x => x.item));
+        list.AddRange(GetCompletionsForCommandCalls(type, context.commands).Select(x => x.item));
+        // list.AddRange(GetCompletionsForSymbols(context.fakeToken, type, context.scope.allGlobalVariables));
         
         return list;
     }

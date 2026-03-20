@@ -470,6 +470,7 @@ namespace FadeBasic
                             source = assignment,
                             transitiveTypeFlags = variableRef.TransitiveFlags | assignment.expression.TransitiveFlags
                         };
+                        assignment.ParsedType = foundType;
                         locals.Add(variableRef.variableName, symbol);
 
                         var isArray = symbol.typeInfo.IsArray;
@@ -1642,29 +1643,33 @@ namespace FadeBasic
                         
                         var reference = ParseVariableReference(token);
                         
-                        var secondToken = _stream.Advance();
+                        var secondToken = _stream.Peek;
 
                         switch (secondToken.type)
                         {
                             case LexemType.EndStatement when secondToken.caseInsensitiveRaw == ":":
+                                _stream.Advance(); // consume the token.
                                 var labelDecl = new LabelDeclarationNode(token, secondToken);
                                 return labelDecl;
                             case LexemType.EndStatement:
+                                _stream.Advance(); // consume the token.
                                 return new ExpressionStatement(reference); // TODO: eh?
 
                             case LexemType.OpEqual:
+                                _stream.Advance(); // consume the token.
                                 var expr = ParseWikiExpression();
                                 
                                 // we actually need to emit a declaration node and an assignment. 
                                 var assignment = new AssignmentStatement
                                 {
                                     startToken = token,
-                                    endToken = _stream.Current,
+                                    endToken = expr.EndToken,
                                     variable = reference,
                                     expression = expr
                                 };
                                 return assignment;
                             case LexemType.KeywordAs:
+                                _stream.Advance(); // consume the token.
                                 var type = ParseTypeReference();
                                 // TODO: if the type is an array, then we should make the scope global by default.
                                 var scopeType = DeclarationScopeType.Local;
@@ -1683,7 +1688,7 @@ namespace FadeBasic
                                     // ah, there is an assignment happening here too!
                                     _stream.Advance(); // discard the equal sign.
                                     decl.initializerExpression = ParseWikiExpression();
-                                    
+                                    decl.endToken = decl.initializerExpression.EndToken;
                                 }
                                 
                                 return decl;
@@ -1694,6 +1699,7 @@ namespace FadeBasic
                             case LexemType.OpPlus:
                             case LexemType.OpMultiply:
                             case LexemType.OpDivide:
+                                _stream.Advance(); // consume the token.
                                 var thirdToken = _stream.Advance();
                                 switch (thirdToken.type)
                                 {
@@ -1721,9 +1727,18 @@ namespace FadeBasic
                             default:
                                 
                                 // this is an error case, and the most general solution is to skip ahead to an end-statement and start anew. 
+                                var patch = new LiteralIntExpression(
+                                    _stream.CreatePatchToken(LexemType.LiteralInt, "0")[0]);
                                 _stream.AdvanceUntil(LexemType.EndStatement);
-                                var statement = new NoOpStatement();
-                                statement.Errors.Add(new ParseError(secondToken, ErrorCodes.AmbiguousDeclarationOrAssignment));
+                                // var statement = new NoOpStatement();
+                                var statement = new AssignmentStatement
+                                {
+                                    startToken = token,
+                                    endToken = reference.EndToken,
+                                    variable = reference,
+                                    expression = patch
+                                };
+                                statement.Errors.Add(new ParseError(_stream.Current, ErrorCodes.AmbiguousDeclarationOrAssignment));
                                 return statement;
                         }
 
@@ -1734,8 +1749,9 @@ namespace FadeBasic
                         var commandStatement = new CommandStatement
                         {
                             startToken = token,
-                            endToken = GetLastToken(token, commandArgs),
+                            // endToken = GetLastToken(token, commandArgs),
                             command = command,
+                            endToken = _stream.Previous,
                             args = commandArgs,
                             argMap = argMap,
                         };
@@ -2008,6 +2024,7 @@ namespace FadeBasic
                 return false;
             }
             tokenJump = _stream.Save();
+            
             _stream.Restore(start);
             return true;
         }
@@ -3515,7 +3532,8 @@ namespace FadeBasic
                     outputExpression = new CommandExpression()
                     {
                         startToken = token,
-                        endToken = GetLastToken(token, argExpressions),
+                        // endToken = GetLastToken(token, argExpressions),
+                        endToken = _stream.Previous,
                         command = command,
                         args = argExpressions,
                         argMap = argMap

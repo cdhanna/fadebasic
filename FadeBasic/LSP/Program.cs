@@ -148,6 +148,7 @@ public static class Program
                             .WithHandler<SemanticTokenHandler>()
                             .WithHandler<CompletionHandler2>()
                             .WithHandler<SignatureHelpHandler>()
+                            .WithHandler<RenameHandler>()
                             // .WithHandler<DiagnosticsHandler>()
                             .OnStarted((languageServer, token) =>
                             {

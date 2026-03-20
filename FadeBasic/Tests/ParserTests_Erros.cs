@@ -2477,6 +2477,31 @@ x = player.pos.x
 
     
     [Test]
+    public void ParseError_TypeDef_IncompleteFieldAssignment()
+    {
+        var input = @"
+TYPE egg
+    x
+ENDTYPE
+e as egg
+e.
+DIM x(10)
+";
+        var parser = MakeParser(input);
+        var prog = parser.ParseProgram();
+
+        var errors = prog.GetAllErrors();
+        Assert.That(errors.Count, Is.EqualTo(3));
+        
+        // it should be the case that the struct field reference still knows what type it is supposed to be. 
+        var assignment = prog.statements[1] as AssignmentStatement;
+        var sfr = assignment.variable as StructFieldReference;
+        Assert.That(sfr.left.ParsedType.type, Is.EqualTo(VariableType.Struct));
+            
+        Assert.That(errors[0].Display, Is.EqualTo($"[5:3] - {ErrorCodes.AmbiguousDeclarationOrAssignment}"));
+    }
+    
+    [Test]
     public void ParseError_TypeDef_BadFieldAssignment_NoVariable()
     {
         var input = @"

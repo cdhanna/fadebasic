@@ -82,8 +82,10 @@ public class SemanticTokenHandler : SemanticTokensHandlerBase
             //     builder.Push(location.startLine, location.startChar, token.Length, SemanticTokenType.Macro, emptyMods);
             // }
             
-            foreach (var token in unit.lexerResults.allTokens)
+            for (var i = 0 ; i < unit.lexerResults.allTokens.Count; i ++)
+            // foreach (var token in unit.lexerResults.allTokens)
             {
+                var token = unit.lexerResults.allTokens[i];
                 if (token.raw == null) continue;
                 
                 
@@ -96,6 +98,12 @@ public class SemanticTokenHandler : SemanticTokensHandlerBase
                 }
 
                 var tokenType = ConvertSymbol(token);
+
+                if (i > 0 && token.type == LexemType.VariableGeneral &&
+                    unit.lexerResults.allTokens[i - 1].type == LexemType.KeywordAs)
+                {
+                    tokenType = SemanticTokenType.Type;
+                }
                
                 if (token.flags.HasFlag(TokenFlags.FunctionCall))
                 {

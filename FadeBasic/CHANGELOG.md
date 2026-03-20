@@ -5,6 +5,15 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.0.51]
+
+### Added
+- LSP supports type-aheads
+
+### Fixed
+- debugger speed improved
+- type tokens appear highlighted in declaration statements
+
 ## [0.0.50] - 2026-03-06
 
 ### Fixed

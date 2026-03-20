@@ -341,9 +341,9 @@ b2 = 2
         Assert.That(session.InstructionPointer, Is.EqualTo(4),
             "Exactly 1 op will let the debugger attach, but the program counter has no budget left");
         
-        session.StartDebugging(2);
+        session.StartDebugging(3);
         Assert.That(session.InstructionPointer, Is.EqualTo(12),
-            "I happen to know that 2 is a magical number of budget to yield 12 as an instruction index...");
+            "I happen to know that 3 is a magical number of budget to yield 12 as an instruction index...");
 
         
         var receivedConf = false;
@@ -377,7 +377,7 @@ b2 = 2
             remote.SendPlay(() => { receivedConf = true; });
 
             await Task.Delay(100); // fluff time for the message to send
-            session.StartDebugging(2); // read the message (1 op for the read, and 1 op to move the debugger forward)
+            session.StartDebugging(3); // read the message (1 op for the read, and 1 op to move the debugger forward)
             await Task.Delay(100); // fluff time for the ack to emit
             Assert.That(receivedConf, Is.True);
             Assert.That(session.InstructionPointer, Is.EqualTo(27),

@@ -64,6 +64,55 @@ namespace FadeBasic.Ast
         public static readonly TypeInfo String = new TypeInfo { type = VariableType.String };
         public static readonly TypeInfo Real = new TypeInfo { type = VariableType.Float };
 
+        
+        public bool IsAssignable(TypeInfo toType)
+        {
+            if (unset) return true;
+
+            if (toType.type == VariableType.Any)
+            {
+                return type != VariableType.Void;
+            }
+
+            if (type == VariableType.Any)
+            {
+                return toType.type != VariableType.Void;
+            }
+
+            switch (type)
+            {
+                case VariableType.Integer:
+
+                    switch (toType.type)
+                    {
+                        case VariableType.Byte:
+                            // TODO: make this function better. 
+                            return true;
+                    }
+                    break;
+            }
+            
+            if (type != toType.type)
+            {
+                return false;
+            }
+
+            if (type == VariableType.Struct)
+            {
+                if (!string.Equals(structName, toType.structName))
+                {
+                    return false;
+                }
+            }
+
+            if (IsArray)
+            {
+                return toType.rank == rank;
+            }
+
+            return true;
+        }
+        
         public string ToDisplay()
         {
             var sb = new StringBuilder();

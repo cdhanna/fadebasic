@@ -308,6 +308,33 @@ namespace FadeBasic
                 all.Add(t);
             }
 
+            void FlushEos(ref bool requestEoS, int requestEoSCharNumber, string[] lines, int lineNumber, Lexem eolLexem, TokenFlags flags)
+            {
+                
+                if (requestEoS)
+                {
+                    requestEoS = false;
+
+                    var previousToken = all.LastOrDefault();
+                    var cn = previousToken == null
+                        ? requestEoSCharNumber
+                        : lines[previousToken.lineNumber].Length + 1; // synthetic index. 
+                    var ln = previousToken == null
+                        ? lineNumber
+                        : previousToken.lineNumber;
+                    AddToken(new Token
+                    {
+                        charNumber = cn ,
+                        lexem = eolLexem,
+                        lineNumber = ln,
+                        caseInsensitiveRaw = "\n",
+                        flags = flags
+
+                    });
+                }
+
+            }
+
             void AddComment(Token t)
             {
                 comments.Add(t);
@@ -402,6 +429,7 @@ namespace FadeBasic
                             (charNumber - remBlockToken.charNumber) + "remend".Length);
                         remBlockToken.caseInsensitiveRaw = remBlockToken.raw.ToLowerInvariant();
                        
+                        
                         AddComment(remBlockToken);
                         remBlockToken = null;
                         charNumber += "remend".Length;
@@ -539,6 +567,7 @@ namespace FadeBasic
                         switch (bestToken.type)
                         {
                             case LexemType.KeywordRem:
+                                FlushEos(ref requestEoS, requestEoSCharNumber, lines, lineNumber, eolLexem, flags);
                                 AddComment(bestToken);
                                 break;
                             case LexemType.WhiteSpace:
@@ -583,20 +612,28 @@ namespace FadeBasic
                                 break;
                             default:
 
-                                
-                                if (requestEoS)
-                                {
-                                    requestEoS = false;
-                                    AddToken(new Token
-                                    {
-                                        charNumber = requestEoSCharNumber ,
-                                        lexem = eolLexem,
-                                        lineNumber = lineNumber,
-                                        caseInsensitiveRaw = "\n",
-                                        flags = flags
-
-                                    });
-                                }
+                                FlushEos(ref requestEoS, requestEoSCharNumber, lines, lineNumber, eolLexem, flags);
+                                // if (requestEoS)
+                                // {
+                                //     requestEoS = false;
+                                //
+                                //     var previousToken = all.LastOrDefault();
+                                //     var cn = previousToken == null
+                                //         ? requestEoSCharNumber
+                                //         : lines[previousToken.lineNumber].Length + 1; // synthetic index. 
+                                //     var ln = previousToken == null
+                                //         ? lineNumber
+                                //         : previousToken.lineNumber;
+                                //     AddToken(new Token
+                                //     {
+                                //         charNumber = cn ,
+                                //         lexem = eolLexem,
+                                //         lineNumber = ln,
+                                //         caseInsensitiveRaw = "\n",
+                                //         flags = flags
+                                //
+                                //     });
+                                // }
 
                                 AddToken(bestToken);
                                 
@@ -653,11 +690,18 @@ namespace FadeBasic
             if (requestEoS)
             {
                 requestEoS = false;
+                var previousToken = all.LastOrDefault();
+                var cn = previousToken == null
+                    ? requestEoSCharNumber
+                    : lines[previousToken.lineNumber].Length + 1; // synthetic index. 
+                var ln = previousToken == null
+                    ? lines.Length - 1
+                    : previousToken.lineNumber;
                 AddToken(new Token
                 {
-                    charNumber = requestEoSCharNumber, 
+                    charNumber = cn, 
                     lexem = eolLexem,
-                    lineNumber = lines.Length - 1,
+                    lineNumber = ln,
                     caseInsensitiveRaw = "\n"
                 });
             }
@@ -1548,6 +1592,11 @@ namespace FadeBasic
         /// true when the token was generated from a substitution, where the substitution included haunted variables. 
         /// </summary>
         IsHauntedGenerated = 1 << 6,
+        
+        /// <summary>
+        /// true when this token was generated by the parser just to keep the program happy
+        /// </summary>
+        IsPatchToken = 1 << 7,
     }
     
     [Serializable]
@@ -1621,6 +1670,7 @@ namespace FadeBasic
         public int Count => _tokens.Count;
 
         public Token Current { get; private set; }
+        public Token Previous => _tokens.Count > 0 ? _tokens[Index - 1] : null;
         private int _maxIndex;
         
 
@@ -1725,7 +1775,8 @@ namespace FadeBasic
                     lineNumber = copyToken.lineNumber,
                     caseInsensitiveRaw = s.ToLowerInvariant(),
                     raw = s,
-                    lexem = new Lexem(type)
+                    lexem = new Lexem(type),
+                    flags = TokenFlags.IsPatchToken
                 }
             };
         }

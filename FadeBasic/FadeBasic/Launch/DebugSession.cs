@@ -1187,7 +1187,16 @@ namespace FadeBasic.Launch
                     
                     // execute to the next breakpoint. 
                     var breakpointInsIndexes = new HashSet<int>(breakpointTokens.Select(t => t.insIndex)); // TODO: move this to cache
-                    _vm.Execute2(0, breakpointInsIndexes);
+                    
+                    // Console.WriteLine($"RUNNING WITH BUDGET: {budget}");
+                    var spent = _vm.Execute3(budget, breakpointInsIndexes);
+                    // Console.WriteLine($"SPENT FOR BUDGET: {spent}");
+                    
+                    budget -= spent;
+                    // if (spent > 1)
+                    // {
+                    //     budget++; // make up for lost?
+                    // }
                     
                     if (_vm.error.type != VirtualRuntimeErrorType.NONE)
                     {

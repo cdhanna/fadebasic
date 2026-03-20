@@ -249,10 +249,15 @@ namespace FadeBasic.Virtual
             }
         }
 
-        public void Execute2(int instructionBatchCount=1000, HashSet<int> breakpointInsIndexes=null)
+        public void Execute2(int instructionBatchCount = 1000, HashSet<int> breakpointInsIndexes = null)
+        {
+            Execute3(instructionBatchCount, breakpointInsIndexes);
+        }
+        
+        public int Execute3(int instructionBatchCount=1000, HashSet<int> breakpointInsIndexes=null)
         {
             isSuspendRequested = false;
-
+            var cycles = 0;
             
             // while (true)
             {
@@ -277,6 +282,7 @@ namespace FadeBasic.Virtual
                         && error.type == VirtualRuntimeErrorType.NONE; 
                      i += incrementer)
                 {
+                    cycles++;
                     var ins = Advance();
                     switch (ins)
                     {
@@ -871,8 +877,8 @@ namespace FadeBasic.Virtual
                 state.insPtr = insPtr;
 
             }
-            
 
+            return cycles;
         }
         
         public int test = 0;

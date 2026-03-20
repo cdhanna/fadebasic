@@ -9,7 +9,7 @@ namespace FadeBasic.Ast
         VariableType variableType { get; }
     }
     
-    public class StructTypeReferenceNode : AstNode, ITypeReferenceNode
+    public class StructTypeReferenceNode : AstNode, ITypeReferenceNode, IHasTriviaNode
     {
         public VariableRefNode variableNode;
         
@@ -30,6 +30,8 @@ namespace FadeBasic.Ast
         {
             yield return variableNode;
         }
+
+        public string Trivia { get; set; }
     }
     
     public class TypeReferenceNode : AstNode, ITypeReferenceNode

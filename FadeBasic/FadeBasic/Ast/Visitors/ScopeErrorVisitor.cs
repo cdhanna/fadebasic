@@ -307,9 +307,7 @@ namespace FadeBasic.Ast.Visitors
                         {
                             statements.Insert(i, implicitDecl);
                         }
-                        
                         // an assignment statement RESETS the transitive nature. 
-                        
                         assignment.variable.TransitiveFlags = assignment.expression.TransitiveFlags;
                         switch (assignment.variable)
                         {
@@ -329,6 +327,11 @@ namespace FadeBasic.Ast.Visitors
                         if (assignment.expression is DefaultValueExpression defExpr2 && assignment.variable.ParsedType.type != VariableType.Void)
                         {
                             defExpr2.ParsedType = assignment.variable.ParsedType;
+                        }
+
+                        if (assignment.variable is AstNode node && node.ParsedType.unset)
+                        {
+                            node.ParsedType = assignment.expression.ParsedType;
                         }
                         
                         break;
@@ -613,6 +616,12 @@ namespace FadeBasic.Ast.Visitors
                     // fieldRef.TransitiveFlags |= symbol.transitiveTypeFlags;
                     // symbol.source.TransitiveFlags |= fieldRef.TransitiveFlags;
                     // fieldRef.TransitiveFlags = symbol.transitiveTypeFlags;
+
+                    if (fieldRef.left is AstNode leftNode)
+                    {
+                        leftNode.ParsedType = symbol.typeInfo;
+                        leftNode.DeclaredFromSymbol = symbol;
+                    }
                     EnsureStructRefRight(fieldRef, symbol, scope, ctx);
                     
                     // we need to know what the left side _is_ in order to create a scope for the right side.
