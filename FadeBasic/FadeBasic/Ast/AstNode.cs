@@ -64,9 +64,14 @@ namespace FadeBasic.Ast
         public static readonly TypeInfo String = new TypeInfo { type = VariableType.String };
         public static readonly TypeInfo Real = new TypeInfo { type = VariableType.Float };
 
-        
+
         public bool IsAssignable(TypeInfo toType)
         {
+            return IsAssignable(toType, out _);
+        }
+        public bool IsAssignable(TypeInfo toType, out bool badParity)
+        {
+            badParity = false;
             if (unset) return true;
 
             if (toType.type == VariableType.Any)
@@ -105,10 +110,15 @@ namespace FadeBasic.Ast
                 }
             }
 
-            if (IsArray)
+            if (toType.rank != rank)
             {
-                return toType.rank == rank;
+                badParity = true;
+                return false; // array parities not lined up.
             }
+            // if (IsArray)
+            // {
+            //     return toType.rank == rank;
+            // }
 
             return true;
         }

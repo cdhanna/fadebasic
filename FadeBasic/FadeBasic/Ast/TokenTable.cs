@@ -51,7 +51,12 @@ namespace FadeBasic.Ast
             });
 
             found = foundEntries.FirstOrDefault();
-            return found != null;
+            var didFind = found != null;
+            if (!didFind)
+            {
+                found = entries[0];
+            }
+            return didFind;
         }
         
         public class Entry

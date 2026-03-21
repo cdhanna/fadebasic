@@ -38,7 +38,7 @@ public class CompletionHandler2 : CompletionHandlerBase
         ClientCapabilities clientCapabilities) => new CompletionRegistrationOptions
     {
         DocumentSelector = TextDocumentSelector.ForLanguage(FadeBasicConstants.FadeBasicLanguage),
-        TriggerCharacters = new Container<string>(" ", ".", "("),
+        TriggerCharacters = new Container<string>(" ", ".", "(", "=", "+", "*", "-", "/"),
         ResolveProvider = false
     };
 
@@ -82,9 +82,9 @@ public class CompletionHandler2 : CompletionHandlerBase
         
         // need to find the nearest token to the left. 
         Token leftToken = null;
-        for (var i = unit.lexerResults.tokens.Count - 1; i >= 0; i --)
+        for (var i = unit.lexerResults.allTokens.Count - 1; i >= 0; i --)
         {
-            var token = unit.lexerResults.tokens[i];
+            var token = unit.lexerResults.allTokens[i];
             if (token.lineNumber < mappedLineNumber)
             {
                 leftToken = token;
@@ -108,29 +108,83 @@ public class CompletionHandler2 : CompletionHandlerBase
             return Token.IsLocationBeforeOrEqual(x.StartToken, fakeToken) && Token.IsLocationBeforeOrEqual(fakeToken, x.EndToken);
         }
 
-        var programGroup = unit.program.Where(Visit);
-        var programNode = programGroup.LastOrDefault();
-        var macroNode = unit.macroProgram?.Where(Visit).LastOrDefault();
+        var programGroup = unit.program?.Where(Visit);
+        var programNode = programGroup?.LastOrDefault();
         
-        var isMacro = macroNode != null;
-        var node = isMacro ? macroNode : programNode;
+        var macroGroup = unit.macroProgram?.Where(Visit);
+        var macroNode = macroGroup?.LastOrDefault();
+        
+        var isMacro = unit.macroProgram.statements.Count > 0 && macroNode != null;
 
-        unit.program.scope.positionedVariables.TryFindEntry(fakeToken, out var entry);
-
-        var items = GetCompletions(new CompletionContext
+        if (isMacro)
         {
-            fakeToken = fakeToken,
-            leftToken = leftToken,
-            program = unit.program, 
-            commands = unit.commands,
-            functionName = entry.value.Item2, 
-            group = programGroup,
-            localScope = entry.value.Item1
-        });
-        return Task.FromResult(new CompletionList(items));
+            if (unit.macroProgram == null)
+            {
+                return Task.FromResult(new CompletionList(new List<CompletionItem>
+                {
+                    new CompletionItem
+                    {
+                        Kind = CompletionItemKind.Folder,
+                        InsertText = "<NO MACRO PROG>"
+                    }
+                }));
+            }
+            if (!unit.macroProgram.scope.positionedVariables.TryFindEntry(fakeToken, out var entry))
+            {
+                entry = unit.macroProgram.scope.positionedVariables.entries[0];
+            }
+
+            var context = new CompletionContext
+            {
+                isMacro = true,
+                fakeToken = fakeToken,
+                leftToken = leftToken,
+                program = unit.macroProgram,
+                commands = unit.commands,
+                functionName = entry.value.Item2,
+                group = macroGroup,
+                localScope = entry.value.Item1
+            };
+            var items = GetCompletions(context);
+            return Task.FromResult(new CompletionList(items, isIncomplete: false));
+
+        }
+        else
+        {
+            if (unit.program == null)
+            {
+                return Task.FromResult(new CompletionList(new List<CompletionItem>
+                {
+                    new CompletionItem
+                    {
+                        Kind = CompletionItemKind.Folder,
+                        InsertText = "<NO PROG>"
+                    }
+                }));
+            }
+            if (!unit.program.scope.positionedVariables.TryFindEntry(fakeToken, out var entry))
+            {
+                entry = unit.program.scope.positionedVariables.entries[0];
+            }
+
+            var context = new CompletionContext
+            {
+                fakeToken = fakeToken,
+                leftToken = leftToken,
+                program = unit.program,
+                commands = unit.commands,
+                functionName = entry.value.Item2,
+                group = programGroup,
+                localScope = entry.value.Item1
+            };
+            var items = GetCompletions(context);
+            return Task.FromResult(new CompletionList(items, isIncomplete: false));
+
+        }
+
     }
 
-    record CompletionContext
+    public record CompletionContext
     {
         public CommandCollection commands;
         public ProgramNode program;
@@ -140,14 +194,22 @@ public class CompletionHandler2 : CompletionHandlerBase
         public List<IAstVisitable> group;
         public SymbolTable localScope;
         public string functionName;
+        public bool isMacro;
 
-        
     }
 
-    public IEnumerable<(CompletionItem item, CommandInfo command)> GetCompletionsForCommandCalls(TypeInfo forType, CommandCollection commands)
+    public IEnumerable<(CompletionItem item, CommandInfo command)> GetCompletionsForCommandCalls(TypeInfo forType, CompletionContext context)
     {
-        foreach (var command in commands.Commands)
+        foreach (var command in context.commands.Commands)
         {
+            if (context.isMacro && !command.usage.HasFlag(FadeBasicCommandUsage.Macro))
+            {
+                continue;
+            }
+            if (!context.isMacro && !command.usage.HasFlag(FadeBasicCommandUsage.Runtime))
+            {
+                continue;
+            }
             if (!TypeInfo.TryGetFromTypeCode(command.returnType, out var commandType))
             {
                 continue;
@@ -182,6 +244,19 @@ public class CompletionHandler2 : CompletionHandlerBase
         }
     }
 
+    public IEnumerable<CompletionItem> GetKeywordCompletions(CompletionContext context)
+    {
+        yield return new CompletionItem
+        {
+            InsertTextFormat = InsertTextFormat.Snippet,
+            InsertTextMode = InsertTextMode.AdjustIndentation,
+            Kind = CompletionItemKind.Keyword,
+            Label = "IF",
+            InsertText = "IF $1\n\t$0\nENDIF",
+            SortText = "b"
+        };
+    }
+    
     public IEnumerable<(CompletionItem item, Symbol func)> GetCompletionsForFunctionCalls(TypeInfo forType, Scope scope)
     {
         foreach (var (name, funcSymbol) in scope.functionSymbolTable)
@@ -225,11 +300,21 @@ public class CompletionHandler2 : CompletionHandlerBase
                 // the symbol is defined AFTER the cursor position, so it would be invalid to look at. 
                 continue; 
             }
+
+
+            var insert = name;
             
-            
-            // TODO: handle arrays. Maybe it is assignable if we grab an index? 
-            if (!symbol.typeInfo.IsAssignable(forType))
-                continue;
+            if (!symbol.typeInfo.IsAssignable(forType, out var badParity))
+            {
+                if (symbol.typeInfo.IsArray && badParity)
+                {
+                    insert += "($0)";
+                }
+                else
+                {
+                    continue;
+                }
+            }
                 
                 
             var docMarkdown = string.Empty;
@@ -249,7 +334,7 @@ public class CompletionHandler2 : CompletionHandlerBase
                 InsertTextMode = InsertTextMode.AdjustIndentation,
                 Kind = CompletionItemKind.Variable,
                 Label = name,
-                InsertText = name,
+                InsertText = insert,
                 SortText = "a",
                 Detail = $"{symbol.typeInfo.ToDisplay()}",
                 Documentation = new MarkupContent()
@@ -276,6 +361,8 @@ public class CompletionHandler2 : CompletionHandlerBase
                 return GetCommandParameterCompletions(commandStatement.command, commandStatement.argMap, commandStatement.args, context);
             case ArrayIndexReference arrayIndexRefence when arrayIndexRefence?.DeclaredFromSymbol?.source is FunctionStatement func:
                 return GetFunctionParameterCompletions(arrayIndexRefence, func, context);
+            case ArrayIndexReference arrayIndexReference:
+                return GetArrayIndexCompletions(arrayIndexReference, context);
             case GoSubStatement:
             case GotoStatement:
                 return GetLabelCompletions(context);
@@ -290,9 +377,20 @@ public class CompletionHandler2 : CompletionHandlerBase
             case FunctionStatement when context.leftToken.type == LexemType.KeywordExitFunction:
             case ProgramNode when context.leftToken.type == LexemType.KeywordEndFunction || context.leftToken.type == LexemType.KeywordExitFunction:
                 return GetExitFunctionCompletions(context);
+            case ProgramNode when context.leftToken.type == LexemType.KeywordThen:
+            case DeferStatement when context.leftToken.type == LexemType.KeywordDefer:
+            case ProgramNode when context.leftToken.type == LexemType.KeywordDefer:
+                return GetStatementCompletions(context, false);
+            
+            case RepeatUntilStatement when context.leftToken.type == LexemType.EndStatement || context.leftToken.type == LexemType.KeywordRem:
+            case WhileStatement when context.leftToken.type == LexemType.EndStatement || context.leftToken.type == LexemType.KeywordRem:
+            case DoLoopStatement when context.leftToken.type == LexemType.EndStatement || context.leftToken.type == LexemType.KeywordRem:
+            case ForStatement when context.leftToken.type == LexemType.EndStatement || context.leftToken.type == LexemType.KeywordRem:
+            case DeferStatement when context.leftToken.type == LexemType.EndStatement || context.leftToken.type == LexemType.KeywordRem:
+            case IfStatement when context.leftToken.type == LexemType.EndStatement || context.leftToken.type == LexemType.KeywordRem:
             case ProgramNode when context.leftToken.type == LexemType.EndStatement || context.leftToken.type == LexemType.KeywordRem:
                 // ah, at this point, we are on a top level statement!
-                return GetStatementCompletions(context);
+                return GetStatementCompletions(context, true);
         }
         
         return new List<CompletionItem>();
@@ -304,7 +402,11 @@ public class CompletionHandler2 : CompletionHandlerBase
         
         // get the type of the left
         var type = reference.left.ParsedType;
-
+        if (string.IsNullOrEmpty(type.structName))
+        {
+            // error case.
+            return list;
+        }
         var symTable = context.scope.typeNameToTypeMembers[type.structName];
         
         foreach (var (name, symbol) in symTable)
@@ -390,11 +492,35 @@ public class CompletionHandler2 : CompletionHandlerBase
         list.AddRange(GetCompletionsForSymbols(context.fakeToken, type, context.localScope).Where(SymbolPredicate).Select(x => x.item));
         list.AddRange(GetCompletionsForSymbols(context.fakeToken, type, context.scope.globalVariables).Where(SymbolPredicate).Select(x => x.item));
         list.AddRange(GetCompletionsForFunctionCalls(type, context.scope).Select(x => x.item));
-        list.AddRange(GetCompletionsForCommandCalls(type, context.commands).Select(x => x.item));
+        list.AddRange(GetCompletionsForCommandCalls(type, context).Select(x => x.item));
 
 
         return list;
     }
+
+    List<CompletionItem> GetArrayIndexCompletions(ArrayIndexReference index, 
+        CompletionContext context)
+    {
+        var list = new List<CompletionItem>();
+
+        var type = TypeInfo.Int; // array index must be an int.
+        bool SymbolPredicate((CompletionItem item, Symbol symbol) x)
+        {
+            // if (statement == x.symbol.source)
+            // {
+            //     // cannot handle self reference. 
+            //     return false;
+            // }
+            return true;
+        }
+        list.AddRange(GetCompletionsForSymbols(context.fakeToken, type, context.localScope).Where(SymbolPredicate).Select(x => x.item));
+        list.AddRange(GetCompletionsForSymbols(context.fakeToken, type, context.scope.globalVariables).Where(SymbolPredicate).Select(x => x.item));
+        list.AddRange(GetCompletionsForFunctionCalls(type, context.scope).Select(x => x.item));
+        list.AddRange(GetCompletionsForCommandCalls(type, context).Select(x => x.item));
+
+        return list;
+    }
+
     List<CompletionItem> GetFunctionParameterCompletions(ArrayIndexReference index, FunctionStatement func, CompletionContext context)
     {
         var list = new List<CompletionItem>();
@@ -419,7 +545,7 @@ public class CompletionHandler2 : CompletionHandlerBase
         list.AddRange(GetCompletionsForSymbols(context.fakeToken, type, context.localScope).Where(SymbolPredicate).Select(x => x.item));
         list.AddRange(GetCompletionsForSymbols(context.fakeToken, type, context.scope.globalVariables).Where(SymbolPredicate).Select(x => x.item));
         list.AddRange(GetCompletionsForFunctionCalls(type, context.scope).Select(x => x.item));
-        list.AddRange(GetCompletionsForCommandCalls(type, context.commands).Select(x => x.item));
+        list.AddRange(GetCompletionsForCommandCalls(type, context).Select(x => x.item));
 
         
         
@@ -471,24 +597,28 @@ public class CompletionHandler2 : CompletionHandlerBase
         list.AddRange(GetCompletionsForSymbols(context.fakeToken, type, table).Select(x => x.item));
         list.AddRange(GetCompletionsForSymbols(context.fakeToken, type, context.scope.globalVariables).Select(x => x.item));
         list.AddRange(GetCompletionsForFunctionCalls(type, context.scope).Select(x => x.item));
-        list.AddRange(GetCompletionsForCommandCalls(type, context.commands).Select(x => x.item));
+        list.AddRange(GetCompletionsForCommandCalls(type, context).Select(x => x.item));
 
         // TODO: add things that return things that COULD match the type? 
         
         return list;
     }
 
-    List<CompletionItem> GetStatementCompletions(CompletionContext context)
+    List<CompletionItem> GetStatementCompletions(CompletionContext context, bool includeKeywords)
     {
         var list = new List<CompletionItem>();
         // offer up keywords
-        
+        if (includeKeywords)
+        {
+            list.AddRange(GetKeywordCompletions(context));
+        }
+
         // offer up function invocations that do not return anything. 
         list.AddRange(GetCompletionsForFunctionCalls(TypeInfo.Void, context.scope).Select(x => x.item));
         
         // offer up commands that do not return anything. 
 
-        list.AddRange(GetCompletionsForCommandCalls(TypeInfo.Void, context.commands).Select(x => x.item));
+        list.AddRange(GetCompletionsForCommandCalls(TypeInfo.Void, context).Select(x => x.item));
         return list;
     }
 
@@ -548,7 +678,7 @@ public class CompletionHandler2 : CompletionHandlerBase
         list.AddRange(GetCompletionsForSymbols(context.fakeToken, type, context.localScope).Where(SymbolPredicate).Select(x => x.item));
         list.AddRange(GetCompletionsForSymbols(context.fakeToken, type, context.scope.globalVariables).Where(SymbolPredicate).Select(x => x.item));
         list.AddRange(GetCompletionsForFunctionCalls(type, context.scope).Select(x => x.item));
-        list.AddRange(GetCompletionsForCommandCalls(type, context.commands).Select(x => x.item));
+        list.AddRange(GetCompletionsForCommandCalls(type, context).Select(x => x.item));
         // list.AddRange(GetCompletionsForSymbols(context.fakeToken, type, context.scope.allGlobalVariables));
         
         return list;
@@ -582,6 +712,10 @@ public class CompletionHandler2 : CompletionHandlerBase
         if (statement.variable.DeclaredFromSymbol != null)
         {
             type = statement.variable.DeclaredFromSymbol.typeInfo;
+            if (statement.variable is ArrayIndexReference)
+            {
+                type.rank = 0; // we are not assigning an array, we are assigning a field.
+            }
         }
         
         // load up all the symbols in the scope, and all global functions.
@@ -600,7 +734,7 @@ public class CompletionHandler2 : CompletionHandlerBase
         list.AddRange(GetCompletionsForSymbols(context.fakeToken, type, context.localScope).Where(SymbolPredicate).Select(x => x.item));
         list.AddRange(GetCompletionsForSymbols(context.fakeToken, type, context.scope.globalVariables).Where(SymbolPredicate).Select(x => x.item));
         list.AddRange(GetCompletionsForFunctionCalls(type, context.scope).Select(x => x.item));
-        list.AddRange(GetCompletionsForCommandCalls(type, context.commands).Select(x => x.item));
+        list.AddRange(GetCompletionsForCommandCalls(type, context).Select(x => x.item));
         // list.AddRange(GetCompletionsForSymbols(context.fakeToken, type, context.scope.allGlobalVariables));
         
         return list;
