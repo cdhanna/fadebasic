@@ -8,10 +8,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [0.0.51]
 
 ### Added
-- LSP supports type-aheads
+- LSP supports text completions
+- LSP supports basic rename support
+- LSP supports signature helper
 
 ### Fixed
-- debugger speed improved
+- debugger program performance greatly improved
 - type tokens appear highlighted in declaration statements
 
 ## [0.0.50] - 2026-03-06

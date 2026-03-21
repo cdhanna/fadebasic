@@ -57,6 +57,8 @@ public class RenameHandler : RenameHandlerBase
             typeof(ArrayIndexReference),
             typeof(GoSubStatement),
             typeof(GotoStatement),
+            typeof(DeclarationStatement),
+            typeof(ParameterNode),
         };
 
         bool Visit(IAstVisitable x)
@@ -166,6 +168,10 @@ public class RenameHandler : RenameHandlerBase
     static Token GetNameToken(IAstNode node) => node switch
     {
         FunctionStatement fs => fs.nameToken,
+        // Variable name is at EndToken; StartToken is the scope keyword (GLOBAL/LOCAL/DIM)
+        DeclarationStatement decl => decl.EndToken,
+        // ParameterNode.StartToken == parameter.variable.startToken (the name token)
+        ParameterNode param => param.StartToken,
         _ => node.StartToken
     };
 
