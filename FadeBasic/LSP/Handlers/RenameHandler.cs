@@ -198,6 +198,11 @@ public class RenameHandler : RenameHandlerBase
             if (x == declarationNode) return;
             if (x.DeclaredFromSymbol?.source == declarationNode)
                 AddEdit(unit, x, newName, edits);
+            if (x.DeclaredFromSymbol?.source is AssignmentStatement macroAssignment &&
+                macroAssignment.variable == declarationNode)
+            {
+                AddEdit(unit, x, newName, edits);
+            }
         });
     }
 
