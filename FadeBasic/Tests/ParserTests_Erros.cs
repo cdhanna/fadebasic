@@ -471,7 +471,7 @@ e = {
         var parser = MakeParser(input);
         var prog = parser.ParseProgram();
         prog.AssertParseErrors(1, out var errors);
-        Assert.That(errors[0].Display, Is.EqualTo($"[6:1,7:5] - {ErrorCodes.InitializerCanOnlyHaveAssignments}"));
+        Assert.That(errors[0].Display, Is.EqualTo($"[6:1,6:6] - {ErrorCodes.InitializerCanOnlyHaveAssignments}"));
     }
 
     
@@ -1888,7 +1888,7 @@ local for";
 
         var errors = prog.GetAllErrors();
         Assert.That(errors.Count, Is.EqualTo(1));
-        Assert.That(errors[0].Display, Is.EqualTo($"[1:9] - {ErrorCodes.ScopedDeclarationInvalid}"));
+        Assert.That(errors[0].Display, Is.EqualTo($"[1:10] - {ErrorCodes.ScopedDeclarationInvalid}"));
 
     }
     
@@ -1918,7 +1918,7 @@ local dim";
 
         var errors = prog.GetAllErrors();
         Assert.That(errors.Count, Is.EqualTo(1));
-        Assert.That(errors[0].Display, Is.EqualTo($"[1:9] - {ErrorCodes.ArrayDeclarationInvalid}"));
+        Assert.That(errors[0].Display, Is.EqualTo($"[1:10] - {ErrorCodes.ArrayDeclarationInvalid}"));
 
     }
 
@@ -1933,9 +1933,9 @@ local dim x";
 
         var errors = prog.GetAllErrors();
         Assert.That(errors.Count, Is.EqualTo(3));
-        Assert.That(errors[0].Display, Is.EqualTo($"[1:11] - {ErrorCodes.ArrayDeclarationMissingOpenParen}"));
+        Assert.That(errors[0].Display, Is.EqualTo($"[1:12] - {ErrorCodes.ArrayDeclarationMissingOpenParen}"));
         Assert.That(errors[1].Display, Is.EqualTo($"[1:10] - {ErrorCodes.ArrayDeclarationRequiresSize}"));
-        Assert.That(errors[2].Display, Is.EqualTo($"[1:11] - {ErrorCodes.ArrayDeclarationMissingCloseParen}"));
+        Assert.That(errors[2].Display, Is.EqualTo($"[1:12] - {ErrorCodes.ArrayDeclarationMissingCloseParen}"));
 
     }
     
@@ -1964,7 +1964,7 @@ local dim x(3";
 
         var errors = prog.GetAllErrors();
         Assert.That(errors.Count, Is.EqualTo(1));
-        Assert.That(errors[0].Display, Is.EqualTo($"[1:13] - {ErrorCodes.ArrayDeclarationMissingCloseParen}"));
+        Assert.That(errors[0].Display, Is.EqualTo($"[1:14] - {ErrorCodes.ArrayDeclarationMissingCloseParen}"));
     }
 
     [Test]
@@ -3234,7 +3234,7 @@ repeat
         var errors = prog.GetAllErrors();
         Assert.That(errors.Count, Is.EqualTo(2)); 
         Assert.That(errors[0].Display, Is.EqualTo($"[1:0] - {ErrorCodes.RepeatStatementMissingUntil}"));
-        Assert.That(errors[1].Display, Is.EqualTo($"[2:0] - {ErrorCodes.ExpressionMissing}"));
+        Assert.That(errors[1].Display, Is.EqualTo($"[1:7] - {ErrorCodes.ExpressionMissing}"));
     }
     
     
@@ -3657,7 +3657,7 @@ n = 1
 
         var errors = prog.GetAllErrors();
         Assert.That(errors.Count, Is.EqualTo(1));
-        Assert.That(errors[0].Display, Is.EqualTo($"[1:2] - {ErrorCodes.AmbiguousDeclarationOrAssignment}"));
+        Assert.That(errors[0].Display, Is.EqualTo($"[1:7] - {ErrorCodes.AmbiguousDeclarationOrAssignment}"));
     }
 
     
