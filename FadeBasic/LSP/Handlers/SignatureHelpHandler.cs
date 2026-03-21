@@ -61,7 +61,7 @@ public class SignatureHelpHandler : SignatureHelpHandlerBase
             Token.IsLocationBeforeOrEqual(v.StartToken, fakeToken) &&
             Token.IsLocationBeforeOrEqual(fakeToken, v.EndToken);
 
-        var group = unit.program.Where(Visit);
+        var group = unit.program?.Where(Visit) ?? new List<IAstVisitable>();
         var node = group.LastOrDefault();
 
         _logger.LogInformation("SignatureHelp node: " + node?.GetType().Name);

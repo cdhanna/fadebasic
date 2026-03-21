@@ -196,7 +196,7 @@ public class HoverHandler : HoverHandlerBase
                 referencedNodes.Add(x);
             }
         }
-        unit.program.Visit(VisitFunc);
+        unit.program?.Visit(VisitFunc);
         unit.macroProgram?.Visit(VisitFunc);
 
         // var markdown = $"test [this]({request.TextDocument.Uri.ToString()}#L2%2C4)";

@@ -97,15 +97,19 @@ public class CompletionHandler2 : CompletionHandlerBase
             }
         }
 
+        var isMacro = false;
+
         if (leftToken == null)
         {
             _logger.LogInformation("There is no found left token");
             return null;
         }
+
+        isMacro = leftToken.flags.HasFlag(TokenFlags.IsMacroToken);
         
         bool Visit(IAstVisitable x)
         {
-            return Token.IsLocationBeforeOrEqual(x.StartToken, fakeToken) && Token.IsLocationBeforeOrEqual(fakeToken, x.EndToken);
+            return x is ProgramNode || Token.IsLocationBeforeOrEqual(x.StartToken, fakeToken) && Token.IsLocationBeforeOrEqual(fakeToken, x.EndToken);
         }
 
         var programGroup = unit.program?.Where(Visit);
@@ -114,7 +118,7 @@ public class CompletionHandler2 : CompletionHandlerBase
         var macroGroup = unit.macroProgram?.Where(Visit);
         var macroNode = macroGroup?.LastOrDefault();
         
-        var isMacro = unit.macroProgram.statements.Count > 0 && macroNode != null;
+        // var isMacro = unit.macroProgram.statements.Count > 0 && macroNode != null;
 
         if (isMacro)
         {
@@ -246,15 +250,17 @@ public class CompletionHandler2 : CompletionHandlerBase
 
     public IEnumerable<CompletionItem> GetKeywordCompletions(CompletionContext context)
     {
-        yield return new CompletionItem
-        {
-            InsertTextFormat = InsertTextFormat.Snippet,
-            InsertTextMode = InsertTextMode.AdjustIndentation,
-            Kind = CompletionItemKind.Keyword,
-            Label = "IF",
-            InsertText = "IF $1\n\t$0\nENDIF",
-            SortText = "b"
-        };
+        // TODO: 
+        yield break;
+        // yield return new CompletionItem
+        // {
+        //     InsertTextFormat = InsertTextFormat.Snippet,
+        //     InsertTextMode = InsertTextMode.AdjustIndentation,
+        //     Kind = CompletionItemKind.Keyword,
+        //     Label = "IF",
+        //     InsertText = "IF $1\n\t$0\nENDIF",
+        //     SortText = "b"
+        // };
     }
     
     public IEnumerable<(CompletionItem item, Symbol func)> GetCompletionsForFunctionCalls(TypeInfo forType, Scope scope)
@@ -279,7 +285,7 @@ public class CompletionHandler2 : CompletionHandlerBase
                 Documentation = new MarkupContent()
                 {
                     Kind = MarkupKind.Markdown,
-                    Value = func.Trivia
+                    Value = func.Trivia ?? string.Empty
                 },
                 Command = new Command
                 {
@@ -321,10 +327,10 @@ public class CompletionHandler2 : CompletionHandlerBase
             switch (symbol.source)
             {
                 case AssignmentStatement assignmentStatement:
-                    docMarkdown = assignmentStatement.Trivia;
+                    docMarkdown = assignmentStatement.Trivia ?? string.Empty;
                     break;
                 case DeclarationStatement declarationStatement:
-                    docMarkdown = declarationStatement.Trivia;
+                    docMarkdown = declarationStatement.Trivia ?? string.Empty;
                     break;
             }
             
@@ -334,6 +340,7 @@ public class CompletionHandler2 : CompletionHandlerBase
                 InsertTextMode = InsertTextMode.AdjustIndentation,
                 Kind = CompletionItemKind.Variable,
                 Label = name,
+                FilterText = "",
                 InsertText = insert,
                 SortText = "a",
                 Detail = $"{symbol.typeInfo.ToDisplay()}",
@@ -353,6 +360,10 @@ public class CompletionHandler2 : CompletionHandlerBase
 
         switch (node)
         {
+            case DefaultValueExpression def:
+                return GetDefaultValueCompletions(def, context);
+            case StructFieldReference when context.leftToken.type == LexemType.OpEqual && context.group.Count > 2 && context.group[^2] is AssignmentStatement assignmentRef:
+                return GetAssignmentCompletions(assignmentRef, context);
             case StructFieldReference fieldRef:
                 return GetStructCompletions(fieldRef, context);
             case CommandExpression commandExpression:
@@ -366,6 +377,9 @@ public class CompletionHandler2 : CompletionHandlerBase
             case GoSubStatement:
             case GotoStatement:
                 return GetLabelCompletions(context);
+            case BinaryOperandExpression binOp:
+                return GetExpressionCompletions(binOp.ParsedType, context);
+                
             case AssignmentStatement assignment:
                 return GetAssignmentCompletions(assignment, context);
             case DeclarationStatement declaration when context.leftToken.type == LexemType.OpEqual:
@@ -382,6 +396,9 @@ public class CompletionHandler2 : CompletionHandlerBase
             case ProgramNode when context.leftToken.type == LexemType.KeywordDefer:
                 return GetStatementCompletions(context, false);
             
+            case MacroSubstitutionExpression:
+            case MacroTokenizeStatement when context.leftToken.type == LexemType.ConstantBracketOpen:
+                return GetExpressionCompletions(context);
             case RepeatUntilStatement when context.leftToken.type == LexemType.EndStatement || context.leftToken.type == LexemType.KeywordRem:
             case WhileStatement when context.leftToken.type == LexemType.EndStatement || context.leftToken.type == LexemType.KeywordRem:
             case DoLoopStatement when context.leftToken.type == LexemType.EndStatement || context.leftToken.type == LexemType.KeywordRem:
@@ -396,6 +413,44 @@ public class CompletionHandler2 : CompletionHandlerBase
         return new List<CompletionItem>();
     }
 
+    List<CompletionItem> GetDefaultValueCompletions(DefaultValueExpression expression, CompletionContext context)
+    {
+        var list = new List<CompletionItem>();
+        var type = expression.ParsedType;
+        if (string.IsNullOrEmpty(type.structName))
+        {
+            // error case.
+            return list;
+        }
+        var symTable = context.scope.typeNameToTypeMembers[type.structName];
+        
+        foreach (var (name, symbol) in symTable)
+        {
+
+            var t = symbol.source is IHasTriviaNode triviaNode
+                ? triviaNode.Trivia
+                : "";
+            var item = new CompletionItem
+            {
+                InsertTextFormat = InsertTextFormat.Snippet,
+                InsertTextMode = InsertTextMode.AdjustIndentation,
+                Kind = CompletionItemKind.Field,
+                Label = name,
+                InsertText = name,
+                SortText = "a",
+                Detail = $"{symbol.typeInfo.ToDisplay()}",
+                Documentation = new MarkupContent()
+                {
+                    Kind = MarkupKind.Markdown,
+                    Value = t
+                }
+            };
+            
+            list.Add(item);
+        }
+
+        return list;
+    }
     List<CompletionItem> GetStructCompletions(StructFieldReference reference, CompletionContext context)
     {
         var list = new List<CompletionItem>();
@@ -683,8 +738,25 @@ public class CompletionHandler2 : CompletionHandlerBase
         
         return list;
     }
-    
-    
+
+    List<CompletionItem> GetExpressionCompletions(CompletionContext context)
+    {
+        return GetExpressionCompletions(TypeInfo.Unset, context);
+    }
+    List<CompletionItem> GetExpressionCompletions(TypeInfo type, CompletionContext context)
+    {
+        var list = new List<CompletionItem>();
+        bool SymbolPredicate((CompletionItem item, Symbol symbol) x)
+        {
+            return true;
+        }
+        list.AddRange(GetCompletionsForSymbols(context.fakeToken, type, context.localScope).Where(SymbolPredicate).Select(x => x.item));
+        list.AddRange(GetCompletionsForSymbols(context.fakeToken, type, context.scope.globalVariables).Where(SymbolPredicate).Select(x => x.item));
+        list.AddRange(GetCompletionsForFunctionCalls(type, context.scope).Select(x => x.item));
+        list.AddRange(GetCompletionsForCommandCalls(type, context).Select(x => x.item));
+
+        return list;
+    }
     List<CompletionItem> GetAssignmentCompletions(AssignmentStatement statement, CompletionContext context)
     {
         var list = new List<CompletionItem>();

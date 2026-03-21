@@ -73,6 +73,7 @@ namespace FadeBasic.Ast
         {
             badParity = false;
             if (unset) return true;
+            if (toType.unset) return true;
 
             if (toType.type == VariableType.Any)
             {
