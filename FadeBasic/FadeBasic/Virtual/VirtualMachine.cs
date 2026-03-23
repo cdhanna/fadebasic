@@ -249,12 +249,12 @@ namespace FadeBasic.Virtual
             }
         }
 
-        public void Execute2(int instructionBatchCount = 1000, HashSet<int> breakpointInsIndexes = null)
+        public void Execute2(int instructionBatchCount = 1000, Func<int, bool> shouldBreakpointCallback = null)
         {
-            Execute3(instructionBatchCount, breakpointInsIndexes);
+            Execute3(instructionBatchCount, shouldBreakpointCallback);
         }
         
-        public int Execute3(int instructionBatchCount=1000, HashSet<int> breakpointInsIndexes=null)
+        public int Execute3(int instructionBatchCount=1000, Func<int, bool> shouldBreakpointCallback=null)
         {
             isSuspendRequested = false;
             var cycles = 0;
@@ -864,7 +864,7 @@ namespace FadeBasic.Virtual
                     }
                     
                     // allow debuggers to pause at known instruction locations. 
-                    if (breakpointInsIndexes?.Contains(instructionIndex) ?? false)
+                    if (shouldBreakpointCallback != null && shouldBreakpointCallback(instructionIndex))
                     {
                         isSuspendRequested = true;
                     }

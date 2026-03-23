@@ -1186,18 +1186,31 @@ namespace FadeBasic.Launch
                     }
                     
                     // execute to the next breakpoint. 
-                    var breakpointInsIndexes = new HashSet<int>(breakpointTokens.Select(t => t.insIndex)); // TODO: move this to cache
-                    
-                    // Console.WriteLine($"RUNNING WITH BUDGET: {budget}");
-                    var spent = _vm.Execute3(budget, breakpointInsIndexes);
-                    // Console.WriteLine($"SPENT FOR BUDGET: {spent}");
-                    
+                    var movedOff = false;
+                    var spent = _vm.Execute3(budget, ins =>
+                    {
+                        // if the token we are on is a debug token.
+                        
+                        // AND, we have at least moved off the token we started on. 
+                        if (instructionMap.TryFindClosestTokenBeforeIndex(ins, out var t))
+                        {
+                            var shouldPause = false;
+                            if (movedOff && breakpointTokens.Contains(t))
+                            {
+                                shouldPause = true;
+                            }
+                            
+                            if (t != currentToken)
+                            {
+                                movedOff = true;
+                            }
+                            return shouldPause;
+                        }
+                        
+                        return false;
+                    });
                     budget -= spent;
-                    // if (spent > 1)
-                    // {
-                    //     budget++; // make up for lost?
-                    // }
-                    
+                    if (budget < 0) budget = 0;
                     if (_vm.error.type != VirtualRuntimeErrorType.NONE)
                     {
                         logger.Error($"Hit a runtime exception! message=[{_vm.error.message}]");

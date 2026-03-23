@@ -5,7 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [0.0.51]
+## [0.0.52]
+
+### Fixed
+- debugger hits breakpoints with instruction indexes mid-token 
+
+## [0.0.51] - 2026-03-21
 
 ### Added
 - LSP supports text completions
