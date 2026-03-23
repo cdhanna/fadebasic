@@ -481,6 +481,10 @@ namespace FadeBasic.Launch
                         catch (Exception ex)
                         {
                             logger.Error("OH NO SOMETHING BROKE!: " + ex.Message);
+                            Ack(evalRequest, new EvalResponse
+                            {
+                                result = DebugEvalResult.Failed($"internal error: {ex.Message}")
+                            });
                         }
 
                         break;
@@ -975,14 +979,21 @@ namespace FadeBasic.Launch
             byte[] originalProgram = _vm.program;
             var originalInstructionIndex = _vm.instructionIndex;
             var originalState = _vm.state;
-            
+
             // make a backup of the entire scope state of the vm...
             var originalScopeStack = FastStack<VirtualScope>.Copy(_vm.scopeStack);
             var reverseIndex = _vm.scopeStack.Count - (frameId + 1);
             var originalScopePtr = _vm.scopeStack.ptr;
             var originalStack = _vm.stack;
             var originalScope = _vm.scope;
-            
+
+            // Deep-save globalScope arrays so STORE_GLOBAL/STORE_PTR_GLOBAL writes during
+            // eval do not permanently corrupt global variable state.
+            var savedGlobalData       = (ulong[])_vm.globalScope.dataRegisters.Clone();
+            var savedGlobalTypes      = (byte[]) _vm.globalScope.typeRegisters.Clone();
+            var savedGlobalInsIndexes = (int[])  _vm.globalScope.insIndexes.Clone();
+            var savedGlobalFlags      = (byte[]) _vm.globalScope.flags.Clone();
+
             var fakeScopeStack = new FastStack<VirtualScope>(2);
             fakeScopeStack.Push(_vm.globalScope);
             if (_vm.scopeStack.Count > 1)
@@ -994,7 +1005,7 @@ namespace FadeBasic.Launch
             var newProgram = new List<byte>();
             newProgram.AddRange(_vm.program);
             newProgram.AddRange(compiler.Program);
-            
+
             _vm.instructionIndex = _vm.program.Length;
             _vm.program = newProgram.ToArray();
             _vm.stack = new FastStack<byte>(8);
@@ -1003,65 +1014,105 @@ namespace FadeBasic.Launch
             };
             _vm.scope = _vm.scopeStack.buffer[_vm.scopeStack.ptr - 1];
 
+            // Always isolate the working scope with fresh array copies so that any writes
+            // during eval do not bleed into the original scope's arrays via the shared
+            // reference left behind by FastStack<VirtualScope>.Copy.
+            _vm.scope.dataRegisters = (ulong[])_vm.scope.dataRegisters.Clone();
+            _vm.scope.typeRegisters = (byte[]) _vm.scope.typeRegisters.Clone();
+            _vm.scope.insIndexes    = (int[])  _vm.scope.insIndexes.Clone();
+            _vm.scope.flags         = (byte[]) _vm.scope.flags.Clone();
+
             var originalError = _vm.error;
             _vm.error = default;
-            while (_vm.instructionIndex < _vm.program.Length)
-            {
-                _vm.Execute2(_vm.program.Length - _vm.instructionIndex);
-            }
-            
-            DebugEvalResult result = null;
-            
 
             if (!compiler.scopeStack.Peek().TryGetVariable(SYNTHETIC_NAME2, out var synth))
             {
                 throw new NotSupportedException("no compiled synthetic");
             }
 
-
-            DebugRuntimeVariable runtimeSynth = null;
-            if (synth.typeCode == TypeCodes.STRUCT)
+            // Grow the (already isolated) scope arrays if the synthetic register falls outside
+            // current capacity.  The arrays are fresh clones at this point, so resizing them
+            // only affects the eval's private copy and never touches the original scope.
+            var requiredCapacity = (int)synth.registerAddress + 1;
+            if (requiredCapacity > _vm.scope.dataRegisters.Length)
             {
-                var ptr = _vm.dataRegisters[synth.registerAddress];
-                if (!_vm.heap.TryGetAllocation(VmPtr.FromRaw(ptr), out var alloc))
+                Array.Resize(ref _vm.scope.dataRegisters, requiredCapacity);
+                Array.Resize(ref _vm.scope.typeRegisters, requiredCapacity);
+                Array.Resize(ref _vm.scope.insIndexes, requiredCapacity);
+                Array.Resize(ref _vm.scope.flags, requiredCapacity);
+            }
+
+            DebugEvalResult result = null;
+            DebugRuntimeVariable runtimeSynth = null;
+            try
+            {
+                try
                 {
-                    return DebugEvalResult.Failed(
-                        $"invalid heap, reg=[{synth.registerAddress}] data=[{ptr}] which is not a valid heap pointer");
+                    while (_vm.instructionIndex < _vm.program.Length
+                           && _vm.error.type == VirtualRuntimeErrorType.NONE)
+                    {
+                        _vm.Execute2(_vm.program.Length - _vm.instructionIndex);
+                    }
+                }
+                catch (Exception vmEx)
+                {
+                    return DebugEvalResult.Failed($"eval exception: {vmEx.Message}");
                 }
 
-                runtimeSynth = new DebugRuntimeVariable(_vm, SYNTHETIC_NAME2, synth.typeCode,
-                    _vm.dataRegisters[synth.registerAddress],
-                    ref alloc, _vm.scopeStack.Count - frameId, synth.registerAddress);
+                if (_vm.error.type != VirtualRuntimeErrorType.NONE)
+                    return DebugEvalResult.Failed($"eval error: {_vm.error.message}");
 
+                if (synth.typeCode == TypeCodes.STRUCT)
+                {
+                    var ptr = _vm.dataRegisters[synth.registerAddress];
+                    if (!_vm.heap.TryGetAllocation(VmPtr.FromRaw(ptr), out var alloc))
+                    {
+                        return DebugEvalResult.Failed(
+                            $"invalid heap, reg=[{synth.registerAddress}] data=[{ptr}] which is not a valid heap pointer");
+                    }
+
+                    runtimeSynth = new DebugRuntimeVariable(_vm, SYNTHETIC_NAME2, synth.typeCode,
+                        _vm.dataRegisters[synth.registerAddress],
+                        ref alloc, _vm.scopeStack.Count - frameId, synth.registerAddress);
+                }
+                else
+                {
+                    runtimeSynth = new DebugRuntimeVariable(_vm, SYNTHETIC_NAME2, synth.typeCode,
+                        _vm.dataRegisters[synth.registerAddress],
+                        _vm.scopeStack.Count - frameId, synth.registerAddress);
+                }
+
+                result = variableDb.AddWatchedExpression(runtimeSynth, synth);
+                var srcScope = _vm.scopeStack.buffer[runtimeSynth.scopeIndex];
+                var srcRaw = _vm.dataRegisters[runtimeSynth.regAddr];
             }
-            else
+            finally
             {
-                runtimeSynth = new DebugRuntimeVariable(_vm, SYNTHETIC_NAME2, synth.typeCode,
-                    _vm.dataRegisters[synth.registerAddress],
-                    _vm.scopeStack.Count - frameId, synth.registerAddress);
+                _vm.instructionIndex = originalInstructionIndex;
+                _vm.program = originalProgram;
+                _vm.state = originalState;
+                _vm.scopeStack = originalScopeStack;
+                _vm.scopeStack.ptr = originalScopePtr;
+                _vm.stack = originalStack;
+                _vm.scope = originalScope;
+                _vm.error = originalError;
+
+                // Restore globalScope array contents that may have been written by
+                // STORE_GLOBAL / STORE_PTR_GLOBAL instructions during eval.
+                Array.Copy(savedGlobalData,       _vm.globalScope.dataRegisters, savedGlobalData.Length);
+                Array.Copy(savedGlobalTypes,      _vm.globalScope.typeRegisters, savedGlobalTypes.Length);
+                Array.Copy(savedGlobalInsIndexes, _vm.globalScope.insIndexes,    savedGlobalInsIndexes.Length);
+                Array.Copy(savedGlobalFlags,      _vm.globalScope.flags,         savedGlobalFlags.Length);
             }
 
-            result = variableDb.AddWatchedExpression(runtimeSynth, synth);
-            var srcScope = _vm.scopeStack.buffer[runtimeSynth.scopeIndex];
-            var srcRaw = _vm.dataRegisters[runtimeSynth.regAddr];
-
-            _vm.instructionIndex = originalInstructionIndex;
-            _vm.program = originalProgram;
-            _vm.state = originalState;
-            _vm.scopeStack = originalScopeStack;
-            _vm.scopeStack.ptr = originalScopePtr;
-            _vm.stack = originalStack;
-            _vm.scope = originalScope;
-            _vm.error = originalError;
-            
             if (overwriteVariableId > -1)
             {
+                if (runtimeSynth == null)
+                    return DebugEvalResult.Failed("eval produced no result");
                 if (!variableDb.TrySetValue(overwriteVariableId, runtimeSynth, out var setErr))
-                {
                     return DebugEvalResult.Failed(setErr);
-                }
             }
-            
+
             return result;
         }
  
@@ -1115,6 +1166,34 @@ namespace FadeBasic.Launch
             });
             
             return frames;
+        }
+
+        /// <summary>
+        /// Executes one VM instruction while stepping, converting any unhandled exception into a
+        /// runtime-error pause so the debug session is never terminated by a VM crash.
+        /// <para>If the instruction throws, <paramref name="activeStepMessage"/> is cleared so the
+        /// step is implicitly "done" — the user will see the error stop event instead.</para>
+        /// </summary>
+        private void StepExecute(ref DebugMessage activeStepMessage)
+        {
+            try
+            {
+                _vm.Execute2(1);
+                if (_vm.error.type != VirtualRuntimeErrorType.NONE)
+                {
+                    logger.Error($"Runtime error during step: {_vm.error.message}");
+                    pauseRequestedByMessageId = resumeRequestedByMessageId + 1;
+                    SendRuntimeErrorMessage(_vm.error.message);
+                    activeStepMessage = null;
+                }
+            }
+            catch (Exception ex)
+            {
+                logger.Error($"Unhandled VM exception during step: {ex.Message}");
+                pauseRequestedByMessageId = resumeRequestedByMessageId + 1;
+                SendRuntimeErrorMessage(ex.Message);
+                activeStepMessage = null;
+            }
         }
 
         public void StartDebugging(int ops = 0)
@@ -1185,30 +1264,41 @@ namespace FadeBasic.Launch
                         break;
                     }
                     
-                    // execute to the next breakpoint. 
+                    // execute to the next breakpoint.
                     var movedOff = false;
-                    var spent = _vm.Execute3(budget, ins =>
+                    int spent;
+                    try
                     {
-                        // if the token we are on is a debug token.
-                        
-                        // AND, we have at least moved off the token we started on. 
-                        if (instructionMap.TryFindClosestTokenBeforeIndex(ins, out var t))
+                        spent = _vm.Execute3(budget, ins =>
                         {
-                            var shouldPause = false;
-                            if (movedOff && breakpointTokens.Contains(t))
+                            // if the token we are on is a debug token.
+
+                            // AND, we have at least moved off the token we started on.
+                            if (instructionMap.TryFindClosestTokenBeforeIndex(ins, out var t))
                             {
-                                shouldPause = true;
+                                var shouldPause = false;
+                                if (movedOff && breakpointTokens.Contains(t))
+                                {
+                                    shouldPause = true;
+                                }
+
+                                if (t != currentToken)
+                                {
+                                    movedOff = true;
+                                }
+                                return shouldPause;
                             }
-                            
-                            if (t != currentToken)
-                            {
-                                movedOff = true;
-                            }
-                            return shouldPause;
-                        }
-                        
-                        return false;
-                    });
+
+                            return false;
+                        });
+                    }
+                    catch (Exception ex)
+                    {
+                        logger.Error($"Unhandled VM exception during execution: {ex.Message}");
+                        pauseRequestedByMessageId = resumeRequestedByMessageId + 1;
+                        SendRuntimeErrorMessage(ex.Message);
+                        spent = 0;
+                    }
                     budget -= spent;
                     if (budget < 0) budget = 0;
                     if (_vm.error.type != VirtualRuntimeErrorType.NONE)
@@ -1253,7 +1343,7 @@ namespace FadeBasic.Launch
                             }
                             else
                             {
-                                _vm.Execute2(1);
+                                StepExecute(ref stepNextMessage);
                             }
                         }
                     }
@@ -1288,7 +1378,7 @@ namespace FadeBasic.Launch
                             }
                             else
                             {
-                                _vm.Execute2(1);
+                                StepExecute(ref stepIntoMessage);
                             }
                         }
                     }
@@ -1324,7 +1414,7 @@ namespace FadeBasic.Launch
                             }
                             else
                             {
-                                _vm.Execute2(1);
+                                StepExecute(ref stepOutMessage);
                             }
                         }
                     }
