@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 - debugger hits breakpoints with instruction indexes mid-token 
+- debugger can modify last field
+- debugger evals properly resize register buffers
 
 ## [0.0.51] - 2026-03-21
 

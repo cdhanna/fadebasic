@@ -474,10 +474,10 @@ namespace FadeBasic.Virtual
                             var fieldName = fieldKvp.Key;
                             var field = fieldKvp.Value;
 
-                            var ptr = variable.rawValue + (ulong)field.offset;
+                            var fieldVmPtr = VmPtr.FromRaw(variable.rawValue) + field.offset;
                             var alloc = new VmAllocation
                             {
-                                ptr = VmPtr.FromRaw(ptr),
+                                ptr = fieldVmPtr,
                                 length = field.length,
                                 format = new HeapTypeFormat
                                 {
@@ -493,7 +493,8 @@ namespace FadeBasic.Virtual
 
                                    
                                     
-                                    var v = new DebugRuntimeVariable(_vm, fieldName, field.typeCode, ptr, ref alloc, 
+                                    var fieldPtrRaw = VmPtr.GetRaw(ref fieldVmPtr);
+                                    var v = new DebugRuntimeVariable(_vm, fieldName, field.typeCode, fieldPtrRaw, ref alloc,
                                         variable.scopeIndex,
                                         variable.regAddr);
                                     var fieldVariable = new Launch.DebugVariable
@@ -530,7 +531,8 @@ namespace FadeBasic.Virtual
                                     
                                     subScope.variables.Add(subVariable);
                                     idToVariable[subVariable.id] = subVariable;
-                                    var v2 = new DebugRuntimeVariable(_vm, subVariable.evalName, field.typeCode, variable.rawValue + (ulong)field.offset, ref alloc, 
+                                    var fieldRaw = VmPtr.GetRaw(ref fieldVmPtr);
+                                    var v2 = new DebugRuntimeVariable(_vm, subVariable.evalName, field.typeCode, fieldRaw, ref alloc,
                                         variable.scopeIndex,
                                         variable.regAddr);
                                     subVariable.runtimeVariable = v2;
