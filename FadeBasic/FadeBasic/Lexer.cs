@@ -1624,6 +1624,11 @@ namespace FadeBasic
     [DebuggerDisplay("{raw} ({type}:{lineNumber}:{charNumber})")]
     public class Token : IJsonable
     {
+        public override string ToString()
+        {
+            return $"{raw} ({type}:{lineNumber}:{charNumber})";
+        }
+
         public static readonly Token Blank = new Token();
         public static readonly Token Local = new Token{caseInsensitiveRaw = "local", raw = "local"};
         public static readonly Token Global = new Token{caseInsensitiveRaw = "global", raw = "global"};

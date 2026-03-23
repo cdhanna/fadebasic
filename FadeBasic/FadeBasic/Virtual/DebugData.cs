@@ -111,6 +111,11 @@ namespace FadeBasic.Virtual
             op.IncludeField(nameof(token), ref token);
             op.IncludeField(nameof(isComputed), ref isComputed);
         }
+
+        public override string ToString()
+        {
+            return $"[{insIndex}]-{token}";
+        }
     }
 
     [DebuggerDisplay("[{startToken}-{stopToken}]")]
