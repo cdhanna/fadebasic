@@ -486,6 +486,23 @@ namespace FadeBasic.Launch
                                 result = DebugEvalResult.Failed($"internal error: {ex.Message}")
                             });
                         }
+                        break;
+                    case DebugMessageType.REQUEST_REPL:
+                        var replRequest = JsonableExtensions.FromJson<EvalMessage>(message.RawJson);
+                        logger.Info($"doing repl. {replRequest.expression}");
+                        try
+                        {
+                            var replResult = ReplExec(replRequest.frameIndex, replRequest.expression);
+                            Ack(replRequest, new EvalResponse { result = replResult });
+                        }
+                        catch (Exception ex)
+                        {
+                            logger.Error("REPL internal error: " + ex.Message);
+                            Ack(replRequest, new EvalResponse
+                            {
+                                result = DebugEvalResult.Failed($"internal error: {ex.Message}")
+                            });
+                        }
 
                         break;
                     case DebugMessageType.REQUEST_SET_VAR:
@@ -1121,7 +1138,358 @@ namespace FadeBasic.Launch
 
             return result;
         }
- 
+
+        /// <summary>
+        /// Executes one or more FadeBasic statements in the REPL (Debug Console).
+        /// Unlike <see cref="Eval"/>, mutations to existing variables ARE persisted back into
+        /// the live VM state.  The VM execution context (instruction pointer, call stack,
+        /// byte-code program) is fully restored so the paused program can continue normally.
+        /// </summary>
+        public DebugEvalResult ReplExec(int frameId, string code)
+        {
+            // ── 1. Lex ────────────────────────────────────────────────────────────────
+            var lexer = new Lexer();
+            var lexResults = lexer.TokenizeWithErrors(code, _commandCollection);
+            if (lexResults.tokenErrors.Count > 0)
+                return DebugEvalResult.Failed("Unable to lex REPL input");
+
+            // ── 2. Parse (multiple statements allowed) ────────────────────────────────
+            var parser = new Parser(lexResults.stream, _commandCollection);
+            var node = parser.ParseProgram(new ParseOptions { ignoreChecks = true });
+
+            // Capture the user's statements BEFORE variable-context declarations are injected.
+            var userStatements = new List<IStatementNode>(node.statements);
+
+            // ── 3. Build type table (same as Eval) ───────────────────────────────────
+            var types = new List<CompiledType>();
+            var idToTypeTable = new Dictionary<int, CompiledType>();
+            foreach (var kvp in _vm.typeTable)
+            {
+                var internedType = kvp.Value;
+                var compileType = new CompiledType
+                {
+                    typeName = internedType.name,
+                    typeId = internedType.typeId,
+                    byteSize = internedType.byteSize,
+                    fields = new Dictionary<string, CompiledTypeMember>()
+                };
+                idToTypeTable[compileType.typeId] = compileType;
+                types.Add(compileType);
+            }
+            foreach (var kvp in _vm.typeTable)
+            {
+                var internedType = kvp.Value;
+                var compiledType = idToTypeTable[internedType.typeId];
+                var members = new List<TypeDefinitionMember>();
+                foreach (var field in internedType.fields)
+                {
+                    var fieldName = field.Key;
+                    var internedField = field.Value;
+                    ITypeReferenceNode fieldTypeNode;
+                    var compiledField = new CompiledTypeMember
+                    {
+                        Length = internedField.length,
+                        Offset = internedField.offset,
+                        TypeCode = internedField.typeCode
+                    };
+                    if (internedField.typeId > 0)
+                    {
+                        if (!idToTypeTable.TryGetValue(internedField.typeId, out var linkedType))
+                            throw new NotSupportedException("invalid type linkage in REPL");
+                        compiledField.Type = linkedType;
+                        fieldTypeNode = new StructTypeReferenceNode(new VariableRefNode(Token.Blank, linkedType.typeName));
+                    }
+                    else
+                    {
+                        if (!VmUtil.TryGetVariableType(field.Value.typeCode, out var typeInfo))
+                            throw new NotSupportedException("Unknown type in REPL field: " + internedField.typeCode);
+                        fieldTypeNode = new TypeReferenceNode(typeInfo, Token.Blank);
+                    }
+                    members.Add(new TypeDefinitionMember(Token.Blank, Token.Blank,
+                        new VariableRefNode(Token.Blank, field.Key), fieldTypeNode));
+                    compiledType.fields.Add(fieldName, compiledField);
+                }
+                var typeDef = new TypeDefinitionStatement(Token.Blank, Token.Blank,
+                    new VariableRefNode(Token.Blank, internedType.name), members);
+                node.typeDefinitions.Add(typeDef);
+            }
+
+            // ── 4. Inject variable context (same as Eval) ────────────────────────────
+            var globalVariableTable = new Dictionary<string, CompiledVariable>();
+            var localVariableTable  = new Dictionary<string, CompiledVariable>();
+            var globalArrayVariableTable = new Dictionary<string, CompiledArrayVariable>();
+            var localArrayVariableTable  = new Dictionary<string, CompiledArrayVariable>();
+
+            var locals  = variableDb.GetLocalVariablesForFrame(frameId);
+            var globals = variableDb.GetGlobalVariablesForFrame(frameId);
+
+            void AddVariable(DebugVariable local, bool isGlobal)
+            {
+                var variable = variableDb.GetRuntimeVariable(local);
+                var arrayLength = variable.GetElementCount(out var arrayRankCount, out var isArray);
+                if (!TypeInfo.TryGetFromTypeCode(variable.typeCode, out var typeInfo))
+                    throw new InvalidOperationException($"unknown type code=[{variable.typeCode}] in REPL");
+
+                var typeCode = isArray ? variable.allocation.format.typeCode : variable.typeCode;
+                ITypeReferenceNode declType;
+                string structName = null;
+                if (typeCode == TypeCodes.STRUCT)
+                {
+                    structName = idToTypeTable[variable.allocation.format.typeId].typeName;
+                    declType = new StructTypeReferenceNode(new VariableRefNode(new Token(), structName));
+                }
+                else
+                {
+                    declType = new TypeReferenceNode(typeInfo.type, new Token());
+                }
+
+                if (!isArray)
+                {
+                    var compiledVariable = new CompiledVariable
+                    {
+                        typeCode = variable.typeCode,
+                        name = local.name,
+                        registerAddress = variable.regAddr,
+                        byteSize = TypeCodes.GetByteSize(variable.typeCode),
+                        structType = structName,
+                        isGlobal = isGlobal
+                    };
+                    if (isGlobal) globalVariableTable.Add(local.name, compiledVariable);
+                    else          localVariableTable.Add(local.name, compiledVariable);
+
+                    node.statements.Insert(0, new DeclarationStatement(new Token
+                        { caseInsensitiveRaw = isGlobal ? "global" : "local" },
+                        new VariableRefNode(new Token(), local.name), declType));
+                }
+                else
+                {
+                    var elementSize = (int)TypeCodes.GetByteSize(typeCode);
+                    CompiledType structType = null;
+                    if (typeCode == TypeCodes.STRUCT)
+                    {
+                        structType = idToTypeTable[variable.allocation.format.typeId];
+                        elementSize = structType.byteSize;
+                    }
+                    var compiledArrayVariable = new CompiledArrayVariable
+                    {
+                        name = variable.name,
+                        typeCode = variable.typeCode,
+                        structType = structType,
+                        byteSize = elementSize,
+                        registerAddress = (byte)variable.regAddr,
+                        isGlobal = isGlobal,
+                        rankSizeRegisterAddresses = new byte[arrayRankCount],
+                        rankIndexScalerRegisterAddresses = new byte[arrayRankCount]
+                    };
+                    var rankExprs = new IExpressionNode[arrayRankCount];
+                    for (var i = 0; i < arrayRankCount; i++)
+                    {
+                        var rankStrideRegAddr = variable.regAddr + (ulong)arrayRankCount * 2 - ((ulong)i * 2);
+                        var rankSizeRegAddr   = rankStrideRegAddr - 1;
+                        var rankSize = _vm.scopeStack.buffer[variable.scopeIndex].dataRegisters[rankSizeRegAddr];
+                        compiledArrayVariable.rankSizeRegisterAddresses[i]           = (byte)rankSizeRegAddr;
+                        compiledArrayVariable.rankIndexScalerRegisterAddresses[i]    = (byte)rankStrideRegAddr;
+                        rankExprs[i] = new LiteralIntExpression(Token.Blank, (int)rankSize);
+                    }
+                    node.statements.Insert(0, new DeclarationStatement(Token.Blank,
+                        new VariableRefNode(Token.Blank, local.name), declType, rankExprs));
+                    (isGlobal ? globalArrayVariableTable : localArrayVariableTable).Add(variable.name, compiledArrayVariable);
+                }
+            }
+
+            foreach (var g in globals.variables) AddVariable(g, true);
+            foreach (var l in locals.variables)  AddVariable(l, false);
+
+            // ── 5. Inject function stubs (same as Eval) ──────────────────────────────
+            foreach (var kvp in _vm.internedData.functions)
+            {
+                var funcName = kvp.Key;
+                var func     = kvp.Value;
+                var statement = new FunctionStatement { name = funcName, nameToken = Token.Blank };
+                for (var i = func.parameters.Count; i > 0; i--)
+                {
+                    var internedParam = func.parameters[i - 1];
+                    ITypeReferenceNode t;
+                    if (internedParam.typeId > 0)
+                        t = new StructTypeReferenceNode(new VariableRefNode(Token.Blank, _vm.typeTable[internedParam.typeId].name));
+                    else
+                    {
+                        if (!VmUtil.TryGetVariableType(internedParam.typeCode, out var vt))
+                            throw new NotSupportedException("invalid type code for function parameter");
+                        t = new TypeReferenceNode(vt, Token.Blank);
+                    }
+                    statement.parameters.Add(new ParameterNode(new VariableRefNode(Token.Blank, internedParam.name), t));
+                }
+                node.functions.Add(statement);
+            }
+
+            var knownFunctionTypes = _vm.internedData.functions.ToDictionary(kvp => kvp.Key, kvp =>
+            {
+                if (kvp.Value.typeId == -1) return TypeInfo.Void;
+                if (kvp.Value.typeId > 0)
+                    return new TypeInfo { structName = _vm.typeTable[kvp.Value.typeId].name, type = VariableType.Struct };
+                if (VmUtil.TryGetVariableType(kvp.Value.typeCode, out var vt))
+                    return new TypeInfo { type = vt };
+                throw new NotSupportedException("Unknown variable code for function");
+            });
+            node.AddScopeRelatedErrors(new ParseOptions(), knownFunctionTypes);
+
+            var parseErrors = node.GetAllErrors();
+            if (parseErrors.Count > 0)
+                return DebugEvalResult.Failed(string.Join(",\n", parseErrors.Select(x => x.errorCode)));
+
+            // ── 6. Build merged variable tables ──────────────────────────────────────
+            var mergedVariableTable = new Dictionary<string, CompiledVariable>(globalVariableTable);
+            var mergedArrayTable    = new Dictionary<string, CompiledArrayVariable>(globalArrayVariableTable);
+            foreach (var kvp in localVariableTable)      mergedVariableTable[kvp.Key] = kvp.Value;
+            foreach (var kvp in localArrayVariableTable) mergedArrayTable[kvp.Key]    = kvp.Value;
+
+            // ── 7. Compile user statements ───────────────────────────────────────────
+            // CompileScope stores _varToReg = mergedVariableTable (same reference).
+            // Any new variables the compiler allocates via Create() will appear in
+            // mergedVariableTable after compilation — we use that to detect new vars below.
+            var existingVarNames = new HashSet<string>(mergedVariableTable.Keys);
+
+            var compileScope = new CompileScope(mergedVariableTable, mergedArrayTable);
+            var compiler = new Compiler(_commandCollection, new CompilerOptions
+            {
+                GenerateDebugData = false,
+                InternStrings = false
+            }, givenGlobalScope: compileScope);
+
+            foreach (var type in types) compiler.AddType(type);
+            foreach (var func in _vm.internedData.functions) compiler.AddFunction(func.Key, func.Value.insIndex);
+
+            foreach (var stmt in userStatements)
+                compiler.Compile(stmt);
+            compiler.CompileJumpReplacements();
+
+            if (compiler.Program.Count == 0)
+                return DebugEvalResult.Failed("REPL produced no bytecode");
+
+            // ── 8. Detect vars the compiler newly allocated ──────────────────────────
+            // For scalars (e.g. `a = 1`), the scope visitor does NOT insert an implicit
+            // DeclarationStatement — it just adds the symbol to its table.  The compiler
+            // then auto-allocates a register via compileScope.Create().  Since _varToReg
+            // inside CompileScope IS mergedVariableTable, those entries are visible here.
+            var newVarDecls = new List<(string name, byte typeCode, ulong regAddr)>();
+            foreach (var kvp in mergedVariableTable)
+            {
+                if (existingVarNames.Contains(kvp.Key)) continue;
+                newVarDecls.Add((kvp.Key, kvp.Value.typeCode, kvp.Value.registerAddress));
+            }
+
+            // Resize the LIVE local scope arrays before saving VM state, so the
+            // resized arrays are captured in originalScope / originalScopeStack.
+            var vmScopeIdxForRepl = _vm.scopeStack.ptr - 1;
+            if (newVarDecls.Count > 0)
+            {
+                var maxNewReg = 0UL;
+                foreach (var (_, _, ra) in newVarDecls)
+                    if (ra > maxNewReg) maxNewReg = ra;
+                var requiredSize = (int)(maxNewReg + 1);
+                var liveScope = _vm.scopeStack.buffer[vmScopeIdxForRepl];
+                if (requiredSize > liveScope.dataRegisters.Length)
+                {
+                    Array.Resize(ref liveScope.dataRegisters, requiredSize);
+                    Array.Resize(ref liveScope.typeRegisters,  requiredSize);
+                    Array.Resize(ref liveScope.insIndexes,     requiredSize);
+                    Array.Resize(ref liveScope.flags,          requiredSize);
+                    _vm.scopeStack.buffer[vmScopeIdxForRepl] = liveScope;
+                    if (vmScopeIdxForRepl == _vm.scopeStack.ptr - 1)
+                    {
+                        _vm.scope.dataRegisters = liveScope.dataRegisters;
+                        _vm.scope.typeRegisters  = liveScope.typeRegisters;
+                        _vm.scope.insIndexes     = liveScope.insIndexes;
+                        _vm.scope.flags          = liveScope.flags;
+                    }
+                }
+            }
+
+            // ── 9. Save VM execution state (after resize so saved arrays are current) ─
+            var originalProgram          = _vm.program;
+            var originalInstructionIndex = _vm.instructionIndex;
+            var originalState            = _vm.state;
+            var originalScopeStack       = FastStack<VirtualScope>.Copy(_vm.scopeStack);
+            var reverseIndex             = _vm.scopeStack.Count - (frameId + 1);
+            var originalScopePtr         = _vm.scopeStack.ptr;
+            var originalStack            = _vm.stack;
+            var originalScope            = _vm.scope;
+            var originalError            = _vm.error;
+            var originalMethodStack      = FastStack<JumpHistoryData>.Copy(_vm.methodStack);
+            // NOTE: globalScope arrays and local dataRegisters/typeRegisters are NOT saved —
+            // REPL writes to variables are intentionally persistent.
+
+            var fakeScopeStack = new FastStack<VirtualScope>(2);
+            fakeScopeStack.Push(_vm.globalScope);
+            if (_vm.scopeStack.Count > 1)
+                fakeScopeStack.Push(originalScopeStack.buffer[reverseIndex]);
+            _vm.scopeStack = fakeScopeStack;
+
+            var newProgram = new List<byte>(_vm.program);
+            newProgram.AddRange(compiler.Program);
+            _vm.instructionIndex = _vm.program.Length;
+            _vm.program          = newProgram.ToArray();
+            _vm.stack            = new FastStack<byte>(8);
+            _vm.state            = new VirtualMachine.VmState();
+            _vm.scope            = _vm.scopeStack.buffer[_vm.scopeStack.ptr - 1];
+
+            // REPL: do NOT clone dataRegisters or typeRegisters — writes must persist.
+            // Clone insIndexes and flags to protect gosub/call-frame bookkeeping.
+            _vm.scope.insIndexes = (int[])_vm.scope.insIndexes.Clone();
+            _vm.scope.flags      = (byte[])_vm.scope.flags.Clone();
+
+            _vm.error = default;
+
+            // ── 10. Execute ───────────────────────────────────────────────────────────
+            DebugEvalResult result = null;
+            try
+            {
+                try
+                {
+                    while (_vm.instructionIndex < _vm.program.Length
+                           && _vm.error.type == VirtualRuntimeErrorType.NONE)
+                    {
+                        _vm.Execute2(_vm.program.Length - _vm.instructionIndex);
+                    }
+                }
+                catch (Exception vmEx)
+                {
+                    return DebugEvalResult.Failed($"REPL exception: {vmEx.Message}");
+                }
+
+                if (_vm.error.type != VirtualRuntimeErrorType.NONE)
+                    return DebugEvalResult.Failed($"REPL error: {_vm.error.message}");
+
+                // Register new variables with the variable database so they appear in the
+                // variables panel and survive subsequent ClearLifetime() calls.
+                foreach (var (name, typeCode, regAddr) in newVarDecls)
+                    variableDb.AddReplVar(name, typeCode, regAddr, vmScopeIdxForRepl);
+
+                // Invalidate the cached local scope so the next REQUEST_SCOPES includes the new vars.
+                variableDb.InvalidateLocalScope(frameId);
+
+                result = new DebugEvalResult { value = "", type = "void", id = 0 };
+            }
+            finally
+            {
+                // Restore VM execution state.
+                // dataRegisters / typeRegisters are NOT restored — variable writes persist.
+                // globalScope arrays are NOT restored — global writes persist.
+                _vm.instructionIndex = originalInstructionIndex;
+                _vm.program          = originalProgram;
+                _vm.state            = originalState;
+                _vm.scopeStack       = originalScopeStack;
+                _vm.scopeStack.ptr   = originalScopePtr;
+                _vm.stack            = originalStack;
+                _vm.scope            = originalScope;
+                _vm.error            = originalError;
+                _vm.methodStack      = originalMethodStack;
+            }
+
+            return result;
+        }
+
         public List<DebugStackFrame> GetFrames2()
         {
             var frames = new List<DebugStackFrame>();
@@ -1457,6 +1825,7 @@ namespace FadeBasic.Launch
         REQUEST_STACK_FRAMES,
         REQUEST_SCOPES,
         REQUEST_EVAL,
+        REQUEST_REPL,
         REQUEST_SET_VAR,
         REQUEST_VARIABLE_EXPANSION,
         REQUEST_BREAKPOINTS

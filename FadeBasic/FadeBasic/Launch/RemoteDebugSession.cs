@@ -188,6 +188,21 @@ namespace FadeBasic.Launch
             });
         }
         
+        public void RequestRepl(int frameIndex, string code, Action<DebugEvalResult> handler)
+        {
+            Send(new EvalMessage
+            {
+                id = GetNextMessageId(),
+                type = DebugMessageType.REQUEST_REPL,
+                frameIndex = frameIndex,
+                expression = code
+            }, msg =>
+            {
+                var details = JsonableExtensions.FromJson<EvalResponse>(msg.RawJson);
+                handler?.Invoke(details.result);
+            });
+        }
+
         public void RequestEval(int frameIndex, string expression, Action<DebugEvalResult> handler)
         {
             Send(new EvalMessage

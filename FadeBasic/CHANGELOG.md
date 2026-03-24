@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.0.53] - 2026-03-23
 
+### Added
+- debugger has repl
+
 ### Fixed
 - debugger hover statements work for strings
 - debugger issue when stepping over `return` statement

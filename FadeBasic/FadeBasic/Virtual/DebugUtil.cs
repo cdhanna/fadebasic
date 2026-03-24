@@ -224,6 +224,25 @@ namespace FadeBasic.Virtual
             return true;
         }
         
+        // REPL variables: survive ClearLifetime so they persist across steps.
+        private readonly List<(string name, byte typeCode, ulong regAddr, int vmScopeIndex)> _replVarDefs
+            = new List<(string, byte, ulong, int)>();
+
+        public void AddReplVar(string name, byte typeCode, ulong regAddr, int vmScopeIndex)
+        {
+            _replVarDefs.RemoveAll(v => v.name == name); // re-declaration replaces the old entry
+            _replVarDefs.Add((name, typeCode, regAddr, vmScopeIndex));
+        }
+
+        /// <summary>
+        /// Evicts the cached local scope for <paramref name="frameIndex"/> so the next
+        /// <see cref="GetLocalVariablesForFrame"/> call rebuilds it (picking up newly added REPL vars).
+        /// </summary>
+        public void InvalidateLocalScope(int frameIndex)
+        {
+            frameToLocals.Remove(frameIndex);
+        }
+
         public void ClearLifetime()
         {
             _variableIdCounter = 1;
@@ -233,7 +252,7 @@ namespace FadeBasic.Virtual
             idToScope.Clear();
             evalNameToId.Clear();
             idToVariable.Clear();
-            // variables.Clear();
+            // _replVarDefs is intentionally NOT cleared — REPL variables persist across steps.
         }
 
         public int NextId()
@@ -329,7 +348,7 @@ namespace FadeBasic.Virtual
             {
                 return scope;
             }
-            
+
             var dict = DebugUtil.LookupVariables(_vm, _dbg, frameIndex, global: global);
             scope = new DebugScope
             {
@@ -341,6 +360,40 @@ namespace FadeBasic.Virtual
                 var v = CreateVariableView(scope, kvp.Value);
                 idToVariable[v.id] = v;
                 scope.variables.Add(v);
+            }
+
+            // Inject REPL-created variables into the local scope of frame 0.
+            if (!global && frameIndex == 0 && _replVarDefs.Count > 0)
+            {
+                foreach (var (name, typeCode, regAddr, vmScopeIndex) in _replVarDefs)
+                {
+                    if (vmScopeIndex >= _vm.scopeStack.Count) continue; // scope was popped
+                    var liveRegs = _vm.scopeStack.buffer[vmScopeIndex].dataRegisters;
+                    if ((int)regAddr >= liveRegs.Length) continue; // register not in scope
+
+                    var rawValue = liveRegs[regAddr];
+                    DebugRuntimeVariable rtVar;
+                    try
+                    {
+                        if ((typeCode == TypeCodes.STRING || typeCode == TypeCodes.STRUCT) && rawValue == 0)
+                        {
+                            var emptyAlloc = default(VmAllocation);
+                            rtVar = new DebugRuntimeVariable(_vm, name, typeCode, rawValue, ref emptyAlloc, vmScopeIndex, regAddr);
+                        }
+                        else
+                        {
+                            rtVar = new DebugRuntimeVariable(_vm, name, typeCode, rawValue, vmScopeIndex, regAddr);
+                        }
+                    }
+                    catch
+                    {
+                        continue; // skip variables that can't be read safely
+                    }
+
+                    var dv = CreateVariableView(scope, rtVar);
+                    idToVariable[dv.id] = dv;
+                    scope.variables.Add(dv);
+                }
             }
 
             section[frameIndex] = scope;

@@ -59,10 +59,30 @@ public partial class FadeDebugAdapter
     {
         var res = new EvaluateResponse();
         var args = responder.Arguments;
+        var frame = args.FrameId.GetValueOrDefault();
 
-        var expr = args.Expression;
-        var frame = args.FrameId;
-        _session.RequestEval(frame.GetValueOrDefault(), expr, result =>
+        if (args.Context == EvaluateArguments.ContextValue.Repl)
+        {
+            _session.RequestRepl(frame, args.Expression, result =>
+            {
+                if (result.id < 0)
+                {
+                    res.Result = result.value;
+                    res.PresentationHint = new VariablePresentationHint
+                    {
+                        Attributes = VariablePresentationHint.AttributesValue.FailedEvaluation
+                    };
+                }
+                else
+                {
+                    res.Result = "";
+                }
+                responder.SetResponse(res);
+            });
+            return;
+        }
+
+        _session.RequestEval(frame, args.Expression, result =>
         {
             res.Result = result.value;
             res.Type = result.type;
@@ -71,15 +91,13 @@ public partial class FadeDebugAdapter
                 res.VariablesReference = result.scope.id;
                 db.AddScope(-1, result.scope);
             }
-            
-            //
+
             res.PresentationHint = new VariablePresentationHint
             {
                 Kind = VariablePresentationHint.KindValue.Data
             };
             if (result.id < 0)
             {
-                // res.PresentationHint.Attributes = VariablePresentationHint.AttributesValue.FailedEvaluation;
                 res.PresentationHint = new VariablePresentationHint
                 {
                     Attributes = VariablePresentationHint.AttributesValue.FailedEvaluation
@@ -90,7 +108,7 @@ public partial class FadeDebugAdapter
             {
                 res.PresentationHint.Attributes = VariablePresentationHint.AttributesValue.RawString;
             }
-            
+
             responder.SetResponse(res);
         });
     }
