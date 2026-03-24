@@ -147,8 +147,10 @@ public class CompletionHandler2 : CompletionHandlerBase
                 commands = unit.commands,
                 functionName = entry.value.Item2,
                 group = macroGroup,
+                constantTable = unit.lexerResults.constantTable,
                 localScope = entry.value.Item1
             };
+            
             var items = GetCompletions(context);
             return Task.FromResult(new CompletionList(items, isIncomplete: false));
 
@@ -179,6 +181,7 @@ public class CompletionHandler2 : CompletionHandlerBase
                 commands = unit.commands,
                 functionName = entry.value.Item2,
                 group = programGroup,
+                constantTable = unit.lexerResults.constantTable,
                 localScope = entry.value.Item1
             };
             var items = GetCompletions(context);
@@ -197,6 +200,7 @@ public class CompletionHandler2 : CompletionHandlerBase
         public Scope scope => program.scope;
         public List<IAstVisitable> group;
         public SymbolTable localScope;
+        public Dictionary<string, string> constantTable;
         public string functionName;
         public bool isMacro;
 
@@ -272,14 +276,15 @@ public class CompletionHandler2 : CompletionHandlerBase
                 continue;
 
             if (name == "_") continue; // skip invalid function name.
-            
+
+            var displayName = func.nameToken.raw;
             yield return (new CompletionItem
             {
                 InsertTextFormat = InsertTextFormat.Snippet,
                 InsertTextMode = InsertTextMode.AdjustIndentation,
                 Kind = CompletionItemKind.Function,
-                Label = name,
-                InsertText = name + "($0)",
+                Label = displayName,
+                InsertText = displayName + "($0)",
                 SortText = "b",
                 Detail = $"{func.ParsedType.ToDisplay()}",
                 Documentation = new MarkupContent()
@@ -295,7 +300,27 @@ public class CompletionHandler2 : CompletionHandlerBase
             }, funcSymbol);
         }
     }
-    
+
+    public IEnumerable<CompletionItem> GetConstantCompletions(Token fakeToken, TypeInfo forType, CompletionContext context)
+    {
+        foreach (var (constantName, val) in context.constantTable)
+        {
+            // TODO: maybe somehow know not to show values that could not match the type?
+            
+            yield return (new CompletionItem
+            {
+                InsertTextFormat = InsertTextFormat.Snippet,
+                InsertTextMode = InsertTextMode.AdjustIndentation,
+                Kind = CompletionItemKind.Constant,
+                Label = constantName,
+                FilterText = "",
+                InsertText = constantName,
+                SortText = "d",
+                Detail = val,
+                Documentation = val
+            });
+        }
+    }
     public IEnumerable<(CompletionItem item, Symbol symbol)> GetCompletionsForSymbols(Token fakeToken, TypeInfo forType, SymbolTable symbolTable)
     {
         // var output = new List<CompletionItem>();
@@ -308,7 +333,29 @@ public class CompletionHandler2 : CompletionHandlerBase
             }
 
 
-            var insert = name;
+            var displayName = name;
+                
+            var docMarkdown = string.Empty;
+            switch (symbol.source)
+            {
+                case ParameterNode parameterStatement:
+                    displayName = parameterStatement.variable.VariableNameCaseSensitive;
+                    break;
+                case AssignmentStatement assignmentStatement:
+                    docMarkdown = assignmentStatement.Trivia ?? string.Empty;
+                    if (assignmentStatement.variable is VariableRefNode v)
+                    {
+                        displayName = v.VariableNameCaseSensitive;
+                    }
+                    break;
+                case DeclarationStatement declarationStatement:
+                    docMarkdown = declarationStatement.Trivia ?? string.Empty;
+                    displayName = declarationStatement.variableNode.VariableNameCaseSensitive;
+                    break;
+            }
+            
+            
+            var insert = displayName;
             
             if (!symbol.typeInfo.IsAssignable(forType, out var badParity))
             {
@@ -321,25 +368,13 @@ public class CompletionHandler2 : CompletionHandlerBase
                     continue;
                 }
             }
-                
-                
-            var docMarkdown = string.Empty;
-            switch (symbol.source)
-            {
-                case AssignmentStatement assignmentStatement:
-                    docMarkdown = assignmentStatement.Trivia ?? string.Empty;
-                    break;
-                case DeclarationStatement declarationStatement:
-                    docMarkdown = declarationStatement.Trivia ?? string.Empty;
-                    break;
-            }
             
             yield return (new CompletionItem
             {
                 InsertTextFormat = InsertTextFormat.Snippet,
                 InsertTextMode = InsertTextMode.AdjustIndentation,
                 Kind = CompletionItemKind.Variable,
-                Label = name,
+                Label = displayName,
                 FilterText = "",
                 InsertText = insert,
                 SortText = "a",
@@ -803,6 +838,7 @@ public class CompletionHandler2 : CompletionHandlerBase
             }
             return true;
         }
+        list.AddRange(GetConstantCompletions(context.fakeToken, type, context));
         list.AddRange(GetCompletionsForSymbols(context.fakeToken, type, context.localScope).Where(SymbolPredicate).Select(x => x.item));
         list.AddRange(GetCompletionsForSymbols(context.fakeToken, type, context.scope.globalVariables).Where(SymbolPredicate).Select(x => x.item));
         list.AddRange(GetCompletionsForFunctionCalls(type, context.scope).Select(x => x.item));

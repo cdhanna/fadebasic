@@ -31,7 +31,8 @@ namespace FadeBasic.Ast
 
     public class DeclarationStatement : AstNode, IStatementNode, IHasTriviaNode
     {
-        public string variable;
+        public string variable => variableNode.variableName;
+        public VariableRefNode variableNode;
         public ITypeReferenceNode type;
         public DeclarationScopeType scopeType;
         public IExpressionNode[] ranks;
@@ -62,7 +63,7 @@ namespace FadeBasic.Ast
             }
             var decl = new DeclarationStatement
             {
-                variable = variableRef.variableName,
+                variableNode = variableRef,
                 type = typeNode,
                 startToken = assignmentStatement.StartToken,
                 endToken = assignmentStatement.endToken,
@@ -76,7 +77,7 @@ namespace FadeBasic.Ast
         
         public DeclarationStatement(Token startToken, VariableRefNode variableNode, IExpressionNode[] ranks)
         {
-            this.variable = variableNode.variableName;
+            this.variableNode = variableNode;
             this.type = new TypeReferenceNode(variableNode.startToken);
             this.ranks = ranks;
             scopeType = DeclarationScopeType.Global;
@@ -86,7 +87,7 @@ namespace FadeBasic.Ast
 
         public DeclarationStatement(Token scopeToken, DeclarationStatement otherDecl)
         {
-            this.variable = otherDecl.variable;
+            this.variableNode = otherDecl.variableNode;
             type = otherDecl.type;
             startToken = scopeToken;
             endToken = otherDecl.endToken;
@@ -97,7 +98,7 @@ namespace FadeBasic.Ast
 
         public DeclarationStatement(Token scopeToken, VariableRefNode variableNode, ITypeReferenceNode type)
         {
-            this.variable = variableNode.variableName;
+            this.variableNode = variableNode;
             this.type = type;
             startToken = scopeToken;
             endToken = variableNode.endToken;
@@ -106,7 +107,7 @@ namespace FadeBasic.Ast
 
         public DeclarationStatement(Token startToken, VariableRefNode variableNode, ITypeReferenceNode type, IExpressionNode[] ranks)
         {
-            this.variable = variableNode.variableName;
+            this.variableNode = variableNode;
             this.type = type;
             this.startToken = startToken;
             endToken = variableNode.endToken;

@@ -139,6 +139,7 @@ namespace FadeBasic
         public List<Token> combinedTokens; // tokens and comments.
         public List<Token> allTokens; // tokens and macros and comments.
         public TokenStream stream;
+        public Dictionary<string, string> constantTable;
         public List<ParseError> tokenErrors;
         public List<Token> macroTokens = new List<Token>();
         public ProgramNode macroProgram;
@@ -344,7 +345,7 @@ namespace FadeBasic
 
             var errors = new List<ParseError>();
 
-            var constantTable = new Dictionary<string, string>();
+            var constantTable =  new Dictionary<string, string>(comparer: StringComparer.InvariantCultureIgnoreCase);
 
             var lexems = Lexems.ToList();
             lexems.Sort((a, b) =>
@@ -584,12 +585,14 @@ namespace FadeBasic
                                 break;
                             case LexemType.Constant:
                                 // replace all instances of string...
-                                var toRemove = bestMatches[0].Groups[1].Value;
+                                var toRemoveMatch = bestMatches[0].Groups[1];
+                                // var toRemove = bestMatches[0].Groups[1].Value;
+                                var toRemove = bestToken.raw.Substring(toRemoveMatch.Index, toRemoveMatch.Length);
                                 var toAdd = bestMatches[0].Groups[2].Value;
 
                                 macroTokens.Add(bestToken);
                                 all.Add(bestToken);
-                                constantTable[toRemove.ToLowerInvariant()] = toAdd;
+                                constantTable[toRemove] = toAdd;
                                 // var prefix = line.Substring(0, charNumber);
                                 // var suffix = line.Substring(charNumber + toRemove.Length);
                                 //
@@ -714,7 +717,8 @@ namespace FadeBasic
                 combinedTokens = combined,
                 stream = new TokenStream(tokens, errors),
                 tokenErrors = errors,
-                macroTokens = macroTokens
+                macroTokens = macroTokens,
+                constantTable = constantTable
             };
 
             // add the runtime commands in. 

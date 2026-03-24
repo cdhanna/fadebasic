@@ -1679,7 +1679,7 @@ namespace FadeBasic
                                     endToken = _stream.Current,
                                     type = type,
                                     scopeType = scopeType,
-                                    variable = token.caseInsensitiveRaw
+                                    variableNode = reference as VariableRefNode //  TODO: we should null check this and add an error case. 
                                 };
 
                                 var maybeEqual = _stream.Peek;

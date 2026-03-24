@@ -73,7 +73,7 @@ namespace FadeBasic.Ast
     public class VariableRefNode : AstNode, IVariableNode, IAstVisitable
     {
         public string variableName;
-
+        public string VariableNameCaseSensitive => startToken.raw;
 
         public VariableRefNode(Token token, string variableName) : base(token)
         {

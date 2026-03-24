@@ -382,9 +382,8 @@ namespace FadeBasic.Launch
                             stepInFromToken = null;
                             stepStackDepth = 0;
                             variableDb.ClearLifetime();
-
                         }
-                        
+
                         if (!instructionMap.TryFindClosestTokenBeforeIndex(_vm.instructionIndex, out stepInFromToken))
                         {
                             logger.Log($"[DBG] could not find into starting token");
@@ -393,9 +392,10 @@ namespace FadeBasic.Launch
                                 reason = "no source location available for starting location",
                                 status = -1
                             });
+                            break; // do NOT set stepIntoMessage — Ack already sent
                         }
 
-                        stepIntoMessage = message; // need to to ACK later...
+                        stepIntoMessage = message; // need to ACK later...
                         stepStackDepth = _vm.methodStack.Count;
 
                         logger.Log($"[DBG] stepping in ins=[{_vm.program[_vm.instructionIndex]}] depth=[{stepStackDepth}] from {stepInFromToken.Jsonify()}");
@@ -406,9 +406,8 @@ namespace FadeBasic.Launch
                             stepOutFromToken = null;
                             stepStackDepth = 0;
                             variableDb.ClearLifetime();
-
                         }
-                        
+
                         if (!instructionMap.TryFindClosestTokenBeforeIndex(_vm.instructionIndex, out stepOutFromToken))
                         {
                             logger.Log($"[DBG] could not find out starting token");
@@ -417,9 +416,10 @@ namespace FadeBasic.Launch
                                 reason = "no source location available for starting location",
                                 status = -1
                             });
+                            break; // do NOT set stepOutMessage — Ack already sent
                         }
 
-                        stepOutMessage = message; // need to to ACK later...
+                        stepOutMessage = message; // need to ACK later...
                         stepStackDepth = _vm.methodStack.Count;
 
                         logger.Log($"[DBG] stepping out from {stepOutFromToken.Jsonify()}");
@@ -427,15 +427,14 @@ namespace FadeBasic.Launch
                     case DebugMessageType.REQUEST_STEP_OVER:
 
                         // stepping NEXT means "step over"
-                        //  that means go to the next statement that has the same stack depth, OR less than currently. 
+                        //  that means go to the next statement that has the same stack depth, OR less than currently.
 
                         { // reset the info to blank
                             stepOverFromToken = null;
                             stepStackDepth = 0;
                             variableDb.ClearLifetime();
-
                         }
-                        
+
                         if (!instructionMap.TryFindClosestTokenBeforeIndex(_vm.instructionIndex, out stepOverFromToken))
                         {
                             logger.Log($"[DBG] could not find next starting token");
@@ -444,9 +443,10 @@ namespace FadeBasic.Launch
                                 reason = "no source location available for starting location",
                                 status = -1
                             });
+                            break; // do NOT set stepNextMessage — Ack already sent
                         }
 
-                        stepNextMessage = message; // need to to ACK later...
+                        stepNextMessage = message; // need to ACK later...
                         stepStackDepth = _vm.methodStack.Count;
 
                         logger.Debug($"stepping from {stepOverFromToken.Jsonify()}");
@@ -1645,22 +1645,21 @@ namespace FadeBasic.Launch
                     {
                         spent = _vm.Execute3(budget, ins =>
                         {
-                            // if the token we are on is a debug token.
-
-                            // AND, we have at least moved off the token we started on.
                             if (instructionMap.TryFindClosestTokenBeforeIndex(ins, out var t))
                             {
-                                var shouldPause = false;
-                                if (movedOff && breakpointTokens.Contains(t))
-                                {
-                                    shouldPause = true;
-                                }
-
+                                // Mark movedOff BEFORE checking shouldPause so that the very
+                                // first instruction of a new breakpoint token is caught.
+                                // (The old order checked shouldPause first, causing
+                                // single-instruction breakpoint tokens to be silently skipped.)
                                 if (t != currentToken)
                                 {
                                     movedOff = true;
                                 }
-                                return shouldPause;
+
+                                if (movedOff && breakpointTokens.Contains(t))
+                                {
+                                    return true;
+                                }
                             }
 
                             return false;

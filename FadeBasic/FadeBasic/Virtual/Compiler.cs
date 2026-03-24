@@ -1026,7 +1026,7 @@ namespace FadeBasic.Virtual
                 // compile up a fake declaration for the input
                 var fakeDecl = new DeclarationStatement
                 {
-                    variable = arg.variable.variableName,
+                    variableNode = arg.variable,
                     scopeType = DeclarationScopeType.Local,
                     type = arg.type
                 };
@@ -1646,7 +1646,7 @@ namespace FadeBasic.Virtual
                             endToken = expression.endToken,
                             ranks = null,
                             scopeType = DeclarationScopeType.Local,
-                            variable = refNode.variableName,
+                            variableNode = refNode,
                             type = new TypeReferenceNode(refNode.DefaultTypeByName, refNode.startToken)
                         };
                         Compile(fakeDeclStatement, includeDefaultInitializer: true);
@@ -3028,7 +3028,7 @@ namespace FadeBasic.Virtual
                 endToken = refNode.endToken,
                 ranks = null,
                 scopeType = DeclarationScopeType.Local,
-                variable = refNode.variableName,
+                variableNode = refNode,
                 type = new TypeReferenceNode(refNode.DefaultTypeByName, refNode.startToken)
             };
             Compile(fakeDeclStatement);
