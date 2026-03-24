@@ -39,9 +39,13 @@ namespace FadeBasic.Launch
 
         void RunClient(object state)
         {
-            
             _logger($"connecting to debug session now at port=[{_port}]");
-            DebugServerStreamUtil.ConnectToServer2(_port, outboundMessages, inboundMessages, _cts.Token);
+            DebugServerStreamUtil.ConnectToServer2(_port, outboundMessages, inboundMessages, _cts.Token,
+                onConnectionDropped: () =>
+                {
+                    _logger("Connection to debuggee dropped unexpectedly");
+                    Exited?.Invoke();
+                });
         }
 
         public void SayHello()

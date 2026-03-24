@@ -547,9 +547,15 @@ namespace FadeBasic.Launch
             // TODO: ignore the frame-id, and just assume everything is at frame-0...
 
             const string SYNTHETIC_NAME2 = "fade________eval";
-            
+
+            // Hover requests from the editor send only the word under the cursor, which may be
+            // truncated: "y" instead of "y$", or "e" instead of "c.e".  Resolve to the best
+            // known eval-name before proceeding so the rest of Eval sees the correct expression.
+            if (variableDb.TryResolveHoverExpression(rightHandExpression, out var resolved))
+                rightHandExpression = resolved;
+
             rightHandExpression = SYNTHETIC_NAME2 + "=" + rightHandExpression;
-            
+
             var globalVariableTable = new Dictionary<string, CompiledVariable>();
             var localVariableTable = new Dictionary<string, CompiledVariable>();
             
@@ -1671,10 +1677,11 @@ namespace FadeBasic.Launch
         
         
         public static void ConnectToServer2<T>(
-            int port, 
-            ConcurrentQueue<T> outputQueue, 
+            int port,
+            ConcurrentQueue<T> outputQueue,
             ConcurrentQueue<T> inputQueue,
-            CancellationToken cancellationToken)
+            CancellationToken cancellationToken,
+            Action onConnectionDropped = null)
             where T : IJsonable, IHasRawBytes, new()
         {
             var ip = new IPEndPoint(IPAddress.Loopback, port);
@@ -1699,6 +1706,7 @@ namespace FadeBasic.Launch
             socket.ReceiveTimeout = 1;
             socket.ReceiveBufferSize = MAX_MESSAGE_LENGTH;
             var buffer = new byte[MAX_MESSAGE_LENGTH];
+            var connectionDropped = false;
             try
             {
                 while (!cancellationToken.IsCancellationRequested)
@@ -1706,10 +1714,17 @@ namespace FadeBasic.Launch
                     // Thread.Sleep(1);
 
                     // try to send out all pending messages
-                    while (outputQueue.TryDequeue(out var msgToSend))
+                    try
                     {
-                        Send(socket, msgToSend);
-                        
+                        while (outputQueue.TryDequeue(out var msgToSend))
+                        {
+                            Send(socket, msgToSend);
+                        }
+                    }
+                    catch (SocketException)
+                    {
+                        connectionDropped = true;
+                        break;
                     }
 
                     int messageLength = 0;
@@ -1718,10 +1733,22 @@ namespace FadeBasic.Launch
                     SocketError err = default;
 
                     { // receive the length of the message
-                        count = socket.Receive(buffer, 0, sizeof(int), SocketFlags.None, out err);
+                        try
+                        {
+                            count = socket.Receive(buffer, 0, sizeof(int), SocketFlags.None, out err);
+                        }
+                        catch (SocketException)
+                        {
+                            connectionDropped = true;
+                            break;
+                        }
                         if (err != SocketError.Success) continue;
 
-                        if (count == 0) continue;
+                        if (count == 0)
+                        {
+                            connectionDropped = true;
+                            break;
+                        }
 
                         var bufferSpan = new Span<byte>(buffer, 0, count);
                         messageLength = BitConverter.ToInt32(bufferSpan.ToArray(), 0);
@@ -1730,7 +1757,7 @@ namespace FadeBasic.Launch
                     var messageCount = (messageLength / MAX_MESSAGE_LENGTH) + 1;
                     if (messageCount > 1)
                     {
-                        
+
                     }
 
                     { // receive the content of the message
@@ -1753,14 +1780,16 @@ namespace FadeBasic.Launch
                         var controlMessage = DecodeJsonable<T>(giantBuffer, messageLength);
                         inputQueue.Enqueue(controlMessage);
                     }
-                    
-                  
+
+
                 }
             }
             finally
             {
-                socket.Disconnect(true);
+                try { socket.Disconnect(true); } catch { }
                 socket.Close();
+                if (connectionDropped)
+                    onConnectionDropped?.Invoke();
             }
         }
         

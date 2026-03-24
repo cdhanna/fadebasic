@@ -241,6 +241,54 @@ namespace FadeBasic.Virtual
             return _variableIdCounter++;
         }
 
+        /// <summary>
+        /// Given a raw hover word from the editor (which may be truncated — e.g. "y" instead of
+        /// "y$", or "e" instead of "c.e"), attempts to find the best matching known eval-name.
+        /// Returns <c>true</c> and sets <paramref name="resolved"/> when a unique match is found.
+        /// </summary>
+        public bool TryResolveHoverExpression(string word, out string resolved)
+        {
+            resolved = word;
+
+            // 1. Exact match — already correct.
+            if (evalNameToId.ContainsKey(word))
+                return false;
+
+            // 2. String-variable suffix: try "word$".
+            var withDollar = word + "$";
+            if (evalNameToId.ContainsKey(withDollar))
+            {
+                resolved = withDollar;
+                return true;
+            }
+
+            // 3. Struct-field suffix: search for an eval-name whose last segment equals word.
+            //    e.g. word="e" matches "c.e".  Only resolve if there is exactly one candidate.
+            var suffix = "." + word;
+            string candidate = null;
+            var ambiguous = false;
+            foreach (var key in evalNameToId.Keys)
+            {
+                if (key.EndsWith(suffix, System.StringComparison.Ordinal))
+                {
+                    if (candidate == null)
+                        candidate = key;
+                    else
+                    {
+                        ambiguous = true;
+                        break;
+                    }
+                }
+            }
+            if (candidate != null && !ambiguous)
+            {
+                resolved = candidate;
+                return true;
+            }
+
+            return false;
+        }
+
         public DebugRuntimeVariable GetRuntimeVariable(Launch.DebugVariable variable)
         {
             return idToTopLevelVariable[variable.id].Item2;
@@ -553,7 +601,15 @@ namespace FadeBasic.Virtual
             }
             else
             {
-                throw new InvalidOperationException("invalid variable id request given. ");
+                // Stale ID — VS Code may request expansion of a variable that existed before ClearLifetime().
+                // Return an empty scope rather than crashing the debug session.
+                _logger.Log($"Expand: unknown variable id={variableRequestVariableId}, returning empty scope");
+                return new DebugScope
+                {
+                    id = NextId(),
+                    scopeName = "na",
+                    variables = new List<Launch.DebugVariable>()
+                };
             }
             
         }

@@ -52,6 +52,7 @@ public partial class FadeDebugAdapter : DebugAdapterBase
             SupportsConfigurationDoneRequest = true,
             SupportsSetExpression = true,
             SupportsSetVariable = false,
+            SupportsEvaluateForHovers = true
             // SupportsReadMemoryRequest = true,
         };
         
