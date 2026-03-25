@@ -206,13 +206,13 @@ namespace FadeBasic.Launch
         }
 
         protected bool didClientConnect = false;
-        void RunServer(object state)
+        protected void RunServer(object state)
         {
             DebugServerStreamUtil.OpenServer2(_options.debugPort, outboundMessages, ref didClientConnect, receivedMessages, _cts.Token);
         }
 
 
-        void RunDiscoverability(object state)
+        protected void RunDiscoverability(object state)
         {
             UdpClient discoverabilityListener = new UdpClient();
 
@@ -247,14 +247,14 @@ namespace FadeBasic.Launch
         }
         
 
-        void Ack(int originalId, DebugMessage responseMsg)
+        protected void Ack(int originalId, DebugMessage responseMsg)
         {
             responseMsg.id = originalId;
             responseMsg.type = DebugMessageType.PROTO_ACK;
             outboundMessages.Enqueue(responseMsg);
         }
         
-        void Ack(DebugMessage originalMessage)
+        protected void Ack(DebugMessage originalMessage)
         {
             outboundMessages.Enqueue(new DebugMessage
             {
@@ -263,7 +263,7 @@ namespace FadeBasic.Launch
             });
         }
 
-        void Ack<T>(DebugMessage originalMessage, T responseMsg)
+        protected void Ack<T>(DebugMessage originalMessage, T responseMsg)
             where T : DebugMessage
         {
             responseMsg.id = originalMessage.id;
@@ -273,7 +273,7 @@ namespace FadeBasic.Launch
 
         public int GetNextMessageId() => Interlocked.Decrement(ref messageIdCounter);
 
-        void SendStopMessage()
+        protected void SendStopMessage()
         {
             var message = new DebugMessage()
             {
@@ -283,7 +283,7 @@ namespace FadeBasic.Launch
             outboundMessages.Enqueue(message);
         }
 
-        void SendRuntimeErrorMessage(string message)
+        protected void SendRuntimeErrorMessage(string message)
         {
             outboundMessages.Enqueue(new ExplodedMessage()
             {
@@ -293,7 +293,7 @@ namespace FadeBasic.Launch
             });
         }
 
-        void SendExitedMessage()
+        protected void SendExitedMessage()
         {
             var message = new DebugMessage()
             {
@@ -303,7 +303,7 @@ namespace FadeBasic.Launch
             outboundMessages.Enqueue(message);
         }
         
-        void ReadMessage()
+        protected void ReadMessage()
         {
             if (receivedMessages.TryDequeue(out var message))
             {
