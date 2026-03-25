@@ -5,6 +5,11 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.0.58] - 2026-03-24
+### Fixed
+- debugger handles suspended vm correctly
+- debugger sorts through tokens using binary search and dense `int` array
+
 ## [0.0.57] - 2026-03-24
 ### Fixed
 - debugger suspends execution when a debug message is received

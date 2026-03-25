@@ -1572,6 +1572,7 @@ namespace FadeBasic.Launch
 
         public virtual void StartDebugging(int ops = 0)
         {
+            var handleManualSuspension = false;
             var budget = ops;
             while (_options.debugWaitForConnection && hasConnectedDebugger == 0)
             {
@@ -1589,6 +1590,11 @@ namespace FadeBasic.Launch
                 }
 
                 if (requestedExit)
+                {
+                    break;
+                }
+
+                if (handleManualSuspension)
                 {
                     break;
                 }
@@ -1640,42 +1646,66 @@ namespace FadeBasic.Launch
                     
                     // execute to the next breakpoint.
                     var movedOff = false;
-                    int spent;
+                    int spent = 0;
                     try
                     {
-                        var executionBudget = ops > 0
-                            ? (budget > 0
-                                ? budget
-                                : 1) // min budget needs to be 1, or it will fail.
-                            : 0; // infinite budget
-                        spent = _vm.Execute3(executionBudget, ins =>
+                        //if (!_vm.isSuspendRequested)
                         {
-                            // if there are messages, we need to stop and read them, I GUESS!?
-                            if (receivedMessages.Count > 0)
-                            {
-                                return true;
-                            }
+                            var wasSus = _vm.isSuspendRequested; // probably false... 
                             
-                            if (instructionMap.TryFindClosestTokenBeforeIndex(ins, out var t))
+                            var executionBudget = ops > 0
+                                ? (budget > 0
+                                    ? budget
+                                    : 1) // min budget needs to be 1, or it will fail.
+                                : 0; // infinite budget
+                            
+                            // calling this in a loop unsuspends the VM,
+                            //  which may not give callers a chance to handle info. 
+                            var hitBreakpoint = false;
+                            spent = _vm.Execute3(executionBudget, ins =>
                             {
-                                // Mark movedOff BEFORE checking shouldPause so that the very
-                                // first instruction of a new breakpoint token is caught.
-                                // (The old order checked shouldPause first, causing
-                                // single-instruction breakpoint tokens to be silently skipped.)
-                                if (t != currentToken)
-                                {
-                                    movedOff = true;
-                                    hitBreakpointToken = null;
-                                }
-
-                                if (movedOff && breakpointTokens.Contains(t))
+                                // if there are messages, we need to stop and read them, I GUESS!?
+                                if (receivedMessages.Count > 0)
                                 {
                                     return true;
                                 }
-                            }
 
-                            return false;
-                        });
+                                if (instructionMap.TryFindClosestTokenBeforeIndex(ins, out var t))
+                                {
+                                    // Mark movedOff BEFORE checking shouldPause so that the very
+                                    // first instruction of a new breakpoint token is caught.
+                                    // (The old order checked shouldPause first, causing
+                                    // single-instruction breakpoint tokens to be silently skipped.)
+                                    if (t != currentToken)
+                                    {
+                                        movedOff = true;
+                                        hitBreakpointToken = null;
+                                    }
+
+                                    if (movedOff && breakpointTokens.Contains(t))
+                                    {
+                                        if (_vm.isSuspendRequested && !hitBreakpoint)
+                                        {
+                                            // if we haven't hit a breakpoint yet, but somehow a sus was requested, we need to yield.
+                                            handleManualSuspension = true;
+                                            
+                                        }
+                                        hitBreakpoint = true;
+                                        return true;
+                                    }
+                                }
+
+                                return false;
+                            });
+
+                            if (_vm.isSuspendRequested && !hitBreakpoint)
+                            {
+                                // the vm itself requested a suspend operation. 
+                                //  we should yield out of the function and let the caller
+                                //  re-call us when they are ready. 
+                                handleManualSuspension = true;
+                            }
+                        }
                     }
                     catch (Exception ex)
                     {

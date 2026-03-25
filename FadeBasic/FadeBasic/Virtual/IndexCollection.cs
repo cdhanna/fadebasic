@@ -6,12 +6,34 @@ namespace FadeBasic.Virtual
 {
     public class IndexCollection
     {
-        private readonly List<DebugToken> _statementTokens;
+        // Sorted by insIndex (see constructor).
+        private readonly DebugToken[] _statementTokens;
+
+        // Parallel int[] so binary search reads a dense value array instead of
+        // chasing DebugToken heap pointers on every probe (cache miss per probe
+        // otherwise, since binary search is non-sequential).
+        private readonly int[] _insIndexes;
+
+        // Pre-filtered versions for the ignoreComputed=true hot path, so we
+        // never need to walk backward after the binary search.
+        private readonly DebugToken[] _nonComputedTokens;
+        private readonly int[] _nonComputedIndexes;
 
         public IndexCollection(List<DebugToken> statementTokens)
         {
-            _statementTokens = statementTokens.ToList();
-            _statementTokens.Sort((a, b) => a.insIndex.CompareTo(b.insIndex));
+            var sorted = statementTokens.ToList();
+            sorted.Sort((a, b) => a.insIndex.CompareTo(b.insIndex));
+            _statementTokens = sorted.ToArray();
+
+            _insIndexes = new int[_statementTokens.Length];
+            for (int i = 0; i < _statementTokens.Length; i++)
+                _insIndexes[i] = _statementTokens[i].insIndex;
+
+            var nc = _statementTokens.Where(t => t.isComputed != 1).ToArray();
+            _nonComputedTokens = nc;
+            _nonComputedIndexes = new int[nc.Length];
+            for (int i = 0; i < nc.Length; i++)
+                _nonComputedIndexes[i] = nc[i].insIndex;
         }
 
         public bool TryFindClosestTokenAtLocation(int lineNumber, int colNumber, out DebugToken token)
@@ -19,7 +41,7 @@ namespace FadeBasic.Virtual
             token = null;
             var bestLineDiff = int.MaxValue;
             int bestColDiff = int.MaxValue;
-            for (var i = 0; i < _statementTokens.Count; i++)
+            for (var i = 0; i < _statementTokens.Length; i++)
             {
                 var statementToken = _statementTokens[i];
 
@@ -45,36 +67,37 @@ namespace FadeBasic.Virtual
 
             return token != null;
         }
-        
+
         public bool TryFindClosestTokenBeforeIndex(int insIndex, out DebugToken token, bool ignoreComputed=false)
         {
-            // TODO: make this a binary search tree or something... Later? 
+            var indexes = ignoreComputed ? _nonComputedIndexes : _insIndexes;
+            var tokens  = ignoreComputed ? _nonComputedTokens  : _statementTokens;
 
             token = null;
-            for (var i = 1; i < _statementTokens.Count; i++)
+            var count = indexes.Length;
+            if (count == 0) return false;
+
+            // Binary search over a dense int[] — no pointer chasing, cache-friendly.
+            // Finds the rightmost entry whose insIndex <= query.
+            int lo = 0, hi = count - 1, result = -1;
+            while (lo <= hi)
             {
-                if (ignoreComputed)
+                var mid = lo + (hi - lo) / 2;
+                if (indexes[mid] <= insIndex)
                 {
-                    if (_statementTokens[i - 1].isComputed == 1)
-                    {
-                        continue; 
-                    }
+                    result = mid;
+                    lo = mid + 1;
                 }
-                
-                
-                if (_statementTokens[i].insIndex > insIndex )
+                else
                 {
-                    token = _statementTokens[i - 1];
-                    return true;
-                }
-                if (i == _statementTokens.Count - 1)
-                {
-                    token = _statementTokens[i];
-                    return true;
+                    hi = mid - 1;
                 }
             }
 
-            return false;
+            if (result < 0) return false;
+
+            token = tokens[result];
+            return true;
         }
     }
 }
