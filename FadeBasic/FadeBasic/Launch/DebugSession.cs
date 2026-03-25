@@ -49,41 +49,41 @@ namespace FadeBasic.Launch
         
         
         public VirtualMachine _vm;
-        private DebugData _dbg;
-        private readonly CommandCollection _commandCollection;
-        private readonly string _label;
+        protected DebugData _dbg;
+        protected readonly CommandCollection _commandCollection;
+        protected readonly string _label;
         public readonly LaunchOptions _options;
 
-        private bool requestedExit;
-        private bool started;
-        private Task _serverTask;
-        private Task _processingTask;
+        protected bool requestedExit;
+        protected bool started;
+        protected Task _serverTask;
+        protected Task _processingTask;
 
-        private ConcurrentQueue<DebugMessage> 
+        protected ConcurrentQueue<DebugMessage> 
             outboundMessages = new ConcurrentQueue<DebugMessage>(),
             receivedMessages = new ConcurrentQueue<DebugMessage>();
 
         public CancellationTokenSource _cts;
-        private Exception _serverTaskEx;
+        protected Exception _serverTaskEx;
 
-        private bool hasReceivedOpen = false;
+        protected bool hasReceivedOpen = false;
 
-        private int hasConnectedDebugger;
-        private int pauseRequestedByMessageId;
-        private int resumeRequestedByMessageId;
+        protected int hasConnectedDebugger;
+        protected int pauseRequestedByMessageId;
+        protected int resumeRequestedByMessageId;
         
-        private int messageIdCounter;
+        protected int messageIdCounter;
 
 
-        private int currentInsLookupOffset = 0;
-        private DebugMessage stepNextMessage;
-        private DebugMessage stepIntoMessage;
-        private DebugMessage stepOutMessage;
+        protected int currentInsLookupOffset = 0;
+        protected DebugMessage stepNextMessage;
+        protected DebugMessage stepIntoMessage;
+        protected DebugMessage stepOutMessage;
 
-        private DebugToken stepOverFromToken;
-        private DebugToken stepInFromToken;
-        private DebugToken stepOutFromToken;
-        private int stepStackDepth;
+        protected DebugToken stepOverFromToken;
+        protected DebugToken stepInFromToken;
+        protected DebugToken stepOutFromToken;
+        protected int stepStackDepth;
 
         public HashSet<DebugToken> breakpointTokens = new HashSet<DebugToken>();
       
@@ -205,7 +205,7 @@ namespace FadeBasic.Launch
             _cts.Cancel();
         }
 
-        private bool didClientConnect = false;
+        protected bool didClientConnect = false;
         void RunServer(object state)
         {
             DebugServerStreamUtil.OpenServer2(_options.debugPort, outboundMessages, ref didClientConnect, receivedMessages, _cts.Token);
@@ -1548,7 +1548,7 @@ namespace FadeBasic.Launch
         /// <para>If the instruction throws, <paramref name="activeStepMessage"/> is cleared so the
         /// step is implicitly "done" — the user will see the error stop event instead.</para>
         /// </summary>
-        private void StepExecute(ref DebugMessage activeStepMessage)
+        protected virtual void StepExecute(ref DebugMessage activeStepMessage)
         {
             try
             {
@@ -1570,7 +1570,7 @@ namespace FadeBasic.Launch
             }
         }
 
-        public void StartDebugging(int ops = 0)
+        public virtual void StartDebugging(int ops = 0)
         {
             var budget = ops;
             while (_options.debugWaitForConnection && hasConnectedDebugger == 0)
@@ -1643,7 +1643,12 @@ namespace FadeBasic.Launch
                     int spent;
                     try
                     {
-                        spent = _vm.Execute3(budget, ins =>
+                        var executionBudget = ops > 0
+                            ? (budget > 0
+                                ? budget
+                                : 1) // min budget needs to be 1, or it will fail.
+                            : 0; // infinite budget
+                        spent = _vm.Execute3(executionBudget, ins =>
                         {
                             if (instructionMap.TryFindClosestTokenBeforeIndex(ins, out var t))
                             {
