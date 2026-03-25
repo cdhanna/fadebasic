@@ -1650,6 +1650,12 @@ namespace FadeBasic.Launch
                             : 0; // infinite budget
                         spent = _vm.Execute3(executionBudget, ins =>
                         {
+                            // if there are messages, we need to stop and read them, I GUESS!?
+                            if (receivedMessages.Count > 0)
+                            {
+                                return true;
+                            }
+                            
                             if (instructionMap.TryFindClosestTokenBeforeIndex(ins, out var t))
                             {
                                 // Mark movedOff BEFORE checking shouldPause so that the very
@@ -1659,6 +1665,7 @@ namespace FadeBasic.Launch
                                 if (t != currentToken)
                                 {
                                     movedOff = true;
+                                    hitBreakpointToken = null;
                                 }
 
                                 if (movedOff && breakpointTokens.Contains(t))
