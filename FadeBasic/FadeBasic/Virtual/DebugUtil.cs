@@ -49,44 +49,9 @@ namespace FadeBasic.Virtual
 
         public string GetValueDisplay()
         {
-            switch (typeCode)
-            {
-                case TypeCodes.INT:
-                    return VmUtil.ConvertToInt(rawValue).ToString();
-                case TypeCodes.DINT:
-                    return VmUtil.ConvertToDInt(rawValue).ToString();
-                case TypeCodes.REAL:
-                    return VmUtil.ConvertToFloat(rawValue).ToString();
-                case TypeCodes.DFLOAT:
-                    return VmUtil.ConvertToDFloat(rawValue).ToString();
-                case TypeCodes.WORD:
-                    return VmUtil.ConvertToWord(rawValue).ToString();
-                case TypeCodes.DWORD:
-                    return VmUtil.ConvertToDWord(rawValue).ToString();
-                case TypeCodes.BYTE:
-                    return VmUtil.ConvertToByte(rawValue).ToString();
-                case TypeCodes.STRING:
-                    var address = VmPtr.FromRaw(rawValue);
-                    if (vm.heap.TryGetAllocationSize(address, out var strSize))
-                    {
-                        vm.heap.Read(address, strSize, out var strBytes);
-                        return  VmConverter.ToString(strBytes);
-                    }
-                    else
-                    {
-                        return "<?>";
-                    }
-                case TypeCodes.BOOL:
-                    return rawValue == 0 ? "false" : "true";
-                case TypeCodes.STRUCT:
-                    // LOOK UP IN HEAP? 
-                    return "[" + GetTypeName() + "]";
-                    
-                    break;
-                default:
-                    return rawValue.ToString();
-            }
-        
+            if (typeCode == TypeCodes.STRUCT)
+                return "[" + GetTypeName() + "]";
+            return VmUtil.ConvertRawToDisplayString(typeCode, rawValue, vm.heap);
         }
 
         public InternedType GetInternedType()

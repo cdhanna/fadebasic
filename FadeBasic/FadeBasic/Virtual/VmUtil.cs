@@ -220,7 +220,40 @@ namespace FadeBasic.Virtual
                     throw new NotImplementedException($"don't know how to convert span of size=[{span.Length}] to typecode=[{typeCode}]");
             }
         }
-        
+
+        public static string ConvertRawToDisplayString(byte typeCode, ulong rawValue, VmHeap heap)
+        {
+            switch (typeCode)
+            {
+                case TypeCodes.INT:
+                    return ConvertToInt(rawValue).ToString();
+                case TypeCodes.DINT:
+                    return ConvertToDInt(rawValue).ToString();
+                case TypeCodes.REAL:
+                    return ConvertToFloat(rawValue).ToString();
+                case TypeCodes.DFLOAT:
+                    return ConvertToDFloat(rawValue).ToString();
+                case TypeCodes.WORD:
+                    return ConvertToWord(rawValue).ToString();
+                case TypeCodes.DWORD:
+                    return ConvertToDWord(rawValue).ToString();
+                case TypeCodes.BYTE:
+                    return ConvertToByte(rawValue).ToString();
+                case TypeCodes.BOOL:
+                    return rawValue == 0 ? "false" : "true";
+                case TypeCodes.STRING:
+                    var address = VmPtr.FromRaw(rawValue);
+                    if (heap.TryGetAllocationSize(address, out var strSize))
+                    {
+                        heap.Read(address, strSize, out var strBytes);
+                        return VmConverter.ToString(strBytes);
+                    }
+                    return "<?>";
+                default:
+                    return rawValue.ToString();
+            }
+        }
+
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public static object DbgConvert(byte typeCode, ref ReadOnlySpan<byte> values)
         {

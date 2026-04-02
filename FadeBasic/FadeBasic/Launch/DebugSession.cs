@@ -565,8 +565,27 @@ namespace FadeBasic.Launch
 
             const string SYNTHETIC_NAME2 = "fade________eval";
 
-            // Hover requests from the editor send only the word under the cursor, which may be
-            // truncated: "y" instead of "y$", or "e" instead of "c.e".  Resolve to the best
+            // VS Code's debug hover may send partial expressions like ".e" (dot-prefixed field)
+            // or "1).e" when it can't fully resolve the dotted path through parenthesized
+            // array indexing.  Strip leading junk to get the bare field name.
+            if (rightHandExpression.Length > 0)
+            {
+                var dotIdx = rightHandExpression.LastIndexOf('.');
+                if (dotIdx >= 0 && dotIdx < rightHandExpression.Length - 1)
+                {
+                    var afterDot = rightHandExpression.Substring(dotIdx + 1);
+                    // If the part before the dot is NOT a valid identifier (e.g. "1)", "."),
+                    // treat it as a bare field hover and use only the part after the last dot.
+                    var beforeDot = rightHandExpression.Substring(0, dotIdx);
+                    if ((beforeDot.Length == 0 || !char.IsLetter(beforeDot[0]))
+                        && afterDot.Length > 0 && char.IsLetter(afterDot[0]))
+                    {
+                        rightHandExpression = afterDot;
+                    }
+                }
+            }
+
+            // Hover requests from the editor send the word under the cursor.  Resolve to the best
             // known eval-name before proceeding so the rest of Eval sees the correct expression.
             if (variableDb.TryResolveHoverExpression(rightHandExpression, out var resolved))
                 rightHandExpression = resolved;
@@ -926,20 +945,171 @@ namespace FadeBasic.Launch
                     elementCount = match.elementCount,
                     id = match.id,
                 };
-                
+
                 if (quickResult.fieldCount > 0 || quickResult.elementCount > 0)
                 {
                     quickResult.scope = variableDb.Expand(match.id);
                 }
             }
 
+            // VS Code's default word pattern strips sigils ($/#), so "name$" becomes "name".
+            // This helper compares a stored field name against a lookup name with sigil tolerance.
+            bool FieldNameMatches(string storedName, string lookupName)
+            {
+                if (string.Equals(storedName, lookupName, StringComparison.OrdinalIgnoreCase))
+                    return true;
+                if (storedName.Length > 0 && (storedName[storedName.Length - 1] == '$' || storedName[storedName.Length - 1] == '#'))
+                    return string.Equals(storedName.Substring(0, storedName.Length - 1), lookupName, StringComparison.OrdinalIgnoreCase);
+                return false;
+            }
+
+            // For struct field references (e.g. "p.name$" or "people(0).name$"), walk the
+            // left chain to find the root variable, then expand each level through the
+            // variable database to read the live value directly.
+            if (quickResult == null && finalStatement.expression is StructFieldReference fieldRef)
+            {
+                // Collect the field chain from right to left.
+                var fieldChain = new List<string>();
+                IExpressionNode current = fieldRef;
+                while (current is StructFieldReference sfr)
+                {
+                    if (sfr.right is VariableRefNode rightVar)
+                        fieldChain.Add(rightVar.variableName);
+                    current = sfr.left;
+                }
+
+                // current is either a plain variable (VariableRefNode) or an array access (ArrayIndexReference)
+                string rootName = null;
+                int arrayIndex = -1;
+                if (current is ArrayIndexReference arrayRef)
+                {
+                    rootName = arrayRef.variableName;
+                    // Try to extract a constant index from the first rank expression
+                    if (arrayRef.rankExpressions.Count > 0 && arrayRef.rankExpressions[0] is LiteralIntExpression litInt)
+                        arrayIndex = litInt.value;
+                }
+                else if (current is VariableRefNode rootVar)
+                {
+                    rootName = rootVar.variableName;
+                }
+
+                if (rootName != null)
+                {
+                    var rootMatch = locals.variables.FirstOrDefault(x => x.name == rootName)
+                                 ?? globals.variables.FirstOrDefault(x => x.name == rootName);
+
+                    if (rootMatch != null && (rootMatch.fieldCount > 0 || (rootMatch.elementCount > 0 && arrayIndex >= 0)))
+                    {
+                        Launch.DebugVariable currentVar = rootMatch;
+
+                        // If the root is an array, expand into the array and pick the element
+                        if (arrayIndex >= 0 && currentVar.elementCount > 0)
+                        {
+                            var arrayScope = variableDb.Expand(currentVar.id);
+                            if (arrayIndex < arrayScope.variables.Count)
+                                currentVar = arrayScope.variables[arrayIndex];
+                            else
+                                currentVar = null;
+                        }
+
+                        // Walk down the field chain, expanding at each level
+                        bool fieldResolved = currentVar != null;
+                        if (fieldResolved)
+                        {
+                            for (int i = fieldChain.Count - 1; i >= 0; i--)
+                            {
+                                var scope = variableDb.Expand(currentVar.id);
+                                var fieldMatch = scope.variables.FirstOrDefault(
+                                    v => FieldNameMatches(v.name, fieldChain[i]));
+                                if (fieldMatch == null)
+                                {
+                                    fieldResolved = false;
+                                    break;
+                                }
+                                currentVar = fieldMatch;
+                            }
+                        }
+
+                        if (fieldResolved)
+                        {
+                            quickResult = new DebugEvalResult
+                            {
+                                value = currentVar.value,
+                                type = currentVar.type,
+                                fieldCount = currentVar.fieldCount,
+                                elementCount = currentVar.elementCount,
+                                id = currentVar.id,
+                            };
+                            if (quickResult.fieldCount > 0 || quickResult.elementCount > 0)
+                            {
+                                quickResult.scope = variableDb.Expand(currentVar.id);
+                            }
+                        }
+                    }
+                }
+            }
+
+            // When hovering over a bare field name (e.g. "field" from "myStruct.field"),
+            // VS Code sends just the word under the cursor. If it didn't match any
+            // local/global variable, check whether it's a field on a struct in scope.
+            if (quickResult == null && match == null && finalStatement.expression is VariableRefNode bareField)
+            {
+                string resolvedFieldExpr = null;
+                bool fieldAmbiguous = false;
+
+                foreach (var v in locals.variables.Concat(globals.variables))
+                {
+                    if (v.fieldCount > 0)
+                    {
+                        // Direct struct variable
+                        var subScope = variableDb.Expand(v.id);
+                        foreach (var sv in subScope.variables)
+                        {
+                            if (FieldNameMatches(sv.name, bareField.variableName))
+                            {
+                                if (resolvedFieldExpr != null) { fieldAmbiguous = true; break; }
+                                resolvedFieldExpr = v.name + "." + sv.name;
+                            }
+                        }
+                    }
+                    else if (v.elementCount > 0)
+                    {
+                        // Array — check if it's an array-of-structs by expanding
+                        // to get elements and checking if first element has fields.
+                        var arrayScope = variableDb.Expand(v.id);
+                        if (arrayScope.variables.Count > 0 && arrayScope.variables[0].fieldCount > 0)
+                        {
+                            var elemScope = variableDb.Expand(arrayScope.variables[0].id);
+                            foreach (var sv in elemScope.variables)
+                            {
+                                if (FieldNameMatches(sv.name, bareField.variableName))
+                                {
+                                    if (resolvedFieldExpr != null) { fieldAmbiguous = true; break; }
+                                    // Use element 0 as best guess — we don't know the index
+                                    resolvedFieldExpr = v.name + "(0)." + sv.name;
+                                }
+                            }
+                        }
+                    }
+                    if (fieldAmbiguous) break;
+                }
+
+                if (resolvedFieldExpr != null)
+                {
+                    // When ambiguous (field exists on multiple structs), use the first
+                    // match rather than returning an error — showing some value is better
+                    // than "Invalid Reference" on hover.
+                    return Eval(frameId, resolvedFieldExpr, overwriteVariableId);
+                }
+            }
+
             if (parseErrors.Count > 0)
             {
-                if (parseErrors[0].errorCode.code == ErrorCodes.ImplicitArrayDeclaration.code)
-                {
-                    if (quickResult != null) return quickResult;
-                }
-                
+                // If the quick-result path already resolved the value (e.g. via struct
+                // field expansion), return it even if the scope error visitor reported
+                // errors like "Member not declared" or "Invalid Reference".
+                if (quickResult != null) return quickResult;
+
                 return DebugEvalResult.Failed($"{string.Join(",\n", parseErrors.Select(x => x.errorCode))}");
             }
 
@@ -1156,6 +1326,26 @@ namespace FadeBasic.Launch
             // ── 2. Parse (multiple statements allowed) ────────────────────────────────
             var parser = new Parser(lexResults.stream, _commandCollection);
             var node = parser.ParseProgram(new ParseOptions { ignoreChecks = true });
+
+            // If parsing produced errors or the result is a bare expression,
+            // delegate to Eval which already handles type inference correctly.
+            // This handles cases like "x", "x + 1", "alan.x" that the parser
+            // can't treat as standalone statements.
+            var earlyErrors = node.GetAllErrors();
+            bool isBareExpr = (node.statements.Count > 0 && node.statements[node.statements.Count - 1] is ExpressionStatement);
+            if (isBareExpr || earlyErrors.Count > 0)
+            {
+                try
+                {
+                    var evalResult = Eval(frameId, code);
+                    if (evalResult != null && evalResult.id >= 0)
+                        return evalResult;
+                }
+                catch
+                {
+                    // If Eval also fails, fall through and let REPL report its own error.
+                }
+            }
 
             // Capture the user's statements BEFORE variable-context declarations are injected.
             var userStatements = new List<IStatementNode>(node.statements);
@@ -1470,6 +1660,33 @@ namespace FadeBasic.Launch
                 variableDb.InvalidateLocalScope(frameId);
 
                 result = new DebugEvalResult { value = "", type = "void", id = 0 };
+
+                // Try to produce a useful result for the debug console.
+                // If the last user statement was an assignment (or a bare expression
+                // rewritten to a synthetic assignment), read back the variable's value
+                // directly from the VM registers.
+                if (userStatements.Count > 0)
+                {
+                    var lastStmt = userStatements[userStatements.Count - 1];
+                    if (lastStmt is AssignmentStatement assign && assign.variable is VariableRefNode varRef)
+                    {
+                        var varName = varRef.variableName;
+                        if (mergedVariableTable.TryGetValue(varName, out var compiledVar))
+                        {
+                            var scopeIdx = compiledVar.isGlobal ? 0 : vmScopeIdxForRepl;
+                            var rawValue = _vm.scopeStack.buffer[scopeIdx].dataRegisters[compiledVar.registerAddress];
+                            var tc = compiledVar.typeCode;
+                            VmUtil.TryGetVariableTypeDisplay(tc, out var typeName);
+
+                            result = new DebugEvalResult
+                            {
+                                value = VmUtil.ConvertRawToDisplayString(tc, rawValue, _vm.heap),
+                                type = typeName,
+                                id = 0
+                            };
+                        }
+                    }
+                }
             }
             finally
             {

@@ -75,7 +75,14 @@ public partial class FadeDebugAdapter
                 }
                 else
                 {
-                    res.Result = "";
+                    res.Result = result.value ?? "";
+                    res.Type = result.type;
+                    if (result.fieldCount > 0 || result.elementCount > 0)
+                    {
+                        res.VariablesReference = result.scope?.id ?? 0;
+                        if (result.scope != null)
+                            db.AddScope(-1, result.scope);
+                    }
                 }
                 responder.SetResponse(res);
             });

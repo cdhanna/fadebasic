@@ -76,7 +76,191 @@ dim x(3,5) as vec
         
         Assert.That(variables.Count, Is.EqualTo(1));
     }
-    
+
+    [Test]
+    public async Task Exploration_StructWithFloatField_Expand()
+    {
+        var src = @"
+type measurement
+    value#
+endtype
+m as measurement
+m.value# = 3.14
+";
+        Compile(src, out _, out var compiler, out var vm);
+        var dbg = compiler.DebugData;
+        var session = new DebugSession(vm, dbg, TestCommands.CommandsForTesting, new LaunchOptions
+        {
+            debug = true, debugPort = 9999, debugWaitForConnection = false
+        });
+        session.StartDebugging();
+        await Task.Delay(50);
+
+        var scopes = session.GetScopes(new DebugScopeRequest { frameIndex = 0 });
+        var allVars = scopes.scopes.SelectMany(s => s.variables).ToList();
+        var mVar = allVars.FirstOrDefault(v => v.name == "m");
+        Assert.That(mVar, Is.Not.Null, $"Should find 'm' variable");
+        Assert.That(mVar.fieldCount, Is.GreaterThan(0), "m should be a struct");
+
+        var structScope = session.variableDb.Expand(mVar.id);
+        Assert.That(structScope.variables.Count, Is.EqualTo(1), "struct should have 1 field");
+
+        var valueField = structScope.variables[0];
+        Assert.That(valueField.name, Does.Contain("value"), $"field name should contain 'value', got '{valueField.name}'");
+        Assert.That(valueField.value, Is.EqualTo("3.14"), $"value should be 3.14, got '{valueField.value}'");
+    }
+
+    [Test]
+    public async Task Exploration_ArrayOfStruct_Expand()
+    {
+        var src = @"
+type person
+    age
+    name$
+endtype
+dim people(3) as person
+p as person
+p.age = 25
+p.name$ = ""hello""
+people(0) = p
+";
+        Compile(src, out _, out var compiler, out var vm);
+        var dbg = compiler.DebugData;
+        var session = new DebugSession(vm, dbg, TestCommands.CommandsForTesting, new LaunchOptions
+        {
+            debug = true, debugPort = 9999, debugWaitForConnection = false
+        });
+        session.StartDebugging();
+        await Task.Delay(50);
+
+        // Get all variables from all scopes
+        var scopes = session.GetScopes(new DebugScopeRequest { frameIndex = 0 });
+        var allVars = scopes.scopes.SelectMany(s => s.variables).ToList();
+
+        // Find the 'people' array variable
+        var peopleVar = allVars.FirstOrDefault(v => v.name == "people");
+        Assert.That(peopleVar, Is.Not.Null, "Should find 'people' variable");
+        Assert.That(peopleVar.elementCount, Is.GreaterThan(0), "people should be an array");
+
+        // Expand the array to get elements
+        var arrayScope = session.variableDb.Expand(peopleVar.id);
+        Assert.That(arrayScope.variables.Count, Is.GreaterThan(0), "array should have elements");
+
+        // The first element should be a struct with fields
+        var elem0 = arrayScope.variables[0];
+        Assert.That(elem0.fieldCount, Is.GreaterThan(0), "element 0 should have fields (struct)");
+
+        // Expand element 0 to get struct fields
+        var structScope = session.variableDb.Expand(elem0.id);
+        Assert.That(structScope.variables.Count, Is.EqualTo(2), "struct should have 2 fields");
+
+        // Check field values
+        var ageField = structScope.variables.FirstOrDefault(v => v.name == "age" || v.name == "age#");
+        var nameField = structScope.variables.FirstOrDefault(v => v.name == "name$" || v.name == "name");
+        Assert.That(ageField, Is.Not.Null, "Should find 'age' field");
+        Assert.That(nameField, Is.Not.Null, "Should find 'name$' field");
+        Assert.That(ageField.value, Is.EqualTo("25"), "age should be 25");
+        Assert.That(nameField.value, Is.EqualTo("hello"), "name should be hello");
+    }
+
+    [TestCase(@"`bare field from array-of-struct resolves via element 0
+type egg
+    e
+endtype
+dim es(3) as egg
+es(0).e = 32
+", "e", "32")]
+    [TestCase(@"`bare field 'y' from array-of-struct (VS Code sends '.y' stripped to 'y')
+type vec
+    x
+    y
+endtype
+dim vecs(3) as vec
+vecs(0).x = 10
+vecs(0).y = 20
+", "y", "20")]
+    [TestCase(@"`dot-prefixed '.y' from array-of-struct
+type vec
+    x
+    y
+endtype
+dim vecs(3) as vec
+vecs(0).x = 10
+vecs(0).y = 20
+", ".y", "20")]
+    [TestCase(@"`bare 'y' with both struct and array-of-struct in scope (ambiguous - picks first)
+type vec
+    x
+    y
+endtype
+v as vec
+v.x = 10
+v.y = 20
+dim vecs(3) as vec
+vecs(0).x = 100
+vecs(0).y = 200
+", "y", "20")]
+    [TestCase(@"`dotted field from array-of-struct
+type egg
+    e
+endtype
+dim es(3) as egg
+es(1).e = 32
+", "es(1).e", "32")]
+    [TestCase(@"`dot-prefixed expression stripped to bare field
+type egg
+    e
+endtype
+dim es(3) as egg
+es(0).e = 32
+", ".e", "32")]
+    [TestCase(@"`struct with sigil field (no expand)
+type person
+    age
+    name$
+endtype
+p as person
+p.age = 25
+p.name$ = ""hello""
+", "p.name$", "hello")]
+    [TestCase(@"`bare int field on simple struct (simulates VS Code hover sending just 'x')
+type vec
+    x
+    y
+endtype
+v as vec
+v.x = 42
+", "x", "42")]
+    [TestCase(@"`bare sigil field on simple struct (simulates VS Code hover sending just 'name')
+type person
+    age
+    name$
+endtype
+p as person
+p.age = 25
+p.name$ = ""hello""
+", "name", "hello")]
+    [TestCase(@"`float sigil field on simple struct (with sigil)
+type measurement
+    value#
+endtype
+m as measurement
+m.value# = 3.14
+", "m.value#", "3.14")]
+    [TestCase(@"`float sigil field WITHOUT sigil (VS Code sends 'm.value' not 'm.value#')
+type measurement
+    value#
+endtype
+m as measurement
+m.value# = 3.14
+", "m.value", "3.14")]
+    [TestCase(@"`bare float sigil field (simulates VS Code hover sending just 'value')
+type measurement
+    value#
+endtype
+m as measurement
+m.value# = 3.14
+", "value", "3.14")]
     [TestCase("x# = 4.2", "x#+1", "5.2")]
     [TestCase("inc x", "x", "1")]
     [TestCase("tuna x$", "x$", "tuna")]
@@ -102,6 +286,39 @@ v as vec
 v.x = 44
 vees(1) = v
 ", "vees(1).x", "44")]
+    [TestCase(@"`array of struct with string field (as string syntax)
+type person
+    age
+    name as string
+endtype
+dim people(3) as person
+p as person
+p.age = 25
+p.name = ""alice""
+people(0) = p
+", "people(0).name", "alice")]
+    [TestCase(@"`array of struct with string field (sigil syntax)
+type person2
+    age
+    name$
+endtype
+dim people(3) as person2
+p as person2
+p.age = 25
+p.name$ = ""bob""
+people(0) = p
+", "people(0).name$", "bob")]
+    [TestCase(@"`array of struct WITHOUT sigil (VS Code sends 'people(0).name' not 'people(0).name$')
+type person2
+    age
+    name$
+endtype
+dim people(3) as person2
+p as person2
+p.age = 25
+p.name$ = ""bob""
+people(0) = p
+", "people(0).name", "bob")]
     [TestCase(@"
 type vec
     x
@@ -161,6 +378,7 @@ x(1).x = 4
             var eval = evals[i];
             var expected = expects[i];
             var res = session.Eval(0, eval);
+            Assert.That(res.id, Is.GreaterThanOrEqualTo(0), $"Eval('{eval}') returned failed result: {res.value}");
             Assert.That(res.value, Is.EqualTo(expected));
 
         }
@@ -232,7 +450,7 @@ v2.x = 10
         Assert.That(res.value, Is.EqualTo(expected));
     }
 
-    
+
     [Test]
     public void Exploration_Variables_Structs()
     {
