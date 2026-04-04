@@ -50,7 +50,7 @@ namespace FadeBasic.Launch
         
         public VirtualMachine _vm;
         protected DebugData _dbg;
-        protected readonly CommandCollection _commandCollection;
+        protected CommandCollection _commandCollection;
         protected readonly string _label;
         public readonly LaunchOptions _options;
 
@@ -69,6 +69,8 @@ namespace FadeBasic.Launch
         protected bool hasReceivedOpen = false;
 
         protected int hasConnectedDebugger;
+        protected int debuggerSaidHello;
+        protected int debuggerReset;
         protected int pauseRequestedByMessageId;
         protected int resumeRequestedByMessageId;
         
@@ -174,6 +176,25 @@ namespace FadeBasic.Launch
             
             
             // _tree = IntervalTree.From(dbg.points);
+        }
+
+        public void Restart(VirtualMachine nextVm, DebugData nextDebugData, CommandCollection commandCollection)
+        {
+            // put this as a message so that the read-loop causes an interupt in the running VM. 
+            //  otherwise, the existing VM will get stuck in a read-loop.
+            receivedMessages.Enqueue(new MockResetMessage()
+            {
+                type = DebugMessageType.REV_REQUEST_RESTART,
+                nextDebugData = nextDebugData,
+                nextMachine = nextVm,
+                nextCommands = commandCollection
+            });
+            
+            // flip some state so the program does not run, until hello is received. 
+            debuggerSaidHello = 0;
+            debuggerReset = 1;
+            
+            _vm.Suspend();
         }
 
         public void StartServer()
@@ -295,6 +316,7 @@ namespace FadeBasic.Launch
 
         protected void SendExitedMessage()
         {
+            logger?.Debug("Sending exit message");
             var message = new DebugMessage()
             {
                 id = GetNextMessageId(),
@@ -308,230 +330,304 @@ namespace FadeBasic.Launch
             if (receivedMessages.TryDequeue(out var message))
             {
                 logger.Log($"[DBG] Received message : {message.id}, {message.type.ToString()}");
-      
-                switch (message.type)
+
+                try
                 {
-                    case DebugMessageType.PROTO_HELLO:
-                        hasConnectedDebugger = 1;
-                        Ack(message, new HelloResponseMessage()
-                        {
-                            processId = Process.GetCurrentProcess().Id
-                        });
-                        break;
-                    case DebugMessageType.REQUEST_PAUSE:
-                        pauseRequestedByMessageId = message.id;
-                        Ack(message);
-                        
-                        if (!instructionMap.TryFindClosestTokenBeforeIndex(_vm.instructionIndex, out var pausedAtToken))
-                        {
-                            logger.Log($"[DBG] could not find pause token");
-                        }
-                        else
-                        {
-                            logger.Log($"[DBG] paused at ins=[{_vm.instructionIndex}]  token {pausedAtToken.Jsonify()}");
-                        }
-                        
-                        break;
-                    case DebugMessageType.REQUEST_PLAY:
-                        resumeRequestedByMessageId = message.id;
-                        variableDb.ClearLifetime();
-                        Ack(message);
-                        break;
-                    case DebugMessageType.REQUEST_TERMINATE:
-                        requestedExit = true;
-                        Ack(message);
-                        Environment.Exit(0);
-                        break;
-                    case DebugMessageType.REQUEST_BREAKPOINTS:
-                        var detail = JsonableExtensions.FromJson<RequestBreakpointMessage>(message.RawJson);
-                        // _breakpoints = detail.breakpoints;
-                        
-                        logger.Log($"Handling breakpoint resolution... breakpoint-count=[{detail.breakpoints.Count}]");
-                        breakpointTokens.Clear();
-                        var verifiedBreakpoints = new List<Breakpoint>();
-                        for (var i = 0; i < detail.breakpoints.Count; i++)
-                        {
-                            var requestedBreakPoint = detail.breakpoints[i];
-                            var verified = instructionMap.TryFindClosestTokenAtLocation(requestedBreakPoint.lineNumber,
-                                requestedBreakPoint.colNumber, out var token);
+                    switch (message.type)
+                    {
+                        case DebugMessageType.REV_REQUEST_RESTART:
 
-                            var bp = new Breakpoint
+                            var mock = message as MockResetMessage;
+                            _vm = mock.nextMachine;
+                            _vm.shouldThrowRuntimeException = false;
+                            _vm.logger = logger;
+            
+                            _commandCollection = mock.nextCommands;
+            
+                            _dbg = mock.nextDebugData;
+            
+                            instructionMap = new IndexCollection(_dbg.statementTokens);
+                            variableDb = new DebugVariableDatabase(_vm, _dbg, logger);
+            
+                            logger.Log("RESTARTING debug session... version=" + typeof(DebugSession).Assembly.GetName().Version);
+                            foreach (var token in _dbg.statementTokens)
                             {
-                                status = verified ? 1 : -1,
-                                lineNumber = verified ? token.token.lineNumber : requestedBreakPoint.lineNumber,
-                                colNumber = verified ? token.token.charNumber : requestedBreakPoint.colNumber
-                            };
-                            logger.Log($" breakpoint index=[{i}] is verified=[{verified}] line=[{bp.lineNumber}] cn=[{bp.colNumber}]");
-                            verifiedBreakpoints.Add(bp);
-                            if (verified)
-                            {
-                                breakpointTokens.Add(token);
+                                var json = JsonableExtensions.Jsonify(token);
+                                logger.Log(json);
                             }
-                        }
-                        
-                        
-                        Ack(message, new ResponseBreakpointMessage
-                        {
-                            breakpoints = verifiedBreakpoints
-                        });
-                        
-                        break;
-                    case DebugMessageType.REQUEST_STEP_IN:
+            
+                            // reset state variables 
+                         
+                            pauseRequestedByMessageId = 0;
+                            resumeRequestedByMessageId = 0;
+                            currentInsLookupOffset = 0;
+                            stepNextMessage = null;
+                            stepIntoMessage = null;
+                            stepOutMessage = null;
+                            stepStackDepth = 0;
+                            stepOverFromToken = null;
+                            stepInFromToken = null;
+                            stepOutFromToken = null;
+                            breakpointTokens.Clear();
+                            hitBreakpointToken = null;
+                            
+                            // tell the DAP Host that we are planning to reboot!
+                            outboundMessages.Enqueue(new DebugMessage()
+                            {
+                                id = GetNextMessageId(),
+                                type = DebugMessageType.REV_REQUEST_RESTART
+                            });
+                            
+                            break;
+                        case DebugMessageType.PROTO_HELLO:
+                            hasConnectedDebugger = 1;
+                            debuggerSaidHello = 1;
+                            debuggerReset = 0;
+                            Ack(message, new HelloResponseMessage()
+                            {
+                                processId = Process.GetCurrentProcess().Id
+                            });
+                            break;
+                        case DebugMessageType.REQUEST_PAUSE:
+                            pauseRequestedByMessageId = message.id;
+                            Ack(message);
 
-                        { // reset the info to blank
+                            if (!instructionMap.TryFindClosestTokenBeforeIndex(_vm.instructionIndex,
+                                    out var pausedAtToken))
+                            {
+                                logger.Log($"[DBG] could not find pause token");
+                            }
+                            else
+                            {
+                                logger.Log(
+                                    $"[DBG] paused at ins=[{_vm.instructionIndex}]  token {pausedAtToken.Jsonify()}");
+                            }
+
+                            break;
+                        case DebugMessageType.REQUEST_PLAY:
+                            resumeRequestedByMessageId = message.id;
+                            variableDb.ClearLifetime();
+                            Ack(message);
+                            break;
+                        case DebugMessageType.REQUEST_TERMINATE:
+                            requestedExit = true;
+                            Ack(message);
+                            Environment.Exit(0);
+                            break;
+                        case DebugMessageType.REQUEST_BREAKPOINTS:
+                            var detail = JsonableExtensions.FromJson<RequestBreakpointMessage>(message.RawJson);
+                            // _breakpoints = detail.breakpoints;
+
+                            logger.Log(
+                                $"Handling breakpoint resolution... breakpoint-count=[{detail.breakpoints.Count}]");
+                            breakpointTokens.Clear();
+                            var verifiedBreakpoints = new List<Breakpoint>();
+                            for (var i = 0; i < detail.breakpoints.Count; i++)
+                            {
+                                var requestedBreakPoint = detail.breakpoints[i];
+                                var verified = instructionMap.TryFindClosestTokenAtLocation(
+                                    requestedBreakPoint.lineNumber,
+                                    requestedBreakPoint.colNumber, out var token);
+
+                                var bp = new Breakpoint
+                                {
+                                    status = verified ? 1 : -1,
+                                    lineNumber = verified ? token.token.lineNumber : requestedBreakPoint.lineNumber,
+                                    colNumber = verified ? token.token.charNumber : requestedBreakPoint.colNumber
+                                };
+                                logger.Log(
+                                    $" breakpoint index=[{i}] is verified=[{verified}] line=[{bp.lineNumber}] cn=[{bp.colNumber}]");
+                                verifiedBreakpoints.Add(bp);
+                                if (verified)
+                                {
+                                    breakpointTokens.Add(token);
+                                }
+                            }
+
+
+                            Ack(message, new ResponseBreakpointMessage
+                            {
+                                breakpoints = verifiedBreakpoints
+                            });
+
+                            break;
+                        case DebugMessageType.REQUEST_STEP_IN:
+
+                        {
+                            // reset the info to blank
                             stepInFromToken = null;
                             stepStackDepth = 0;
                             variableDb.ClearLifetime();
                         }
 
-                        if (!instructionMap.TryFindClosestTokenBeforeIndex(_vm.instructionIndex, out stepInFromToken))
-                        {
-                            logger.Log($"[DBG] could not find into starting token");
-                            Ack(message, new StepNextResponseMessage
+                            if (!instructionMap.TryFindClosestTokenBeforeIndex(_vm.instructionIndex,
+                                    out stepInFromToken))
                             {
-                                reason = "no source location available for starting location",
-                                status = -1
-                            });
-                            break; // do NOT set stepIntoMessage — Ack already sent
-                        }
+                                logger.Log($"[DBG] could not find into starting token");
+                                Ack(message, new StepNextResponseMessage
+                                {
+                                    reason = "no source location available for starting location",
+                                    status = -1
+                                });
+                                break; // do NOT set stepIntoMessage — Ack already sent
+                            }
 
-                        stepIntoMessage = message; // need to ACK later...
-                        stepStackDepth = _vm.methodStack.Count;
+                            stepIntoMessage = message; // need to ACK later...
+                            stepStackDepth = _vm.methodStack.Count;
 
-                        logger.Log($"[DBG] stepping in ins=[{_vm.program[_vm.instructionIndex]}] depth=[{stepStackDepth}] from {stepInFromToken.Jsonify()}");
-                        break;
-                    case DebugMessageType.REQUEST_STEP_OUT:
+                            logger.Log(
+                                $"[DBG] stepping in ins=[{_vm.program[_vm.instructionIndex]}] depth=[{stepStackDepth}] from {stepInFromToken.Jsonify()}");
+                            break;
+                        case DebugMessageType.REQUEST_STEP_OUT:
 
-                        { // reset the info to blank
+                        {
+                            // reset the info to blank
                             stepOutFromToken = null;
                             stepStackDepth = 0;
                             variableDb.ClearLifetime();
                         }
 
-                        if (!instructionMap.TryFindClosestTokenBeforeIndex(_vm.instructionIndex, out stepOutFromToken))
-                        {
-                            logger.Log($"[DBG] could not find out starting token");
-                            Ack(message, new StepNextResponseMessage
+                            if (!instructionMap.TryFindClosestTokenBeforeIndex(_vm.instructionIndex,
+                                    out stepOutFromToken))
                             {
-                                reason = "no source location available for starting location",
-                                status = -1
-                            });
-                            break; // do NOT set stepOutMessage — Ack already sent
-                        }
+                                logger.Log($"[DBG] could not find out starting token");
+                                Ack(message, new StepNextResponseMessage
+                                {
+                                    reason = "no source location available for starting location",
+                                    status = -1
+                                });
+                                break; // do NOT set stepOutMessage — Ack already sent
+                            }
 
-                        stepOutMessage = message; // need to ACK later...
-                        stepStackDepth = _vm.methodStack.Count;
+                            stepOutMessage = message; // need to ACK later...
+                            stepStackDepth = _vm.methodStack.Count;
 
-                        logger.Log($"[DBG] stepping out from {stepOutFromToken.Jsonify()}");
-                        break;
-                    case DebugMessageType.REQUEST_STEP_OVER:
+                            logger.Log($"[DBG] stepping out from {stepOutFromToken.Jsonify()}");
+                            break;
+                        case DebugMessageType.REQUEST_STEP_OVER:
 
-                        // stepping NEXT means "step over"
-                        //  that means go to the next statement that has the same stack depth, OR less than currently.
+                            // stepping NEXT means "step over"
+                            //  that means go to the next statement that has the same stack depth, OR less than currently.
 
-                        { // reset the info to blank
+                        {
+                            // reset the info to blank
                             stepOverFromToken = null;
                             stepStackDepth = 0;
                             variableDb.ClearLifetime();
                         }
 
-                        if (!instructionMap.TryFindClosestTokenBeforeIndex(_vm.instructionIndex, out stepOverFromToken))
-                        {
-                            logger.Log($"[DBG] could not find next starting token");
-                            Ack(message, new StepNextResponseMessage
+                            if (!instructionMap.TryFindClosestTokenBeforeIndex(_vm.instructionIndex,
+                                    out stepOverFromToken))
                             {
-                                reason = "no source location available for starting location",
-                                status = -1
-                            });
-                            break; // do NOT set stepNextMessage — Ack already sent
-                        }
-
-                        stepNextMessage = message; // need to ACK later...
-                        stepStackDepth = _vm.methodStack.Count;
-
-                        logger.Debug($"stepping from {stepOverFromToken.Jsonify()}");
-                        break;
-                    
-                    case DebugMessageType.REQUEST_VARIABLE_EXPANSION:
-                        var variableRequest = JsonableExtensions.FromJson<DebugVariableExpansionRequest>(message.RawJson);
-                        var subScope = variableDb.Expand(variableRequest.variableId);
-                        Ack(message, new ScopesMessage
-                        {
-                            scopes = new List<DebugScope>
-                            {
-                                subScope
+                                logger.Log($"[DBG] could not find next starting token");
+                                Ack(message, new StepNextResponseMessage
+                                {
+                                    reason = "no source location available for starting location",
+                                    status = -1
+                                });
+                                break; // do NOT set stepNextMessage — Ack already sent
                             }
-                        });
-                        break;
-                    case DebugMessageType.REQUEST_EVAL:
-                        var evalRequest = JsonableExtensions.FromJson<EvalMessage>(message.RawJson);
-                        logger.Info($"doing eval. {evalRequest.expression}");
-                        try
-                        {
-                            var evalResult = Eval(evalRequest.frameIndex, evalRequest.expression);
-                            logger.Info($"did eval id=[{evalResult.id}] value=[{evalResult.value}]");
 
-                            var retMsg = new EvalResponse
+                            stepNextMessage = message; // need to ACK later...
+                            stepStackDepth = _vm.methodStack.Count;
+
+                            logger.Debug($"stepping from {stepOverFromToken.Jsonify()}");
+                            break;
+
+                        case DebugMessageType.REQUEST_VARIABLE_EXPANSION:
+                            try
                             {
-                                result = evalResult
-                            };
-                            logger.Info($"Return eval msg=[{retMsg.Jsonify()}]");
-                            Ack(evalRequest, retMsg);
-                        }
-                        catch (Exception ex)
-                        {
-                            logger.Error("OH NO SOMETHING BROKE!: " + ex.Message);
-                            Ack(evalRequest, new EvalResponse
+                                var variableRequest =
+                                    JsonableExtensions.FromJson<DebugVariableExpansionRequest>(message.RawJson);
+                                var subScope = variableDb.Expand(variableRequest.variableId);
+                                Ack(message, new ScopesMessage
+                                {
+                                    scopes = new List<DebugScope>
+                                    {
+                                        subScope
+                                    }
+                                });
+                            }
+                            catch (Exception ex)
                             {
-                                result = DebugEvalResult.Failed($"internal error: {ex.Message}")
+                                logger.Error($"Variable expansion error: {ex.Message}");
+                                Ack(message, new ScopesMessage { scopes = new List<DebugScope>() });
+                            }
+
+                            break;
+                        case DebugMessageType.REQUEST_EVAL:
+                            var evalRequest = JsonableExtensions.FromJson<EvalMessage>(message.RawJson);
+                            logger.Info($"doing eval. {evalRequest.expression}");
+                            try
+                            {
+                                var evalResult = Eval(evalRequest.frameIndex, evalRequest.expression);
+                                logger.Info($"did eval id=[{evalResult.id}] value=[{evalResult.value}]");
+
+                                var retMsg = new EvalResponse
+                                {
+                                    result = evalResult
+                                };
+                                logger.Info($"Return eval msg=[{retMsg.Jsonify()}]");
+                                Ack(evalRequest, retMsg);
+                            }
+                            catch (Exception ex)
+                            {
+                                logger.Error("OH NO SOMETHING BROKE!: " + ex.Message);
+                                Ack(evalRequest, new EvalResponse
+                                {
+                                    result = DebugEvalResult.Failed($"internal error: {ex.Message}")
+                                });
+                            }
+
+                            break;
+                        case DebugMessageType.REQUEST_REPL:
+                            var replRequest = JsonableExtensions.FromJson<EvalMessage>(message.RawJson);
+                            logger.Info($"doing repl. {replRequest.expression}");
+                            try
+                            {
+                                var replResult = ReplExec(replRequest.frameIndex, replRequest.expression);
+                                Ack(replRequest, new EvalResponse { result = replResult });
+                            }
+                            catch (Exception ex)
+                            {
+                                logger.Error("REPL internal error: " + ex.Message);
+                                Ack(replRequest, new EvalResponse
+                                {
+                                    result = DebugEvalResult.Failed($"internal error: {ex.Message}")
+                                });
+                            }
+
+                            break;
+                        case DebugMessageType.REQUEST_SET_VAR:
+                            var setVarRequest = JsonableExtensions.FromJson<SetVariableMessage>(message.RawJson);
+                            var exprResult = Eval(setVarRequest.frameId, setVarRequest.rhs, setVarRequest.variableId);
+
+                            // now that we have the result, we need to assign it to the given value... 
+                            // variableDb.ResetValue(setVarRequest.variableId, exprResult);
+
+                            // throw new NotImplementedException();
+                            Ack(setVarRequest, new EvalResponse
+                            {
+                                result = exprResult
                             });
-                        }
-                        break;
-                    case DebugMessageType.REQUEST_REPL:
-                        var replRequest = JsonableExtensions.FromJson<EvalMessage>(message.RawJson);
-                        logger.Info($"doing repl. {replRequest.expression}");
-                        try
-                        {
-                            var replResult = ReplExec(replRequest.frameIndex, replRequest.expression);
-                            Ack(replRequest, new EvalResponse { result = replResult });
-                        }
-                        catch (Exception ex)
-                        {
-                            logger.Error("REPL internal error: " + ex.Message);
-                            Ack(replRequest, new EvalResponse
+                            break;
+                        case DebugMessageType.REQUEST_SCOPES:
+                            var scopeRequest = JsonableExtensions.FromJson<DebugScopeRequest>(message.RawJson);
+                            var scopeResult = GetScopes(scopeRequest);
+                            Ack(message, scopeResult);
+                            break;
+                        case DebugMessageType.REQUEST_STACK_FRAMES:
+                            var frames = GetFrames2();
+                            Ack(message, new StackFrameMessage
                             {
-                                result = DebugEvalResult.Failed($"internal error: {ex.Message}")
+                                frames = frames
                             });
-                        }
+                            logger.Debug($"enqueued stack frame response. frame-count=[{frames.Count}]");
 
-                        break;
-                    case DebugMessageType.REQUEST_SET_VAR:
-                        var setVarRequest = JsonableExtensions.FromJson<SetVariableMessage>(message.RawJson);
-                        var exprResult = Eval(setVarRequest.frameId, setVarRequest.rhs, setVarRequest.variableId);
-                        
-                        // now that we have the result, we need to assign it to the given value... 
-                        // variableDb.ResetValue(setVarRequest.variableId, exprResult);
-
-                        // throw new NotImplementedException();
-                        Ack(setVarRequest, new EvalResponse
-                        {
-                            result = exprResult
-                        });
-                        break;
-                    case DebugMessageType.REQUEST_SCOPES:
-                        var scopeRequest = JsonableExtensions.FromJson<DebugScopeRequest>(message.RawJson);
-                        var scopeResult = GetScopes(scopeRequest);
-                        Ack(message, scopeResult);
-                        break;
-                    case DebugMessageType.REQUEST_STACK_FRAMES:
-                        var frames = GetFrames2();
-                        Ack(message, new StackFrameMessage
-                        {
-                            frames = frames
-                        });
-                        logger.Debug($"enqueued stack frame response. frame-count=[{frames.Count}]");
-                        
-                        break;
+                            break;
+                    }
+                } catch (Exception ex){
+                    logger?.Error($"Read Error: type=[{ex.GetType().Name}] msg=[{ex.Message}]");
                 }
             }
         }
@@ -896,10 +992,14 @@ namespace FadeBasic.Launch
             var finalStatement = (AssignmentStatement)node.statements.LastOrDefault(x => x is AssignmentStatement);
             var finalDeclare = (DeclarationStatement)node.statements.LastOrDefault(x => x is DeclarationStatement);
 
+            if (finalStatement == null)
+            {
+                return DebugEvalResult.Failed("only declarations are allowed");
+            }
+
             if (finalDeclare == null || finalDeclare.variable != SYNTHETIC_NAME2)
             {
                 finalDeclare = null;
-                // TypeInfo.FromVariableType()
 
                 var finalType = finalStatement.expression.ParsedType.type;
                 if (overwriteVariableId > 1 && variableDb.TryGetTypeCodeForVariableId(overwriteVariableId, out var finaltypeCode))
@@ -909,18 +1009,13 @@ namespace FadeBasic.Launch
                         throw new Exception("invalid type code");
                     }
                 }
-                
+
                 finalDeclare = new DeclarationStatement(new Token
                     {
                         caseInsensitiveRaw = "local"
                     }, new VariableRefNode(Token.Blank, SYNTHETIC_NAME2),
                     new TypeReferenceNode(finalType, Token.Blank));
                 node.statements.Insert(node.statements.Count - 1, finalDeclare);
-            }
-            
-            if (finalStatement == null)
-            {
-                return DebugEvalResult.Failed("only declarations are allowed");
             }
             finalStatement.variable.Errors.Clear(); // remove the cast related error
             
@@ -1787,11 +1882,19 @@ namespace FadeBasic.Launch
             }
         }
 
+        public virtual void DebugForever()
+        {
+            while (_vm.instructionIndex < _vm.program.Length)
+            {
+                StartDebugging();
+            }
+        }
+
         public virtual void StartDebugging(int ops = 0)
         {
             var handleManualSuspension = false;
             var budget = ops;
-            while (_options.debugWaitForConnection && hasConnectedDebugger == 0)
+            while (_options.debugWaitForConnection && hasConnectedDebugger == 0 || (debuggerReset > 0 && debuggerSaidHello == 0))
             {
                 if (ops > 0 && budget-- == 0) break; 
                 ReadMessage();
@@ -2054,6 +2157,7 @@ namespace FadeBasic.Launch
             }
 
 
+            logger?.Debug("done with debug loop");
             if (_vm.instructionIndex >= _vm.program.Length || requestedExit)
             {
                 SendExitedMessage();
@@ -2071,6 +2175,7 @@ namespace FadeBasic.Launch
         
         REV_REQUEST_BREAKPOINT,
         REV_REQUEST_EXITED,
+        REV_REQUEST_RESTART,
         REV_REQUEST_EXPLODE,
         
         REQUEST_PAUSE,
@@ -2248,6 +2353,13 @@ namespace FadeBasic.Launch
             base.ProcessJson(op);
             op.IncludeField(nameof(processId), ref processId);
         }
+    }
+
+    public class MockResetMessage : DebugMessage
+    {
+        public VirtualMachine nextMachine;
+        public CommandCollection nextCommands;
+        public DebugData nextDebugData;
     }
 
     

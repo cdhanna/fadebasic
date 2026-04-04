@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Threading;
+using FadeBasic.Launch;
 using FadeBasic.Lib.Standard.Util;
 using FadeBasic.SourceGenerators;
 using FadeBasic.Virtual;
@@ -16,6 +17,25 @@ namespace FadeBasic.Lib.Standard
         public static void WaitKey()
         {
             var _ = System.Console.ReadKey();
+        }
+
+        [FadeBasicCommand("dbg restart")]
+        public static void Suspend([FromVm] VirtualMachine vm)
+        {
+            if (!Launcher.machineToDebugTable.TryGetValue(vm, out var data))
+            {
+                Console.WriteLine("FAILED TO FIND DEBUG SESSION");
+                return;
+            }
+
+            var instance = data.Item1;
+            var session = data.Item2;
+            var nextVm = new VirtualMachine(instance.Bytecode)
+            {
+                hostMethods = HostMethodTable.FromCommandCollection(instance.CommandCollection)
+            };
+            Launcher.machineToDebugTable[nextVm] = data;
+            session.Restart(nextVm, instance.DebugData, instance.CommandCollection);
         }
 
         public static Action<int, string> msBuildLogger;

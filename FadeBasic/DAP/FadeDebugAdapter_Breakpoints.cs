@@ -7,6 +7,23 @@ namespace DAP;
 
 public partial class FadeDebugAdapter
 {
+    private List<Breakpoint> _lastBreakpoints = new List<Breakpoint>();
+
+    public void ReapplyBreakpoints(Action onComplete = null)
+    {
+        if (_lastBreakpoints.Count == 0)
+        {
+            onComplete?.Invoke();
+            return;
+        }
+        _logger.Log($"Re-applying {_lastBreakpoints.Count} cached breakpoints after restart");
+        _session.RequestBreakpoints(new List<Breakpoint>(_lastBreakpoints), _ =>
+        {
+            _logger.Log("Breakpoints re-applied after restart");
+            onComplete?.Invoke();
+        });
+    }
+
     protected override void HandleSetBreakpointsRequestAsync(IRequestResponder<SetBreakpointsArguments, SetBreakpointsResponse> responder)
     {
         var breakpoints = new List<Breakpoint>();
@@ -35,6 +52,7 @@ public partial class FadeDebugAdapter
            }
         }
 
+        _lastBreakpoints = new List<Breakpoint>(breakpoints);
         _session.RequestBreakpoints(breakpoints, actualBreakPoints =>
         {
             var res = new SetBreakpointsResponse();

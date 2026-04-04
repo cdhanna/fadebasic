@@ -17,6 +17,7 @@ public partial class FadeDebugAdapter : DebugAdapterBase
     private string _debuggerLogPath;
 
     private RemoteDebugSession _session;
+    public bool hasSession = false;
     private ProjectContext? _project;
     private SourceMap? _sourceMap;
     private IDAPLogger _logger;
@@ -45,18 +46,18 @@ public partial class FadeDebugAdapter : DebugAdapterBase
 
     protected override InitializeResponse HandleInitializeRequest(InitializeArguments arguments)
     {
-        
         var res = new InitializeResponse
         {
             
             SupportsConfigurationDoneRequest = true,
             SupportsSetExpression = true,
             SupportsSetVariable = false,
-            SupportsEvaluateForHovers = true
+            SupportsEvaluateForHovers = true,
+       
             // SupportsReadMemoryRequest = true,
         };
         
-        _logger.Log($"LINES_AT_ONE=[{arguments.LinesStartAt1}] COLS_AT_ONE=[{arguments.ColumnsStartAt1}] VARIABLE_SUPPORT=[{arguments.SupportsVariableType}]");
+        _logger.Log($"LINES_AT_ONE=[{arguments.LinesStartAt1}] COLS_AT_ONE=[{arguments.ColumnsStartAt1}] VARIABLE_SUPPORT=[{arguments.SupportsVariableType}] INVALIDATION_SUPPORT=[{arguments.SupportsInvalidatedEvent}]");
         return res;
     }
 
@@ -135,6 +136,23 @@ public partial class FadeDebugAdapter : DebugAdapterBase
 
     protected override LaunchResponse HandleLaunchRequest(LaunchArguments arguments)
     {
+        if (hasSession)
+        {
+            if (arguments._Restart != null)
+            {
+                _logger?.Log("HANDLING RESTART LAUNCH");
+                // the session is already connected. Don't do anything. 
+                return new LaunchResponse
+                {
+
+                };
+            }
+            else
+            {
+                throw new InvalidOperationException("Cannot relaunch a session.");
+            }
+        }
+        
         _fileName = arguments.ConfigurationProperties.GetValueAsString("program");
         _debuggerLogPath = arguments.ConfigurationProperties.GetValueAsString("debuggerLogPath");
         
@@ -171,9 +189,21 @@ public partial class FadeDebugAdapter : DebugAdapterBase
         {
             startReq.Env[LaunchOptions.ENV_DEBUG_LOG_PATH] = _debuggerLogPath;
         }
-        
+
+        hasSession = true;
         _session = new RemoteDebugSession(port, _logger.Log);
 
+        _session.RestartCallback = () =>
+        {
+            _logger?.Log("RESTART HANDLING: Re-applying breakpoints and resuming");
+            ReapplyBreakpoints(() =>
+            {
+                _logger?.Log("RESTART HANDLING: Breakpoints re-applied, sending continue");
+                Protocol.SendEvent(new InvalidatedEvent());
+                Protocol.SendEvent(new ContinuedEvent());
+                _session.SayHello();
+            });
+        };
         _session.HitBreakpointCallback = () =>
         {
             Protocol.SendEvent(new StoppedEvent
@@ -251,9 +281,14 @@ public partial class FadeDebugAdapter : DebugAdapterBase
 
     protected override DisconnectResponse HandleDisconnectRequest(DisconnectArguments arguments)
     {
+        if (arguments.Restart == true)
+        {
+            _logger.Log("handling disconnect with restart");
+            return new DisconnectResponse();
+        }
+        
         _logger.Log("KILLING: " + _session.RemoteProcessId);
         _session.SendTerminate(() => { });
-
         Protocol.SendEvent(new ExitedEvent(0));
         return new DisconnectResponse();
     }

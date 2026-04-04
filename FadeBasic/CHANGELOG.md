@@ -5,7 +5,14 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [0.0.59] - 2026-04-1
+## [0.0.60] - 2025-04-03
+### Added
+- debug session supports dynamic restarts without losing connection to DAP
+
+### Fixed
+- launcher under debug no longer exits on first debug message
+
+## [0.0.59] - 2026-04-01
 ### Fixed
 - debugger shows hover values when looking at struct fields and array fields
 - debugger statement eval shows output

@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Diagnostics;
 using System.Net;
 using System.Net.Sockets;
@@ -47,6 +48,9 @@ namespace FadeBasic.Launch
     {
         // public static bool IsDebugMode => Environment.GetEnvironmentVariable("FADE_BASIC_DEBUG")
         //
+
+        public static Dictionary<VirtualMachine, (ILaunchable, DebugSession)> machineToDebugTable =
+            new Dictionary<VirtualMachine, (ILaunchable, DebugSession)>();
         
         public static void Run<T>(LaunchOptions options=null) 
             where T : ILaunchable, new()
@@ -71,8 +75,9 @@ namespace FadeBasic.Launch
             else
             {
                 var session = new DebugSession(vm, instance.DebugData, instance.CommandCollection, options);
+                machineToDebugTable.Add(vm, (instance, session));
                 session.StartServer();
-                session.StartDebugging(); // needs infinite budget. 
+                session.DebugForever(); // needs infinite budget. 
                 session.ShutdownServer();
                 
             }

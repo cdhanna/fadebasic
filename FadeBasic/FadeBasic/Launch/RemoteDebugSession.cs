@@ -25,6 +25,7 @@ namespace FadeBasic.Launch
         private ConcurrentDictionary<int, Action<DebugMessage>> _ackHandlers =
             new ConcurrentDictionary<int, Action<DebugMessage>>();
 
+        public Action RestartCallback;
         public Action HitBreakpointCallback;
         public Action Exited;
         public Action<string> RuntimeException;
@@ -75,6 +76,9 @@ namespace FadeBasic.Launch
 
                         switch (message.type)
                         {
+                            case DebugMessageType.REV_REQUEST_RESTART:
+                                RestartCallback?.Invoke();
+                                break;
                             case DebugMessageType.REV_REQUEST_BREAKPOINT:
                                 // ah, emit a stop event!
                                 HitBreakpointCallback?.Invoke();
