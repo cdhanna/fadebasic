@@ -5,7 +5,14 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [0.0.60] - 2025-04-03
+## [0.0.61] - 2026-04-16
+### Added
+- Fade.Build generates markdown file for command docs unless `<FadeDisableAutoDocs>` is set to true
+
+### Fixed
+- generated docs allow slashes
+
+## [0.0.60] - 2026-04-03
 ### Added
 - debug session supports dynamic restarts without losing connection to DAP
 

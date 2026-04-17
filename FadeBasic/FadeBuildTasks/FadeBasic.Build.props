@@ -19,5 +19,6 @@
     </ItemDefinitionGroup>
     
     <UsingTask TaskName="$(MSBuildThisFileName).FadeProjectTask" AssemblyFile="$(FadeBasicCustomTasksAssembly)"/>
-    
+    <UsingTask TaskName="$(MSBuildThisFileName).FadeDocsTask" AssemblyFile="$(FadeBasicCustomTasksAssembly)"/>
+
 </Project>

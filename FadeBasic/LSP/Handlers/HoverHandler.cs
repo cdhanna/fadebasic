@@ -154,6 +154,23 @@ public class HoverHandler : HoverHandlerBase
             }
         }
 
+        if (!string.IsNullOrEmpty(foundCommand.methodDocs.remarks))
+        {
+            sb.Append(Environment.NewLine);
+            sb.AppendLine("#### Remarks");
+            sb.AppendLine(foundCommand.methodDocs.remarks.Trim());
+        }
+
+        if (foundCommand.methodDocs.examples.Count > 0)
+        {
+            sb.Append(Environment.NewLine);
+            sb.AppendLine("#### Examples");
+            foreach (var example in foundCommand.methodDocs.examples)
+            {
+                sb.AppendLine(example.Trim());
+            }
+        }
+
         return sb;
     }
 

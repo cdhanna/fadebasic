@@ -257,7 +257,9 @@ namespace {namespaceStr}
             // jsonString = RegexUtil.ReplaceDocSlashes(jsonString);
             jsonString = Regex.Replace(jsonString, "\\n\\s*///\\s*", "\n///").Replace("///", "");
             return jsonString
+                .Replace("\\", "\\\\")
                 .Replace("\n", "\\n")
+                .Replace("\r", "\\r")
                 .Replace("\"", "\\\"");
         }
 

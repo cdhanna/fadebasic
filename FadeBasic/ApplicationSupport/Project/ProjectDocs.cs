@@ -23,16 +23,33 @@ public class XmlDocMethodParameter
 
 public interface IDocParser
 {
+    Func<string, string> ResolveSeeRef { get; set; }
     void ConvertParagraph(StringBuilder sb, XElement element);
     void ConvertBold(StringBuilder sb, XElement element);
     void ConvertItalic(StringBuilder sb, XElement element);
     void ConvertCode(StringBuilder sb, XElement element);
     void ConvertCodeBlock(StringBuilder sb, XElement element);
     void ConvertList(StringBuilder sb, XElement element, string listType);
+    void ConvertSee(StringBuilder sb, XElement element);
 }
 
 public class MarkdownDocParser : IDocParser
 {
+    public Func<string, string> ResolveSeeRef { get; set; }
+
+    public void ConvertSee(StringBuilder sb, XElement element)
+    {
+        var cref = element.Attribute("cref")?.Value;
+        if (string.IsNullOrEmpty(cref)) return;
+
+        var display = string.IsNullOrWhiteSpace(element.Value) ? cref : element.Value.Trim();
+        var url = ResolveSeeRef?.Invoke(cref);
+        if (url != null)
+            sb.Append($"[{display}]({url})");
+        else
+            sb.Append($"`{display}`");
+    }
+
     public void ConvertParagraph(StringBuilder sb, XElement element)
     {
         sb.Append(Environment.NewLine);
@@ -91,6 +108,21 @@ public class MarkdownDocParser : IDocParser
 
 public class HtmlDocParser : IDocParser
 {
+    public Func<string, string> ResolveSeeRef { get; set; }
+
+    public void ConvertSee(StringBuilder sb, XElement element)
+    {
+        var cref = element.Attribute("cref")?.Value;
+        if (string.IsNullOrEmpty(cref)) return;
+
+        var display = string.IsNullOrWhiteSpace(element.Value) ? cref : element.Value.Trim();
+        var url = ResolveSeeRef?.Invoke(cref);
+        if (url != null)
+            sb.Append($"<a href=\"{url}\">{display}</a>");
+        else
+            sb.Append($"<code>{display}</code>");
+    }
+
     public void ConvertParagraph(StringBuilder sb, XElement element)
     {
         sb.Append("<p>");
@@ -154,41 +186,51 @@ public static class ProjectDocMethods
     
     
     public static XmlDocMethod ParseMethodDocs<T>(string xml) where T : IDocParser, new()
+        => ParseMethodDocs(new T(), xml);
+
+    public static XmlDocMethod ParseMethodDocs(IDocParser parser, string xml)
     {
         var res = new XmlDocMethod();
         if (!xml.StartsWith("<root>"))
         {
             xml = "<root>" + xml + "</root>";
         }
-        
+
         var doc = XDocument.Parse(xml, LoadOptions.None);
-        
-        
-        
+
         var nodes = doc.Root.Nodes().ToList();
         foreach (var node in nodes)
         {
             switch (node)
-            { 
+            {
                 case XElement element when element.Name == "example":
-                    var ex = ParseBlock<T>(element);
-                    res.examples.Add(ex);
+                    var sb = new StringBuilder();
+                    ParseBlock(parser, element, sb);
+                    res.examples.Add(sb.ToString());
                     break;
                 case XElement element when element.Name == "summary":
-                    res.summary = ParseBlock<T>(element);
+                    sb = new StringBuilder();
+                    ParseBlock(parser, element, sb);
+                    res.summary = sb.ToString();
                     break;
                 case XElement element when element.Name == "returns":
-                    res.returns = ParseBlock<T>(element);
+                    sb = new StringBuilder();
+                    ParseBlock(parser, element, sb);
+                    res.returns = sb.ToString();
                     break;
                 case XElement element when element.Name == "remarks":
-                    res.remarks = ParseBlock<T>(element);
+                    sb = new StringBuilder();
+                    ParseBlock(parser, element, sb);
+                    res.remarks = sb.ToString();
                     break;
                 case XElement element when element.Name == "param":
                     var parameterName = element.Attribute("name")?.Value;
+                    sb = new StringBuilder();
+                    ParseBlock(parser, element, sb);
                     res.parameters.Add(new XmlDocMethodParameter
                     {
                         name = parameterName,
-                        body = ParseBlock<T>(element)
+                        body = sb.ToString()
                     });
                     break;
             }
@@ -241,6 +283,9 @@ public static class ProjectDocMethods
                 case XElement element when element.Name == "code":
                     parser.ConvertCodeBlock(sb, element);
                     break;
+                case XElement element when element.Name == "see" || element.Name == "seealso":
+                    parser.ConvertSee(sb, element);
+                    break;
                 case XElement element when element.Name == "list":
                     var listType = element.Attribute("type")?.Value.ToLowerInvariant() ?? "bullet";
                     parser.ConvertList(sb, element, listType);
@@ -254,6 +299,24 @@ public static class ProjectDocMethods
     public static ProjectDocs LoadDocs<T>(this List<CommandMetadata> metadatas)
         where T : IDocParser, new()
     {
+        // Build command name -> group lookup so <see cref="x"/> can resolve links
+        var commandToGroup = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var metadata in metadatas)
+        {
+            foreach (var command in metadata.commands)
+            {
+                commandToGroup[command.callName] = metadata.className;
+            }
+        }
+
+        var parser = new T();
+        parser.ResolveSeeRef = cref =>
+        {
+            if (commandToGroup.TryGetValue(cref, out var group))
+                return "/command/" + group + "/" + cref;
+            return null;
+        };
+
         var docs = new ProjectDocs();
         foreach (var metadata in metadatas)
         {
@@ -269,7 +332,7 @@ public static class ProjectDocMethods
                 docs.map[command.sig] = doc;
                 doc.command = command;
                 doc.commandName = command.callName;
-                doc.methodDocs = ParseMethodDocs<T>(command.docString);
+                doc.methodDocs = ParseMethodDocs(parser, command.docString);
             }
         }
 

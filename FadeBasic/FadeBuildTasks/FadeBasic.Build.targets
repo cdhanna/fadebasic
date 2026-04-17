@@ -16,7 +16,7 @@
         <FadeGeneratedLaunchFile Condition="'$(FadeGeneratedLaunchFile)'==''">$(MSBuildProjectDirectory)/$(FadeGeneratedFolder)/$(FadeGeneratedLaunchType).g.cs</FadeGeneratedLaunchFile>
     </PropertyGroup>
 
-    <Target Name="GenerateFadeBasic" BeforeTargets="CoreCompile" Inputs="@(FadeSource);@(Commands);@(ReferencePath)" Outputs="$(FadeGeneratedLaunchFile)">
+    <Target Name="GenerateFadeBasic" BeforeTargets="CoreCompile" Condition="'$(FadeDisableAutoBuild)'!='true'" Inputs="@(FadeSource);@(Commands);@(ReferencePath)" Outputs="$(FadeGeneratedLaunchFile)">
         <FadeProjectTask 
                 OutputPath="$(TargetDir)"
                 GenerateDebugData="$(FadeBasicDebug)"
@@ -46,5 +46,7 @@
     <Target Name="ForceReGenerateOnRebuild" AfterTargets="CoreClean">
         <Delete Files="$(FadeGeneratedLaunchFile)" />
     </Target>
-    
+
+    <Import Project="$(MSBuildThisFileDirectory)FadeBasic.Docs.targets" />
+
 </Project>

@@ -29,6 +29,7 @@
     <ItemGroup>
         <None Update="FadeBasic.Build.props" Pack="True" PackagePath="build/$(AssemblyName).props" />
         <None Update="FadeBasic.Build.targets" Pack="True" PackagePath="build/$(AssemblyName).targets" />
+        <None Update="FadeBasic.Docs.targets" Pack="True" PackagePath="build/FadeBasic.Docs.targets" />
     </ItemGroup>
     
     <ItemGroup>

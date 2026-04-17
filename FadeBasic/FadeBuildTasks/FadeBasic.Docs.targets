@@ -1,0 +1,24 @@
+<Project>
+
+    <PropertyGroup>
+        <FadeDisableAutoDocs Condition="'$(FadeDisableAutoDocs)'==''">false</FadeDisableAutoDocs>
+        <FadeDocsOutputFile Condition="'$(FadeDocsOutputFile)'==''">$(IntermediateOutputPath)FadeCommandDocs.md</FadeDocsOutputFile>
+    </PropertyGroup>
+
+    <Target
+        Name="GenerateFadeDocs"
+        AfterTargets="ResolveReferences"
+        Condition="'$(FadeDisableAutoDocs)'!='true' AND '@(FadeCommand)' != ''"
+        Inputs="@(FadeCommand);@(ReferencePath)"
+        Outputs="$(FadeDocsOutputFile)">
+
+        <FadeDocsTask
+            Commands="@(FadeCommand)"
+            References="@(ReferencePath)"
+            OutputFile="$(FadeDocsOutputFile)">
+            <Output TaskParameter="GeneratedDocsFile" PropertyName="FadeGeneratedDocsFile" />
+        </FadeDocsTask>
+
+    </Target>
+
+</Project>

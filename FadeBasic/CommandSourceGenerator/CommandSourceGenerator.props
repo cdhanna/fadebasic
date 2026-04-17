@@ -1,6 +1,15 @@
 <Project>
+
+    <PropertyGroup>
+        <!-- The FadeBasic source generator reads XML doc comments from /// trivia.
+             Roslyn only classifies /// as SingleLineDocumentationCommentTrivia when
+             documentation mode is enabled. Without this, doc comments are silently
+             treated as regular comments and the generator produces empty docStrings. -->
+        <GenerateDocumentationFile Condition="'$(GenerateDocumentationFile)'==''">true</GenerateDocumentationFile>
+    </PropertyGroup>
+
     <ItemGroup>
-        
+
         <!-- This exists to help IDE integration. -->
         <PackageReference Include="Microsoft.Net.Compilers.Toolset" Version="4.5.0">
             <PrivateAssets>all</PrivateAssets>
