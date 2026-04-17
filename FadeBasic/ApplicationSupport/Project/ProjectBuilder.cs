@@ -175,15 +175,15 @@ namespace FadeBasic.ApplicationSupport.Project
             return LoadCommandMetadata(context.projectLibraries);
         }
         
-        public static ProjectCommandInfo LoadCommandMetadata(List<ProjectCommandSource> libraries)
+        public static ProjectCommandInfo LoadCommandMetadata(List<ProjectCommandSource> libraries, Action<string, System.Xml.XmlException> onDocParseError = null)
         {
             var metaDatas = new List<CommandMetadata>();
-            
+
             foreach (var projectLib in libraries)
             {
                 var loadContext = new AssemblyLoadContext("metadata", isCollectible: true);
 
-                
+
                 var firstDll = true;
                 loadContext.Resolving += (assemblyContext, assemblyName) =>
                 {
@@ -215,12 +215,12 @@ namespace FadeBasic.ApplicationSupport.Project
                     metaDatas.Add(metadata);
                 }
 
-                
+
                 loadContext.Unload();
-                
+
             }
 
-            var docs = ProjectDocMethods.LoadDocs<MarkdownDocParser>(metaDatas);
+            var docs = ProjectDocMethods.LoadDocs<MarkdownDocParser>(metaDatas, onDocParseError);
             // TODO: this is a bug! 
             //  macro DLLs are not loaded at this time, so we cannot actually invoke into them :( 
             //  we need to load the macro DLL's once per compilation? and pray they don't explode? 

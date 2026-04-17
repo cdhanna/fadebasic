@@ -1,8 +1,5 @@
 using System.Text;
-using System.Xml;
 using System.Xml.Linq;
-using System.Xml.Serialization;
-using FadeBasic.Virtual;
 
 namespace FadeBasic.ApplicationSupport.Project;
 
@@ -188,15 +185,27 @@ public static class ProjectDocMethods
     public static XmlDocMethod ParseMethodDocs<T>(string xml) where T : IDocParser, new()
         => ParseMethodDocs(new T(), xml);
 
-    public static XmlDocMethod ParseMethodDocs(IDocParser parser, string xml)
+    public static XmlDocMethod ParseMethodDocs(IDocParser parser, string xml, Action<System.Xml.XmlException> onXmlError = null)
     {
         var res = new XmlDocMethod();
+        if (string.IsNullOrWhiteSpace(xml))
+            return res;
+
         if (!xml.StartsWith("<root>"))
         {
             xml = "<root>" + xml + "</root>";
         }
 
-        var doc = XDocument.Parse(xml, LoadOptions.None);
+        XDocument doc;
+        try
+        {
+            doc = XDocument.Parse(xml, LoadOptions.None);
+        }
+        catch (System.Xml.XmlException ex)
+        {
+            onXmlError?.Invoke(ex);
+            return res;
+        }
 
         var nodes = doc.Root.Nodes().ToList();
         foreach (var node in nodes)
@@ -296,7 +305,7 @@ public static class ProjectDocMethods
         }
     }
     
-    public static ProjectDocs LoadDocs<T>(this List<CommandMetadata> metadatas)
+    public static ProjectDocs LoadDocs<T>(this List<CommandMetadata> metadatas, Action<string, System.Xml.XmlException> onDocParseError = null)
         where T : IDocParser, new()
     {
         // Build command name -> group lookup so <see cref="x"/> can resolve links
@@ -332,7 +341,10 @@ public static class ProjectDocMethods
                 docs.map[command.sig] = doc;
                 doc.command = command;
                 doc.commandName = command.callName;
-                doc.methodDocs = ParseMethodDocs(parser, command.docString);
+                doc.methodDocs = ParseMethodDocs(parser, command.docString, ex =>
+                {
+                    onDocParseError?.Invoke(command.callName, ex);
+                });
             }
         }
 

@@ -66,7 +66,20 @@ namespace FadeBasic.Build
                     return true;
                 }
 
-                var info = ProjectBuilder.LoadCommandMetadata(libraries);
+                var info = ProjectBuilder.LoadCommandMetadata(libraries, (commandName, xmlEx) =>
+                {
+                    Log.LogWarning(
+                        subcategory: "fade-docs",
+                        warningCode: "FADEDOC01",
+                        helpKeyword: null,
+                        file: null,
+                        lineNumber: 0,
+                        columnNumber: 0,
+                        endLineNumber: 0,
+                        endColumnNumber: 0,
+                        message: "Command '{0}' has invalid XML in its doc comment (line {1}, position {2}): {3}",
+                        commandName, xmlEx.LineNumber, xmlEx.LinePosition, xmlEx.Message);
+                });
                 var markdown = GenerateMarkdown(info.docs);
 
                 var dir = Path.GetDirectoryName(OutputFile);
