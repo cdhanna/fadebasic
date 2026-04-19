@@ -3951,6 +3951,21 @@ any input ""darn"", y
         Assert.That(vm.dataRegisters[0], Is.EqualTo(28));
     }
     
+    [Test]
+    public void CallHost_RefType_Float()
+    {
+        var src = @"
+x# = 1.5
+refFloat x#
+";
+        Setup(src, out var compiler, out var prog);
+        _exprAst.AssertNoParseErrors();
+        var vm = new VirtualMachine(prog);
+        vm.hostMethods = compiler.methodTable;
+        vm.Execute2();
+        Assert.That(vm.typeRegisters[0], Is.EqualTo(TypeCodes.REAL));
+        Assert.That(VmUtil.ConvertToFloat(vm.dataRegisters[0]), Is.EqualTo(3.0));
+    }
     
     [Test]
     public void CallHost_RefType_ArrayStruct()

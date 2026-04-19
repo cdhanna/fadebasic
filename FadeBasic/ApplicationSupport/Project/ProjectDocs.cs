@@ -77,9 +77,11 @@ public class MarkdownDocParser : IDocParser
 
     public void ConvertCodeBlock(StringBuilder sb, XElement element)
     {
+        if (sb.Length > 0 && sb[sb.Length - 1] != '\n')
+            sb.Append('\n');
         sb.Append("```\n");
         ProjectDocMethods.ParseBlock(this, element, sb, replaceNewlines: false);
-        sb.Append("\n```");
+        sb.Append("\n```\n");
     }
 
     public void ConvertList(StringBuilder sb, XElement element, string listType)

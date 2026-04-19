@@ -103,7 +103,7 @@ multi
 </summary>
 ";
         var data = ProjectDocMethods.ParseMethodDocsMarkdown(xml);
-        Assert.That(data.summary, Is.EqualTo("hello ```\nworld\nmulti\n```"));
+        Assert.That(data.summary, Is.EqualTo("hello \n```\nworld\nmulti\n```\n"));
     }
     
     [Test]

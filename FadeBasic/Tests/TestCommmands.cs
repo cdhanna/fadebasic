@@ -260,6 +260,13 @@ namespace Tests
             x = "tuna";
         }
         
+        [FadeBasicCommand("refFloat")]
+        public static void Tuna(ref float x)
+        {
+            x *= 2;
+        }
+
+        
         [FadeBasicCommand("tuna_echo")]
         public static void TunaEcho(int a, ref string x)
         {

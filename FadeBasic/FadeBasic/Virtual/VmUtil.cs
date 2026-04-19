@@ -282,6 +282,15 @@ namespace FadeBasic.Virtual
                 case int i:
                     bytes = BitConverter.GetBytes(i);
                     break;
+                case float f:
+                    bytes = BitConverter.GetBytes(f);
+                    break;
+                case long l:
+                    bytes = BitConverter.GetBytes(l);
+                    break;
+                case double d:
+                    bytes = BitConverter.GetBytes(d);
+                    break;
                 default:
                     throw new NotImplementedException("cannot convert unknown type to bytes " + value + " typeof " + typeof(T));
             }
