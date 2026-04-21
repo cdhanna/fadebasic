@@ -327,7 +327,23 @@ namespace FadeBasic.Virtual
             switch (state)
             {
                 case CommandArgRuntimeState.RegisterRef:
+                    var existingPtr = VmPtr.FromRaw(vm.dataRegisters[address]);
+                    if (vm.heap.TryGetAllocation(existingPtr, out var existingAlloc))
+                    {
+                        if (existingAlloc.format.IsString())
+                        {
+                            vm.heap.Read(existingPtr, existingAlloc.length, out var existingMem);
+                            var existingString = VmConverter.ToString(existingMem);
+                            if (existingString == value)
+                            {
+                                // don't need to do anything; because the string is the same as what already exists, so no need to re-allocate it. 
+                                break;
+                            }
+                        }
+                    }
+                    
                     VmConverter.FromString(value, out strBytes);
+                    
                     vm.heap.Allocate(ref HeapTypeFormat.STRING_FORMAT, strBytes.Length, out strPtr);
                     vm.heap.Write(strPtr, strBytes.Length, strBytes);
                     vm.heap.IncrementRefCount(strPtr);

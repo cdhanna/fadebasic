@@ -272,6 +272,21 @@ namespace Tests
         {
             x = "t" + a;
         }
+        [FadeBasicCommand("tuna_echo2")]
+        public static void TunaEcho2(int a, ref string x)
+        {
+            if (a >= 1)
+            {
+                x = x + "more";
+            }
+            // otherwise, x is left un-assigned. 
+        }
+        
+        [FadeBasicCommand("tuna_opt_string")]
+        public static void TunaEcho(int a, string x="")
+        {
+            // do nothing :shrug:
+        }
         
         //
         [FadeBasicCommand("upper$")]

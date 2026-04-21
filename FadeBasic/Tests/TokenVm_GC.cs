@@ -85,6 +85,27 @@ tuna_echo 1, a$
 tuna_echo 1, a$
 a$ = ""toast""
 ", 2)]
+    [TestCase(@"
+a$ = ""toast""
+tuna_echo2 0, a$ `no assignment needed
+tuna_echo2 1, a$ `1 assignment needed
+", 2)]
+    [TestCase(@"
+len(""toast"")
+", 1)]
+    [TestCase(@"
+len(""toast"")
+len(""toast"")
+len(""toast"")
+", 1)]
+    [TestCase(@"
+len(""toast"")
+len(""toast"")
+len(""toast"")
+", 1)]
+    [TestCase(@"
+tuna_opt_string 3 `an empty optional does not need to allocate
+", 0)]
     public void GC_Simple(string src, int allocationCount)
     {
         Setup(src, out var compiler, out var prog);
