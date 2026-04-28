@@ -15,11 +15,15 @@ project.lock.json
 *.userosscache
 *.sln.docstates
 
-# Build results
-[Dd]ebug/
-[Dd]ebugPublic/
-[Rr]elease/
-[Rr]eleases/
+# Build results (scoped to .NET bin/obj so they don't match source folders named debug/release)
+**/bin/[Dd]ebug/
+**/bin/[Dd]ebugPublic/
+**/bin/[Rr]elease/
+**/bin/[Rr]eleases/
+**/obj/[Dd]ebug/
+**/obj/[Dd]ebugPublic/
+**/obj/[Rr]elease/
+**/obj/[Rr]eleases/
 x64/
 x86/
 build/
