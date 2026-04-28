@@ -33,3 +33,7 @@ msbuild.wrn
 # Visual Studio 2015
 .vs/
 .idea/
+
+# Plugin signing material (JetBrains Marketplace)
+*.pem
+*.crt
