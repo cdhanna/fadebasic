@@ -97,20 +97,6 @@ jobs:
         if: inputs.publishNuget == false
         run: echo "FADE_NUGET_DRYRUN=true" >> $GITHUB_ENV
 
-      - name: Run Build Script
-        working-directory: ./FadeBasic
-        run: bash ./install.sh ${{ inputs.majorSemver }}.${{ inputs.minorSemver }}.${{ inputs.patchSemver }} 1 ${{ secrets.NUGET_HOST }} ${{ secrets.NUGET_API_KEY }}
-        # env:
-        #   FADE_NUGET_DRYRUN: true
-
-      - name: Run VsCode Scripts
-        working-directory: ./VsCode/basicscript
-        if: inputs.publishVsCode == true
-        run: |
-          sudo chmod -R 777 out
-          npm install
-          npm version ${{ inputs.majorSemver }}.${{ inputs.minorSemver }}.${{ inputs.patchSemver }}
-          npx vsce publish -p ${{ secrets.VS_CODE_AZURE_PAT }}
 
       - name: Build and Publish Rider Plugin
         working-directory: ./Rider/fade-basic-rider
@@ -131,6 +117,21 @@ jobs:
         with:
           name: rider-plugin
           path: Rider/fade-basic-rider/build/distributions/*.zip
+
+      - name: Run Build Script
+        working-directory: ./FadeBasic
+        run: bash ./install.sh ${{ inputs.majorSemver }}.${{ inputs.minorSemver }}.${{ inputs.patchSemver }} 1 ${{ secrets.NUGET_HOST }} ${{ secrets.NUGET_API_KEY }}
+        # env:
+        #   FADE_NUGET_DRYRUN: true
+
+      - name: Run VsCode Scripts
+        working-directory: ./VsCode/basicscript
+        if: inputs.publishVsCode == true
+        run: |
+          sudo chmod -R 777 out
+          npm install
+          npm version ${{ inputs.majorSemver }}.${{ inputs.minorSemver }}.${{ inputs.patchSemver }}
+          npx vsce publish -p ${{ secrets.VS_CODE_AZURE_PAT }}
 
       - name: Create Git Tag
         run: |
