@@ -113,6 +113,8 @@ namespace FadeBasic.Launch
 
         public bool IsPaused => pauseRequestedByMessageId > resumeRequestedByMessageId;
 
+        public bool IsClientConnected => didClientConnect;
+
         public const int DEBUG_SERVER_DISCOVERY_PORT = 21758;
         public static List<DiscoveryMessage> DiscoverServers()
         {
@@ -1894,7 +1896,10 @@ namespace FadeBasic.Launch
         {
             var handleManualSuspension = false;
             var budget = ops;
-            while (_options.debugWaitForConnection && hasConnectedDebugger == 0 || (debuggerReset > 0 && debuggerSaidHello == 0))
+            // only wait for a post-restart hello if a debugger client actually connected — otherwise
+            // a Restart() with no client attached would deadlock waiting for a PROTO_HELLO that never arrives.
+            while ((_options.debugWaitForConnection && hasConnectedDebugger == 0)
+                   || (hasConnectedDebugger != 0 && debuggerReset > 0 && debuggerSaidHello == 0))
             {
                 if (ops > 0 && budget-- == 0) break; 
                 ReadMessage();
@@ -1920,7 +1925,20 @@ namespace FadeBasic.Launch
                 }
                 
                 ReadMessage();
-                
+
+                // If the debug client disconnected while we were paused (breakpoint, step,
+                // or explicit pause), auto-resume so the program isn't stuck forever waiting
+                // for a continuation that will never arrive. Keep hitBreakpointToken set so
+                // the breakpoint check at the current token doesn't immediately re-fire — it
+                // clears naturally once the VM moves off this token. Breakpoints themselves
+                // stay registered so a later reconnecting client can stop on them again.
+                if (!IsClientConnected && (IsPaused || stepNextMessage != null || stepIntoMessage != null || stepOutMessage != null))
+                {
+                    resumeRequestedByMessageId = pauseRequestedByMessageId;
+                    stepNextMessage = null;
+                    stepIntoMessage = null;
+                    stepOutMessage = null;
+                }
 
                 var hasCurrentToken =
                     instructionMap.TryFindClosestTokenBeforeIndex(_vm.instructionIndex, out var currentToken);
@@ -2376,42 +2394,91 @@ namespace FadeBasic.Launch
         // public const int MAX_MESSAGE_LENGTH = 1024 * 8; // 8kb.
         public const int MAX_MESSAGE_LENGTH = 1024 * 32; // 32kb. 32_768
 
+        /// <summary>
+        /// Reads exactly <paramref name="count"/> bytes into <paramref name="buffer"/> starting at
+        /// <paramref name="offset"/>. TCP's <see cref="Socket.Receive(byte[],int,int,SocketFlags,out SocketError)"/>
+        /// is allowed to return fewer bytes than requested (especially with a short ReceiveTimeout
+        /// or under load with large messages). The previous receive code assumed a single Receive
+        /// call satisfied the request, which corrupted the message stream when the kernel split
+        /// reads — that mis-framed every subsequent message and the IJsonable parser eventually
+        /// crashed on garbage with "json error. Expected [\"] but found [...]".
+        ///
+        /// Returns false if the connection dropped (count==0) or <paramref name="cancellationToken"/>
+        /// fired before all bytes were read. Timeouts (SocketError.TimedOut) are NOT treated as
+        /// errors here — we just retry until the full count is in.
+        /// </summary>
+        private static bool ReceiveExactly(
+            Socket socket, byte[] buffer, int offset, int count,
+            CancellationToken cancellationToken,
+            out SocketError lastError)
+        {
+            lastError = SocketError.Success;
+            var read = 0;
+            while (read < count)
+            {
+                if (cancellationToken.IsCancellationRequested) return false;
+                int got;
+                try
+                {
+                    got = socket.Receive(buffer, offset + read, count - read, SocketFlags.None, out lastError);
+                }
+                catch (SocketException ex)
+                {
+                    lastError = ex.SocketErrorCode;
+                    if (lastError == SocketError.TimedOut) continue;
+                    return false;
+                }
+                if (lastError == SocketError.TimedOut) continue;
+                if (lastError != SocketError.Success) return false;
+                if (got == 0) return false; // peer closed
+                read += got;
+            }
+            return true;
+        }
+
+        /// <summary>
+        /// Writes exactly <paramref name="count"/> bytes from <paramref name="buffer"/>. TCP
+        /// <see cref="Socket.Send(byte[],int,int,SocketFlags,out SocketError)"/> may return fewer
+        /// bytes than requested under backpressure, and the previous code advanced the offset by
+        /// a fixed amount regardless of the actual sent count — that silently dropped bytes.
+        /// </summary>
+        private static bool SendExactly(Socket socket, byte[] buffer, int offset, int count, out SocketError lastError)
+        {
+            lastError = SocketError.Success;
+            var sent = 0;
+            while (sent < count)
+            {
+                int got;
+                try
+                {
+                    got = socket.Send(buffer, offset + sent, count - sent, SocketFlags.None, out lastError);
+                }
+                catch (SocketException ex)
+                {
+                    lastError = ex.SocketErrorCode;
+                    return false;
+                }
+                if (lastError != SocketError.Success && lastError != SocketError.WouldBlock) return false;
+                if (got == 0) return false; // socket closed
+                sent += got;
+            }
+            return true;
+        }
+
         public static void Send<T>(Socket socket, T message)
             where T : IJsonable
         {
-            
             var sendBytes = EncodeJsonable(message);
-
             var sendLength = sendBytes.Length;
-            var messageCount = (sendLength / MAX_MESSAGE_LENGTH) + 1;
-            // if (sendLength > MAX_MESSAGE_LENGTH)
-            //     throw new InvalidOperationException("Cannot send message longer than max-length");
 
             var lengthBytes = BitConverter.GetBytes(sendLength);
+            SendExactly(socket, lengthBytes, 0, lengthBytes.Length, out _);
 
-            socket.Send(lengthBytes, 0, lengthBytes.Length, SocketFlags.None, out var sendError);
-            if (sendError != SocketError.Success)
-            {
-                // TODO: uh oh?
-            }
-
-            var sendOffset = 0;
-            for (var i = 0; i < messageCount; i++)
-            {
-                var chunkSize = MAX_MESSAGE_LENGTH;
-                if (i == messageCount - 1)
-                {
-                    chunkSize = sendLength % MAX_MESSAGE_LENGTH;
-                }
-                var sentByteCount = socket.Send(sendBytes, sendOffset, chunkSize, SocketFlags.None,
-                    out sendError);
-                if (sendError != SocketError.Success)
-                {
-                    // TODO: uh oh?
-                }
-
-                sendOffset += MAX_MESSAGE_LENGTH;
-            }
+            // Send the body in one shot — SendExactly loops on partial writes internally, so
+            // we don't need the caller-side chunking the previous version did. The chunked
+            // version also miscomputed offsets, occasionally skipping bytes for messages whose
+            // length was exactly a multiple of MAX_MESSAGE_LENGTH.
+            if (sendLength > 0) SendExactly(socket, sendBytes, 0, sendLength, out _);
         }
         
         
@@ -2466,54 +2533,44 @@ namespace FadeBasic.Launch
                         break;
                     }
 
-                    int messageLength = 0;
-                    int availableBytes = 0;
-                    int count = 0;
-                    SocketError err = default;
+                    // Don't enter the read loop unless there's actually some data — otherwise
+                    // ReceiveExactly will spin retrying on timeout and never let the outer loop
+                    // drain its outbound queue. This preserves the original "poll for incoming,
+                    // service outgoing" multiplexing without the partial-read framing bug.
+                    int avail;
+                    try { avail = socket.Available; }
+                    catch (SocketException) { connectionDropped = true; break; }
+                    if (avail <= 0) continue;
 
-                    { // receive the length of the message
-                        try
-                        {
-                            count = socket.Receive(buffer, 0, sizeof(int), SocketFlags.None, out err);
-                        }
-                        catch (SocketException)
-                        {
-                            connectionDropped = true;
-                            break;
-                        }
-                        if (err != SocketError.Success) continue;
+                    int messageLength;
+                    SocketError err;
 
-                        if (count == 0)
+                    { // receive the length of the message — must be exactly 4 bytes
+                        if (!ReceiveExactly(socket, buffer, 0, sizeof(int), cancellationToken, out err))
                         {
-                            connectionDropped = true;
+                            if (cancellationToken.IsCancellationRequested) break;
+                            connectionDropped = true; // peer closed or hard error mid-read
                             break;
                         }
 
-                        var bufferSpan = new Span<byte>(buffer, 0, count);
-                        messageLength = BitConverter.ToInt32(bufferSpan.ToArray(), 0);
+                        messageLength = BitConverter.ToInt32(buffer, 0);
                     }
 
-                    var messageCount = (messageLength / MAX_MESSAGE_LENGTH) + 1;
-                    if (messageCount > 1)
+                    if (messageLength <= 0)
                     {
-
+                        // Garbage length means the stream is unrecoverable — bail rather than
+                        // allocate ridiculous buffers or read for hours.
+                        connectionDropped = true;
+                        break;
                     }
 
-                    { // receive the content of the message
+                    { // receive the content of the message — must be exactly `messageLength` bytes
                         var giantBuffer = new byte[messageLength];
-
-                        var recvOffset = 0;
-                        for (var i = 0; i < messageCount; i++)
+                        if (!ReceiveExactly(socket, giantBuffer, 0, messageLength, cancellationToken, out err))
                         {
-                            var recvSize = MAX_MESSAGE_LENGTH;
-                            if (i == messageCount - 1)
-                            {
-                                recvSize = messageLength % MAX_MESSAGE_LENGTH;
-                            }
-                            count = socket.Receive(giantBuffer, recvOffset, recvSize, SocketFlags.None, out err);
-                            if (err != SocketError.Success) continue;
-                            if (count == 0) continue;
-                            recvOffset += MAX_MESSAGE_LENGTH;
+                            if (cancellationToken.IsCancellationRequested) break;
+                            connectionDropped = true;
+                            break;
                         }
 
                         var controlMessage = DecodeJsonable<T>(giantBuffer, messageLength);
@@ -2568,66 +2625,102 @@ namespace FadeBasic.Launch
             // var buffer = new ArraySegment<byte>(new byte[socket.ReceiveBufferSize]);
             var buffer = new byte[MAX_MESSAGE_LENGTH];
             
-            Socket handler = null;
-            try
-            {
-                handler = socket.Accept();
-                handler.ReceiveTimeout = 100;
-                handler.ReceiveBufferSize = MAX_MESSAGE_LENGTH;
-
-                didClientConnect = true;
-
-            }
-            catch (Exception ex)
-            {
-                throw;
-            }
-
+            // Outer accept loop — handle reconnects from successive adapter sessions. The
+            // previous version did a single Accept() and looped on that one handler forever;
+            // when the adapter died and the user reconnected, the new connection got queued by
+            // socket.Listen but was never accepted, so adapter→runtime requests piled up
+            // unanswered and Rider sat at the breakpoint waiting for setBreakpoints responses
+            // that never came.
             try
             {
                 while (!cancellationToken.IsCancellationRequested)
                 {
-                    Thread.Sleep(1);
-
-                    // try to send out all pending messages
-                    while (outputQueue.TryDequeue(out var msgToSend))
+                    Socket handler;
+                    try
                     {
-                        Send(handler, msgToSend);
+                        // Wait for an incoming connection with periodic cancellation checks
+                        // (Accept itself isn't cancellable; Poll lets us peek without blocking).
+                        if (!socket.Poll(100_000, SelectMode.SelectRead))
+                        {
+                            continue; // 100ms with no pending connection — re-check cancel
+                        }
+                        handler = socket.Accept();
+                        handler.ReceiveTimeout = 100;
+                        handler.ReceiveBufferSize = MAX_MESSAGE_LENGTH;
                     }
+                    catch (SocketException) { break; }
+                    catch (ObjectDisposedException) { break; }
 
-                    // read the length
-                    for (var i = 0; i < sizeof(int); i++)
+                    didClientConnect = true;
+
+                    try
                     {
-                        buffer[i] = 0;
-                    }
-                    
-                    var count = handler.Receive(buffer, 0, sizeof(int), SocketFlags.None, out var err);
-                    if (err != SocketError.Success) continue;
-                    if (count == 0) continue;
+                        while (!cancellationToken.IsCancellationRequested)
+                        {
+                            Thread.Sleep(1);
 
-                    var length = BitConverter.ToInt32(buffer, 0);
-                    
-                    if (length > buffer.Length)
+                            // try to send out all pending messages
+                            try
+                            {
+                                while (outputQueue.TryDequeue(out var msgToSend))
+                                {
+                                    Send(handler, msgToSend);
+                                }
+                            }
+                            catch (SocketException) { break; } // adapter died mid-send
+
+                            // Detect graceful peer close: Poll says readable but no bytes are
+                            // actually available — that's TCP's "FIN received" pattern. Without
+                            // this, we'd loop forever on the dead handler and never re-accept.
+                            bool peerClosed;
+                            try
+                            {
+                                peerClosed = handler.Poll(0, SelectMode.SelectRead)
+                                             && handler.Available == 0;
+                            }
+                            catch (SocketException) { break; }
+                            if (peerClosed) break;
+
+                            int handlerAvail;
+                            try { handlerAvail = handler.Available; }
+                            catch (SocketException) { break; }
+                            if (handlerAvail <= 0) continue;
+
+                            // read the length — must be exactly 4 bytes (TCP recv may return fewer)
+                            if (!ReceiveExactly(handler, buffer, 0, sizeof(int), cancellationToken, out var err))
+                            {
+                                if (cancellationToken.IsCancellationRequested) break;
+                                break; // mid-read disconnect — close handler, re-accept
+                            }
+
+                            var length = BitConverter.ToInt32(buffer, 0);
+                            if (length <= 0) continue; // garbage length, skip
+
+                            // The receive buffer is only MAX_MESSAGE_LENGTH bytes wide. If the
+                            // sender chunked a larger payload, we need a buffer that fits it.
+                            var bodyBuffer = length <= buffer.Length ? buffer : new byte[length];
+
+                            if (!ReceiveExactly(handler, bodyBuffer, 0, length, cancellationToken, out err))
+                            {
+                                if (cancellationToken.IsCancellationRequested) break;
+                                break; // mid-message disconnect — close handler, re-accept
+                            }
+
+                            var controlMessage = DecodeJsonable<T>(bodyBuffer, length);
+                            inputQueue.Enqueue(controlMessage);
+                        }
+                    }
+                    finally
                     {
-                        throw new Exception(@$"buffer error has invalid size. port=[{port}] count=[{count}] b0=[{buffer[0]}] b1=[{buffer[1]}] b2=[{buffer[2]}] b3=[{buffer[3]}]");
+                        try { handler.Close(); } catch { }
+                        didClientConnect = false;
                     }
-
-                    // try to receive a single message
-                    count = handler.Receive(buffer, 0, length, SocketFlags.None,
-                        out err);
-                    if (err != SocketError.Success) continue;
-                    if (count == 0) continue;
-                    // TODO: should check that the received byte count is big enough to read a full message.
-
-                    var controlMessage = DecodeJsonable<T>(buffer, length);
-                    inputQueue.Enqueue(controlMessage);
-
+                    // Loop back to Accept the next adapter connection.
                 }
             }
             finally
             {
-                handler.Close();
-                socket.Close();
+                try { socket.Close(); } catch { }
             }
 
         }

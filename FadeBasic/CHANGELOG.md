@@ -5,6 +5,15 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.0.64] - 2026-04-28
+### Added
+- Rider IDE Plugin Support
+
+### Fixed
+- Using `:` as statement separator no longer creates implicit label
+- Debugger JSON transport code streams small byte payloads correctly
+- `DebugSession` allows a host to disconnect and reconnect gracefully 
+
 ## [0.0.63] - 2026-04-21
 ### Fixed
 - commands with string ref parameters no longer allocate unless new string is written to parameter

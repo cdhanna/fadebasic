@@ -1647,7 +1647,9 @@ namespace FadeBasic
 
                         switch (secondToken.type)
                         {
-                            case LexemType.EndStatement when secondToken.caseInsensitiveRaw == ":":
+                            // a label is just `name:`. If `reference` consumed parens or fields,
+                            // the `:` is a statement separator, not a label declaration.
+                            case LexemType.EndStatement when secondToken.caseInsensitiveRaw == ":" && reference is VariableRefNode:
                                 _stream.Advance(); // consume the token.
                                 var labelDecl = new LabelDeclarationNode(token, secondToken);
                                 return labelDecl;

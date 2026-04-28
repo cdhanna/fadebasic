@@ -65,8 +65,13 @@ public class DocumentService
         return content.SplitNewLines();
     }
 
-    public void Populate(DocumentUri rootUri)
+    public void Populate(DocumentUri? rootUri)
     {
+        if (rootUri is null)
+        {
+            return;
+        }
+
         var filePath = rootUri.GetFileSystemPath();
         
         // find all .basic files and .basicProject.yaml files

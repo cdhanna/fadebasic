@@ -6,6 +6,7 @@ using System.Threading.Tasks;
 using FadeBasic;
 using FadeBasic.ApplicationSupport.Project;
 using FadeBasic.Json;
+using FadeBasic.Lsp;
 using FadeBasic.Sdk;
 using LSP.Services;
 using Microsoft.Extensions.Logging;
@@ -68,55 +69,20 @@ public class SemanticTokenHandler : SemanticTokensHandlerBase
             sourceMap = unit.sourceMap;
             var emptyMods = Array.Empty<SemanticTokenModifier>();
 
-            
-            // it is important that macro tokens GO FIRST; the LSP takes the first value for each spot. 
-            // TODO: this is still a little flakey
-            // foreach (var token in unit.lexerResults.macroTokens)
-            // {
-            //     if (token.raw == null) continue;
-            //     var location = unit.sourceMap.GetOriginalLocation(token.lineNumber, token.charNumber);
-            //     if (location.fileName != identifier.TextDocument.Uri.GetFileSystemPath())
-            //     {
-            //         continue;
-            //     }
-            //     builder.Push(location.startLine, location.startChar, token.Length, SemanticTokenType.Macro, emptyMods);
-            // }
-            
-            for (var i = 0 ; i < unit.lexerResults.allTokens.Count; i ++)
-            // foreach (var token in unit.lexerResults.allTokens)
+            for (var i = 0; i < unit.lexerResults.allTokens.Count; i++)
             {
                 var token = unit.lexerResults.allTokens[i];
                 if (token.raw == null) continue;
-                
-                
-                // if the token is not part of this file; we can skip it.
-                // TODO: it would be better if this was cached...
+
                 var location = unit.sourceMap.GetOriginalLocation(token.lineNumber, token.charNumber);
                 if (location.fileName != identifier.TextDocument.Uri.GetFileSystemPath())
-                {
                     continue;
-                }
 
-                var tokenType = ConvertSymbol(token);
+                var prevToken = i > 0 ? unit.lexerResults.allTokens[i - 1] : null;
+                var result = LSPUtil.ClassifyToken(token, prevToken);
+                if (result.Skip) continue;
 
-                if (i > 0 && token.type == LexemType.VariableGeneral &&
-                    unit.lexerResults.allTokens[i - 1].type == LexemType.KeywordAs)
-                {
-                    tokenType = SemanticTokenType.Type;
-                }
-               
-                if (token.flags.HasFlag(TokenFlags.FunctionCall))
-                {
-                    tokenType = SemanticTokenType.Method;
-                    
-                }
-                
-                if (token.flags.HasFlag(TokenFlags.IsConstant))
-                {
-                    // tokenType = SemanticTokenType.Macro;
-                    continue;
-                }
-                builder.Push(location.startLine, location.startChar, token.Length, tokenType, emptyMods);
+                builder.Push(location.startLine, location.startChar, token.Length, ToSemanticTokenType(result.TokenType), emptyMods);
             }
 
 
@@ -147,124 +113,22 @@ public class SemanticTokenHandler : SemanticTokensHandlerBase
         }
     }
 
-    static SemanticTokenType ConvertSymbol(Token token)
+    static SemanticTokenType ToSemanticTokenType(PortableSemanticTokenType type)
     {
-        switch (token.type)
+        switch (type)
         {
-            case LexemType.KeywordRem:
-            case LexemType.KeywordRemStart:
-            case LexemType.KeywordRemEnd:
-                return SemanticTokenType.Comment;
-            
-            case LexemType.KeywordFunction:
-                return SemanticTokenType.Function;
-            case LexemType.KeywordExitFunction:
-            case LexemType.KeywordEndFunction:
-                return SemanticTokenType.Function;
-            
-            case LexemType.ConstantBegin:
-            case LexemType.ConstantEnd:
-            case LexemType.ConstantTokenize:
-            case LexemType.ConstantEndTokenize:
-            case LexemType.ConstantBracketClose:
-            case LexemType.ConstantBracketOpen:
-            case LexemType.Constant:
-            case LexemType.VariableReal when token.raw?.Length == 1:
-                return SemanticTokenType.Macro;
-            case LexemType.VariableString:
-            case LexemType.VariableReal:
-            case LexemType.VariableGeneral:
-                return SemanticTokenType.Parameter;
-            
-            case LexemType.KeywordEnd:
-            case LexemType.KeywordTo:
-            case LexemType.KeywordNext:
-            case LexemType.KeywordFor:
-            case LexemType.KeywordSkip:
-            case LexemType.KeywordStep:
-            case LexemType.KeywordDo:
-            case LexemType.KeywordLoop:
-            case LexemType.KeywordWhile:
-            case LexemType.KeywordEndWhile:
-            case LexemType.KeywordRepeat:
-            case LexemType.KeywordUntil:
-            case LexemType.KeywordAnd:
-            case LexemType.KeywordNot:
-            case LexemType.KeywordXor:
-            case LexemType.KeywordAs:
-            case LexemType.OpMod:
-            case LexemType.KeywordCase:
-            case LexemType.KeywordElse:
-            case LexemType.KeywordIf:
-            case LexemType.KeywordEndIf:
-            case LexemType.KeywordGoto:
-            case LexemType.KeywordOr:
-            case LexemType.KeywordScope:
-            case LexemType.KeywordSelect:
-            case LexemType.KeywordEndSelect:
-            case LexemType.KeywordCaseDefault:
-            case LexemType.KeywordThen:
-            case LexemType.KeywordGoSub:
-            case LexemType.ArgSplitter:
-            case LexemType.FieldSplitter:
-            case LexemType.KeywordDeclareArray:
-            case LexemType.KeywordReDimArray:
-            case LexemType.CommandWord:
-            case LexemType.KeywordReturn:
-            case LexemType.KeywordEndCase:
-            case LexemType.KeywordExit:
-            case LexemType.KeywordDefer:
-            case LexemType.KeywordEndDefer:
-                return SemanticTokenType.Keyword;
-                
-            case LexemType.KeywordType:
-            case LexemType.KeywordEndType:
-                return SemanticTokenType.Struct;
-            
-            case LexemType.KeywordTypeBoolean:
-            case LexemType.KeywordTypeInteger:
-            case LexemType.KeywordTypeFloat:
-            case LexemType.KeywordTypeDoubleFloat:
-            case LexemType.KeywordTypeDoubleInteger:
-            case LexemType.KeywordTypeByte:
-            case LexemType.KeywordTypeString:
-            case LexemType.KeywordTypeWord:
-            case LexemType.KeywordTypeDWord:
-                return SemanticTokenType.Type;
-
-            
-            case LexemType.BracketClose:
-            case LexemType.BracketOpen:
-            case LexemType.ParenClose:
-            case LexemType.ParenOpen:
-            case LexemType.OpPlus:
-            case LexemType.OpEqual:
-            case LexemType.OpDivide:
-            case LexemType.OpGt:
-            case LexemType.OpGte:
-            case LexemType.OpLt:
-            case LexemType.OpLte:
-            case LexemType.OpMinus:
-            case LexemType.OpMultiply:
-            case LexemType.OpPower:
-            case LexemType.OpNotEqual:
-            case LexemType.OpBitwiseAnd:
-            case LexemType.OpBitwiseNot:
-            case LexemType.OpBitwiseOr:
-            case LexemType.OpBitwiseXor:
-            case LexemType.OpBitwiseLeftShift:
-            case LexemType.OpBitwiseRightShift:
-                return SemanticTokenType.Operator;
-            case LexemType.LiteralInt:
-            case LexemType.LiteralBinary:
-            case LexemType.LiteralOctal:
-            case LexemType.LiteralHex:
-            case LexemType.LiteralReal:
-                return SemanticTokenType.Number;
-            case LexemType.LiteralString:
-                return SemanticTokenType.String;
-            default:
-                return SemanticTokenType.Comment;
+            case PortableSemanticTokenType.Comment: return SemanticTokenType.Comment;
+            case PortableSemanticTokenType.Function: return SemanticTokenType.Function;
+            case PortableSemanticTokenType.Macro: return SemanticTokenType.Macro;
+            case PortableSemanticTokenType.Parameter: return SemanticTokenType.Parameter;
+            case PortableSemanticTokenType.Keyword: return SemanticTokenType.Keyword;
+            case PortableSemanticTokenType.Struct: return SemanticTokenType.Struct;
+            case PortableSemanticTokenType.Type: return SemanticTokenType.Type;
+            case PortableSemanticTokenType.Operator: return SemanticTokenType.Operator;
+            case PortableSemanticTokenType.Number: return SemanticTokenType.Number;
+            case PortableSemanticTokenType.String: return SemanticTokenType.String;
+            case PortableSemanticTokenType.Method: return SemanticTokenType.Method;
+            default: return SemanticTokenType.Comment;
         }
     }
 

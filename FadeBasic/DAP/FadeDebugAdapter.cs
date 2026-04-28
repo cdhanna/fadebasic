@@ -51,7 +51,7 @@ public partial class FadeDebugAdapter : DebugAdapterBase
             
             SupportsConfigurationDoneRequest = true,
             SupportsSetExpression = true,
-            SupportsSetVariable = false,
+            SupportsSetVariable = true,
             SupportsEvaluateForHovers = true,
        
             // SupportsReadMemoryRequest = true,
@@ -93,6 +93,7 @@ public partial class FadeDebugAdapter : DebugAdapterBase
             {
                 Reason = StoppedEvent.ReasonValue.Breakpoint,
                 Description = "Hit a breakpoint",
+                ThreadId = 1,
                 AllThreadsStopped = true,
                 HitBreakpointIds = new List<int>(){0}
             });
@@ -141,7 +142,7 @@ public partial class FadeDebugAdapter : DebugAdapterBase
             if (arguments._Restart != null)
             {
                 _logger?.Log("HANDLING RESTART LAUNCH");
-                // the session is already connected. Don't do anything. 
+                // the session is already connected. Don't do anything.
                 return new LaunchResponse
                 {
 
@@ -149,20 +150,29 @@ public partial class FadeDebugAdapter : DebugAdapterBase
             }
             else
             {
-                throw new InvalidOperationException("Cannot relaunch a session.");
+                throw new ProtocolException("Cannot relaunch a session.");
             }
         }
-        
+
         _fileName = arguments.ConfigurationProperties.GetValueAsString("program");
         _debuggerLogPath = arguments.ConfigurationProperties.GetValueAsString("debuggerLogPath");
-        
+
         if (String.IsNullOrEmpty(_fileName))
         {
             throw new ProtocolException("Launch failed because launch configuration did not specify 'program'.");
         }
 
-        _project = ProjectLoader.LoadCsProject(_fileName);
-        var projectInfo = ProjectBuilder.LoadCommandMetadata(_project.projectLibraries);
+        ProjectCommandInfo projectInfo;
+        try
+        {
+            _project = ProjectLoader.LoadCsProject(_fileName);
+            projectInfo = ProjectBuilder.LoadCommandMetadata(_project.projectLibraries);
+        }
+        catch (Exception ex)
+        {
+            _logger?.Log($"Failed to load project: {ex.Message}\n{ex.StackTrace}");
+            throw new ProtocolException($"Launch failed: could not load project '{_fileName}'. {ex.Message}");
+        }
         var lexer = new Lexer();
         _sourceMap = _project.CreateSourceMap();
         var source = _sourceMap.fullSource;
@@ -210,6 +220,7 @@ public partial class FadeDebugAdapter : DebugAdapterBase
             {
                 Reason = StoppedEvent.ReasonValue.Breakpoint,
                 Description = "Hit a breakpoint",
+                ThreadId = 1,
                 AllThreadsStopped = true,
                 HitBreakpointIds = new List<int>(){0}
             });

@@ -1,6 +1,7 @@
 // See https://aka.ms/new-console-template for more information
 
 using System;
+using System.Linq;
 using System.IO.Pipes;
 using System.Threading;
 using System.Threading.Tasks;
@@ -122,7 +123,11 @@ public static class Program
                             {
                                 var docService = languageServer.Services.GetService<DocumentService>();
                                 var projectService = languageServer.Services.GetService<ProjectService>();
-                                docService.Populate(request.RootUri);
+
+                                // VS Code often sets rootUri; JetBrains clients may send only workspaceFolders (LSP allows null rootUri).
+                                var rootUri = request.RootUri
+                                    ?? request.WorkspaceFolders?.FirstOrDefault()?.Uri;
+                                docService.Populate(rootUri);
 
                                 foreach (var (uri, text) in docService.AllProjects())
                                 {

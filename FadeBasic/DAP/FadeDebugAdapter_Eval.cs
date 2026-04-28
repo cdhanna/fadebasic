@@ -1,3 +1,4 @@
+using System.Linq;
 using FadeBasic.Launch;
 using Microsoft.VisualStudio.Shared.VSCodeDebugProtocol;
 using Microsoft.VisualStudio.Shared.VSCodeDebugProtocol.Messages;
@@ -6,16 +7,60 @@ namespace DAP;
 
 public partial class FadeDebugAdapter
 {
-    // protected override void HandleSetVariableRequestAsync(IRequestResponder<SetVariableArguments, SetVariableResponse> responder)
-    // {
-    //     var res = new SetExpressionResponse();
-    //     var args = responder.Arguments;
-    //     _session.RequestSetVariable(args.VariablesReference, args.Name, args.Value, msg =>
-    //     {
-    //         responder.SetError(new ProtocolException("Unable to acquiesce your request!"));
-    //     });
-    //
-    // }
+    protected override void HandleSetVariableRequestAsync(IRequestResponder<SetVariableArguments, SetVariableResponse> responder)
+    {
+        var args = responder.Arguments;
+
+        // Find the child variable by name within the parent scope
+        if (!db.TryGetEntry(args.VariablesReference, out var entry))
+        {
+            responder.SetError(new ProtocolException($"Unknown variablesReference {args.VariablesReference}"));
+            return;
+        }
+
+        var childVar = entry.Variables?.FirstOrDefault(v =>
+            string.Equals(v.name, args.Name, StringComparison.OrdinalIgnoreCase));
+        if (childVar == null)
+        {
+            responder.SetError(new ProtocolException($"Variable '{args.Name}' not found in scope"));
+            return;
+        }
+
+        _session.RequestSetVariable(childVar.id, 0, args.Value, msg =>
+        {
+            if (msg.id < 0)
+            {
+                responder.SetError(new ProtocolException(msg.value));
+                return;
+            }
+
+            // Update both the underlying DebugVariable (read on cache miss) and the cached
+            // DAP Variable (returned on cache hit) so a subsequent `variables` request reflects
+            // the new value. Without this, the variable cache returns the original stale value.
+            childVar.value = msg.value;
+            childVar.type = msg.type;
+            if (db.TryGetVariable(childVar, out var cachedVar))
+            {
+                cachedVar.Value = msg.value;
+                cachedVar.Type = msg.type;
+            }
+
+            var res = new SetVariableResponse
+            {
+                Value = msg.value,
+                Type = msg.type,
+                IndexedVariables = msg.elementCount,
+                NamedVariables = msg.fieldCount,
+            };
+            if (msg.fieldCount > 0 || msg.elementCount > 0)
+            {
+                res.VariablesReference = msg.id;
+                if (msg.scope != null)
+                    db.AddScope(-1, msg.scope);
+            }
+            responder.SetResponse(res);
+        });
+    }
 
     private int errorCount;
     protected override void HandleSetExpressionRequestAsync(IRequestResponder<SetExpressionArguments, SetExpressionResponse> responder)

@@ -1,0 +1,36 @@
+<idea-plugin>
+  <id>ink.brewed.fadebasic</id>
+  <name>Fade Basic</name>
+  <vendor url="https://brewed.ink">Brewed Ink</vendor>
+  <description><![CDATA[Fade Basic language support via LSP and DAP launch integration for Rider.]]></description>
+  <depends>com.intellij.modules.platform</depends>
+  <depends>com.intellij.modules.lsp</depends>
+  <depends>com.intellij.modules.rider</depends>
+  <extensions defaultExtensionNs="com.intellij">
+    <platform.lsp.serverSupportProvider implementation="ink.brewed.fadebasic.rider.lsp.FadeBasicLspServerSupportProvider"/>
+    <fileType name="Fade Basic" language="fadeBasic" implementationClass="ink.brewed.fadebasic.rider.FadeBasicFileType" fieldName="INSTANCE" extensions="fbasic;fb"/>
+    <lang.syntaxHighlighterFactory language="fadeBasic" implementationClass="ink.brewed.fadebasic.rider.FadeBasicSyntaxHighlighterFactory"/>
+    <applicationConfigurable parentId="tools" instance="ink.brewed.fadebasic.rider.settings.FadeBasicRiderConfigurable" id="ink.brewed.fadebasic.rider.settings.FadeBasicRiderConfigurable" displayName="Fade Basic"/>
+    <configurationType implementation="ink.brewed.fadebasic.rider.run.FadeBasicDapConfigurationType"/>
+    <programRunner implementation="ink.brewed.fadebasic.rider.run.FadeBasicDapDebugProgramRunner" id="FadeBasicDapDebugProgramRunner"/>
+    <xdebugger.breakpointType implementation="ink.brewed.fadebasic.rider.debug.FadeBasicLineBreakpointType"/>
+    <notificationGroup id="Fade Basic" displayType="BALLOON" toolWindowId="Debug"/>
+  </extensions>
+  <actions>
+    <action id="FadeBasic.AttachToProcess"
+            class="ink.brewed.fadebasic.rider.run.FadeBasicAttachAction"
+            text="Attach to Fade Process…"
+            description="Discover and attach to a running Fade Basic debug server on the local network">
+      <!-- Sit next to the standard "Attach to Process" — Rider wraps that action in
+           XDebugger.AttachGroup (which itself lives inside the Run menu). Anchoring inside
+           that group puts our action right after it, matching where Unity's "Attach to
+           Unity Editor & Play" appears. -->
+      <add-to-group group-id="XDebugger.AttachGroup"
+                    relative-to-action="XDebugger.AttachToProcess"
+                    anchor="after"/>
+    </action>
+  </actions>
+  <change-notes><![CDATA[<p>Initial release: LSP wiring, DAP run configuration, settings page.</p>]]></change-notes>
+  <!-- LSP (`com.intellij.modules.lsp`) requires Rider / platform 2025.2+ -->
+  <idea-version since-build="252" until-build="262.*"/>
+</idea-plugin>

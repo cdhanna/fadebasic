@@ -807,8 +807,282 @@ EndFunction 0
         var vm = new VirtualMachine(prog);
         vm.Execute2(25000); // YO, the instruction count needs to be high
         
-        Assert.That(vm.dataRegisters[0], Is.EqualTo(expected)); 
+        Assert.That(vm.dataRegisters[0], Is.EqualTo(expected));
         Assert.That(vm.typeRegisters[0], Is.EqualTo(TypeCodes.INT));
     }
 
+    [Test]
+    public void Function_ForwardCall_FromTopLevel()
+    {
+        // baseline: top-level call to a function defined later in the file works.
+        var src = @"
+x = Plus(2, 3)
+END
+
+Function Plus(a, b)
+EndFunction a + b
+";
+        Setup(src, out _, out var prog);
+
+        var vm = new VirtualMachine(prog);
+        vm.Execute2(0);
+
+        Assert.That(vm.dataRegisters[0], Is.EqualTo(5));
+        Assert.That(vm.typeRegisters[0], Is.EqualTo(TypeCodes.INT));
+    }
+
+    [Test]
+    public void Function_ForwardCall_FromTopLevelLabel()
+    {
+        // call a function from inside a top-level label, where the function is defined later.
+        var src = @"
+gosub computeIt
+END
+
+computeIt:
+x = Plus(2, 3)
+return
+
+Function Plus(a, b)
+EndFunction a + b
+";
+        Setup(src, out _, out var prog);
+
+        var vm = new VirtualMachine(prog);
+        vm.Execute2(0);
+
+        Assert.That(vm.dataRegisters[0], Is.EqualTo(5));
+        Assert.That(vm.typeRegisters[0], Is.EqualTo(TypeCodes.INT));
+    }
+
+    [Test]
+    public void Function_ForwardCall_FromLabelInsideFunction()
+    {
+        // call a function from inside a label inside another function, where the called function is defined later.
+        var src = @"
+x = Outer()
+END
+
+Function Outer()
+    gosub innerLabel
+ExitFunction y
+innerLabel:
+    y = Plus(2, 3)
+return
+EndFunction 0
+
+Function Plus(a, b)
+EndFunction a + b
+";
+        Setup(src, out _, out var prog);
+
+        var vm = new VirtualMachine(prog);
+        vm.Execute2(0);
+
+        Assert.That(vm.dataRegisters[0], Is.EqualTo(5));
+        Assert.That(vm.typeRegisters[0], Is.EqualTo(TypeCodes.INT));
+    }
+
+    [Test]
+    public void Function_ForwardCall_FromLabelInsideFunction_GosubBeforeAssign()
+    {
+        // mimic the more realistic case: gosub a label that calls a forward function and stores into a global.
+        var src = @"
+global result as integer
+result = 0
+gosub doStuff
+END
+
+doStuff:
+    result = AddIt(40, 2)
+return
+
+Function AddIt(a as integer, b as integer)
+EndFunction a + b
+";
+        Setup(src, out _, out var prog);
+
+        var vm = new VirtualMachine(prog);
+        vm.Execute2(0);
+
+        Assert.That(vm.dataRegisters[0], Is.EqualTo(42));
+        Assert.That(vm.typeRegisters[0], Is.EqualTo(TypeCodes.INT));
+    }
+
+    [Test]
+    public void Function_ForwardCall_InsideExpressionInLabel()
+    {
+        var src = @"
+global result as integer
+result = 0
+gosub doStuff
+END
+
+doStuff:
+    result = AddIt(1, 2) + AddIt(3, 4)
+return
+
+Function AddIt(a as integer, b as integer)
+EndFunction a + b
+";
+        Setup(src, out _, out var prog);
+
+        var vm = new VirtualMachine(prog);
+        vm.Execute2(0);
+
+        Assert.That(vm.dataRegisters[0], Is.EqualTo(10));
+    }
+
+    [Test]
+    public void Function_ForwardCall_FromLabelInsideFunction_FarAwayWithGlobal()
+    {
+        // call a forward-defined function from inside a label inside another function,
+        // with many filler functions between, writing to a global to verify behavior.
+        var src = @"
+global result as integer
+result = 0
+ignored = Outer()
+END
+
+Function Outer()
+    gosub innerLabel
+ExitFunction 0
+innerLabel:
+    result = AddIt(40, 2)
+return
+EndFunction 0
+
+Function Filler1(a)
+EndFunction a
+
+Function Filler2(a)
+EndFunction a + 1
+
+Function Filler3(a)
+EndFunction a + 2
+
+Function AddIt(a as integer, b as integer)
+EndFunction a + b
+";
+        Setup(src, out _, out var prog);
+
+        var vm = new VirtualMachine(prog);
+        vm.Execute2(0);
+
+        Assert.That(vm.dataRegisters[0], Is.EqualTo(42));
+        Assert.That(vm.typeRegisters[0], Is.EqualTo(TypeCodes.INT));
+    }
+
+    [Test]
+    public void Function_Call_FollowedByColonSeparator_BackwardRef()
+    {
+        // function defined BEFORE the call. : is a statement separator.
+        // confirms the colon-misparse is order-independent.
+        var src = @"
+global result as integer
+result = 0
+
+Function addOne()
+    result = result + 1
+EndFunction 0
+
+addOne() : addOne()
+END
+";
+        Setup(src, out _, out var prog);
+
+        var vm = new VirtualMachine(prog);
+        vm.Execute2(0);
+
+        Assert.That(vm.dataRegisters[0], Is.EqualTo(2));
+    }
+
+    [Test]
+    public void Function_Call_FollowedByColonSeparator()
+    {
+        // : is a statement separator. `foo() : bar()` should call both.
+        // suspicion: the parser misclassifies `foo() :` as a label declaration named "foo".
+        var src = @"
+global result as integer
+result = 0
+addOne() : addOne()
+END
+
+Function addOne()
+    result = result + 1
+EndFunction 0
+";
+        Setup(src, out _, out var prog);
+
+        var vm = new VirtualMachine(prog);
+        vm.Execute2(0);
+
+        Assert.That(vm.dataRegisters[0], Is.EqualTo(2));
+    }
+
+    [Test]
+    public void Function_Call_InsideLabel_FollowedByColonSeparator()
+    {
+        // same idea, but inside a label.
+        var src = @"
+global result as integer
+result = 0
+gosub doStuff
+END
+
+doStuff:
+    addOne() : addOne()
+return
+
+Function addOne()
+    result = result + 1
+EndFunction 0
+";
+        Setup(src, out _, out var prog);
+
+        var vm = new VirtualMachine(prog);
+        vm.Execute2(0);
+
+        Assert.That(vm.dataRegisters[0], Is.EqualTo(2));
+    }
+
+    [Test]
+    public void Function_ForwardCall_FromLabelInsideFunction_FunctionFarAway()
+    {
+        // same as above, but with a lot of function definitions between Outer and Plus, to mimic "far away" definitions.
+        var src = @"
+x = Outer()
+END
+
+Function Outer()
+    gosub innerLabel
+ExitFunction y
+innerLabel:
+    y = Plus(2, 3)
+return
+EndFunction 0
+
+Function Filler1(a)
+EndFunction a
+
+Function Filler2(a)
+EndFunction a + 1
+
+Function Filler3(a)
+EndFunction a + 2
+
+Function Filler4(a)
+EndFunction a + 3
+
+Function Plus(a, b)
+EndFunction a + b
+";
+        Setup(src, out _, out var prog);
+
+        var vm = new VirtualMachine(prog);
+        vm.Execute2(0);
+
+        Assert.That(vm.dataRegisters[0], Is.EqualTo(5));
+        Assert.That(vm.typeRegisters[0], Is.EqualTo(TypeCodes.INT));
+    }
 }

@@ -32,6 +32,11 @@ on:
         description: publish the nuget packages extension?
         required: true
         default: true
+      publishRider:
+        type: boolean
+        description: publish the Rider plugin?
+        required: true
+        default: true
 
 run-name:  Release ${{ inputs.majorSemver }}.${{ inputs.minorSemver }}.${{ inputs.patchSemver }} by @${{ github.actor }}
 jobs:
@@ -57,6 +62,12 @@ jobs:
         with:
           node-version: '22.x'
 
+      - uses: actions/setup-java@v4
+        if: inputs.publishRider == true
+        with:
+          distribution: temurin
+          java-version: '17'
+
 
       - name: pre-test setup 
         working-directory: ./FadeBasic
@@ -77,6 +88,11 @@ jobs:
           dotnet nuget list source
           FADE_NUGET_VERSION='0.0.1000.1' dotnet test Tests
 
+      - name: Run Rider Plugin Tests
+        working-directory: ./Rider/fade-basic-rider
+        if: inputs.publishRider == true
+        run: ./gradlew test
+
       - name: set FADE_NUGET_DRYRUN based on input
         if: inputs.publishNuget == false
         run: echo "FADE_NUGET_DRYRUN=true" >> $GITHUB_ENV
@@ -96,6 +112,26 @@ jobs:
           npm version ${{ inputs.majorSemver }}.${{ inputs.minorSemver }}.${{ inputs.patchSemver }}
           npx vsce publish -p ${{ secrets.VS_CODE_AZURE_PAT }}
 
+      - name: Build and Publish Rider Plugin
+        working-directory: ./Rider/fade-basic-rider
+        if: inputs.publishRider == true
+        env:
+          JETBRAINS_MARKETPLACE_TOKEN: ${{ secrets.JETBRAINS_MARKETPLACE_TOKEN }}
+          JETBRAINS_PLUGIN_SIGNING_CERT_CHAIN_FILE: ${{ runner.temp }}/rider-cert-chain.crt
+          JETBRAINS_PLUGIN_SIGNING_KEY_FILE: ${{ runner.temp }}/rider-private-key.pem
+        run: |
+          echo "${{ secrets.JETBRAINS_PLUGIN_SIGNING_CERT_CHAIN }}" > "$JETBRAINS_PLUGIN_SIGNING_CERT_CHAIN_FILE"
+          echo "${{ secrets.JETBRAINS_PLUGIN_SIGNING_KEY }}" > "$JETBRAINS_PLUGIN_SIGNING_KEY_FILE"
+          ./gradlew buildPlugin publishPlugin -PpluginVersion=${{ inputs.majorSemver }}.${{ inputs.minorSemver }}.${{ inputs.patchSemver }}
+          rm -f "$JETBRAINS_PLUGIN_SIGNING_CERT_CHAIN_FILE" "$JETBRAINS_PLUGIN_SIGNING_KEY_FILE"
+
+      - name: Upload Rider Plugin Artifact
+        if: inputs.publishRider == true
+        uses: actions/upload-artifact@v4
+        with:
+          name: rider-plugin
+          path: Rider/fade-basic-rider/build/distributions/*.zip
+
       - name: Create Git Tag
         run: |
           git config user.name "github-actions[bot]"
@@ -109,6 +145,14 @@ jobs:
         run: |
           VERSION="${{ inputs.majorSemver }}.${{ inputs.minorSemver }}.${{ inputs.patchSemver }}"
           NOTES=$(awk "/^\#\# \[$VERSION\]/{found=1; next} found && /^\#\# \[/{exit} found{print}" FadeBasic/CHANGELOG.md | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//' | sed '/./,$!d' | sed -e :a -e '/^\n*$/{$d;N;ba}')
-          gh release create "v$VERSION" \
-            --title "v$VERSION" \
-            --notes "$NOTES"
+          RIDER_ZIP=$(ls Rider/fade-basic-rider/build/distributions/*.zip 2>/dev/null || true)
+          if [ -n "$RIDER_ZIP" ]; then
+            gh release create "v$VERSION" \
+              --title "v$VERSION" \
+              --notes "$NOTES" \
+              $RIDER_ZIP
+          else
+            gh release create "v$VERSION" \
+              --title "v$VERSION" \
+              --notes "$NOTES"
+          fi
