@@ -65,7 +65,12 @@ namespace FadeBasic
         
         KeywordDefer,
         KeywordEndDefer,
-        
+
+        KeywordTest,
+        KeywordEndTest,
+        KeywordAbstract,
+        KeywordFrom,
+
         KeywordAs,
         KeywordTypeInteger,
         KeywordTypeByte,
@@ -231,6 +236,11 @@ namespace FadeBasic
             
             new Lexem(LexemType.KeywordEndDefer, new Regex("^enddefer")),
             new Lexem(LexemType.KeywordDefer, new Regex("^defer")),
+
+            new Lexem(LexemType.KeywordEndTest, new Regex("^endtest\\b")),
+            new Lexem(LexemType.KeywordTest, new Regex("^test\\b")),
+            new Lexem(LexemType.KeywordAbstract, new Regex("^abstract\\b")),
+            new Lexem(LexemType.KeywordFrom, new Regex("^from\\b")),
             
             new Lexem(LexemType.KeywordGoto, new Regex("^goto")),
             new Lexem(LexemType.KeywordGoSub, new Regex("^gosub")),
@@ -1710,6 +1720,13 @@ namespace FadeBasic
                 lexem = new Lexem(LexemType.EOF, null)
             }
             : _tokens[Index];
+
+        public Token Peek2 => Index + 1 >= _maxIndex
+            ? new Token
+            {
+                lexem = new Lexem(LexemType.EOF, null)
+            }
+            : _tokens[Index + 1];
 
         public List<Token> PeekUntilEoS => PeekUntil(LexemType.EndStatement);
         public List<Token> PeekUntil(LexemType type)

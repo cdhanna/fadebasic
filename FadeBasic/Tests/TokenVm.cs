@@ -2782,7 +2782,7 @@ next
     {
         var src = @"
 #macro
-x = macro return test()
+x = macro return demo()
 #endmacro
 n = [x]
 ";
@@ -3643,17 +3643,17 @@ ENDTYPE
 albert AS chicken
 albert.e.color = 3
 albert.n = 4
-test = albert.e.color * albert.n
+result = albert.e.color * albert.n
 ";
         Setup(src, out var compiler, out var prog);
         var vm = new VirtualMachine(prog);
         vm.hostMethods = compiler.methodTable;
         vm.Execute2();
-        
-        
+
+
         Assert.That(vm.heap.Cursor, Is.EqualTo(8.ToPtr()));
         Assert.That(vm.typeRegisters[0], Is.EqualTo(TypeCodes.STRUCT));
-        
+
         Assert.That(vm.typeRegisters[1], Is.EqualTo(TypeCodes.INT));
         Assert.That(vm.dataRegisters[1], Is.EqualTo(12));
     }
@@ -3870,7 +3870,7 @@ y = x(2).derp * x(1).color
     {
         var x = new TestCommands();
         
-        var src = "callTest";
+        var src = "callDemo";
         Setup(src, out var compiler, out var prog);
         var vm = new VirtualMachine(prog);
         vm.hostMethods = compiler.methodTable;

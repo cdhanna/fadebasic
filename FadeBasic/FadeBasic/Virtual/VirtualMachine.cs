@@ -129,10 +129,28 @@ namespace FadeBasic.Virtual
 
         public List<TokenReplacement> tokenReplacements;
 
+        /// <summary>
+        /// Stack of pending runto frames. Each frame records the target program
+        /// address the test asked to advance to, and the test-side instruction
+        /// the VM should resume at when that target is hit.
+        /// </summary>
+        public FastStack<RuntoFrame> runtoStack = new FastStack<RuntoFrame>(4);
+
+        /// <summary>
+        /// Where the program should resume from on the next `runto`. On the very
+        /// first `runto`, this points at the program's main entry (instructionIndex
+        /// after interned-data setup, i.e. 4). On subsequent runtos, this is the
+        /// saved IP from the most recent RUNTO_YIELD.
+        /// </summary>
+        public int programResumeIP;
+
         public VirtualMachine(IEnumerable<byte> program) : this(program.ToArray())
         {
         }
-        public VirtualMachine(byte[] program)
+        public VirtualMachine(byte[] program) : this(program, 4)
+        {
+        }
+        public VirtualMachine(byte[] program, int entryPointAddress)
         {
             this.program = program;
             shouldThrowRuntimeException = true;
@@ -140,11 +158,12 @@ namespace FadeBasic.Virtual
             scopeStack = new FastStack<VirtualScope>(16);
             methodStack = new FastStack<JumpHistoryData>(16);
             heap = new VmHeap(128);
-            
-            instructionIndex = 4;
+
+            instructionIndex = entryPointAddress;
+            programResumeIP = 4;
             internedDataInstructionIndex = BitConverter.ToInt32(program, 0);
 
-            
+
             ReadInternedData();
             globalScope = scope = new VirtualScope(internedData.maxRegisterAddress);
             scopeStack.Push(globalScope);
@@ -859,6 +878,37 @@ namespace FadeBasic.Virtual
                             break;
                         case OpCodes.BREAKPOINT:
                             break;
+                        case OpCodes.RUNTO:
+                            // Pop the target address off the data stack.
+                            VmUtil.ReadAsInt(ref stack, out var runtoTarget);
+                            // The test-resume IP is the very next instruction after this RUNTO.
+                            // (instructionIndex has already been incremented past the RUNTO opcode.)
+                            runtoStack.Push(new RuntoFrame
+                            {
+                                targetAddr = runtoTarget,
+                                testResumeIp = instructionIndex
+                            });
+                            // Switch execution to wherever the program is currently paused.
+                            instructionIndex = programResumeIP;
+                            break;
+                        case OpCodes.RUNTO_YIELD:
+                            // The compiler emits RUNTO_YIELD after every label that's a runto target.
+                            // We're exactly one instruction past the label here. If the runtoStack top
+                            // matches our address, yield back to the test. Otherwise fall through.
+                            //
+                            // The "match" is: the target address that the test asked for == the address
+                            // immediately AFTER the RUNTO_YIELD opcode (i.e., the body of the program
+                            // resuming at the next real instruction). The compiler records the target
+                            // as that post-yield address.
+                            if (runtoStack.Count > 0 && runtoStack.buffer[runtoStack.ptr - 1].targetAddr == instructionIndex)
+                            {
+                                var frame = runtoStack.Pop();
+                                // Save where the program is now so the next runto can resume from here.
+                                programResumeIP = instructionIndex;
+                                instructionIndex = frame.testResumeIp;
+                            }
+                            // else fall through; this label wasn't the targeted one.
+                            break;
                         default:
                             throw new Exception("Unknown op code: " + ins);
                     }
@@ -882,6 +932,12 @@ namespace FadeBasic.Virtual
         }
         
         public int test = 0;
+
+        public struct RuntoFrame
+        {
+            public int targetAddr;
+            public int testResumeIp;
+        }
 
         void TriggerRuntimeError(VirtualRuntimeError error)
         {

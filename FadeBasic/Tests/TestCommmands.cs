@@ -11,17 +11,17 @@ namespace Tests
     {
         public static readonly CommandCollection CommandsForTesting = new CommandCollection(new TestCommands());
 
-        [FadeBasicCommand("macroFuncTest", FadeBasicCommandUsage.Macro)]
+        [FadeBasicCommand("macroFuncDemo", FadeBasicCommandUsage.Macro)]
         public static void Example(int x, ref int id)
         {
             id = x * 2;
         }
-        [FadeBasicCommand("macro return test", FadeBasicCommandUsage.Macro)]
+        [FadeBasicCommand("macro return demo", FadeBasicCommandUsage.Macro)]
         public static int Example()
         {
             return 42;
         }
-        [FadeBasicCommand("macroReturnTest", FadeBasicCommandUsage.Macro)]
+        [FadeBasicCommand("macroReturnDemo", FadeBasicCommandUsage.Macro)]
         public static int Example2()
         {
             return 42;
@@ -129,10 +129,10 @@ namespace Tests
             
         }
         //
-        [FadeBasicCommand("callTest")]
+        [FadeBasicCommand("callDemo")]
         public static void CallTest()
         {
-            
+
         }
         [FadeBasicCommand("add")]
         public static int AddTest(int a, int b)

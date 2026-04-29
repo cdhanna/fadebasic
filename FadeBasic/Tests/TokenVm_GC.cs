@@ -35,19 +35,19 @@ v2 = v
 v3 = v2
 ", 3)]
     [TestCase(@"
-x$ = test()
-function test()
+x$ = demo()
+function demo()
 endfunction ""igloo""
 ", 1)]
     [TestCase(@"
-x$ = test(1)
-x$ = test(2)
-function test(n)
+x$ = demo(1)
+x$ = demo(2)
+function demo(n)
 endfunction str$(n)
 ", 1)]
     [TestCase(@"
-test()
-function test()
+demo()
+function demo()
     z$ = ""toast""
 endfunction
 ", 1)]
@@ -56,8 +56,8 @@ type vec
     x
     y
 endtype
-v = test() ` 1 allocation to assign
-function test()
+v = demo() ` 1 allocation to assign
+function demo()
     v2 as vec 
     v3 as vec
 endfunction v2 

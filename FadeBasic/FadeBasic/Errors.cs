@@ -210,6 +210,13 @@ namespace FadeBasic
         public static readonly ErrorCode DeferStatementMissingEndDefer = "[0162] Defer statement is missing a closing EndDefer clause";
         public static readonly ErrorCode CommandNotInRuntime = "[0163] This command is only available inside a macro";
         public static readonly ErrorCode CommandNotInMacro = "[0163] This command is only available outside of a macro";
+        public static readonly ErrorCode TestMissingName = "[0164] Test missing name";
+        public static readonly ErrorCode TestMissingEndTest = "[0165] Test missing EndTest clause";
+        public static readonly ErrorCode TestDefinedInsideFunction = "[0166] Tests cannot be defined inside functions";
+        public static readonly ErrorCode TestDefinedInsideTest = "[0167] Tests cannot be defined inside other tests";
+        public static readonly ErrorCode AbstractRequiresTest = "[0168] Abstract keyword must be followed by test";
+        public static readonly ErrorCode TestFromMissingParent = "[0169] Test from clause must specify a parent test name";
+        public static readonly ErrorCode TestNameAlreadyDeclared = "[0170] Test with this name is already declared";
 
         // 200 series represents post-parse issues
         public static readonly ErrorCode InvalidReference = "[0200] Invalid reference";

@@ -9,7 +9,7 @@ public class SourceMapTests
 {
     
     [Test]
-    public void Test()
+    public void Demo()
     {
         var file = @"print ""hello""
 x = 3

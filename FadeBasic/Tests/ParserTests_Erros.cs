@@ -1555,8 +1555,8 @@ endfunction
     public void ParseError_Function_CallBeforeDefined_Works()
     {
         var input = @"
-x = test(1)
-function test(a)
+x = demo(1)
+function demo(a)
 endfunction a
 ";
         var parser = MakeParser(input);
@@ -1568,9 +1568,9 @@ endfunction a
     public void ParseError_Function_DefinedTwice()
     {
         var input = @"
-function test()
+function demo()
 endfunction
-function test(a)
+function demo(a)
 endfunction
 ";
         var parser = MakeParser(input);
@@ -2126,8 +2126,8 @@ ENDTYPE
 TYPE chicken
     y 
 ENDTYPE
-test as egg
-y = test.x
+t1 as egg
+y = t1.x
 z = y.y
 ";
         var parser = MakeParser(input);
@@ -2732,7 +2732,7 @@ x = b
     {
         var input = @"
 #macro
-    n = macro return test()
+    n = macro return demo()
 #endmacro
 x = [n]
 ";
@@ -3029,7 +3029,7 @@ dim n(3)
     public void ParseError_Macro_CommandAppearsOutsideOfMacro()
     {
         var input = @"
-x = macro return test()
+x = macro return demo()
 ";
         var parser = MakeParser(input);
         var prog = parser.ParseProgram();

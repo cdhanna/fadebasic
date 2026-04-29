@@ -780,7 +780,7 @@ a = 1
 ", 
         @"
 #macro
-    x = macro return test()
+    x = macro return demo()
     # a = 1
 #endmacro
 ")]
@@ -789,7 +789,7 @@ a = 1
 ", 
         @"
 #macro
-    x = macroReturnTest()
+    x = macroReturnDemo()
     # a = 1
 #endmacro
 ")]
@@ -873,7 +873,7 @@ b = [a] + x
         var input = @"
 
 #macro
-    macroFuncTest 6, myImage
+    macroFuncDemo 6, myImage
 #endmacro
 a = [myImage]
 ";
@@ -892,7 +892,7 @@ a = [myImage]
         var input = @"
 
 #macro
-    x = macro return test()
+    x = macro return demo()
     # a = 1
 #endmacro
 ";

@@ -82,7 +82,7 @@ public class JsonTests
     }
 
     [Test]
-    public void DebugScopeTest()
+    public void DebugScopeDemo()
     {
         var msg = new ScopesMessage
         {
@@ -112,7 +112,7 @@ public class JsonTests
     }
 
     [Test]
-    public void StringIntTest()
+    public void StringIntDemo()
     {
         var x = new StringInt
         {
@@ -142,7 +142,7 @@ public class JsonTests
     }
 
     [Test]
-    public void DictStringIntTest()
+    public void DictStringIntDemo()
     {
         var x = new DictStringInt
         {
@@ -179,7 +179,7 @@ public class JsonTests
     }
 
     [Test]
-    public void ByteArray_Test()
+    public void ByteArray_Demo()
     {
         var x = new ByteArray
         {

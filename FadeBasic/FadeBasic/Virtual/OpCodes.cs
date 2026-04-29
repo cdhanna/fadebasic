@@ -383,8 +383,25 @@ namespace FadeBasic.Virtual
 
         /// <summary>
         /// pull a value off the defer stack, and push it into the main stack.
-        /// If the defer stack is empty, a 0 is used. 
+        /// If the defer stack is empty, a 0 is used.
         /// </summary>
-        public const byte POP_DEFER = 63; 
+        public const byte POP_DEFER = 63;
+
+        /// <summary>
+        /// Begin a runto: pops a target address off the stack, pushes a runto frame
+        /// (target_addr, test_resume_ip), and sets instructionIndex to the saved
+        /// programResumeIP. Used at the start of every `runto :L` statement in test code.
+        /// </summary>
+        public const byte RUNTO = 64;
+
+        /// <summary>
+        /// Yield-back marker: the compiler emits this immediately after every label
+        /// that is referenced by a `runto` somewhere in the test corpus. When executed,
+        /// checks whether the top of runtoStack targets the current address. If yes,
+        /// stores the program IP in programResumeIP and jumps to test_resume_ip.
+        /// Otherwise falls through. In `dotnet run` builds (no tests), this opcode is
+        /// not emitted.
+        /// </summary>
+        public const byte RUNTO_YIELD = 65;
     }
 }

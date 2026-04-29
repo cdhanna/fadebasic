@@ -955,6 +955,9 @@ namespace FadeBasic
                     case TypeDefinitionStatement typeStatement:
                         program.typeDefinitions.Add(typeStatement);
                         break;
+                    case TestNode testNode:
+                        program.tests.Add(testNode);
+                        break;
                     case LabelDeclarationNode labelStatement:
                         program.labels.Add(new LabelDefinition
                         {
@@ -1617,6 +1620,10 @@ namespace FadeBasic
                         return ParseFunction(token);
                     case LexemType.KeywordExitFunction:
                         return ParseExitFunction(token);
+                    case LexemType.KeywordTest:
+                        return ParseTest(token, isAbstract: false);
+                    case LexemType.KeywordAbstract:
+                        return ParseAbstractTest(token);
                     case LexemType.KeywordEnd:
                         return new EndProgramStatement(token);
                     case LexemType.KeywordExit:
@@ -1637,10 +1644,10 @@ namespace FadeBasic
 
                         if (token.type == LexemType.VariableReal && token.Length == 1)
                         {
-                            // this is the special tokenize block case. 
+                            // this is the special tokenize block case.
                             return ParseTokenization(token);
                         }
-                        
+
                         var reference = ParseVariableReference(token);
                         
                         var secondToken = _stream.Peek;
@@ -2383,6 +2390,150 @@ namespace FadeBasic
                 startToken = functionToken,
                 endToken = _stream.Current,
                 hasNoReturnExpression = hasNoReturnExpression
+            };
+        }
+
+        private static bool IsNameToken(Token token)
+        {
+            return token.type == LexemType.VariableGeneral
+                   || token.type == LexemType.VariableReal
+                   || token.type == LexemType.VariableString;
+        }
+
+        private IStatementNode ParseAbstractTest(Token abstractToken)
+        {
+            if (_stream.Peek.type != LexemType.KeywordTest)
+            {
+                var node = new TestNode
+                {
+                    name = "_",
+                    startToken = abstractToken,
+                    endToken = abstractToken,
+                    isAbstract = true
+                };
+                node.Errors.Add(new ParseError(abstractToken, ErrorCodes.AbstractRequiresTest));
+                return node;
+            }
+            var testToken = _stream.Advance(); // consume `test`
+            return ParseTest(testToken, isAbstract: true, abstractToken: abstractToken);
+        }
+
+        private TestNode ParseTest(Token testToken, bool isAbstract, Token abstractToken = default)
+        {
+            var errors = new List<ParseError>();
+            var startToken = isAbstract ? abstractToken : testToken;
+
+            // parse the name
+            var nameToken = _stream.Peek;
+            if (!IsNameToken(nameToken))
+            {
+                nameToken = _stream.CreatePatchToken(LexemType.VariableGeneral, "_")[0];
+                errors.Add(new ParseError(testToken, ErrorCodes.TestMissingName));
+            }
+            else
+            {
+                _stream.Advance();
+            }
+
+            // optional from clause
+            string fromParent = null;
+            Token fromParentToken = default;
+            if (_stream.Peek.type == LexemType.KeywordFrom)
+            {
+                _stream.Advance(); // consume `from`
+                var parentToken = _stream.Peek;
+                if (!IsNameToken(parentToken))
+                {
+                    errors.Add(new ParseError(parentToken, ErrorCodes.TestFromMissingParent));
+                }
+                else
+                {
+                    _stream.Advance();
+                    fromParent = parentToken.caseInsensitiveRaw;
+                    fromParentToken = parentToken;
+                }
+            }
+
+            // now parse the body until endtest
+            var statements = new List<IStatementNode>();
+            var labels = new List<LabelDeclarationNode>();
+            var functions = new List<FunctionStatement>();
+            var looking = true;
+            while (looking)
+            {
+                var nextToken = _stream.Peek;
+                switch (nextToken.type)
+                {
+                    case LexemType.EOF:
+                        errors.Add(new ParseError(testToken, ErrorCodes.TestMissingEndTest));
+                        looking = false;
+                        break;
+
+                    case LexemType.EndStatement:
+                        _stream.Advance();
+                        break;
+
+                    case LexemType.KeywordEndTest:
+                        _stream.Advance();
+                        looking = false;
+                        break;
+
+                    case LexemType.KeywordTest:
+                    case LexemType.KeywordAbstract:
+                    {
+                        var illegalErr = new ParseError(nextToken, ErrorCodes.TestDefinedInsideTest);
+                        errors.Add(illegalErr);
+                        // recover: skip until matching endtest
+                        var depth = 1;
+                        _stream.Advance();
+                        while (depth > 0 && _stream.Peek.type != LexemType.EOF)
+                        {
+                            var t = _stream.Advance();
+                            if (t.type == LexemType.KeywordTest || t.type == LexemType.KeywordAbstract) depth++;
+                            else if (t.type == LexemType.KeywordEndTest) depth--;
+                        }
+                        break;
+                    }
+
+                    case LexemType.KeywordFunction:
+                    {
+                        var fnToken = _stream.Advance();
+                        var fn = ParseFunction(fnToken);
+                        functions.Add(fn);
+                        statements.Add(fn);
+                        break;
+                    }
+
+                    default:
+                    {
+                        var member = ParseStatement(statements);
+                        if (member is LabelDeclarationNode lbl)
+                        {
+                            labels.Add(lbl);
+                            statements.Add(member);
+                        }
+                        else
+                        {
+                            statements.Add(member);
+                        }
+                        break;
+                    }
+                }
+            }
+
+            return new TestNode
+            {
+                Errors = errors,
+                name = nameToken.caseInsensitiveRaw,
+                nameToken = nameToken,
+                isAbstract = isAbstract,
+                fromParent = fromParent,
+                fromParentToken = fromParentToken,
+                statements = statements,
+                labels = labels,
+                functions = functions,
+                startToken = startToken,
+                endToken = _stream.Current
             };
         }
 

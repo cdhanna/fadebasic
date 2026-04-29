@@ -15,6 +15,7 @@ namespace FadeBasic.Ast
         public List<TypeDefinitionStatement> typeDefinitions = new List<TypeDefinitionStatement>();
         public List<FunctionStatement> functions = new List<FunctionStatement>();
         public List<LabelDefinition> labels = new List<LabelDefinition>();
+        public List<TestNode> tests = new List<TestNode>();
         protected override string GetString()
         {
             List<IStatementNode> allStatements = new List<IStatementNode>();
@@ -22,6 +23,7 @@ namespace FadeBasic.Ast
             allStatements.AddRange(typeDefinitions);
             allStatements.AddRange(statements);
             allStatements.AddRange(functions);
+            allStatements.AddRange(tests);
             return $"{string.Join(",", allStatements.Select(x => x.ToString()))}";
         }
 
@@ -38,6 +40,10 @@ namespace FadeBasic.Ast
             foreach (var type in typeDefinitions)
             {
                 yield return type;
+            }
+            foreach (var test in tests)
+            {
+                yield return test;
             }
         }
     }

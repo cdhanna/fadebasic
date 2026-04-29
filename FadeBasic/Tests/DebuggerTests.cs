@@ -527,7 +527,7 @@ endfunction";
     }
 
     [Test]
-    public async Task DebugServerTest()
+    public async Task DebugServerDemo()
     {
         var port = LaunchUtil.FreeTcpPort();
         var src = @$"
