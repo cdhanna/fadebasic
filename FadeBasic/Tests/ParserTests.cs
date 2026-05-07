@@ -728,6 +728,22 @@ x = 1 + 2 > 3
     
     
     [Test]
+    public void TestBlock_Function()
+    {
+        var input = @"
+test block
+    x()
+    function x()
+    endfunction
+endtest
+";
+        var parser = MakeParser(input);
+        var prog = parser.ParseProgram();
+        prog.AssertNoParseErrors();
+    }
+    
+    
+    [Test]
     public void Default_int()
     {
         var input = @"

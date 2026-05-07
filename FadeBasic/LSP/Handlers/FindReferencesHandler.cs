@@ -73,7 +73,7 @@ public class FindReferencesHandler : ReferencesHandlerBase
         void Visit(IAstVisitable x)
         {
             bool isMatch = false;
-            if (x is VariableRefNode or DeclarationStatement or ArrayIndexReference or LabelDeclarationNode or GoSubStatement or GotoStatement)
+            if (x is VariableRefNode or DeclarationStatement or ArrayIndexReference or LabelDeclarationNode or GoSubStatement or GotoStatement or RuntoStatement)
             {
                 isMatch = Token.AreLocationsEqual(token, x.StartToken) || Token.AreLocationsEqual(token, x.EndToken);
                

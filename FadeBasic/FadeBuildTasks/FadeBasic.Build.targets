@@ -1,13 +1,13 @@
 <Project>
 
     <PropertyGroup>
-        
+
         <!-- When the dotnet mode is debug, enable fade debug data by default, only if the debug hasn't been manually set one way or another-->
         <FadeBasicDebug Condition="'$(FadeBasicDebug)'=='' AND '$(Configuration)'=='Debug'">true</FadeBasicDebug>
-        
+
         <FadeGenerateMain Condition="'$(FadeGenerateMain)'==''">True</FadeGenerateMain>
         <FadeIgnoreChecks Condition="'$(FadeIgnoreChecks)'==''">False</FadeIgnoreChecks>
-        
+
         <FadeGeneratedLaunchType Condition="'$(FadeGeneratedLaunchType)'==''">GeneratedFade</FadeGeneratedLaunchType>
 
         <FadeGeneratedFolder Condition="'$(FadeGeneratedFolder)'==''">Launch</FadeGeneratedFolder>
@@ -16,17 +16,54 @@
         <FadeGeneratedLaunchFile Condition="'$(FadeGeneratedLaunchFile)'==''">$(MSBuildProjectDirectory)/$(FadeGeneratedFolder)/$(FadeGeneratedLaunchType).g.cs</FadeGeneratedLaunchFile>
     </PropertyGroup>
 
+    <!-- When FadeEnableTesting is on, FadeBasic.Testing must be in the
+         consumer's PackageReference list. NuGet does not restore packages
+         declared by props files imported from another package, so the
+         dependency cannot be auto-injected. This diagnostic stays in the
+         Build package because it has to fire even when the Testing package
+         isn't referenced — once it IS referenced, FadeEnableTesting
+         defaults to true via FadeBasic.Testing's own props, and this
+         check passes silently. -->
+    <Target Name="EnsureFadeTestingReferenced" BeforeTargets="GenerateFadeBasic"
+            Condition="'$(FadeEnableTesting)'=='True'">
+        <ItemGroup>
+            <_FadeTestingHits Include="@(PackageReference)" Condition="'%(PackageReference.Identity)' == 'FadeBasic.Testing'" />
+        </ItemGroup>
+        <Error Code="FADE0002"
+               Condition="'@(_FadeTestingHits)' == ''"
+               Text="FadeEnableTesting=true requires a PackageReference to FadeBasic.Testing. Add this line to your csproj's main &lt;ItemGroup&gt;:%0A    &lt;PackageReference Include=&quot;FadeBasic.Testing&quot; Version=&quot;$(FadeVersion)&quot; /&gt;%0AThen run `dotnet restore`. Once referenced, FadeBasic.Testing's own props default FadeEnableTesting=true automatically, so you can drop the explicit flag. (NuGet does not observe package-provided props during restore, so this reference cannot be auto-injected.)" />
+    </Target>
+
+    <!--
+        Tell Rider's / Visual Studio's "fast up-to-date check" that
+        .fbasic files are inputs to the build. Without this, the IDE
+        decides nothing changed when only a .fbasic was edited and
+        skips the build before "Run Test" — the test then runs against
+        a stale DLL with the old TestManifest.
+
+        UpToDateCheckBuilt names the generator's output file; pairing
+        it with UpToDateCheckInput in the same `Set` lets the IDE
+        compare the two timestamps directly.
+
+        Reference: https://github.com/dotnet/project-system/blob/main/docs/up-to-date-check.md
+    -->
+    <ItemGroup Condition="'$(FadeDisableAutoBuild)'!='true'">
+        <UpToDateCheckInput Include="@(FadeSource)" Set="FadeBasic" />
+        <UpToDateCheckBuilt Include="$(FadeGeneratedLaunchFile)" Set="FadeBasic" />
+    </ItemGroup>
+
     <Target Name="GenerateFadeBasic" BeforeTargets="CoreCompile" Condition="'$(FadeDisableAutoBuild)'!='true'" Inputs="@(FadeSource);@(Commands);@(ReferencePath)" Outputs="$(FadeGeneratedLaunchFile)">
-        <FadeProjectTask 
+        <FadeProjectTask
                 OutputPath="$(TargetDir)"
                 GenerateDebugData="$(FadeBasicDebug)"
-                GeneratedClassName="$(FadeGeneratedLaunchType)" 
+                GeneratedClassName="$(FadeGeneratedLaunchType)"
                 SourceFiles="@(FadeSource)"
                 Commands="@(FadeCommand)"
                 GenerateEntryPoint="$(FadeGenerateMain)"
                 IgnoreSafetyChecks="$(FadeIgnoreChecks)"
                 References="@(ReferencePath)"
                 GenerateFileLocation="$(FadeGeneratedLaunchFile)"
+                EnableTesting="$(FadeEnableTesting)"
         >
             <Output TaskParameter="GeneratedFile" PropertyName="FadeGeneratedClassFileName" />
         </FadeProjectTask>

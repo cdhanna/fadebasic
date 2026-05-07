@@ -5,6 +5,42 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+### Added
+- `FadeBasic.Testing` adapter — first-party Microsoft.Testing.Platform `ITestFramework`
+  that surfaces every Fade `test ... endtest` block to `dotnet test` and IDE Test
+  Explorer (VS / Rider via VSTestBridge). Replaces the NUnit-fixture path.
+- `IFadeTestHost` extension point — downstream consumers (MonoGame, Avalonia,
+  custom hosts) implement this and tag the class with
+  `[FadeBasic.Testing.FadeTestHost]` to take over per-session / per-test setup
+  (e.g., rebuild a `Game1`, reset GPU state).
+- The opt-in is **a single PackageReference**: adding `FadeBasic.Testing`
+  pulls in MTP + the VSTestBridge + the MTP MSBuild integration, defaults
+  `FadeEnableTesting=true` via the package's own props, sets every required
+  MTP knob (`IsTestProject`, runner flags, auto-Main suppression), and
+  auto-writes a `global.json` next to the csproj so `dotnet test` opts into
+  the new runner. To opt back out, set `<FadeEnableTesting>false</FadeEnableTesting>`.
+- Diagnostic codes:
+  - `FADE0001` — warns when the deprecated `FadeGenerateNUnitFixture` flag is set.
+  - `FADE0002` — fires when `FadeEnableTesting=true` but `FadeBasic.Testing` is
+    not in the consumer's `PackageReference` list (NuGet can't resolve a
+    package-provided conditional `PackageReference` during restore, so this
+    has to be authored explicitly).
+  - `FADE0003` — fires when an existing `global.json` does not opt into MTP.
+
+### Changed
+- All testing-related MSBuild config moved out of `FadeBasic.Build` into
+  `FadeBasic.Testing/build/FadeBasic.Testing.props/targets`. The Build
+  package stays focused on Fade source compilation; the Testing package
+  owns its own MSBuild surface.
+
+### Removed
+- `FadeGenerateNUnitFixture` MSBuild property — emits FADE0001 instead.
+  The auto-imported `Microsoft.NET.Test.Sdk` / `NUnit` / `NUnit3TestAdapter`
+  package references are gone; the new path is dependency-free apart from MTP.
+- `LaunchableGenerator.NUnitFixtureTemplate` and the corresponding
+  `IsTestProject` / `GenerateProgramFile` workarounds in `FadeBasic.Build.targets`.
+
 ## [0.0.64] - 2026-04-28
 ### Added
 - Rider IDE Plugin Support

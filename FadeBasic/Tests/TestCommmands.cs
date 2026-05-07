@@ -126,7 +126,7 @@ namespace Tests
         [FadeBasicCommand("wait ms")]
         public static void WiatMs(int amount)
         {
-            
+            waitMsCallCount++;
         }
         //
         [FadeBasicCommand("callDemo")]
@@ -168,6 +168,11 @@ namespace Tests
         {
             Console.WriteLine(string.Join("\n", variable));
         }
+
+        // Counter incremented every time `wait ms` is invoked (real path only,
+        // mocks bypass the executor). Mock execution tests reset and inspect
+        // this to confirm the host method was/wasn't actually called.
+        public static int waitMsCallCount = 0;
 
         public static List<string> staticPrintBuffer = new List<string>();
         [FadeBasicCommand("static print")]

@@ -62,8 +62,11 @@ namespace FadeBasic.Ast
     
     public class FunctionStatement : AstNode, IStatementNode, IHasTriviaNode
     {
+        public const string REGION_TOP_LEVEL = null; // a top level function.
+        
         public string name;
         public Token nameToken;
+        public string region = REGION_TOP_LEVEL; // a null 
         public List<ParameterNode> parameters = new List<ParameterNode>();
         public List<IStatementNode> statements = new List<IStatementNode>();
         public List<LabelDeclarationNode> labels = new List<LabelDeclarationNode>();

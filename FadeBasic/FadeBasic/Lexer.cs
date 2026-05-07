@@ -70,6 +70,19 @@ namespace FadeBasic
         KeywordEndTest,
         KeywordAbstract,
         KeywordFrom,
+        KeywordRunto,
+        KeywordEndRunto,
+        KeywordMaxCycles,
+        KeywordAssert,
+        KeywordMock,
+        KeywordEndMock,
+        KeywordReturns,
+        KeywordForbid,
+        KeywordOnce,
+        KeywordTimes,
+        KeywordAlways,
+        KeywordClear,
+        KeywordMocks,
 
         KeywordAs,
         KeywordTypeInteger,
@@ -241,7 +254,23 @@ namespace FadeBasic
             new Lexem(LexemType.KeywordTest, new Regex("^test\\b")),
             new Lexem(LexemType.KeywordAbstract, new Regex("^abstract\\b")),
             new Lexem(LexemType.KeywordFrom, new Regex("^from\\b")),
-            
+            new Lexem(LexemType.KeywordEndRunto, new Regex("^endrunto\\b")),
+            new Lexem(LexemType.KeywordRunto, new Regex("^runto\\b")),
+            // Multi-word keyword: `max cycles`. Matches one or more spaces/tabs
+            // between the two words; ranks higher (more specific) than VariableGeneral.
+            new Lexem(-2, LexemType.KeywordMaxCycles, new Regex("^max[ \\t]+cycles\\b")),
+            new Lexem(LexemType.KeywordAssert, new Regex("^assert\\b")),
+
+            new Lexem(LexemType.KeywordEndMock, new Regex("^endmock\\b")),
+            new Lexem(LexemType.KeywordMocks, new Regex("^mocks\\b")),
+            new Lexem(LexemType.KeywordMock, new Regex("^mock\\b")),
+            new Lexem(LexemType.KeywordReturns, new Regex("^returns\\b")),
+            new Lexem(LexemType.KeywordForbid, new Regex("^forbid\\b")),
+            new Lexem(LexemType.KeywordOnce, new Regex("^once\\b")),
+            new Lexem(LexemType.KeywordTimes, new Regex("^times\\b")),
+            new Lexem(LexemType.KeywordAlways, new Regex("^always\\b")),
+            new Lexem(LexemType.KeywordClear, new Regex("^clear\\b")),
+
             new Lexem(LexemType.KeywordGoto, new Regex("^goto")),
             new Lexem(LexemType.KeywordGoSub, new Regex("^gosub")),
             new Lexem(LexemType.KeywordReturn, new Regex("^return")),
@@ -1809,6 +1838,27 @@ namespace FadeBasic
         {
             Index = index;
             Current = _tokens[index];
+        }
+
+        /// <summary>
+        /// Returns a single-line source-text reconstruction of tokens in the range
+        /// [startInclusive, endExclusive). Tokens are joined by single spaces, which
+        /// loses exact original whitespace but produces readable output for things
+        /// like assertion failure messages.
+        /// </summary>
+        public string GetSourceText(int startInclusive, int endExclusive)
+        {
+            if (startInclusive >= endExclusive) return "";
+            if (startInclusive < 0) startInclusive = 0;
+            if (endExclusive > _tokens.Count) endExclusive = _tokens.Count;
+            var sb = new StringBuilder();
+            for (var i = startInclusive; i < endExclusive; i++)
+            {
+                if (i > startInclusive) sb.Append(' ');
+                var raw = _tokens[i].raw ?? _tokens[i].caseInsensitiveRaw ?? "";
+                sb.Append(raw);
+            }
+            return sb.ToString();
         }
 
         public List<Token> CreatePatchToken(LexemType type, string s, int offset=0)

@@ -144,6 +144,37 @@ namespace FadeBasic.Virtual
         /// </summary>
         public int programResumeIP;
 
+        /// <summary>
+        /// Set when an `assert` fails during test execution. Null means the test
+        /// has not failed any assertions (yet). The test runner inspects this
+        /// after Execute() returns to determine pass/fail.
+        /// </summary>
+        public TestFailure assertionFailure;
+
+        public class TestFailure
+        {
+            public string sourceText;   // Captured text of the asserted expression.
+            public int instructionIndex; // IP at the moment of failure (for source-mapping).
+        }
+
+        /// <summary>
+        /// Per-VM mock registrations. Keyed by host method id (the index into
+        /// <see cref="HostMethodTable.methods"/>). On CALL_HOST the dispatcher
+        /// consults this table first; if a registration exists, it pops the
+        /// command's args via metadata and synthesizes the mock behavior in
+        /// place of the real call.
+        /// </summary>
+        public Dictionary<int, MockBehavior> mockTable;
+
+        public class MockBehavior
+        {
+            // 0 = void (skip), 1 = returns (push value), 2 = forbid (assert-fail).
+            public byte kind;
+            // For kind = Returns: the typed return value to push.
+            public byte returnTypeCode;
+            public byte[] returnBytes;
+        }
+
         public VirtualMachine(IEnumerable<byte> program) : this(program.ToArray())
         {
         }
@@ -798,11 +829,83 @@ namespace FadeBasic.Virtual
                         //     VmUtil.PushSpan(ref stack, BitConverter.GetBytes(readAllocLength), TypeCodes.INT);
                         //     break;
                         case OpCodes.CALL_HOST:
-                            
                             VmUtil.ReadAsInt(ref stack, out var hostMethodPtr);
                             hostMethods.FindMethod(hostMethodPtr, out var method);
-                            HostMethodUtil.Execute(method, this);
-                            
+
+                            if (mockTable != null && mockTable.TryGetValue(hostMethodPtr, out var mock))
+                            {
+                                // Mocked: pop the args off the stack as the real
+                                // executor would, then synthesize the behavior.
+                                if (method.args != null)
+                                {
+                                    for (var ai = method.args.Length - 1; ai >= 0; ai--)
+                                    {
+                                        if (method.args[ai].isVmArg) continue;
+                                        VmUtil.ReadValueAny(this, default, out _, out _, out _, allowOptional: true);
+                                    }
+                                }
+
+                                if (mock.kind == 1)
+                                {
+                                    // returns: push the recorded value
+                                    VmUtil.PushSpan(ref stack, mock.returnBytes, mock.returnTypeCode);
+                                }
+                                else if (mock.kind == 2)
+                                {
+                                    // forbid: record an assertion failure naming the command
+                                    assertionFailure = new TestFailure
+                                    {
+                                        sourceText = "forbidden command was called: " + method.name,
+                                        instructionIndex = instructionIndex
+                                    };
+                                    instructionIndex = int.MaxValue;
+                                }
+                                // kind == 0 (void): nothing else to do; args are gone
+                            }
+                            else
+                            {
+                                HostMethodUtil.Execute(method, this);
+                            }
+
+                            break;
+
+                        case OpCodes.MOCK_VOID:
+                        {
+                            VmUtil.ReadAsInt(ref stack, out var voidId);
+                            mockTable ??= new Dictionary<int, MockBehavior>();
+                            mockTable[voidId] = new MockBehavior { kind = 0 };
+                            break;
+                        }
+                        case OpCodes.MOCK_RETURNS:
+                        {
+                            // Stack top: typed return value; below: commandId.
+                            VmUtil.ReadSpan(ref stack, out var retType, out var retSpan);
+                            var retBytes = retSpan.ToArray();
+                            VmUtil.ReadAsInt(ref stack, out var retId);
+                            mockTable ??= new Dictionary<int, MockBehavior>();
+                            mockTable[retId] = new MockBehavior
+                            {
+                                kind = 1,
+                                returnTypeCode = retType,
+                                returnBytes = retBytes
+                            };
+                            break;
+                        }
+                        case OpCodes.MOCK_FORBID:
+                        {
+                            VmUtil.ReadAsInt(ref stack, out var forbidId);
+                            mockTable ??= new Dictionary<int, MockBehavior>();
+                            mockTable[forbidId] = new MockBehavior { kind = 2 };
+                            break;
+                        }
+                        case OpCodes.MOCK_CLEAR:
+                        {
+                            VmUtil.ReadAsInt(ref stack, out var clearId);
+                            mockTable?.Remove(clearId);
+                            break;
+                        }
+                        case OpCodes.MOCK_CLEAR_ALL:
+                            mockTable?.Clear();
                             break;
                         
                         case OpCodes.NOOP:
@@ -909,6 +1012,43 @@ namespace FadeBasic.Virtual
                             }
                             // else fall through; this label wasn't the targeted one.
                             break;
+                        case OpCodes.ASSERT_FAIL:
+                        {
+                            // The data stack holds the source-text. The compiler emits
+                            // it via the LiteralStringExpression path which produces
+                            // [8 ptr bytes][STRING type code] (interned strings get
+                            // CAST to STRING after the PTR push). We accept STRING
+                            // and PTR_HEAP type codes here.
+                            var assertTextTypeCode = stack.Pop();
+                            var ptrBytes = new byte[8];
+                            for (var b = 7; b >= 0; b--) ptrBytes[b] = stack.Pop();
+                            var textPtr = VmPtr.FromBytes(ptrBytes);
+                            string text = "";
+                            try
+                            {
+                                if (heap.TryGetAllocationSize(textPtr, out var len) && len > 0)
+                                {
+                                    heap.Read(textPtr, len, out var bytes);
+                                    // Fade strings are stored as 4-bytes-per-char (uint codepoints).
+                                    var charCount = len / 4;
+                                    var chars = new char[charCount];
+                                    for (var c = 0; c < charCount; c++)
+                                    {
+                                        chars[c] = (char)BitConverter.ToUInt32(bytes, c * 4);
+                                    }
+                                    text = new string(chars);
+                                }
+                            }
+                            catch { /* best-effort recovery; leave text empty */ }
+                            assertionFailure = new TestFailure
+                            {
+                                sourceText = text,
+                                instructionIndex = instructionIndex
+                            };
+                            // Halt execution by jumping past program.Length, mirroring CompileEnd.
+                            instructionIndex = int.MaxValue;
+                            break;
+                        }
                         default:
                             throw new Exception("Unknown op code: " + ins);
                     }

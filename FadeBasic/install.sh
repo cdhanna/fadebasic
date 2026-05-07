@@ -34,10 +34,21 @@ dotnet pack ./ApplicationSupport $PACK_ARGS
 dotnet pack ./CommandSourceGenerator $PACK_ARGS
 dotnet pack ./Templates $PACK_ARGS
 dotnet pack ./FadeBuildTasks $PACK_ARGS
+# FadeBasic.TestAdapter.dll is bundled inside FadeBasic.Testing.nupkg (see
+# the ProjectReference + <None Include build/_common/> in FadeBasic.Testing.csproj).
+# No separate adapter package — referencing FadeBasic.Testing alone gets both.
+dotnet pack ./FadeBasic.Testing $PACK_ARGS
 
-# build the LSP and DAP and store it in the associated vscode extension folder
-dotnet build ./LSP -o ../VsCode/basicscript/out/tools -c Release
-dotnet build ./DAP -o ../VsCode/basicscript/out/tools -c Release
+# build the LSP and DAP once, then fan out the result to each editor extension
+TOOLS_OUTPUT="bin/tools_${SEM_VER}"
+rm -rf "$TOOLS_OUTPUT"
+dotnet build ./LSP -o "$TOOLS_OUTPUT" -c Release
+dotnet build ./DAP -o "$TOOLS_OUTPUT" -c Release
+
+for dest in ../VsCode/basicscript/out/tools ../Zed/fade-basic-zed/tools; do
+  mkdir -p "$dest"
+  cp -R "$TOOLS_OUTPUT"/. "$dest"/
+done
 
 if [ -z "$FADE_USE_LOCAL_SOURCE" ]; then
   if [ -z "$FADE_NUGET_DRYRUN" ]; then

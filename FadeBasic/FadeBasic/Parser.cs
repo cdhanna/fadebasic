@@ -75,6 +75,7 @@ namespace FadeBasic
         public Stack<SymbolTable> localVariables = new Stack<SymbolTable>();
         public TokenTable<(SymbolTable, string)> positionedVariables = new TokenTable<(SymbolTable, string)>();
         public Stack<string> currentFunctionName = new Stack<string>();
+        public Stack<string> currentRegionName = new Stack<string>();
         public Dictionary<string, Symbol> functionSymbolTable = new Dictionary<string, Symbol>();
         public Dictionary<string, FunctionStatement> functionTable = new Dictionary<string, FunctionStatement>();
         public Dictionary<string, List<TypeInfo>> functionReturnTypeTable = new Dictionary<string, List<TypeInfo>>();
@@ -82,7 +83,10 @@ namespace FadeBasic
         List<DelayedTypeCheck> delayedTypeChecks = new List<DelayedTypeCheck>();
 
         private int allowExitCounter;
-        
+        private int testDepth;
+
+        public bool IsInsideTest => testDepth > 0;
+
         public Scope()
         {
             localVariables.Push(new SymbolTable());
@@ -161,6 +165,65 @@ namespace FadeBasic
         {
             localVariables.Pop();
             currentFunctionName.Pop();
+        }
+
+        public bool BeginTest(TestNode test)
+        {
+            // A test gets its own local symbol table — same shape as a function's.
+            // We push the test name onto currentFunctionName so the label-scope
+            // check (TraverseLabelBetweenScopes) fires when a test tries to
+            // goto/gosub a label that belongs to a different namespace, and so
+            // labels declared inside this test resolve only within it.
+            //
+            // Seed the test's local table with the names visible from main-body
+            // scope so the basic ScopeErrorVisitor doesn't flag program-scope
+            // names referenced from inside the test as "unknown symbol". The
+            // TestScopeStrictnessVisitor enforces the runto-based visibility
+            // lens on top of this seed.
+            var table = new SymbolTable();
+            if (localVariables.Count > 0)
+            {
+                foreach (var kvp in localVariables.Peek())
+                {
+                    table[kvp.Key] = kvp.Value;
+                }
+            }
+
+            if (currentRegionName.Count > 1) throw new InvalidOperationException("Cannot handle multi-region parsing");
+            currentRegionName.Push(test.nameToken.raw);
+            localVariables.Push(table);
+            positionedVariables.Add(new TokenTable<(SymbolTable, string)>.Entry(test, (table, test.name)));
+            currentFunctionName.Push(test.name);
+            testDepth++;
+
+            // Register the test's functions in the scope so calls from inside the
+            // test resolve. Functions are unregistered in EndTest so they aren't
+            // visible from main program code or sibling tests.
+            foreach (var function in test.functions)
+            {
+                if (!functionTable.ContainsKey(function.name))
+                {
+                    functionTable.Add(function.name, function);
+                }
+            }
+            return true;
+        }
+
+        public void EndTest(TestNode test)
+        {
+            localVariables.Pop();
+            currentFunctionName.Pop();
+            currentRegionName.Pop();
+            testDepth--;
+            // Unregister test-scoped functions so other tests / program code can't see them.
+            foreach (var function in test.functions)
+            {
+                if (functionTable.TryGetValue(function.name, out var registered)
+                    && ReferenceEquals(registered, function))
+                {
+                    functionTable.Remove(function.name);
+                }
+            }
         }
 
         public void BeginLoop() => allowExitCounter++;
@@ -1624,6 +1687,14 @@ namespace FadeBasic
                         return ParseTest(token, isAbstract: false);
                     case LexemType.KeywordAbstract:
                         return ParseAbstractTest(token);
+                    case LexemType.KeywordRunto:
+                        return ParseRunto(token);
+                    case LexemType.KeywordAssert:
+                        return ParseAssert(token);
+                    case LexemType.KeywordMock:
+                        return ParseMock(token);
+                    case LexemType.KeywordClear:
+                        return ParseClearMock(token);
                     case LexemType.KeywordEnd:
                         return new EndProgramStatement(token);
                     case LexemType.KeywordExit:
@@ -2499,8 +2570,9 @@ namespace FadeBasic
                     {
                         var fnToken = _stream.Advance();
                         var fn = ParseFunction(fnToken);
+                        fn.region = nameToken.raw;
                         functions.Add(fn);
-                        statements.Add(fn);
+                        // statements.Add(fn);
                         break;
                     }
 
@@ -2524,7 +2596,7 @@ namespace FadeBasic
             return new TestNode
             {
                 Errors = errors,
-                name = nameToken.caseInsensitiveRaw,
+                name = nameToken.raw,
                 nameToken = nameToken,
                 isAbstract = isAbstract,
                 fromParent = fromParent,
@@ -3192,13 +3264,443 @@ namespace FadeBasic
             {
                 case LexemType.VariableGeneral:
                     return new GotoStatement(gotoToken, next);
-                    
+
                 default:
                     var patchToken = _stream.CreatePatchToken(LexemType.VariableGeneral, "_")[0];
                     var statement = new GotoStatement(gotoToken, patchToken);
                     statement.Errors.Add(new ParseError(gotoToken, ErrorCodes.GotoMissingLabel));
                     return statement;
             }
+        }
+
+        private AssertStatement ParseAssert(Token assertToken)
+        {
+            // Capture source text by snapshotting stream indices around the
+            // expression parse, then slicing the consumed tokens.
+            var startIdx = _stream.Save();
+            if (!TryParseExpression(out var expr))
+            {
+                var stmt = new AssertStatement(assertToken, assertToken, null, "");
+                stmt.Errors.Add(new ParseError(assertToken, ErrorCodes.AssertMissingExpression));
+                return stmt;
+            }
+            var endIdx = _stream.Save();
+            var sourceText = _stream.GetSourceText(startIdx, endIdx);
+
+            return new AssertStatement(assertToken, expr.EndToken, expr, sourceText);
+        }
+
+        private RuntoStatement ParseRunto(Token runtoToken)
+        {
+            // Forms:
+            //   inline:        `runto labelName`
+            //   inline-stack:  `runto labelName max cycles N` (clauses on same line)
+            //   block:         `runto labelName \n max cycles N \n endrunto`
+            // Clauses on the same line (separated by `:` or whitespace) bind to
+            // the runto without requiring `endrunto`. If the user crosses a newline
+            // and continues with another clause or writes `endrunto`, that's the
+            // block form and must close with `endrunto`.
+            var labelToken = _stream.Peek;
+            if (labelToken.type != LexemType.VariableGeneral)
+            {
+                var patchToken = _stream.CreatePatchToken(LexemType.VariableGeneral, "_")[0];
+                var stmt = new RuntoStatement(runtoToken, runtoToken, patchToken);
+                stmt.Errors.Add(new ParseError(runtoToken, ErrorCodes.RuntoMissingLabel));
+                return stmt;
+            }
+            _stream.Advance(); // consume label
+
+            var statement = new RuntoStatement(runtoToken, labelToken, labelToken);
+            Token endToken = labelToken;
+
+            // Phase 1: parse clauses on the same line. Colon separators (`:`)
+            // between the label and clauses, and between clauses, are honored;
+            // a real newline ends the inline form.
+            while (IsColonEndStatement(_stream.Peek)) _stream.Advance();
+            while (IsRuntoClauseStart(_stream.Peek.type))
+            {
+                ParseRuntoClause(statement, ref endToken);
+                while (IsColonEndStatement(_stream.Peek)) _stream.Advance();
+            }
+
+            // Phase 2: detect block form. If the next non-EndStatement token is
+            // a clause or `endrunto`, this is the multi-line block form and must
+            // be closed with `endrunto`.
+            var lookAhead = PeekPastEndStatements();
+            bool hasBlockBody = lookAhead.type == LexemType.KeywordEndRunto
+                                || IsRuntoClauseStart(lookAhead.type);
+
+            if (!hasBlockBody)
+            {
+                statement.endToken = endToken;
+                return statement;
+            }
+
+            // Consume the EndStatements before clauses.
+            while (_stream.Peek.type == LexemType.EndStatement) _stream.Advance();
+
+            // Parse clauses until endrunto or a hard boundary (EOF / endtest).
+            var looking = true;
+            while (looking)
+            {
+                var next = _stream.Peek;
+                switch (next.type)
+                {
+                    case LexemType.EOF:
+                    case LexemType.KeywordEndTest:
+                    case LexemType.KeywordTest:
+                    case LexemType.KeywordAbstract:
+                        statement.Errors.Add(new ParseError(runtoToken, ErrorCodes.RuntoMissingEndRunto));
+                        looking = false;
+                        break;
+
+                    case LexemType.EndStatement:
+                        _stream.Advance();
+                        break;
+
+                    case LexemType.KeywordEndRunto:
+                        endToken = _stream.Advance();
+                        looking = false;
+                        break;
+
+                    default:
+                        if (IsRuntoClauseStart(next.type))
+                        {
+                            ParseRuntoClause(statement, ref endToken);
+                        }
+                        else
+                        {
+                            // Unknown clause; skip token to avoid infinite loop.
+                            _stream.Advance();
+                        }
+                        break;
+                }
+            }
+
+            statement.endToken = endToken;
+            return statement;
+        }
+
+        private static bool IsRuntoClauseStart(LexemType type)
+        {
+            return type == LexemType.KeywordMaxCycles;
+        }
+
+        private void ParseRuntoClause(RuntoStatement statement, ref Token endToken)
+        {
+            var head = _stream.Peek;
+            switch (head.type)
+            {
+                case LexemType.KeywordMaxCycles:
+                {
+                    _stream.Advance(); // consume `max cycles`
+                    if (TryParseExpression(out var cyclesExpr))
+                    {
+                        statement.maxCyclesExpression = cyclesExpr;
+                        endToken = cyclesExpr.EndToken;
+                    }
+                    else
+                    {
+                        statement.Errors.Add(new ParseError(head, ErrorCodes.RuntoMaxCyclesMissingValue));
+                    }
+                    break;
+                }
+                default:
+                    // Caller is expected to gate on IsRuntoClauseStart.
+                    _stream.Advance();
+                    break;
+            }
+        }
+
+        private MockStatement ParseMock(Token mockToken)
+        {
+            // Forms:
+            //   inline:        `mock <name> returns <expr> [<freq>]`
+            //                  `mock <name> forbid [<freq>]`
+            //   inline-stack:  `mock <name> returns 1 once: returns 2 once`
+            //                  (multiple entries on the same line, no endmock)
+            //   block:         `mock <name>\n returns <expr>\n ... \n endmock`
+            //   bare:          `mock <name>` alone — void intercept
+            //
+            // The lexer's command-name pass merges multi-word command names into a
+            // single CommandWord token, so we can grab the next token as the name.
+            var stmt = new MockStatement(mockToken, mockToken);
+
+            var nameToken = _stream.Peek;
+            if (nameToken.type == LexemType.CommandWord)
+            {
+                _stream.Advance();
+                stmt.commandName = nameToken.caseInsensitiveRaw;
+                stmt.commandNameToken = nameToken;
+                stmt.endToken = nameToken;
+            }
+            else
+            {
+                stmt.Errors.Add(new ParseError(mockToken, ErrorCodes.MockMissingCommandName));
+                return stmt;
+            }
+
+            var hadEnd = _stream.Peek.type == LexemType.EndStatement;
+
+            // Phase 1: parse inline entries on the same line. After the first
+            // entry, additional `returns`/`forbid` clauses can stack via the
+            // colon separator (DEFER-style) without requiring `endmock`. The
+            // distinction between `:` and a real newline is preserved in
+            // `Token.raw` (newline-synthesized EndStatements have raw != ":").
+            if (!hadEnd && IsMockEntryStart(_stream.Peek.type))
+            {
+                while (true)
+                {
+                    if (!IsMockEntryStart(_stream.Peek.type)) break;
+                    var entry = ParseMockEntry();
+                    if (entry != null)
+                    {
+                        stmt.entries.Add(entry);
+                        stmt.endToken = entry.EndToken;
+                    }
+
+                    // Consume colon-separators between entries, but stop at a
+                    // newline (which switches to block form).
+                    while (IsColonEndStatement(_stream.Peek)) _stream.Advance();
+                }
+
+                // After same-line entries, check whether more entries (or `endmock`)
+                // appear past a newline — that promotes this into block form.
+                var afterInline = PeekPastEndStatements();
+                if (afterInline.type != LexemType.KeywordEndMock
+                    && !IsMockEntryStart(afterInline.type))
+                {
+                    return stmt;
+                }
+                // fall through to block-form loop
+                while (_stream.Peek.type == LexemType.EndStatement) _stream.Advance();
+                ParseMockBlockBody(stmt, mockToken);
+                return stmt;
+            }
+
+            // Bare-form: after the command name + newline, the next non-EndStatement
+            // token isn't a recognized entry start or `endmock`. Synthesize a
+            // single Void entry and return without consuming further tokens.
+            var lookAhead = PeekPastEndStatements();
+            if (hadEnd
+                && !IsMockEntryStart(lookAhead.type)
+                && lookAhead.type != LexemType.KeywordEndMock)
+            {
+                var voidEntry = new MockEntry(nameToken, nameToken)
+                {
+                    kind = MockEntryKind.Void,
+                    frequency = MockFrequencyKind.Always
+                };
+                stmt.entries.Add(voidEntry);
+                return stmt;
+            }
+
+            // Block form: consume EndStatements before entries.
+            while (_stream.Peek.type == LexemType.EndStatement) _stream.Advance();
+            ParseMockBlockBody(stmt, mockToken);
+            return stmt;
+        }
+
+        private static bool IsMockEntryStart(LexemType type)
+        {
+            return type == LexemType.KeywordReturns || type == LexemType.KeywordForbid;
+        }
+
+        // True when the token is a colon-induced EndStatement (same line) rather
+        // than a newline-induced one. The lexer synthesizes newline EndStatements
+        // with empty/null `raw`; colon ones carry `raw = ":"`.
+        private static bool IsColonEndStatement(Token token)
+        {
+            return token != null
+                   && token.type == LexemType.EndStatement
+                   && token.raw == ":";
+        }
+
+        private void ParseMockBlockBody(MockStatement stmt, Token mockToken)
+        {
+            // Block-form mock body: zero or more entries terminated by `endmock`.
+            // `endtest`, `test`, `abstract`, and EOF are hard boundaries that
+            // emit `MockMissingEndMock` without consuming the boundary token —
+            // this lets the surrounding test-body parser still see its `endtest`.
+            var looking = true;
+            while (looking)
+            {
+                var next = _stream.Peek;
+                switch (next.type)
+                {
+                    case LexemType.EOF:
+                    case LexemType.KeywordEndTest:
+                    case LexemType.KeywordTest:
+                    case LexemType.KeywordAbstract:
+                        stmt.Errors.Add(new ParseError(mockToken, ErrorCodes.MockMissingEndMock));
+                        looking = false;
+                        break;
+
+                    case LexemType.EndStatement:
+                        _stream.Advance();
+                        break;
+
+                    case LexemType.KeywordEndMock:
+                        stmt.endToken = next;
+                        _stream.Advance();
+                        looking = false;
+                        break;
+
+                    case LexemType.KeywordReturns:
+                    case LexemType.KeywordForbid:
+                    {
+                        var entry = ParseMockEntry();
+                        if (entry != null) stmt.entries.Add(entry);
+                        break;
+                    }
+
+                    default:
+                    {
+                        // Unknown token in mock body — flag and skip to recover.
+                        var bad = _stream.Advance();
+                        stmt.Errors.Add(new ParseError(bad, ErrorCodes.MockEntryRequiresReturnsOrForbid));
+                        break;
+                    }
+                }
+            }
+        }
+
+        private MockEntry ParseMockEntry()
+        {
+            var head = _stream.Peek;
+            if (head.type == LexemType.KeywordReturns)
+            {
+                _stream.Advance();
+                var entry = new MockEntry(head, head);
+                entry.kind = MockEntryKind.Returns;
+
+                if (TryParseExpression(out var returnExpr))
+                {
+                    entry.returnExpression = returnExpr;
+                    entry.endToken = returnExpr.EndToken;
+                }
+                else
+                {
+                    entry.Errors.Add(new ParseError(head, ErrorCodes.MockEntryRequiresReturnsOrForbid));
+                    return entry;
+                }
+
+                ParseMockFrequency(entry);
+                return entry;
+            }
+            if (head.type == LexemType.KeywordForbid)
+            {
+                _stream.Advance();
+                var entry = new MockEntry(head, head);
+                entry.kind = MockEntryKind.Forbid;
+                ParseMockFrequency(entry);
+                return entry;
+            }
+
+            // Caller invariants should prevent this, but be defensive.
+            var bad = _stream.Advance();
+            var entryErr = new MockEntry(bad, bad);
+            entryErr.Errors.Add(new ParseError(bad, ErrorCodes.MockEntryRequiresReturnsOrForbid));
+            return entryErr;
+        }
+
+        // Optional trailing frequency words: `once`, `<N> times`, `always`.
+        // Default frequency (no clause) is `always`.
+        private void ParseMockFrequency(MockEntry entry)
+        {
+            var next = _stream.Peek;
+            switch (next.type)
+            {
+                case LexemType.KeywordOnce:
+                    _stream.Advance();
+                    entry.frequency = MockFrequencyKind.Once;
+                    entry.endToken = next;
+                    break;
+
+                case LexemType.KeywordAlways:
+                    _stream.Advance();
+                    entry.frequency = MockFrequencyKind.Always;
+                    entry.endToken = next;
+                    break;
+
+                case LexemType.KeywordTimes:
+                    // `times` here means the count expression came BEFORE — but
+                    // we already consumed `returns <expr>` as the return value,
+                    // so this is malformed. Flag and consume.
+                    _stream.Advance();
+                    entry.Errors.Add(new ParseError(next, ErrorCodes.MockNTimesRequiresCount));
+                    break;
+
+                default:
+                {
+                    // Try to parse `<count> times`. If the count expression
+                    // succeeds and is followed by `times`, accept it as the
+                    // frequency. Otherwise restore — there is no frequency
+                    // clause, leave it default `always`.
+                    var saved = _stream.Save();
+                    if (TryParseExpression(out var countExpr) && _stream.Peek.type == LexemType.KeywordTimes)
+                    {
+                        var timesToken = _stream.Advance(); // consume `times`
+                        entry.frequency = MockFrequencyKind.NTimes;
+                        entry.countExpression = countExpr;
+                        entry.endToken = timesToken;
+                    }
+                    else
+                    {
+                        _stream.Restore(saved);
+                    }
+                    break;
+                }
+            }
+        }
+
+        private ClearMockStatement ParseClearMock(Token clearToken)
+        {
+            // `clear mock <command name>` or `clear mocks`
+            var stmt = new ClearMockStatement(clearToken, clearToken);
+
+            var next = _stream.Peek;
+            if (next.type == LexemType.KeywordMocks)
+            {
+                _stream.Advance();
+                stmt.commandName = null; // means "clear all"
+                stmt.endToken = next;
+                return stmt;
+            }
+            if (next.type == LexemType.KeywordMock)
+            {
+                _stream.Advance();
+                var nameToken = _stream.Peek;
+                if (nameToken.type == LexemType.CommandWord)
+                {
+                    _stream.Advance();
+                    stmt.commandName = nameToken.caseInsensitiveRaw;
+                    stmt.commandNameToken = nameToken;
+                    stmt.endToken = nameToken;
+                }
+                else
+                {
+                    stmt.Errors.Add(new ParseError(clearToken, ErrorCodes.MockMissingCommandName));
+                }
+                return stmt;
+            }
+
+            stmt.Errors.Add(new ParseError(clearToken, ErrorCodes.ClearMockMissingTarget));
+            return stmt;
+        }
+
+        // Helper: peek past any EndStatement tokens to see what's next, without
+        // permanently advancing the stream.
+        private Token PeekPastEndStatements()
+        {
+            var saved = _stream.Save();
+            while (_stream.Peek.type == LexemType.EndStatement)
+            {
+                _stream.Advance();
+            }
+            var result = _stream.Peek;
+            _stream.Restore(saved);
+            return result;
         }
         private GoSubStatement ParseGoSub(Token gotoToken)
         {

@@ -147,6 +147,33 @@ if x
   n
 endif
 ")]
+    [TestCase(@"
+test x
+print 1
+endtest
+", @"
+test x
+  print 1
+endtest
+")]
+    [TestCase(@"
+#macro x
+print 1
+#endmacro
+", @"
+#macro x
+  print 1
+#endmacro
+")]
+    [TestCase(@"
+#tokenize x
+print 1
+#endtokenize
+", @"
+#tokenize x
+  print 1
+#endtokenize
+")]
     public void Format_SpaceSizes(string src, string expected, int editCount=1)
     {
         settings = new TokenFormatSettings

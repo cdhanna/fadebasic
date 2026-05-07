@@ -403,5 +403,49 @@ namespace FadeBasic.Virtual
         /// not emitted.
         /// </summary>
         public const byte RUNTO_YIELD = 65;
+
+        /// <summary>
+        /// Records an assertion failure on the VM and halts execution. The data
+        /// stack at the time of dispatch holds a string ptr pointing to the
+        /// captured source text of the asserted expression. The compiler emits
+        /// this only on the failure branch of an assert; passing assertions just
+        /// fall through.
+        /// </summary>
+        public const byte ASSERT_FAIL = 66;
+
+        /// <summary>
+        /// Installs a void-mock for a host command. Stack at dispatch:
+        ///   [..., commandId:int]  → consumed
+        /// On the next CALL_HOST for that command id, the VM pops the args
+        /// (per CommandInfo.args metadata) but does not invoke the C# method
+        /// and does not push a return value. Useful for suppressing void
+        /// commands like `wait ms` during tests.
+        /// </summary>
+        public const byte MOCK_VOID = 67;
+
+        /// <summary>
+        /// Installs a value-returning mock for a host command. Stack at
+        /// dispatch (top to bottom):
+        ///   [..., commandId:int, returnValue:typed]  → consumed
+        /// On the next CALL_HOST for that command id, args are popped and
+        /// the recorded return value is pushed in their place.
+        /// </summary>
+        public const byte MOCK_RETURNS = 68;
+
+        /// <summary>
+        /// Installs a forbid-mock for a host command. Stack: [..., commandId:int].
+        /// On dispatch, the VM records an assertion failure naming the command.
+        /// </summary>
+        public const byte MOCK_FORBID = 69;
+
+        /// <summary>
+        /// Removes any mock registration for a single command. Stack: [..., commandId:int].
+        /// </summary>
+        public const byte MOCK_CLEAR = 70;
+
+        /// <summary>
+        /// Removes all mock registrations for the current VM. No stack inputs.
+        /// </summary>
+        public const byte MOCK_CLEAR_ALL = 71;
     }
 }

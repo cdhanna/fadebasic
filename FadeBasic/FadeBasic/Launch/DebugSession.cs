@@ -56,6 +56,17 @@ namespace FadeBasic.Launch
 
         protected bool requestedExit;
         protected bool started;
+
+        /// <summary>
+        /// When true, reaching end-of-program does not automatically fire
+        /// <c>REV_REQUEST_EXITED</c> to the connected debug client. Hosts that
+        /// drive the VM through multiple programs in one process (e.g. a test
+        /// runner that <see cref="Restart"/>s between tests, or any consumer
+        /// that wants to keep the debugger session alive across program
+        /// completions) should set this. An explicit <see cref="requestedExit"/>
+        /// or socket close still terminates the session normally.
+        /// </summary>
+        public bool suppressExitOnProgramEnd;
         protected Task _serverTask;
         protected Task _processingTask;
 
@@ -182,21 +193,74 @@ namespace FadeBasic.Launch
 
         public void Restart(VirtualMachine nextVm, DebugData nextDebugData, CommandCollection commandCollection)
         {
-            // put this as a message so that the read-loop causes an interupt in the running VM. 
-            //  otherwise, the existing VM will get stuck in a read-loop.
-            receivedMessages.Enqueue(new MockResetMessage()
+            // Suspend the current VM first so anything currently executing it
+            // (on this thread or otherwise) drops out before we swap. Restart()
+            // is expected to be called from the same thread that drives the VM
+            // (via StartDebugging), so by the time we return the swap is in
+            // effect for the caller's next tick.
+            _vm?.Suspend();
+
+            // Swap synchronously. The previous design enqueued a
+            // MockResetMessage and let the read-loop perform the swap when
+            // ReadMessage was next called from inside StartDebugging. That
+            // failed when the prior VM had reached end-of-program: the inner
+            // exec loop's `instructionIndex < program.Length` guard short-
+            // circuited, ReadMessage was never invoked, and the swap message
+            // sat in the queue forever — leaving _vm pointing at the dead VM
+            // while the caller's _vm field already pointed at the new one.
+            ApplyRestart(nextVm, nextDebugData, commandCollection);
+        }
+
+        // Shared swap path used by Restart() and the (now-defensive) inbound
+        // REV_REQUEST_RESTART message handler. Mutates _vm and the surrounding
+        // state on the calling thread; safe because the only writers of these
+        // fields are the message-processing loop and Restart(), both invoked
+        // from the same VM-driving thread.
+        private void ApplyRestart(VirtualMachine nextVm, DebugData nextDebugData, CommandCollection nextCommands)
+        {
+            _vm = nextVm;
+            _vm.shouldThrowRuntimeException = false;
+            _vm.logger = logger;
+
+            _commandCollection = nextCommands;
+            _dbg = nextDebugData;
+
+            instructionMap = new IndexCollection(_dbg.statementTokens);
+            variableDb = new DebugVariableDatabase(_vm, _dbg, logger);
+
+            logger.Log("RESTARTING debug session... version=" + typeof(DebugSession).Assembly.GetName().Version);
+            foreach (var token in _dbg.statementTokens)
             {
-                type = DebugMessageType.REV_REQUEST_RESTART,
-                nextDebugData = nextDebugData,
-                nextMachine = nextVm,
-                nextCommands = commandCollection
-            });
-            
-            // flip some state so the program does not run, until hello is received. 
+                var json = JsonableExtensions.Jsonify(token);
+                logger.Log(json);
+            }
+
+            // reset state variables
+            pauseRequestedByMessageId = 0;
+            resumeRequestedByMessageId = 0;
+            currentInsLookupOffset = 0;
+            stepNextMessage = null;
+            stepIntoMessage = null;
+            stepOutMessage = null;
+            stepStackDepth = 0;
+            stepOverFromToken = null;
+            stepInFromToken = null;
+            stepOutFromToken = null;
+            breakpointTokens.Clear();
+            hitBreakpointToken = null;
+
+            // Gate the new VM behind a fresh PROTO_HELLO from any connected
+            // debugger so a mid-step client doesn't continue executing against
+            // stale program state.
             debuggerSaidHello = 0;
             debuggerReset = 1;
-            
-            _vm.Suspend();
+
+            // tell the DAP Host that we are planning to reboot!
+            outboundMessages.Enqueue(new DebugMessage()
+            {
+                id = GetNextMessageId(),
+                type = DebugMessageType.REV_REQUEST_RESTART
+            });
         }
 
         public void StartServer()
@@ -219,13 +283,20 @@ namespace FadeBasic.Launch
 
         public void ShutdownServer()
         {
-            logger.Log("Starting server shutdown...");
+            // No-op when the server was never started (e.g., a DebugSession
+            // constructed for in-process debugging without a network listener,
+            // or a test host that creates the session but skips StartServer).
+            // Without this guard _cts is null and the Cancel() below NREs on
+            // dispose paths.
+            if (!started) return;
+
+            logger?.Log("Starting server shutdown...");
             while (didClientConnect && outboundMessages.Count > 0)
             {
                 Thread.Sleep(10); // wait for messages to go away...
             }
-            logger.Log("Messages done...");
-            _cts.Cancel();
+            logger?.Log("Messages done...");
+            _cts?.Cancel();
         }
 
         protected bool didClientConnect = false;
@@ -316,7 +387,15 @@ namespace FadeBasic.Launch
             });
         }
 
-        protected void SendExitedMessage()
+        /// <summary>
+        /// Tell the connected debug client that this session is exiting. Use
+        /// this from a host that has set <see cref="suppressExitOnProgramEnd"/>
+        /// (so the auto-fire at end-of-program is disabled) and needs to
+        /// emit the EXITED event explicitly when its overall lifetime ends —
+        /// e.g., a test runner after the last test, or any consumer that
+        /// drives multiple programs in one debug session.
+        /// </summary>
+        public void SendExitedMessage()
         {
             logger?.Debug("Sending exit message");
             var message = new DebugMessage()
@@ -338,48 +417,15 @@ namespace FadeBasic.Launch
                     switch (message.type)
                     {
                         case DebugMessageType.REV_REQUEST_RESTART:
-
-                            var mock = message as MockResetMessage;
-                            _vm = mock.nextMachine;
-                            _vm.shouldThrowRuntimeException = false;
-                            _vm.logger = logger;
-            
-                            _commandCollection = mock.nextCommands;
-            
-                            _dbg = mock.nextDebugData;
-            
-                            instructionMap = new IndexCollection(_dbg.statementTokens);
-                            variableDb = new DebugVariableDatabase(_vm, _dbg, logger);
-            
-                            logger.Log("RESTARTING debug session... version=" + typeof(DebugSession).Assembly.GetName().Version);
-                            foreach (var token in _dbg.statementTokens)
+                            // Defensive: Restart() now swaps synchronously and
+                            // does not enqueue this message, so this case is
+                            // unreachable from internal callers. Kept for any
+                            // external code that drives the message bus
+                            // directly.
+                            if (message is MockResetMessage mock)
                             {
-                                var json = JsonableExtensions.Jsonify(token);
-                                logger.Log(json);
+                                ApplyRestart(mock.nextMachine, mock.nextDebugData, mock.nextCommands);
                             }
-            
-                            // reset state variables 
-                         
-                            pauseRequestedByMessageId = 0;
-                            resumeRequestedByMessageId = 0;
-                            currentInsLookupOffset = 0;
-                            stepNextMessage = null;
-                            stepIntoMessage = null;
-                            stepOutMessage = null;
-                            stepStackDepth = 0;
-                            stepOverFromToken = null;
-                            stepInFromToken = null;
-                            stepOutFromToken = null;
-                            breakpointTokens.Clear();
-                            hitBreakpointToken = null;
-                            
-                            // tell the DAP Host that we are planning to reboot!
-                            outboundMessages.Enqueue(new DebugMessage()
-                            {
-                                id = GetNextMessageId(),
-                                type = DebugMessageType.REV_REQUEST_RESTART
-                            });
-                            
                             break;
                         case DebugMessageType.PROTO_HELLO:
                             hasConnectedDebugger = 1;
@@ -2176,7 +2222,13 @@ namespace FadeBasic.Launch
 
 
             logger?.Debug("done with debug loop");
-            if (_vm.instructionIndex >= _vm.program.Length || requestedExit)
+            // Always honor an explicit requestedExit. End-of-program only
+            // fires EXITED when the host hasn't opted into managing program
+            // lifetime via suppressExitOnProgramEnd — without that opt-out,
+            // a test runner that swaps VMs between tests would tell the
+            // debugger "process exited" mid-session and lose the connection.
+            if (requestedExit ||
+                (_vm.instructionIndex >= _vm.program.Length && !suppressExitOnProgramEnd))
             {
                 SendExitedMessage();
             }

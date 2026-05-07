@@ -16,7 +16,7 @@
     <ItemGroup>
       <ProjectReference Include="..\FadeBasic\FadeBasic.csproj" />
     </ItemGroup>
-    
+
     <ItemGroup>
         <EmbeddedResource Include="DocSite\index.html" LogicalName="docs/index.html"/>
         <EmbeddedResource Include="DocSite\styles.css" LogicalName="docs/styles.css"/>

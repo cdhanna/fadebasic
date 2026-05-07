@@ -87,38 +87,11 @@ public partial class FadeDebugAdapter : DebugAdapterBase
         
         _session = new RemoteDebugSession(port, _logger.Log);
 
-        _session.HitBreakpointCallback = () =>
-        {
-            Protocol.SendEvent(new StoppedEvent
-            {
-                Reason = StoppedEvent.ReasonValue.Breakpoint,
-                Description = "Hit a breakpoint",
-                ThreadId = 1,
-                AllThreadsStopped = true,
-                HitBreakpointIds = new List<int>(){0}
-            });
-        };
+        WireSessionEvents();
 
-        _session.Exited = () =>
-        {
-            Protocol.SendEvent(new ExitedEvent());
-            Protocol.SendEvent(new TerminatedEvent());
-        };
-
-        _session.RuntimeException = (error) =>
-        {
-            _logger.Log($"Received runtime exception message=[{error}]");
-            Protocol.SendEvent(new StoppedEvent(StoppedEvent.ReasonValue.Exception)
-            {
-                Text = "Fatal Exception",
-                Description = error,
-                AllThreadsStopped = true,
-            });
-        };
-
-        // as soon as this event is sent- debugger info will appear. 
+        // as soon as this event is sent- debugger info will appear.
         Protocol.SendEvent(new InitializedEvent());
-        
+
         _logger.Log("Attaching to debug application");
         _session.Connect();
 
@@ -182,9 +155,17 @@ public partial class FadeDebugAdapter : DebugAdapterBase
         // at this point, we can actually kick off the process. 
         var path = Path.GetDirectoryName(_fileName);
         var port = LaunchUtil.FreeTcpPort();
+        
+        // public const string ENV_DEBUG_DOTNET_COMMAND = "FADE_BASIC_DEBUG_DOTNET_COMMAND";
+
+        var dotnetCommand = Environment.GetEnvironmentVariable("FADE_BASIC_DEBUG_DOTNET_COMMAND");
+        if (string.IsNullOrEmpty(dotnetCommand))
+        {
+            dotnetCommand = "run";
+        }
         var startReq = new RunInTerminalRequest(path, new List<string>
         {
-            DAPEnv.DotnetPath, "run", "--project", _fileName, "-p:FadeBasicDebug=true"
+            DAPEnv.DotnetPath, dotnetCommand, "--project", _fileName, "-p:FadeBasicDebug=true"
         });
         
         startReq.Kind = RunInTerminalArguments.KindValue.Integrated;
@@ -203,6 +184,28 @@ public partial class FadeDebugAdapter : DebugAdapterBase
         hasSession = true;
         _session = new RemoteDebugSession(port, _logger.Log);
 
+        WireSessionEvents();
+
+        // as soon as this event is sent- debugger info will appear. 
+        Protocol.SendEvent(new InitializedEvent());
+        
+        
+        this.Protocol.SendClientRequest(startReq, x =>
+        {
+            _logger.Log("Connecting to debug application");
+            _session.Connect();
+            _session.SayHello();
+        
+        }, (args, err) =>
+        {
+            
+        });
+        var res = new LaunchResponse();
+        return res;
+    }
+
+    private void WireSessionEvents()
+    {
         _session.RestartCallback = () =>
         {
             _logger?.Log("RESTART HANDLING: Re-applying breakpoints and resuming");
@@ -214,6 +217,7 @@ public partial class FadeDebugAdapter : DebugAdapterBase
                 _session.SayHello();
             });
         };
+
         _session.HitBreakpointCallback = () =>
         {
             Protocol.SendEvent(new StoppedEvent
@@ -242,25 +246,7 @@ public partial class FadeDebugAdapter : DebugAdapterBase
                 AllThreadsStopped = true,
             });
         };
-
-        // as soon as this event is sent- debugger info will appear. 
-        Protocol.SendEvent(new InitializedEvent());
-        
-        
-        this.Protocol.SendClientRequest(startReq, x =>
-        {
-            _logger.Log("Connecting to debug application");
-            _session.Connect();
-            _session.SayHello();
-        
-        }, (args, err) =>
-        {
-            
-        });
-        var res = new LaunchResponse();
-        return res;
     }
-
 
     protected override ConfigurationDoneResponse HandleConfigurationDoneRequest(ConfigurationDoneArguments arguments)
     {

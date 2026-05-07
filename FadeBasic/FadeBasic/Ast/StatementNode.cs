@@ -107,6 +107,163 @@ namespace FadeBasic.Ast
         }
     }
 
+    public class AssertStatement : AstNode, IStatementNode
+    {
+        public IExpressionNode condition;
+        // Source-text snapshot of the asserted expression at the time of parsing.
+        // For macro-expanded sites this is the post-substitution text. The runtime
+        // uses this to format failure messages.
+        public string sourceText;
+
+        public AssertStatement(Token startToken, Token endToken, IExpressionNode condition, string sourceText)
+            : base(startToken, endToken)
+        {
+            this.condition = condition;
+            this.sourceText = sourceText;
+        }
+
+        protected override string GetString()
+        {
+            return $"assert {condition}";
+        }
+
+        public override IEnumerable<IAstVisitable> IterateChildNodes()
+        {
+            yield return condition;
+        }
+    }
+
+    public class RuntoStatement : AstNode, IStatementNode
+    {
+        public string targetLabel;
+        public Token targetLabelToken;
+
+        // Optional clauses parsed from the block form (`runto :name ... endrunto`).
+        // Recorded for forward-compatibility; not yet wired into the runtime.
+        public IExpressionNode maxCyclesExpression;
+
+        public RuntoStatement(Token startToken, Token endToken, Token labelToken)
+            : base(startToken, endToken)
+        {
+            targetLabelToken = labelToken;
+            targetLabel = labelToken.caseInsensitiveRaw;
+        }
+
+        protected override string GetString()
+        {
+            if (maxCyclesExpression != null)
+            {
+                return $"runto {targetLabel} max-cycles {maxCyclesExpression}";
+            }
+            return $"runto {targetLabel}";
+        }
+
+        public override IEnumerable<IAstVisitable> IterateChildNodes()
+        {
+            if (maxCyclesExpression != null)
+                yield return maxCyclesExpression;
+        }
+    }
+
+    public enum MockEntryKind
+    {
+        Returns,
+        Forbid,
+        // Bare-form mock (`mock <command>` with no body). Used for void
+        // commands the test wants to suppress, like `mock wait ms` to skip
+        // the actual sleep during test execution. Args are still consumed
+        // from the stack at dispatch time.
+        Void
+    }
+
+    public enum MockFrequencyKind
+    {
+        Always,   // default — applies to every call until exhausted (forbid: every call)
+        Once,     // applies to one call, then the entry is consumed
+        NTimes    // applies to N calls, then the entry is consumed (N from countExpression)
+    }
+
+    public class MockEntry : AstNode
+    {
+        public MockEntryKind kind;
+        public MockFrequencyKind frequency = MockFrequencyKind.Always;
+        // Only set when kind == Returns. The expression evaluated to produce
+        // the mocked return value at dispatch time.
+        public IExpressionNode returnExpression;
+        // Only set when frequency == NTimes. Evaluated once when the mock is
+        // installed; the result is the count of remaining calls for this entry.
+        public IExpressionNode countExpression;
+
+        public MockEntry(Token startToken, Token endToken) : base(startToken, endToken)
+        {
+        }
+
+        protected override string GetString()
+        {
+            var freqStr = frequency switch
+            {
+                MockFrequencyKind.Once => " once",
+                MockFrequencyKind.NTimes => $" {countExpression} times",
+                _ => "" // always is the default, omit for brevity
+            };
+            return kind == MockEntryKind.Forbid
+                ? $"forbid{freqStr}"
+                : $"returns {returnExpression}{freqStr}";
+        }
+
+        public override IEnumerable<IAstVisitable> IterateChildNodes()
+        {
+            if (returnExpression != null) yield return returnExpression;
+            if (countExpression != null) yield return countExpression;
+        }
+    }
+
+    public class MockStatement : AstNode, IStatementNode
+    {
+        // The full command name, e.g. "screen width". Stored as the source text
+        // of the command-name token (already normalized by the lexer's
+        // CommandNameTree pass).
+        public string commandName;
+        public Token commandNameToken;
+        public List<MockEntry> entries = new List<MockEntry>();
+
+        public MockStatement(Token startToken, Token endToken) : base(startToken, endToken)
+        {
+        }
+
+        protected override string GetString()
+        {
+            return $"mock {commandName} ({string.Join(",", entries.Select(e => e.ToString()))})";
+        }
+
+        public override IEnumerable<IAstVisitable> IterateChildNodes()
+        {
+            foreach (var entry in entries) yield return entry;
+        }
+    }
+
+    public class ClearMockStatement : AstNode, IStatementNode
+    {
+        // Null means "clear all mocks" (`clear mocks`).
+        // Non-null is a specific command name (`clear mock screen width`).
+        public string commandName;
+        public Token commandNameToken;
+
+        public ClearMockStatement(Token startToken, Token endToken) : base(startToken, endToken)
+        {
+        }
+
+        protected override string GetString()
+        {
+            return commandName == null ? "clear mocks" : $"clear mock {commandName}";
+        }
+
+        public override IEnumerable<IAstVisitable> IterateChildNodes()
+        {
+            yield break;
+        }
+    }
+
     public class MacroSubstitutionExpression : AstNode, IExpressionNode
     {
         public IExpressionNode innerExpression;

@@ -217,6 +217,24 @@ namespace FadeBasic
         public static readonly ErrorCode AbstractRequiresTest = "[0168] Abstract keyword must be followed by test";
         public static readonly ErrorCode TestFromMissingParent = "[0169] Test from clause must specify a parent test name";
         public static readonly ErrorCode TestNameAlreadyDeclared = "[0170] Test with this name is already declared";
+        public static readonly ErrorCode RuntoMissingLabel = "[0171] Runto statement missing label";
+        public static readonly ErrorCode RuntoMissingEndRunto = "[0172] Runto block missing EndRunto clause";
+        public static readonly ErrorCode RuntoOutsideTest = "[0173] Runto can only be used inside a test block";
+        public static readonly ErrorCode RuntoUnknownLabel = "[0174] Runto target label is not defined anywhere in the program";
+        public static readonly ErrorCode RuntoMaxCyclesMissingValue = "[0175] max cycles clause requires an integer expression";
+        public static readonly ErrorCode AssertOutsideTest = "[0176] assert can only be used inside a test block";
+        public static readonly ErrorCode AssertMissingExpression = "[0177] assert requires a boolean expression";
+        public static readonly ErrorCode TestVariableNotYetDeclared = "[0178] Variable is declared in the program but not yet at the most recent runto target";
+        public static readonly ErrorCode TestVariableUnreachable = "[0179] Variable is not visible from the test at this point — no runto has reached its declaration";
+        public static readonly ErrorCode MockMissingCommandName = "[0180] mock requires a command name";
+        public static readonly ErrorCode MockUnknownCommand = "[0181] mock target is not a known command";
+        public static readonly ErrorCode MockMissingEndMock = "[0182] mock block missing endmock clause";
+        public static readonly ErrorCode MockEntryRequiresReturnsOrForbid = "[0183] mock entry must be `returns <expr>` or `forbid`";
+        public static readonly ErrorCode MockUnreachableEntry = "[0184] mock entry is unreachable; a previous entry has frequency `always`";
+        public static readonly ErrorCode MockNTimesRequiresCount = "[0185] mock frequency `times` requires an integer count expression";
+        public static readonly ErrorCode MockOutsideTest = "[0186] mock can only be used inside a test block";
+        public static readonly ErrorCode ClearMockMissingTarget = "[0187] clear must be followed by `mock <command name>` or `mocks`";
+        public static readonly ErrorCode ClearMockOutsideTest = "[0188] clear mock(s) can only be used inside a test block";
 
         // 200 series represents post-parse issues
         public static readonly ErrorCode InvalidReference = "[0200] Invalid reference";
@@ -240,6 +258,7 @@ namespace FadeBasic
         public static readonly ErrorCode ArrayCannotAssignFromDefault = "[0218] Cannot assign default to array";
         public static readonly ErrorCode TokenizationContainsHaunted = "[0219] Tokenization cannot be resolved without running the program ";
         public static readonly ErrorCode VariableUsesHaunted = "[0220] Variable cannot include tokens generated from a non deterministic macro";
+        public static readonly ErrorCode CannotCallTestFunctionFromOutsideTest = "[0221] Cannot invoke function declared in test";
     
         // 300 series represents type issues
         public static readonly ErrorCode SymbolAlreadyDeclared = "[0300] Symbol already declared";

@@ -5,10 +5,22 @@
         <_FadeBasic_TaskFolder>$(MSBuildThisFileDirectory)..\tasks\net8.0</_FadeBasic_TaskFolder>
         <!--Reference to the assembly which contains the MSBuild Task-->
         <FadeBasicCustomTasksAssembly>$(_FadeBasic_TaskFolder)\$(MSBuildThisFileName).dll</FadeBasicCustomTasksAssembly>
-        
+
+        <!-- Note: the testing-related MSBuild config (IsTestProject,
+             EnableMicrosoftTestingPlatform, GenerateTestingPlatformEntryPoint,
+             the global.json auto-write target, etc.) lives in the
+             FadeBasic.Testing package's own props/targets. Adding a
+             PackageReference to FadeBasic.Testing is the opt-in to
+             `dotnet test` integration; this Build package stays focused on
+             Fade source compilation.
+
+             FadeBasic.Build does still read $(FadeEnableTesting) — it
+             controls which Main shape the FadeProjectTask emits — but
+             the Testing package is what assigns that property. -->
+
     </PropertyGroup>
 
-    
+
     <ItemDefinitionGroup>
 
         <FadeCommand>
@@ -17,7 +29,7 @@
         </FadeCommand>
 
     </ItemDefinitionGroup>
-    
+
     <UsingTask TaskName="$(MSBuildThisFileName).FadeProjectTask" AssemblyFile="$(FadeBasicCustomTasksAssembly)"/>
     <UsingTask TaskName="$(MSBuildThisFileName).FadeDocsTask" AssemblyFile="$(FadeBasicCustomTasksAssembly)"/>
 

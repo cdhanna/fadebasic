@@ -110,6 +110,22 @@ namespace FadeBasic.Lsp
                 case LexemType.KeywordExit:
                 case LexemType.KeywordDefer:
                 case LexemType.KeywordEndDefer:
+                case LexemType.KeywordTest:
+                case LexemType.KeywordEndTest:
+                case LexemType.KeywordAbstract:
+                case LexemType.KeywordFrom:
+                case LexemType.KeywordRunto:
+                case LexemType.KeywordEndRunto:
+                case LexemType.KeywordAssert:
+                case LexemType.KeywordMock:
+                case LexemType.KeywordEndMock:
+                case LexemType.KeywordMocks:
+                case LexemType.KeywordReturns:
+                case LexemType.KeywordForbid:
+                case LexemType.KeywordOnce:
+                case LexemType.KeywordTimes:
+                case LexemType.KeywordAlways:
+                case LexemType.KeywordClear:
                     return PortableSemanticTokenType.Keyword;
 
                 case LexemType.KeywordType:

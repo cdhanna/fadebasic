@@ -1,0 +1,42 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+    <PropertyGroup>
+        <AssemblyName>FadeBasic.TestAdapter</AssemblyName>
+        <!-- Match FadeBasic.Testing's TFM. The adapter is loaded into the
+             test host process, which is whatever runtime the test app uses;
+             FadeBasic test apps all target net8.0+ via the Fade templates. -->
+        <TargetFramework>net8.0</TargetFramework>
+        <LangVersion>latest</LangVersion>
+        <RootNamespace>FadeBasic.TestAdapter</RootNamespace>
+        <Nullable>enable</Nullable>
+
+        <!-- This project is bundled into FadeBasic.Testing's nupkg as a
+             build-asset DLL — there is no separate FadeBasic.TestAdapter
+             package on NuGet. Suppress packing entirely; FadeBasic.Testing
+             picks up our build output and packs it into its own
+             build/_common/ folder via a project-level <None Include>. -->
+        <IsPackable>false</IsPackable>
+    </PropertyGroup>
+
+    <ItemGroup>
+        <!-- VSTest adapter contract. PrivateAssets so consumers of the
+             FadeBasic.Testing nupkg never see this transitively. -->
+        <PackageReference Include="Microsoft.TestPlatform.ObjectModel" Version="18.3.0"
+                          PrivateAssets="all" />
+    </ItemGroup>
+
+    <ItemGroup>
+        <!-- We only need types from FadeBasic core (IFadeTestHost lives there
+             now in namespace FadeBasic.Testing). NOT FadeBasic.Testing —
+             that would form a cycle since FadeBasic.Testing wants to bundle
+             our DLL into its nupkg. -->
+        <ProjectReference Include="..\FadeBasic\FadeBasic.csproj" />
+    </ItemGroup>
+
+    <ItemGroup>
+        <!-- Expose internals (EnumerateTestCases, ResolveEntry, BuildErrorMessage,
+             BuildErrorStackTrace) to the Tests project for unit testing. -->
+        <InternalsVisibleTo Include="Tests" />
+    </ItemGroup>
+
+</Project>

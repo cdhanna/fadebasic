@@ -1,0 +1,143 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+    <Import Project="../NugetPackage.props"/>
+
+    <PropertyGroup>
+        <AssemblyName>FadeBasic.Testing</AssemblyName>
+        <TargetFramework>net8.0</TargetFramework>
+        <LangVersion>latest</LangVersion>
+        <RootNamespace>FadeBasic.Testing</RootNamespace>
+
+        <PackageId>FadeBasic.Testing</PackageId>
+        <Title>FadeBasic Testing Adapter</Title>
+        <Description>A Microsoft.Testing.Platform adapter that surfaces FadeBasic `test ... endtest` blocks to `dotnet test` and IDE Test Explorer. Drop-in: a single FadeEnableTesting MSBuild property turns a Fade console-app project into a `dotnet test` target without disturbing `dotnet run`.</Description>
+        <Nullable>enable</Nullable>
+
+        <!-- Microsoft.NET.Test.Sdk's props unconditionally sets IsTestProject=true,
+             which NuGet's Pack target reads as a signal to skip pack
+             (IsPackable defaults to false when IsTestProject=true). We're a
+             library that ships AS a NuGet package, not a runnable test
+             project ourselves — explicitly override. -->
+        <IsPackable>true</IsPackable>
+    </PropertyGroup>
+
+    <ItemGroup>
+        <!-- Microsoft.Testing.Platform is the runtime library FadeTestFramework
+             and FadeTestApplicationBuilder compile against. It MUST flow to
+             consumers (no PrivateAssets) because the consumer's process is
+             where this code actually executes when MTP is the runner.
+             We pin the version so consumers don't drift; bump deliberately. -->
+        <PackageReference Include="Microsoft.Testing.Platform" Version="2.2.1" />
+
+        <!-- Microsoft.Testing.Platform.MSBuild is the MSBuild-integration
+             half of MTP — it's what makes `dotnet test` route a project
+             through MTP instead of VSTest. We need it ourselves so the
+             FadeBasic.Testing.dll compiles, but we DO NOT want it flowing
+             to consumers because:
+               - On .NET 10 SDK, this package's targets hard-error if the
+                 project isn't in MTP mode (EnableMicrosoftTestingPlatform=true).
+                 We default to VSTest mode (FadeUseMtpRunner=false) for Rider
+                 compatibility, so propagating it would break `dotnet test`
+                 on .NET 10 with a confusing "VSTest target is no longer
+                 supported" message.
+               - Consumers who explicitly opt into MTP via FadeUseMtpRunner=true
+                 get this package added back via our props.
+             PrivateAssets="all" prevents the package's MSBuild assets from
+             reaching the consumer, while we still have access for our own
+             compile. -->
+        <PackageReference Include="Microsoft.Testing.Platform.MSBuild" Version="2.2.1"
+                          PrivateAssets="all" />
+
+        <!-- Microsoft.NET.Test.Sdk MUST be a direct nuspec-level dependency
+             of FadeBasic.Testing, NOT just an entry in our package-provided
+             props. Test.Sdk's runtime assets (testhost.dll, Newtonsoft.Json,
+             vstest.console.dll) only flow to a consumer's bin when it's
+             referenced directly in their csproj OR as a regular PackageReference
+             dependency of a referenced package. The sentinel-restore path
+             that makes <PackageReference Include=> in package props "work"
+             only adds the compile-time reference, not the runtime assets —
+             which manifests as `dotnet test` aborting with "An assembly
+             specified in the application dependencies manifest
+             (testhost.deps.json) was not found: Newtonsoft.Json".
+
+             By declaring it here at the project level, the dependency lands
+             in our nuspec and consumers get the full asset deployment when
+             they restore. -->
+        <PackageReference Include="Microsoft.NET.Test.Sdk" Version="18.0.1" />
+    </ItemGroup>
+
+    <!-- VSTestBridge was originally referenced for MTP→VSTest IDE compat.
+         Investigation showed the bridge is one-directional (it lets VSTest
+         frameworks like xUnit ride on the MTP runner, NOT the reverse), so
+         it can't help a custom MTP framework be visible to VSTest IDEs.
+         Removed in favor of FadeBasic.TestAdapter, our actual VSTest adapter. -->
+
+    <ItemGroup>
+        <ProjectReference Include="..\FadeBasic\FadeBasic.csproj" />
+
+        <!--
+            FadeBasic.TestAdapter is bundled into THIS nupkg as a runtime
+            asset (build/_common/FadeBasic.TestAdapter.dll). The consumer
+            never sees TestAdapter as a separate package — referencing
+            FadeBasic.Testing alone deploys both the MTP framework AND
+            the VSTest adapter to their bin.
+
+            PrivateAssets="all" is doing two jobs:
+              - Suppresses the project ref from showing up in this nupkg's
+                <dependencies> metadata (consumers shouldn't need to know
+                TestAdapter exists; it's a runtime extension, not a library).
+              - Suppresses TestAdapter.dll from being packed into lib/<TFM>/
+                of this nupkg (which would otherwise turn it into a
+                compile-time reference for consumers, transitively pulling
+                Microsoft.TestPlatform.ObjectModel into their build).
+            We then explicitly pack TestAdapter.{dll,pdb} into build/_common/
+            via the <None Include> further down, and our props/targets copy
+            it into the consumer's bin via <Link>.
+
+            DO NOT add ReferenceOutputAssembly="false" to this reference.
+            It looks tempting (we don't compile against any TestAdapter types,
+            so why pay for the assembly link?) but it interacts badly with
+            `dotnet pack`: MSBuild treats it as "I don't need this project's
+            output," skips its build in some scenarios, and the bundled
+            <None Include="...TestAdapter\bin\..."> below evaluates with
+            Exists()=false. The package then ships without the adapter and
+            silently breaks IDE Test Explorer discovery in consumers.
+            Verified empirically — this exact bug shipped FadeBasic.Testing
+            0.0.2.516 with no adapter inside.
+
+            Why this dependency direction? Pre-Stage-11H, TestAdapter
+            ProjectReferenced Testing for IFadeTestHost etc. We moved those
+            shared types to FadeBasic core (FadeBasic.Sdk.Testing namespace)
+            so the dependency cleanly reverses: both Testing and TestAdapter
+            now depend on core, and Testing additionally bundles TestAdapter
+            for distribution.
+        -->
+        <ProjectReference Include="..\FadeBasic.TestAdapter\FadeBasic.TestAdapter.csproj"
+                          PrivateAssets="all" />
+    </ItemGroup>
+
+    <!-- Pack the props/targets into build/<PackageId>.[props|targets] so
+         NuGet auto-imports them when this package is referenced. The mere
+         presence of the PackageReference is the opt-in. -->
+    <ItemGroup>
+        <None Update="FadeBasic.Testing.props" Pack="True" PackagePath="build/$(AssemblyName).props" />
+        <None Update="FadeBasic.Testing.targets" Pack="True" PackagePath="build/$(AssemblyName).targets" />
+    </ItemGroup>
+
+    <!--
+        Bundle FadeBasic.TestAdapter.{dll,pdb} into build/_common/. The
+        ProjectReference above guarantees they're built before this Pack
+        runs, so the file exists at evaluation time. <Link> on the consumer
+        side (in our props) is what flattens the deployment to bin/<TFM>/
+        instead of bin/<TFM>/_common/.
+    -->
+    <ItemGroup>
+        <None Include="..\FadeBasic.TestAdapter\bin\$(Configuration)\net8.0\FadeBasic.TestAdapter.dll"
+              Pack="True" PackagePath="build/_common/" Visible="false"
+              Condition="Exists('..\FadeBasic.TestAdapter\bin\$(Configuration)\net8.0\FadeBasic.TestAdapter.dll')" />
+        <None Include="..\FadeBasic.TestAdapter\bin\$(Configuration)\net8.0\FadeBasic.TestAdapter.pdb"
+              Pack="True" PackagePath="build/_common/" Visible="false"
+              Condition="Exists('..\FadeBasic.TestAdapter\bin\$(Configuration)\net8.0\FadeBasic.TestAdapter.pdb')" />
+    </ItemGroup>
+
+</Project>

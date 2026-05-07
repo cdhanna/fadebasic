@@ -112,6 +112,52 @@ namespace FadeBasic.Virtual
         public string Label;
     }
 
+    public class TestManifestEntry : IJsonable
+    {
+        public string name;
+        public int entryPointAddress;
+        public bool isAbstract;
+        public string fromParent; // null if no parent
+
+        // sourceLine/sourceChar are reported in the ORIGINATING file's coordinate
+        // space (1-based line numbers as the user sees them). The compiler
+        // initially stamps these in the concatenated-source space; a post-compile
+        // pass remaps them via SourceMap when one is available. The originating
+        // file path goes in <see cref="sourceFilePath"/>; null/empty means the
+        // file is unknown (no source map provided), and consumers should treat
+        // line/char as best-effort positions only.
+        public int sourceLine;
+        public int sourceChar;
+        public string sourceFilePath;
+
+        public void ProcessJson(IJsonOperation op)
+        {
+            op.IncludeField(nameof(name), ref name);
+            op.IncludeField(nameof(entryPointAddress), ref entryPointAddress);
+            op.IncludeField(nameof(isAbstract), ref isAbstract);
+            op.IncludeField(nameof(fromParent), ref fromParent);
+            op.IncludeField(nameof(sourceLine), ref sourceLine);
+            op.IncludeField(nameof(sourceChar), ref sourceChar);
+            op.IncludeField(nameof(sourceFilePath), ref sourceFilePath);
+        }
+    }
+
+    /// <summary>
+    /// Serializable wrapper around the compiler's test manifest. Used by
+    /// <c>LaunchUtil.PackTestManifest</c> / <c>UnpackTestManifest</c> to bake
+    /// the manifest into the generated launchable so console-app builds can
+    /// support <c>--fade-test=name</c> at runtime.
+    /// </summary>
+    public class TestManifest : IJsonable
+    {
+        public List<TestManifestEntry> entries = new List<TestManifestEntry>();
+
+        public void ProcessJson(IJsonOperation op)
+        {
+            op.IncludeField(nameof(entries), ref entries);
+        }
+    }
+
     public struct FunctionCallReplacement
     {
         public int InstructionIndex;
@@ -380,6 +426,22 @@ namespace FadeBasic.Virtual
         private List<LabelReplacement> _labelReplacements = new List<LabelReplacement>();
         private Dictionary<string, int> _labelToInstructionIndex = new Dictionary<string, int>();
 
+        // For each `runto label` call site, record where in the bytecode the
+        // PUSH int placeholder lives so we can patch the resolved post-yield
+        // address (label_addr + 2) at the end of compilation.
+        private List<LabelReplacement> _runtoReplacements = new List<LabelReplacement>();
+
+        // Set of label names that any test references via `runto`. These get a
+        // RUNTO_YIELD opcode emitted right after the label's NOOP. Labels that
+        // aren't runto targets carry no overhead.
+        private HashSet<string> _runtoTargetLabels = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        // Manifest of compiled tests: name → entry-point address. Recorded as
+        // each test body is compiled. Surfaced via the public Manifest property
+        // and (later) emitted into the interned-data section.
+        private List<TestManifestEntry> _testManifest = new List<TestManifestEntry>();
+        public IReadOnlyList<TestManifestEntry> TestManifest => _testManifest;
+
         private List<FunctionCallReplacement> _functionCallReplacements = new List<FunctionCallReplacement>();
         private Dictionary<string, int> _functionTable = new Dictionary<string, int>();
         
@@ -438,28 +500,43 @@ namespace FadeBasic.Virtual
             {
                 _buffer.Add(value[i]);
             }
-            
+
+            // Pre-pass: collect every label name referenced by a `runto` anywhere in
+            // the test corpus. These labels get a RUNTO_YIELD opcode emitted right
+            // after their NOOP. Labels not referenced get no overhead, and run builds
+            // with no tests skip this pass entirely (set stays empty).
+            CollectRuntoTargets(program);
+
             foreach (var typeDef in program.typeDefinitions)
             {
                 Compile(typeDef);
             }
-            
+
             foreach (var statement in program.statements)
             {
-            
+
                 Compile(statement);
             }
 
-            // prevent the execution from ever going to the functions. GOTO statements _should_ be illegal to jump into a function's scope. 
+            // prevent the execution from ever going to the functions. GOTO statements _should_ be illegal to jump into a function's scope.
             CompileEnd();
-            
+
             foreach (var function in program.functions)
             {
                 Compile(function);
             }
 
+            // Tests are compiled as additional, runnable bytecode regions after the
+            // program's functions but before interned data. Each test gets its own
+            // entry point recorded in the manifest. A test instance is launched via
+            // `new VirtualMachine(program, manifest.entryPointAddress)`.
+            foreach (var test in program.tests)
+            {
+                CompileTest(test);
+            }
+
             { // handle interned data
-                { // replace the jump ptr at index=0 to tell us where the data lives. 
+                { // replace the jump ptr at index=0 to tell us where the data lives.
                     var internLocationBytes = BitConverter.GetBytes(_buffer.Count);
                     for (var i = 0; i < internLocationBytes.Length; i++)
                     {
@@ -472,9 +549,64 @@ namespace FadeBasic.Virtual
             CompileJumpReplacements();
         }
 
+        private void CollectRuntoTargets(ProgramNode program)
+        {
+            void Visit(IAstVisitable node)
+            {
+                if (node is RuntoStatement runto)
+                {
+                    _runtoTargetLabels.Add(runto.targetLabel);
+                }
+            }
+            foreach (var test in program.tests)
+            {
+                test.Visit(Visit);
+            }
+        }
+
+        private void CompileTest(TestNode test)
+        {
+            // Abstract tests still produce bytecode (they may be `from`-parents of
+            // concrete tests, which Stage 8 will leverage), but they don't appear
+            // as runnable manifest entries.
+            var entryPoint = _buffer.Count;
+            _testManifest.Add(new TestManifestEntry
+            {
+                name = test.name,
+                entryPointAddress = entryPoint,
+                isAbstract = test.isAbstract,
+                fromParent = test.fromParent,
+                sourceLine = test.startToken?.lineNumber ?? 0,
+                sourceChar = test.startToken?.charNumber ?? 0
+            });
+
+            // Compile the test body. The dispatch in Compile(IStatementNode) skips
+            // FunctionStatement nodes — they're emitted separately below — so the
+            // body's own function declarations don't pollute the test's entry-point
+            // bytecode region.
+            foreach (var statement in test.statements)
+            {
+                Compile(statement);
+            }
+
+            // Halt at the end of the test body so execution doesn't fall into
+            // whatever follows in the bytecode blob.
+            CompileEnd();
+
+            // Now compile any test-scoped functions. They live alongside program
+            // functions in the bytecode blob and register themselves in the
+            // shared _functionTable, which means the test body can call them by
+            // name. (Stage 6 narrows visibility via the from-chain in a follow-up
+            // pass; for v1 they're globally addressable, which is permissive.)
+            foreach (var function in test.functions)
+            {
+                Compile(function);
+            }
+        }
+
         public void CompileJumpReplacements()
         {
-            
+
             // replace all label instructions...
             foreach (var replacement in _labelReplacements)
             {
@@ -491,7 +623,27 @@ namespace FadeBasic.Virtual
                     _buffer[replacement.InstructionIndex + 2 + i] = locationBytes[i];
                 }
             }
-            
+
+            // replace all runto target placeholders. The runto target address is
+            // the byte AFTER the label's RUNTO_YIELD opcode (= label_addr + 2).
+            // RUNTO_YIELD checks `runtoStack.Peek().target == instructionIndex`,
+            // and instructionIndex at that point is post-RUNTO_YIELD, so we need
+            // to bake `label_addr + 2` into the PUSH int placeholder.
+            foreach (var replacement in _runtoReplacements)
+            {
+                if (!_labelToInstructionIndex.TryGetValue(replacement.Label, out var location))
+                {
+                    throw new Exception("Compiler: unknown runto target label " + replacement.Label);
+                }
+
+                var postYieldAddr = location + 2; // skip the NOOP and the RUNTO_YIELD
+                var locationBytes = BitConverter.GetBytes(postYieldAddr);
+                for (var i = 0; i < locationBytes.Length; i++)
+                {
+                    _buffer[replacement.InstructionIndex + 2 + i] = locationBytes[i];
+                }
+            }
+
             // replace all function instrunctions
             foreach (var replacement in _functionCallReplacements)
             {
@@ -715,6 +867,18 @@ namespace FadeBasic.Virtual
                     break;
                 case FunctionReturnStatement returnStatement:
                     Compile(returnStatement);
+                    break;
+                case RuntoStatement runtoStatement:
+                    Compile(runtoStatement);
+                    break;
+                case AssertStatement assertStatement:
+                    Compile(assertStatement);
+                    break;
+                case MockStatement mockStatement:
+                    Compile(mockStatement);
+                    break;
+                case ClearMockStatement clearMockStatement:
+                    Compile(clearMockStatement);
                     break;
                 case ExpressionStatement expressionStatement:
                     Compile(expressionStatement);
@@ -1582,14 +1746,161 @@ namespace FadeBasic.Virtual
         
         private void Compile(LabelDeclarationNode labelStatement)
         {
-            // take note of instruction number... 
+            // take note of instruction number...
             _labelToInstructionIndex[labelStatement.label] = _buffer.Count;
             _buffer.Add(OpCodes.NOOP);
+            // Emit RUNTO_YIELD only for labels that some test targets via `runto`.
+            // In `dotnet run` builds where no tests exist, this set is empty and
+            // there is zero per-label overhead.
+            if (_runtoTargetLabels.Contains(labelStatement.label))
+            {
+                _buffer.Add(OpCodes.RUNTO_YIELD);
+            }
+        }
+
+        private void Compile(RuntoStatement runtoStatement)
+        {
+            // Emit `PUSH int <placeholder>; RUNTO`. The placeholder is patched
+            // in CompileJumpReplacements with the post-yield address: the byte
+            // immediately after the label's RUNTO_YIELD (i.e., label_addr + 2).
+            _runtoReplacements.Add(new LabelReplacement
+            {
+                InstructionIndex = _buffer.Count,
+                Label = runtoStatement.targetLabel
+            });
+            AddPushInt(_buffer, int.MaxValue);
+            _buffer.Add(OpCodes.RUNTO);
+        }
+
+        private void Compile(AssertStatement assertStatement)
+        {
+            // Layout:
+            //   <evaluate condition>      ; pushes int (0 = false, !0 = true)
+            //   PUSH int <skipAddr>       ; placeholder for skip-on-pass target
+            //   JUMP_GT_ZERO              ; if value > 0, jump past failure block
+            //   <push source-text string ptr>
+            //   ASSERT_FAIL
+            //   :skipAddr (continue normally)
+
+            Compile(assertStatement.condition);
+
+            // Placeholder for the skip address; we patch it after emitting the
+            // failure branch so we know where the post-failure code starts.
+            var skipAddrIndex = _buffer.Count;
+            AddPushInt(_buffer, int.MaxValue);
+            _buffer.Add(OpCodes.JUMP_GT_ZERO);
+
+            // Failure branch: push the captured source text string and fail.
+            Compile(new LiteralStringExpression(assertStatement.startToken, assertStatement.sourceText ?? ""));
+            _buffer.Add(OpCodes.ASSERT_FAIL);
+
+            // Patch the skip address to point at the byte right after the failure
+            // branch. AddPushInt emits 2 prefix bytes (opcode + type) before the
+            // 4-byte int payload, so the int value lives at skipAddrIndex+2.
+            var skipAddrBytes = BitConverter.GetBytes(_buffer.Count);
+            for (var i = 0; i < skipAddrBytes.Length; i++)
+            {
+                _buffer[skipAddrIndex + 2 + i] = skipAddrBytes[i];
+            }
         }
 
         private void Compile(ReturnStatement _)
         {
             _buffer.Add(OpCodes.RETURN);
+        }
+
+        private List<int> ResolveMockCommandIds(string commandName)
+        {
+            // A mock targets every overload sharing the given name. Iterate the
+            // method table (which includes every overload) and gather the ids
+            // of those whose name matches case-insensitively.
+            var ids = new List<int>();
+            var methods = methodTable.methods;
+            for (var i = 0; i < methods.Length; i++)
+            {
+                if (string.Equals(methods[i].name, commandName,
+                        StringComparison.OrdinalIgnoreCase))
+                {
+                    ids.Add(i);
+                }
+            }
+            return ids;
+        }
+
+        private void Compile(MockStatement mockStatement)
+        {
+            var commandIds = ResolveMockCommandIds(mockStatement.commandName);
+            if (commandIds.Count == 0)
+            {
+                // Unknown command — the lexer would normally have caught this
+                // (CommandWord token doesn't form). Skip silently here.
+                return;
+            }
+
+            // For each entry in source order, emit one install opcode per
+            // overload. The VM keys mocks by host method id, so each overload
+            // gets its own registration.
+            foreach (var entry in mockStatement.entries)
+            {
+                foreach (var commandId in commandIds)
+                {
+                    var commandReturnType = methodTable.methods[commandId].returnType;
+                    var isVoidCommand = commandReturnType == TypeCodes.VOID;
+
+                    // `returns <expr>` on a void command is silently degraded
+                    // to a Void mock. The caller doesn't read a return value,
+                    // so pushing one would just leak onto the stack. Users
+                    // sometimes write `mock wait ms returns 0` thinking they
+                    // need a body — make that DWIM.
+                    var effectiveKind = entry.kind;
+                    if (effectiveKind == MockEntryKind.Returns && isVoidCommand)
+                    {
+                        effectiveKind = MockEntryKind.Void;
+                    }
+
+                    switch (effectiveKind)
+                    {
+                        case MockEntryKind.Void:
+                            AddPushInt(_buffer, commandId);
+                            _buffer.Add(OpCodes.MOCK_VOID);
+                            break;
+
+                        case MockEntryKind.Returns:
+                            AddPushInt(_buffer, commandId);
+                            if (entry.returnExpression != null)
+                            {
+                                Compile(entry.returnExpression);
+                            }
+                            else
+                            {
+                                AddPushInt(_buffer, 0);
+                            }
+                            _buffer.Add(OpCodes.MOCK_RETURNS);
+                            break;
+
+                        case MockEntryKind.Forbid:
+                            AddPushInt(_buffer, commandId);
+                            _buffer.Add(OpCodes.MOCK_FORBID);
+                            break;
+                    }
+                }
+            }
+        }
+
+        private void Compile(ClearMockStatement clearMockStatement)
+        {
+            if (clearMockStatement.commandName == null)
+            {
+                _buffer.Add(OpCodes.MOCK_CLEAR_ALL);
+                return;
+            }
+
+            var commandIds = ResolveMockCommandIds(clearMockStatement.commandName);
+            foreach (var commandId in commandIds)
+            {
+                AddPushInt(_buffer, commandId);
+                _buffer.Add(OpCodes.MOCK_CLEAR);
+            }
         }
 
         private void Compile(EndProgramStatement endProgramStatement)

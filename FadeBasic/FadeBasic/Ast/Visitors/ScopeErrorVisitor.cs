@@ -46,14 +46,31 @@ namespace FadeBasic.Ast.Visitors
                 }
             });
             
+            var allFunctions = new List<FunctionStatement>();
+            allFunctions.AddRange(program.functions);
+            foreach (var test in program.tests)
+            {
+                allFunctions.AddRange(test.functions);
+            }
             
-            foreach (var function in program.functions)
+            foreach (var function in allFunctions)
             {
                 foreach (var label in function.labels)
                 {
                     scope.AddLabel(function.name, label);
                 }
                 scope.DeclareFunction(function);
+            }
+
+            // Register test labels with the test's name as the owning scope.
+            // Cross-namespace goto/gosub (test→program, program→test, test→other-test)
+            // now fires the existing TraverseLabelBetweenScopes error.
+            foreach (var test in program.tests)
+            {
+                foreach (var label in test.labels)
+                {
+                    scope.AddLabel(test.name, label);
+                }
             }
 
             // CheckTypeInfo2(scope);
@@ -78,9 +95,11 @@ namespace FadeBasic.Ast.Visitors
                 }
             }
             
+            
+            scope.currentRegionName.Push(FunctionStatement.REGION_TOP_LEVEL);
             CheckStatements(program.statements, scope, globalCtx);
 
-            foreach (var function in program.functions)
+            foreach (var function in allFunctions)
             {
                 if (scope.functionReturnTypeTable.ContainsKey(function.name))
                 {
@@ -105,12 +124,26 @@ namespace FadeBasic.Ast.Visitors
                 
             }
 
-            foreach (var function in program.functions)
+            foreach (var function in allFunctions)
             {
                 if (scope.functionReturnTypeTable.ContainsKey(function.name)) continue; // already parsed.
                 function.Errors.Add(new ParseError(function.startToken, ErrorCodes.UnknowableFunctionReturnType));
 
             }
+
+            // Validate test bodies: each test gets its own local-variable scope.
+            // The main scope check below handles general "unknown symbol" errors.
+            // The TestScopeStrictnessVisitor adds the strict scope_at(:L) check
+            // afterwards, ensuring tests can only reference program-scope names
+            // that are visible at the most recent runto target.
+            scope.currentRegionName.Pop(); // remove the top level region.
+            foreach (var test in program.tests)
+            {
+                scope.BeginTest(test);
+                CheckStatements(test.statements, scope, globalCtx);
+                scope.EndTest(test);
+            }
+            program.EnforceStrictTestScopes();
 
             foreach (var def in scope.defaultValueExpressions)
             {
@@ -473,6 +506,52 @@ namespace FadeBasic.Ast.Visitors
                     case TypeDefinitionStatement invalidTypeStatement:
                         invalidTypeStatement.Errors.Add(new ParseError(invalidTypeStatement.name, ErrorCodes.TypeMustBeTopLevel));
                         break;
+                    case AssertStatement assertStatement:
+                        // Strict scope enforcement is handled by TestScopeStrictnessVisitor.
+                        // Here we only need to recurse into the condition expression to
+                        // catch general "unknown symbol" errors.
+                        if (!scope.IsInsideTest)
+                        {
+                            assertStatement.Errors.Add(new ParseError(assertStatement.StartToken, ErrorCodes.AssertOutsideTest));
+                        }
+                        if (assertStatement.condition != null)
+                        {
+                            assertStatement.condition.EnsureVariablesAreDefined(scope, ctx);
+                        }
+                        break;
+                    case RuntoStatement runtoStatement:
+                        // Runto target validation happens in the TestScopeStrictnessVisitor.
+                        // Here we just resolve the target label's symbol so the
+                        // LSP can offer go-to-definition + find-references on
+                        // `runto labelName` sites.
+                        if (!scope.IsInsideTest)
+                        {
+                            runtoStatement.Errors.Add(new ParseError(runtoStatement.StartToken, ErrorCodes.RuntoOutsideTest));
+                        }
+                        if (runtoStatement.targetLabel != null
+                            && scope.TryGetLabel(runtoStatement.targetLabel, out var runtoLabelSymbol))
+                        {
+                            runtoStatement.DeclaredFromSymbol = runtoLabelSymbol;
+                        }
+                        if (runtoStatement.maxCyclesExpression != null)
+                        {
+                            runtoStatement.maxCyclesExpression.EnsureVariablesAreDefined(scope, ctx);
+                        }
+                        break;
+                    case MockStatement mockStatement:
+                        if (!scope.IsInsideTest)
+                        {
+                            mockStatement.Errors.Add(new ParseError(mockStatement.StartToken, ErrorCodes.MockOutsideTest));
+                        }
+                        ValidateMockStatement(mockStatement, scope, ctx);
+                        break;
+                    case ClearMockStatement clearMockStatement:
+                        if (!scope.IsInsideTest)
+                        {
+                            clearMockStatement.Errors.Add(new ParseError(clearMockStatement.StartToken, ErrorCodes.ClearMockOutsideTest));
+                        }
+                        ValidateClearMockStatement(clearMockStatement);
+                        break;
                     default:
                         throw new NotImplementedException($"cannot check statement for scope errors - {statement.GetType().Name} {statement}");
                         // break;
@@ -480,6 +559,42 @@ namespace FadeBasic.Ast.Visitors
             }
         }
         
+        // mock and clear-mock validation. Command-existence is enforced by the
+        // lexer's CommandNameTree pass (an unknown command name doesn't tokenize
+        // as CommandWord, so the parser already errors). Here we walk the entry
+        // expressions to catch general scope errors (unknown variable refs in
+        // `returns` expressions, etc.) and emit unreachable-entry warnings.
+        static void ValidateMockStatement(MockStatement mock, Scope scope, EnsureTypeContext ctx)
+        {
+            var sawAlways = false;
+            for (var i = 0; i < mock.entries.Count; i++)
+            {
+                var entry = mock.entries[i];
+                if (sawAlways)
+                {
+                    entry.Errors.Add(new ParseError(entry.StartToken, ErrorCodes.MockUnreachableEntry));
+                }
+                if (entry.frequency == MockFrequencyKind.Always) sawAlways = true;
+
+                if (entry.returnExpression != null)
+                {
+                    entry.returnExpression.EnsureVariablesAreDefined(scope, ctx);
+                }
+                if (entry.countExpression != null)
+                {
+                    entry.countExpression.EnsureVariablesAreDefined(scope, ctx);
+                }
+            }
+        }
+
+        static void ValidateClearMockStatement(ClearMockStatement clear)
+        {
+            // Nothing to validate at the scope level — the parser already
+            // checked for `mock <name>` / `mocks` shape, and the command name
+            // (if present) was a CommandWord token (so it's known to the
+            // command collection).
+        }
+
         // static void TryGetSymbolTable(this StructFieldReference)
         static void EnsureLabel(Scope scope, string label, AstNode node)
         {
@@ -709,6 +824,13 @@ namespace FadeBasic.Ast.Visitors
                     {
                         if (scope.functionTable.TryGetValue(arrayRef.variableName, out var function))
                         {
+                            
+                            // if the function is not a top level, and the current scope IS top level; then we have an issue.
+                            if (function.region != FunctionStatement.REGION_TOP_LEVEL && scope.currentRegionName.Peek() == FunctionStatement.REGION_TOP_LEVEL)
+                            {
+                                arrayRef.Errors.Add(new ParseError(arrayRef.startToken, ErrorCodes.CannotCallTestFunctionFromOutsideTest));
+                            }
+                            
                             TypeInfo functionType = default;
                             arrayRef.TransitiveFlags |= function.TransitiveFlags;
                             if (ctx.functionHistory.Contains(function.name))

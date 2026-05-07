@@ -70,6 +70,7 @@ public class GotoDefinitionHandler : DefinitionHandlerBase
             typeof(ArrayIndexReference),
             typeof(GoSubStatement),
             typeof(GotoStatement),
+            typeof(RuntoStatement),
         };
 
         bool Visit(IAstVisitable x)
@@ -90,6 +91,7 @@ public class GotoDefinitionHandler : DefinitionHandlerBase
             
             case GoSubStatement _:
             case GotoStatement _:
+            case RuntoStatement _:
             case ArrayIndexReference _:
             case VariableRefNode _:
                 location = GetLink(node, unit);

@@ -159,11 +159,12 @@ namespace FadeBasic.Sdk
         }
     }
 
-    public class FadeRuntimeContext : ILaunchable
+    public partial class FadeRuntimeContext : ITestLaunchable
     {
         byte[] ILaunchable.Bytecode => Machine.program;
         CommandCollection ILaunchable.CommandCollection => CommandCollection;
         DebugData ILaunchable.DebugData => Compiler.DebugData;
+        IReadOnlyList<TestManifestEntry> ITestLaunchable.TestManifest => Compiler.TestManifest;
         
         private DebugSession _session;
         private static Lexer _lexer = new Lexer();
@@ -802,6 +803,12 @@ namespace FadeBasic.Sdk
                 InternStrings = true
             });
             compiler.Compile(program);
+
+            // Resolve test manifest source locations to per-file paths via the
+            // source map, so multi-`.fbasic` projects surface the right
+            // originating file in IDE Test Explorer (Stage 11H). No-op when
+            // no source map was supplied (single-string SDK callers).
+            FadeBasic.Launch.LaunchUtil.ApplySourceMap(compiler.TestManifest, map);
 
             var vm = new VirtualMachine(compiler.Program);
             vm.hostMethods = compiler.methodTable;

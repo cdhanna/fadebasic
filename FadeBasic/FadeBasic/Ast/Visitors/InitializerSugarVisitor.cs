@@ -43,6 +43,13 @@ namespace FadeBasic.Ast.Visitors
                         }
                         ApplyStatements(switchStatement.defaultCase?.statements);
                         break;
+                    case TestNode testStatement:
+                        foreach (var func in testStatement.functions)
+                        {
+                            ApplyStatements(func.statements);
+                        }
+                        ApplyStatements(testStatement.statements);
+                        break;
                 }
                 
             } 
