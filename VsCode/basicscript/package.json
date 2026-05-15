@@ -118,6 +118,12 @@
                 "type": "string",
                 "description": "when provided, the DAP session will overwrite logs to this file. These logs are internal debug logs of the dap program, not the STDOUT from the actual Fade Application",
                 "default": ""
+              },
+              "dotnetCommand": {
+                "type": "string",
+                "enum": ["run", "test"],
+                "description": "Which `dotnet` subcommand the DAP should invoke for the launched program. Use `run` for a normal Fade application, or `test` to attach the debugger to a Fade test session.",
+                "default": "run"
               }
             }
           },

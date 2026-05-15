@@ -152,7 +152,7 @@ export async function activate(context: vscode.ExtensionContext) {
 		transport: TransportKind.stdio
 	}
 	
-	// // run directly from src
+	// run directly from src
 	// config = {
 	// 	command: '/usr/local/share/dotnet/dotnet',
 	// 	args: [
@@ -162,6 +162,18 @@ export async function activate(context: vscode.ExtensionContext) {
 	// 	],
 	// 	transport: TransportKind.pipe
 	// }
+
+	config = {
+		command: '/usr/local/share/dotnet/dotnet',
+		args: [
+			'run',
+			'--project',
+			'/Users/chrishanna/Documents/Github/dby/FadeBasic/LSP',
+			'--',
+			'--use-log-path'
+		],
+		transport: TransportKind.pipe
+	}
 
 	logMessage('fade LSP config', config)
 	
@@ -311,11 +323,15 @@ class FadeBasicDebugger implements DebugAdapterDescriptorFactory
 		var program = _session.configuration.program;
 		var debuggerLogPath = _session.configuration.debuggerLogPath ?? "";
 		var dapLogPath = _session.configuration.dapLogPath ?? "";
+		// "run" launches the program normally; "test" routes through
+		// `dotnet test` so the DAP attaches to a Fade test host.
+		var dotnetCommand = _session.configuration.dotnetCommand ?? "run";
 
 		var env: any = {
 			"FADE_PROGRAM": program,
 			"FADE_WAIT_FOR_DEBUG": waitForDebugger,
-			"FADE_DOTNET_PATH": this.dotnetPath
+			"FADE_DOTNET_PATH": this.dotnetPath,
+			"FADE_BASIC_DEBUG_DOTNET_COMMAND": dotnetCommand
 		}
 		if (debuggerLogPath){
 			env["FADE_DEBUGGER_LOG_PATH"] = debuggerLogPath

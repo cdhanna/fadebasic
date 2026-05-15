@@ -35,7 +35,7 @@ endtest
         Assert.That(errs, Is.Empty,
             "expected clean parse; got: " + string.Join(", ", errs.Select(e => e.Display)));
 
-        var runto = prog.tests[0].statements
+        var runto = prog.tests[0].testProgram.statements
             .OfType<RuntoStatement>()
             .First();
         Assert.That(runto.DeclaredFromSymbol, Is.Not.Null,
@@ -59,7 +59,7 @@ test foo
 endtest
 ";
         var prog = Parse(src, out _);
-        var runto = prog.tests[0].statements
+        var runto = prog.tests[0].testProgram.statements
             .OfType<RuntoStatement>()
             .First();
         Assert.That(runto.DeclaredFromSymbol, Is.Null);
@@ -83,7 +83,7 @@ test foo
 endtest
 ";
         var prog = Parse(src, out var errs);
-        var runto = prog.tests[0].statements.OfType<RuntoStatement>().First();
+        var runto = prog.tests[0].testProgram.statements.OfType<RuntoStatement>().First();
         Assert.That(runto.DeclaredFromSymbol, Is.Not.Null);
         var label = (LabelDeclarationNode)runto.DeclaredFromSymbol.source;
         Assert.That(label.label, Is.EqualTo("fnInner").IgnoreCase);

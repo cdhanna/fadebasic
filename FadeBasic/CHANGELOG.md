@@ -41,6 +41,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `LaunchableGenerator.NUnitFixtureTemplate` and the corresponding
   `IsTestProject` / `GenerateProgramFile` workarounds in `FadeBasic.Build.targets`.
 
+### Fixed
+- boolean type inference works through binary operators
+
 ## [0.0.64] - 2026-04-28
 ### Added
 - Rider IDE Plugin Support

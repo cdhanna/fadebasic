@@ -115,6 +115,10 @@ namespace FadeBasic.Ast
         // uses this to format failure messages.
         public string sourceText;
 
+        // Optional second arg: a string expression giving a human-readable reason
+        // surfaced in the failure report. Null when not supplied.
+        public IExpressionNode reason;
+
         public AssertStatement(Token startToken, Token endToken, IExpressionNode condition, string sourceText)
             : base(startToken, endToken)
         {
@@ -124,12 +128,14 @@ namespace FadeBasic.Ast
 
         protected override string GetString()
         {
+            if (reason != null) return $"assert {condition}, {reason}";
             return $"assert {condition}";
         }
 
         public override IEnumerable<IAstVisitable> IterateChildNodes()
         {
-            yield return condition;
+            if (condition != null) yield return condition;
+            if (reason != null) yield return reason;
         }
     }
 

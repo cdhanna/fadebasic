@@ -126,6 +126,7 @@ namespace FadeBasic.Lsp
                 case LexemType.KeywordTimes:
                 case LexemType.KeywordAlways:
                 case LexemType.KeywordClear:
+                case LexemType.KeywordMaxCycles:
                     return PortableSemanticTokenType.Keyword;
 
                 case LexemType.KeywordType:

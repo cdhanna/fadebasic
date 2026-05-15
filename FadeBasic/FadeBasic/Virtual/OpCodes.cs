@@ -447,5 +447,13 @@ namespace FadeBasic.Virtual
         /// Removes all mock registrations for the current VM. No stack inputs.
         /// </summary>
         public const byte MOCK_CLEAR_ALL = 71;
+
+        /// <summary>
+        /// Pushes the current scope-stack depth onto the data stack as an int.
+        /// Depth 1 means only the global scope is live. Used by the assert-unwind
+        /// trampoline to walk up the scope chain draining defers, but is a
+        /// general primitive any future "unwind to scope N" feature can reuse.
+        /// </summary>
+        public const byte PUSH_SCOPE_DEPTH = 72;
     }
 }

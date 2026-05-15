@@ -31,8 +31,14 @@ dependencies {
     testRuntimeOnly("org.junit.platform:junit-platform-launcher")
 }
 
+// Toolchain language version is overridable via -PfadeJdkVersion=21 so contributors
+// who only have JDK 21 (e.g. Rider's bundled JBR) can compile without installing
+// JDK 17 explicitly. The compiled bytecode level (jvmTarget below) stays at JVM 17
+// regardless, keeping the plugin runnable on the IntelliJ Platform's minimum runtime.
+val fadeJdkVersion: String = (project.findProperty("fadeJdkVersion") as String?) ?: "17"
+
 kotlin {
-    jvmToolchain(17)
+    jvmToolchain(fadeJdkVersion.toInt())
     sourceSets.named("main") {
         kotlin.srcDir(layout.buildDirectory.dir("generated/kotlin/main"))
     }
@@ -74,12 +80,29 @@ val generateFadeDevPaths by tasks.registering {
     }
 }
 
+// Match Kotlin's jvmTarget to the toolchain language version so JVM-target
+// compatibility validation accepts the build (Kotlin and Java tasks must agree).
+// Default is 17 to match the platform; opt-up to 21 with -PfadeJdkVersion=21 when
+// JDK 17 isn't installed.
+val fadeJvmTarget: JvmTarget = when (fadeJdkVersion) {
+    "21" -> JvmTarget.JVM_21
+    "20" -> JvmTarget.JVM_20
+    "19" -> JvmTarget.JVM_19
+    "18" -> JvmTarget.JVM_18
+    else -> JvmTarget.JVM_17
+}
+
 tasks.withType<KotlinCompile>().configureEach {
     dependsOn(generateFadeDevPaths)
     compilerOptions {
-        jvmTarget.set(JvmTarget.JVM_17)
+        jvmTarget.set(fadeJvmTarget)
         freeCompilerArgs.add("-Xjvm-default=all")
     }
+}
+
+tasks.withType<JavaCompile>().configureEach {
+    sourceCompatibility = fadeJdkVersion
+    targetCompatibility = fadeJdkVersion
 }
 
 tasks.test {

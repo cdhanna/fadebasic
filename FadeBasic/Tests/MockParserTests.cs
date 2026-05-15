@@ -20,7 +20,7 @@ public class MockParserTests
     {
         foreach (var t in prog.tests)
         {
-            foreach (var stmt in t.statements)
+            foreach (var stmt in t.testProgram.statements)
             {
                 if (stmt is MockStatement m) return m;
             }
@@ -32,7 +32,7 @@ public class MockParserTests
     {
         foreach (var t in prog.tests)
         {
-            foreach (var stmt in t.statements)
+            foreach (var stmt in t.testProgram.statements)
             {
                 if (stmt is ClearMockStatement c) return c;
             }
@@ -321,14 +321,18 @@ clear mocks
     }
 
     [Test]
-    public void Assert_OutsideTest_Errors()
+    public void Assert_OutsideTest_IsAllowed()
     {
+        // `assert` is now legal in the main program. When the VM runs the
+        // program directly and an assert fails, it triggers a runtime crash
+        // (verified by VM-side tests). Parse should produce no errors here.
         var src = @"
 assert 1 = 1
 ";
-        var prog = Parse(src, out var errs);
+        Parse(src, out var errs);
         Assert.That(errs.Any(e => e.errorCode.Equals(ErrorCodes.AssertOutsideTest)),
-            Is.True,
-            "expected AssertOutsideTest; got: " + string.Join(", ", errs.Select(e => e.Display)));
+            Is.False,
+            "AssertOutsideTest should no longer be raised; got: " +
+            string.Join(", ", errs.Select(e => e.Display)));
     }
 }

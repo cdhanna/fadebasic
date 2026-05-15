@@ -934,6 +934,8 @@ IF x > 0 THEN GOTO tuna
 
 `GOTO` statements can be used to escape from looping control structures, or indeed from any control statements. However, `GOTO` statements _cannot_ be used to jump the code between [#scopes](#scopes).
 
+----
+#### Labels
 _Labels_ are defined as any valid variable name, with a `:` symbol immediately following the name. Labels cannot be redeclared.
 
 ----
@@ -1361,3 +1363,341 @@ blueFish as TUNA `a second TUNA is allocated
 redFish = blueFish `the first TUNA is no longer being reference, and is garbage collected. 
 ```
 
+## Testing
+
+_Fade Basic_ has a software testing framework built into the language itself. A program may define a series of test blocks using the `TEST` and `ENDTEST` keywords. 
+
+```basic
+TEST sample
+    `this is an example test block called `sample`
+ENDTEST
+```
+
+The code inside a test block is never executed as part of the main program execution. 
+```basic
+print "a"
+TEST sample
+    print "b"
+ENDTEST
+
+`runtime output:
+` a
+```
+
+Instead, test blocks are run as distinct top level programs using the `dotnet test` command. #TODO, insert guide to this. `--logger "console;verbosity=detailed"`
+When `dotnet test` is run, all of the test blocks will run in sequence, in the order they are defined in the program. 
+```basic
+TEST tuna
+    print "a"
+ENDTEST
+TEST fish
+    print "b"
+ENDTEST
+
+`test output
+` a
+` b
+```
+
+Test blocks have a unique access to the scope of the main program. They can _access_ variables defined in the global [scope](#scopes) of the program, but by default, they do not have access to local scoped variables. However, the test program does not run the main program, so global values are _declared_, but they will not have their actual assigned values. 
+```basic
+GLOBAL x = 42
+TEST sample
+    print x
+ENDTEST
+
+`test output
+` 0
+```
+
+----
+#### `RUNTO`
+
+Test programs are allowed to control the flow of the main program by using the `RUNTO` syntax. The `RUNTO` keyword must be followed by a [label](#labels) name. 
+
+When the test program executes a `RUNTO` statement, the execution will switch from the test program _into_ the main program, and execution will continue until the given label is reached. When the execution reaches the given label, execution returns after the `RUNTO` statement in the test program. 
+```basic
+
+print "hello"
+_L1:
+
+TEST sample
+    print "start"
+    RUNTO _L1
+    print "end"
+ENDTEST
+
+`test output
+` start
+` hello
+` end
+```
+
+The `RUNTO` statement can take an optional `MAX CYCLES` cluase followed by an integer expression. The value represents the max number of instructions that the _Fade Basic_ virtual machine will allow before causing the test to _fail_. For example, if the main program would never reach the desired label, the `MAX CYCLES` clause can be used to prevent the test from running forever. 
+```basic
+WHILE 1
+    `loop forever
+ENDWHILE
+
+print "hello"
+_L1:
+
+TEST sample
+    print "start"
+    RUNTO _L1 MAX CYCLES 1000
+ENDTEST
+
+`test output
+` hello
+` <fail>
+```
+
+----
+#### Test Scope
+
+By default, test blocks can only reference global scope from the main program. However, anytime a `RUNTO` statement resumes execution into the test program, the current available scope in the test block is equivilent to the scope from where the main program was paused. 
+```basic
+x = 42
+_L1:
+
+TEST sample
+    RUNTO _L1
+    print x
+ENDTEST
+
+`test output
+` 42
+```
+
+In the example, it would be invalid to access `x` before the `RUNTO`, because the main program has not declared `x` yet.
+```basic
+x = 42
+_L1:
+
+TEST sample
+    print x `invalid; x is not defined yet.
+ENDTEST
+```
+
+Variables can come in and out of scope. 
+```basic
+LOCAL x = 42
+_L1:
+tuna()
+
+
+FUNCTION tuna()
+    y = 24
+    _L2:
+ENDFUNCTION
+
+TEST sample
+    RUNTO _L1
+    print x
+    RUNTO _L2
+    print y
+    ` note, x is no longer valid
+ENDTEST
+```
+
+Sadly, it is possible to introduce a variable name collision. 
+```basic
+x = 4 `x is declared as a variable in the main program
+_L1:
+TEST sample
+    x = 12 `x is declared as a variable in the test program
+    RUNTO _L1 `this RUNTO is invalid, because it introduces a conflict on x. 
+ENDTEST
+```
+
+State can be mutated from within a test.
+```
+x = 1
+_L1:
+
+print x 
+_L2:
+
+TEST sample
+    RUNTO _L1
+    x = 42 `mutate the program state
+    RUNTO _L2
+ENDTEST
+
+`test output
+` 42
+```
+
+Functions are always global in _Fade Basic_, which means a test block may invoke a function defined in the main program. 
+```basic
+FUNCTION add(a, b)
+ENDFUNCTION a + b
+
+TEST sample
+    sum = add(1,2)
+ENDTEST
+```
+
+However, remember that if a function references variables that have not been set yet, their values will be zero'd. 
+```basic
+GLOBAL x = 100
+
+FUNCTION greaterThanX(a)
+ENDFUNCTION a > x
+
+TEST sample
+    n = greaterThanX(5) `5 is less than 100
+    print n
+ENDTEST
+
+`test output
+` 1
+```
+
+----
+#### Asserts
+
+A test block can use the `ASSERT` statement to cause a test to pass or fail. An `ASSERT` statement must be followed by an expression that resolves to a boolean. When the expresion resolves to a truthy value, the assert statement is valid. Otherwise, the assert statement is considered _invalid_. The test block will stop executing and be marked as a failure at the first invalid `ASSERT` statement. 
+```basic
+TEST sample
+    x = 1
+    ASSERT x = 1 `this assert passes.
+    ASSERT x = 0 `this assert fails, and causes the test to fail.
+ENDTEST
+```
+
+The `ASSERT` statement can be used to validate the output of a function.
+```basic
+FUNCTION add(a, b)
+ENDFUNCTION a + b
+
+TEST sample
+    ASSERT add(1,2) = 3
+ENDTEST
+```
+
+The `ASSERT` statement can be used to validate the state of the program in conjunction with the [`RUNTO`](#runto) statement.
+```basic
+x = 1 + 2
+_L1:
+
+TEST sample
+    RUNTO _L1
+    ASSERT x = 3
+ENDTEST
+```
+
+`ASSERT` statements can optionally include a _reason_ phrase after the condition. The _reason_ phrase will be included the output if the assert ever fails. These are useful for adding documentation to failed assertions. 
+```basic
+TEST sample
+    x = 12
+    ASSERT x > 100, "x should be greater than zero"
+ENDTEST
+```
+
+Similar to [`short circuits`](#short-circuiting), if an `ASSERT` does _not_ fail, then the _reason_ phrase is not evaluated. 
+```basic
+FUNCTION message(x)
+    msg$ = "failed " + str$(x)
+    print msg$
+ENDFUNCTION msg$
+
+TEST sample
+    ASSERT 1 = 1, message(1) `message(1) is never evaluated, because the assert is valid
+ENDTEST
+```
+
+The `ASSERT` statement may also be used outside of a test block. 
+
+When the assertion happens as part the execution of a test block, any failure will cause the current test block to fail. 
+```basic
+FUNCTION ex(x)
+    ASSERT x > 0 `the test will fail here
+    print x
+ENDFUNCTION
+
+TEST sample
+    ex(0)
+ENDTEST
+```
+
+When the assertion happens as part of the main program, any failure will crash the entire program.
+The `ASSERT` statement will halt the entire program if it fails.
+```basic
+FUNCTION ex(x)
+    ASSERT x > 0 `the program will crash here
+    print x
+ENDFUNCTION
+
+ex(0)
+```
+
+
+Any [`DEFERRED`](#defer-statements) statements will execute when an assertion causes a test block to fail. 
+```basic
+DEFER print "a"
+_L1:
+
+TEST sample
+    DEFER print "b"
+    RUNTO _L1
+
+    ASSERT 0
+ENDTEST
+
+`test output
+` a
+` b
+```
+
+However, when an assertion crashes a program without a test block, deferred statements **are not** executed. In this scenario, the `ASSERT` acts as a fatal exception, causing the program to crash.
+```basic
+DEFER print "a"
+ASSERT 0
+` the assert throws a fatal exception, and the deferred statement is not run
+```
+
+----
+#### Test Macros
+
+Test blocks can be combined with [`#MACRO`](#compile-time-execution) statements. The following example will result in 3 unique tests. 
+```basic
+FUNCTION evenAndPositive(n)
+    isEven = n mod 2 = 0
+    isPositive = n > 0
+    x = 1 and isEven and isPositive
+ENDFUNCTION x
+
+#MACRO
+    DIM cases(3)
+    cases(0) = 42
+    cases(1) = 888
+    cases(2) = 36
+
+    for n = 0 to 2
+        v = cases(n)
+        #tokenize
+            TEST sample_[v]
+                ASSERT evenAndPositive([v]) = 1
+            ENDTEST
+        #endtokenize
+    next
+#ENDMACRO
+```
+
+----
+#### Mocks
+
+
+----
+#### Child Tests
+
+----
+#### Testing Edge Cases
+- defer statements?
+- type definitions? 
+- 
+
+----
+#### Calling Tests
+- quirks with `dotnet test`

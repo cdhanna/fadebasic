@@ -235,6 +235,10 @@ namespace FadeBasic
         public static readonly ErrorCode MockOutsideTest = "[0186] mock can only be used inside a test block";
         public static readonly ErrorCode ClearMockMissingTarget = "[0187] clear must be followed by `mock <command name>` or `mocks`";
         public static readonly ErrorCode ClearMockOutsideTest = "[0188] clear mock(s) can only be used inside a test block";
+        public static readonly ErrorCode TestNestingNotAllowed = "[0189] tests cannot be declared inside another test";
+        public static readonly ErrorCode TestRuntoShadowsLocal = "[0190] runto brings a program-scope variable into view that conflicts with a test-local of the same name";
+        public static readonly ErrorCode AssertReasonMissingExpression = "[0191] assert reason clause (after `,`) requires a string expression";
+        public static readonly ErrorCode AssertReasonMustBeString = "[0192] assert reason expression must be a string";
 
         // 200 series represents post-parse issues
         public static readonly ErrorCode InvalidReference = "[0200] Invalid reference";

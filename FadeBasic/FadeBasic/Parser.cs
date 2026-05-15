@@ -83,9 +83,16 @@ namespace FadeBasic
         List<DelayedTypeCheck> delayedTypeChecks = new List<DelayedTypeCheck>();
 
         private int allowExitCounter;
-        private int testDepth;
 
-        public bool IsInsideTest => testDepth > 0;
+        public bool IsInsideTest { get; set; }
+
+        // Names that were preloaded from the parent program into a test scope
+        // (top-level locals + function-internal locals/params, see
+        // ScopeErrorVisitor.AddScopeRelatedErrors). They're in the local table
+        // so the base checker can resolve cross-scope references, but a test's
+        // own `local <name>` declaration is allowed to shadow them rather than
+        // erroring with SymbolAlreadyDeclared.
+        public HashSet<string> borrowedFromParent = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
         public Scope()
         {
@@ -167,65 +174,6 @@ namespace FadeBasic
             currentFunctionName.Pop();
         }
 
-        public bool BeginTest(TestNode test)
-        {
-            // A test gets its own local symbol table — same shape as a function's.
-            // We push the test name onto currentFunctionName so the label-scope
-            // check (TraverseLabelBetweenScopes) fires when a test tries to
-            // goto/gosub a label that belongs to a different namespace, and so
-            // labels declared inside this test resolve only within it.
-            //
-            // Seed the test's local table with the names visible from main-body
-            // scope so the basic ScopeErrorVisitor doesn't flag program-scope
-            // names referenced from inside the test as "unknown symbol". The
-            // TestScopeStrictnessVisitor enforces the runto-based visibility
-            // lens on top of this seed.
-            var table = new SymbolTable();
-            if (localVariables.Count > 0)
-            {
-                foreach (var kvp in localVariables.Peek())
-                {
-                    table[kvp.Key] = kvp.Value;
-                }
-            }
-
-            if (currentRegionName.Count > 1) throw new InvalidOperationException("Cannot handle multi-region parsing");
-            currentRegionName.Push(test.nameToken.raw);
-            localVariables.Push(table);
-            positionedVariables.Add(new TokenTable<(SymbolTable, string)>.Entry(test, (table, test.name)));
-            currentFunctionName.Push(test.name);
-            testDepth++;
-
-            // Register the test's functions in the scope so calls from inside the
-            // test resolve. Functions are unregistered in EndTest so they aren't
-            // visible from main program code or sibling tests.
-            foreach (var function in test.functions)
-            {
-                if (!functionTable.ContainsKey(function.name))
-                {
-                    functionTable.Add(function.name, function);
-                }
-            }
-            return true;
-        }
-
-        public void EndTest(TestNode test)
-        {
-            localVariables.Pop();
-            currentFunctionName.Pop();
-            currentRegionName.Pop();
-            testDepth--;
-            // Unregister test-scoped functions so other tests / program code can't see them.
-            foreach (var function in test.functions)
-            {
-                if (functionTable.TryGetValue(function.name, out var registered)
-                    && ReferenceEquals(registered, function))
-                {
-                    functionTable.Remove(function.name);
-                }
-            }
-        }
-
         public void BeginLoop() => allowExitCounter++;
         public void EndLoop() => allowExitCounter--;
         public bool AllowExits => allowExitCounter > 0;
@@ -266,7 +214,8 @@ namespace FadeBasic
                 
                 if (expr.operationType == OperationType.EqualTo)
                 {
-                    // the expression has a VOID type  
+                    // Comparison result is an int (BASIC uses int as boolean).
+                    expr.ParsedType = TypeInfo.FromVariableType(VariableType.Integer);
                     return;
                 }
 
@@ -650,15 +599,23 @@ namespace FadeBasic
         
         public void AddDeclaration(DeclarationStatement declStatement, EnsureTypeContext ctx)
         {
-            
+
             var table = GetVariables(declStatement.scopeType);
             if (table.ContainsKey(declStatement.variable))
             {
-                // this is an error; we cannot declare a variable twice in the same scope.
-                declStatement.Errors.Add(new ParseError(declStatement.StartToken, ErrorCodes.SymbolAlreadyDeclared));
-                
-                // don't do anything with this.
-                return;
+                // A parent-program name preloaded into this test scope is
+                // allowed to be legitimately shadowed by the test's own
+                // declaration. Drop the borrowed symbol and proceed.
+                if (borrowedFromParent.Remove(declStatement.variable))
+                {
+                    table.Remove(declStatement.variable);
+                }
+                else
+                {
+                    // Real duplicate in the same scope -> hard error.
+                    declStatement.Errors.Add(new ParseError(declStatement.StartToken, ErrorCodes.SymbolAlreadyDeclared));
+                    return;
+                }
             }
 
             switch (declStatement.type)
@@ -1022,11 +979,7 @@ namespace FadeBasic
                         program.tests.Add(testNode);
                         break;
                     case LabelDeclarationNode labelStatement:
-                        program.labels.Add(new LabelDefinition
-                        {
-                            statementIndex = program.statements.Count + 1,
-                            node = labelStatement
-                        });
+                        program.labels.Add(labelStatement);
                         program.statements.Add(labelStatement);
                         break;
                     default:
@@ -2480,7 +2433,10 @@ namespace FadeBasic
                     name = "_",
                     startToken = abstractToken,
                     endToken = abstractToken,
-                    isAbstract = true
+                    isAbstract = true,
+                    // empty test body so downstream visitors that recurse into
+                    // testProgram don't NRE on this error-recovery node.
+                    testProgram = new ProgramNode(abstractToken) { endToken = abstractToken },
                 };
                 node.Errors.Add(new ParseError(abstractToken, ErrorCodes.AbstractRequiresTest));
                 return node;
@@ -2593,17 +2549,23 @@ namespace FadeBasic
                 }
             }
 
+            // TODO: are you allowed to define custom types in a test? 
+            var testProgram = new ProgramNode(nameToken)
+            {
+                statements = statements,
+                functions = functions, 
+                labels = labels, 
+                endToken = _stream.Current,
+            };
             return new TestNode
             {
+                testProgram = testProgram,
                 Errors = errors,
                 name = nameToken.raw,
                 nameToken = nameToken,
                 isAbstract = isAbstract,
                 fromParent = fromParent,
                 fromParentToken = fromParentToken,
-                statements = statements,
-                labels = labels,
-                functions = functions,
                 startToken = startToken,
                 endToken = _stream.Current
             };
@@ -3287,7 +3249,25 @@ namespace FadeBasic
             var endIdx = _stream.Save();
             var sourceText = _stream.GetSourceText(startIdx, endIdx);
 
-            return new AssertStatement(assertToken, expr.EndToken, expr, sourceText);
+            var stmtNode = new AssertStatement(assertToken, expr.EndToken, expr, sourceText);
+
+            // Optional second arg: `assert <cond>, <reason>` where <reason> is a
+            // string expression (literal or variable). Surfaced in failure reports.
+            if (_stream.Peek.type == LexemType.ArgSplitter)
+            {
+                _stream.Advance(); // consume comma
+                if (TryParseExpression(out var reasonExpr))
+                {
+                    stmtNode.reason = reasonExpr;
+                    stmtNode.endToken = reasonExpr.EndToken;
+                }
+                else
+                {
+                    stmtNode.Errors.Add(new ParseError(assertToken, ErrorCodes.AssertReasonMissingExpression));
+                }
+            }
+
+            return stmtNode;
         }
 
         private RuntoStatement ParseRunto(Token runtoToken)

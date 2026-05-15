@@ -8,7 +8,7 @@ namespace FadeBasic.Ast.Visitors
     public static partial class ErrorVisitors
     {
 
-        public static void AddScopeRelatedErrors(this ProgramNode program, ParseOptions options, Dictionary<string, TypeInfo> knownFunctionTypes=null)
+        public static void AddScopeRelatedErrors(this ProgramNode program, ParseOptions options, Dictionary<string, TypeInfo> knownFunctionTypes=null, ProgramNode parentProgram=null)
         { 
             if (options?.ignoreChecks ?? false)
             {
@@ -18,14 +18,112 @@ namespace FadeBasic.Ast.Visitors
                 return;
             }
 
+
             var scope = program.scope = new Scope();
+            // Region name used to tag this program's top-level labels and to seed
+            // GetCurrentFunctionName() so EnsureLabel can detect cross-scope gotos
+            // between a test and its parent. Null for the outermost program (matches
+            // the existing "top-level = null" convention).
+            string topLevelRegion = parentProgram != null ? program.startToken?.raw : null;
+            if (parentProgram != null)
+            {
+                // We're scoping a test's sub-program. Mark the scope so test-only
+                // statements (assert/runto/mock/clear-mock) don't false-fire as
+                // "outside test" while we recurse.
+                scope.IsInsideTest = true;
+
+                // Push the test's name as the current "function" context so
+                // GetCurrentFunctionName() returns the test region (not null) for
+                // the test's top-level statements. This makes EnsureLabel emit
+                // TraverseLabelBetweenScopes when test code does `goto mainLabel`
+                // (parent's top-level labels carry a null funcName tag).
+                scope.currentFunctionName.Push(topLevelRegion);
+
+                // Layer in the parent program's scope as a baseline. Per the design,
+                // tests can read into parent (globals, types, functions, labels) but
+                // parent never reads into a test. We copy dictionary state here; the
+                // test's own pass below adds its locals on top. Stack-based state
+                // (currentFunctionName/Region, localVariables frames) intentionally
+                // stays separate — those are runtime-walk state, not symbol tables.
+                var parentScope = parentProgram.scope;
+
+                foreach (var kvp in parentScope.labelTable)
+                    scope.labelTable[kvp.Key] = kvp.Value;
+                foreach (var kvp in parentScope.labelDeclTable)
+                    scope.labelDeclTable[kvp.Key] = kvp.Value;
+
+                foreach (var kvp in parentScope.typeNameToTypeMembers)
+                    scope.typeNameToTypeMembers[kvp.Key] = kvp.Value;
+                foreach (var kvp in parentScope.typeNameToDecl)
+                    scope.typeNameToDecl[kvp.Key] = kvp.Value;
+
+                // Globals (`global X`) — always visible to tests.
+                foreach (var kvp in parentScope.globalVariables)
+                    scope.globalVariables[kvp.Key] = kvp.Value;
+                foreach (var kvp in parentScope.allGlobalVariables)
+                    scope.allGlobalVariables[kvp.Key] = kvp.Value;
+
+                // Parent top-level locals: variables declared at the program's main
+                // scope (including implicit-locals from bare assignments). The
+                // strict-scope visitor decides per-runto which of these the test
+                // can actually *see*; here we just make them resolvable so the
+                // basic scope check doesn't flag them as unknown.
+                if (parentScope.localVariables.Count > 0)
+                {
+                    var parentTopLocals = parentScope.localVariables.Peek();
+                    var testTopLocals = scope.localVariables.Peek();
+                    foreach (var kvp in parentTopLocals)
+                    {
+                        testTopLocals[kvp.Key] = kvp.Value;
+                        scope.borrowedFromParent.Add(kvp.Key);
+                    }
+                }
+
+                // Parent function-internal locals + parameters. Same rationale
+                // as above: without this, `runto :insideFn; print y` blows up
+                // with [0200] "unknown symbol y" before the strict visitor can
+                // rule on per-runto visibility. The strict visitor's
+                // ComputeFunctionInternalScopeAts already snapshots these
+                // names so it can enforce reachability per runto target.
+                //
+                // Name collisions across functions are resolved
+                // first-source-wins via the ContainsKey guard; type info on
+                // those rare cases may resolve to the "wrong" function, but
+                // visibility (the immediate goal) is unaffected.
+                {
+                    var testTopLocals = scope.localVariables.Peek();
+                    foreach (var entry in parentScope.positionedVariables.entries)
+                    {
+                        var (fnTable, fnName) = entry.value;
+                        if (fnName == null) continue; // top-level program, already copied
+                        foreach (var kvp in fnTable)
+                        {
+                            if (!testTopLocals.ContainsKey(kvp.Key))
+                            {
+                                testTopLocals[kvp.Key] = kvp.Value;
+                                scope.borrowedFromParent.Add(kvp.Key);
+                            }
+                        }
+                    }
+                }
+
+                foreach (var kvp in parentScope.functionSymbolTable)
+                    scope.functionSymbolTable[kvp.Key] = kvp.Value;
+                foreach (var kvp in parentScope.functionTable)
+                    scope.functionTable[kvp.Key] = kvp.Value;
+                foreach (var kvp in parentScope.functionReturnTypeTable)
+                    scope.functionReturnTypeTable[kvp.Key] = kvp.Value;
+            }
             
             // add the main program variables. 
             scope.positionedVariables.Add(new TokenTable<(SymbolTable, string)>.Entry(program, (scope.localVariables.Peek(), null)));
             
             foreach (var label in program.labels)
             {
-                scope.AddLabel(null, label.node);
+                // Inside a test scope, tag this program's top-level labels with the
+                // test's region name (not null) so cross-scope gotos to/from main
+                // get caught by EnsureLabel's funcName comparison.
+                scope.AddLabel(topLevelRegion, label);
             }
 
             foreach (var type in program.typeDefinitions)
@@ -48,10 +146,16 @@ namespace FadeBasic.Ast.Visitors
             
             var allFunctions = new List<FunctionStatement>();
             allFunctions.AddRange(program.functions);
-            foreach (var test in program.tests)
-            {
-                allFunctions.AddRange(test.functions);
-            }
+            /*
+             * the general rule here is that a TEST can call into global parent scope.
+             * but parent scope can never call into TEST scope.
+             *  - this is so that we can always safely remove tests from a production build
+             *  - and so that the presence of the test never changes how the main code runs.
+             *
+             * In that sense- the scope error visiting is not so much about having specific
+             * support for test scoping;
+             * it is more about merging the parent scope as a baseline when starting to parse the test scope. 
+             */
             
             foreach (var function in allFunctions)
             {
@@ -61,18 +165,7 @@ namespace FadeBasic.Ast.Visitors
                 }
                 scope.DeclareFunction(function);
             }
-
-            // Register test labels with the test's name as the owning scope.
-            // Cross-namespace goto/gosub (test→program, program→test, test→other-test)
-            // now fires the existing TraverseLabelBetweenScopes error.
-            foreach (var test in program.tests)
-            {
-                foreach (var label in test.labels)
-                {
-                    scope.AddLabel(test.name, label);
-                }
-            }
-
+            
             // CheckTypeInfo2(scope);
             CheckTypesForUnknownReferences(scope);
             CheckTypesForRecursiveReferences(scope, out var typeRefCounter);
@@ -91,12 +184,17 @@ namespace FadeBasic.Ast.Visitors
             {
                 foreach (var kvp in knownFunctionTypes)
                 {
-                    scope.functionReturnTypeTable.Add(kvp.Key, new List<TypeInfo>{kvp.Value});
+                    // indexer rather than Add: parent-merged entries (in test
+                    // sub-scopes) may already contain keys from knownFunctionTypes.
+                    scope.functionReturnTypeTable[kvp.Key] = new List<TypeInfo>{kvp.Value};
                 }
             }
             
             
-            scope.currentRegionName.Push(FunctionStatement.REGION_TOP_LEVEL);
+            // Inside a test sub-scope, push the test's region name so calls to
+            // test-internal functions (whose region equals the test's name) don't
+            // trip the "test function called from top-level" check at line ~904.
+            scope.currentRegionName.Push(parentProgram != null ? topLevelRegion : FunctionStatement.REGION_TOP_LEVEL);
             CheckStatements(program.statements, scope, globalCtx);
 
             foreach (var function in allFunctions)
@@ -131,20 +229,7 @@ namespace FadeBasic.Ast.Visitors
 
             }
 
-            // Validate test bodies: each test gets its own local-variable scope.
-            // The main scope check below handles general "unknown symbol" errors.
-            // The TestScopeStrictnessVisitor adds the strict scope_at(:L) check
-            // afterwards, ensuring tests can only reference program-scope names
-            // that are visible at the most recent runto target.
-            scope.currentRegionName.Pop(); // remove the top level region.
-            foreach (var test in program.tests)
-            {
-                scope.BeginTest(test);
-                CheckStatements(test.statements, scope, globalCtx);
-                scope.EndTest(test);
-            }
-            program.EnforceStrictTestScopes();
-
+           
             foreach (var def in scope.defaultValueExpressions)
             {
                 if (def.ParsedType.type == VariableType.Void)
@@ -154,6 +239,30 @@ namespace FadeBasic.Ast.Visitors
             }
 
             scope.DoDelayedTypeChecks();
+            
+            // as the very last part of verifying the scope, 
+            //  we need to verify the child scopes, which at this point, are just tests 
+            scope.currentRegionName.Pop(); // remove the top level region.
+            foreach (var test in program.tests)
+            {
+                // Tests cannot be nested inside another test. parentProgram != null
+                // means *we* are already a test sub-program, so any tests we contain
+                // are an invalid nesting.
+                if (parentProgram != null)
+                {
+                    test.Errors.Add(new ParseError(test.nameToken ?? test.StartToken, ErrorCodes.TestNestingNotAllowed));
+                    continue;
+                }
+                test.testProgram.AddScopeRelatedErrors(options, knownFunctionTypes, program);
+            }
+
+            // Strict scope_at(:L) enforcement runs after all test sub-scopes are built,
+            // and only on the outermost program — a test's own ProgramNode has no further
+            // tests to validate (nested tests already errored above).
+            if (parentProgram == null)
+            {
+                program.EnforceStrictTestScopes();
+            }
         }
 
 
@@ -507,16 +616,22 @@ namespace FadeBasic.Ast.Visitors
                         invalidTypeStatement.Errors.Add(new ParseError(invalidTypeStatement.name, ErrorCodes.TypeMustBeTopLevel));
                         break;
                     case AssertStatement assertStatement:
-                        // Strict scope enforcement is handled by TestScopeStrictnessVisitor.
-                        // Here we only need to recurse into the condition expression to
-                        // catch general "unknown symbol" errors.
-                        if (!scope.IsInsideTest)
-                        {
-                            assertStatement.Errors.Add(new ParseError(assertStatement.StartToken, ErrorCodes.AssertOutsideTest));
-                        }
+                        // `assert` is legal anywhere. Inside a test, strict-scope
+                        // enforcement is handled by TestScopeStrictnessVisitor.
+                        // Here we resolve symbols in the condition + reason so
+                        // general "unknown symbol" errors still surface.
                         if (assertStatement.condition != null)
                         {
                             assertStatement.condition.EnsureVariablesAreDefined(scope, ctx);
+                        }
+                        if (assertStatement.reason != null)
+                        {
+                            assertStatement.reason.EnsureVariablesAreDefined(scope, ctx);
+                            if (assertStatement.reason.ParsedType.type != VariableType.String
+                                && !assertStatement.reason.ParsedType.unset)
+                            {
+                                assertStatement.Errors.Add(new ParseError(assertStatement.reason, ErrorCodes.AssertReasonMustBeString));
+                            }
                         }
                         break;
                     case RuntoStatement runtoStatement:

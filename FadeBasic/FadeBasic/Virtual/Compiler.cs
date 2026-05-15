@@ -444,6 +444,12 @@ namespace FadeBasic.Virtual
 
         private List<FunctionCallReplacement> _functionCallReplacements = new List<FunctionCallReplacement>();
         private Dictionary<string, int> _functionTable = new Dictionary<string, int>();
+
+        // For each `assert` failure-branch emit site, record the buffer index of
+        // the placeholder PUSH int that should be patched with the assert-unwind
+        // trampoline's address. The trampoline is emitted once near program end;
+        // these get patched after that emission completes.
+        private List<int> _assertTrampolinePatches = new List<int>();
         
         private InternedData data = new InternedData();
         
@@ -535,6 +541,11 @@ namespace FadeBasic.Virtual
                 CompileTest(test);
             }
 
+            // Emit the assert-unwind trampoline after tests, before interned
+            // data. ASSERT_FAIL sites pushed a placeholder for its address; the
+            // call below patches every site once the real address is known.
+            CompileAssertUnwindTrampoline();
+
             { // handle interned data
                 { // replace the jump ptr at index=0 to tell us where the data lives.
                     var internLocationBytes = BitConverter.GetBytes(_buffer.Count);
@@ -584,7 +595,7 @@ namespace FadeBasic.Virtual
             // FunctionStatement nodes — they're emitted separately below — so the
             // body's own function declarations don't pollute the test's entry-point
             // bytecode region.
-            foreach (var statement in test.statements)
+            foreach (var statement in test.testProgram.statements)
             {
                 Compile(statement);
             }
@@ -598,7 +609,7 @@ namespace FadeBasic.Virtual
             // shared _functionTable, which means the test body can call them by
             // name. (Stage 6 narrows visibility via the from-chain in a follow-up
             // pass; for v1 they're globally addressable, which is permissive.)
-            foreach (var function in test.functions)
+            foreach (var function in test.testProgram.functions)
             {
                 Compile(function);
             }
@@ -1760,9 +1771,20 @@ namespace FadeBasic.Virtual
 
         private void Compile(RuntoStatement runtoStatement)
         {
-            // Emit `PUSH int <placeholder>; RUNTO`. The placeholder is patched
-            // in CompileJumpReplacements with the post-yield address: the byte
-            // immediately after the label's RUNTO_YIELD (i.e., label_addr + 2).
+            // Stack at RUNTO dispatch: [..., maxCycles, target]. Target is on top
+            // so the VM's existing pop order is preserved. Absent `max cycles`
+            // clause -> push int.MaxValue as the unbounded sentinel.
+            if (runtoStatement.maxCyclesExpression != null)
+            {
+                Compile(runtoStatement.maxCyclesExpression);
+            }
+            else
+            {
+                AddPushInt(_buffer, int.MaxValue);
+            }
+
+            // Target placeholder, patched in CompileJumpReplacements with the
+            // post-yield address (label_addr + 2).
             _runtoReplacements.Add(new LabelReplacement
             {
                 InstructionIndex = _buffer.Count,
@@ -1778,8 +1800,10 @@ namespace FadeBasic.Virtual
             //   <evaluate condition>      ; pushes int (0 = false, !0 = true)
             //   PUSH int <skipAddr>       ; placeholder for skip-on-pass target
             //   JUMP_GT_ZERO              ; if value > 0, jump past failure block
+            //   <evaluate reason expr>    ; short-circuit: only runs on failure
             //   <push source-text string ptr>
-            //   ASSERT_FAIL
+            //   PUSH int <trampolineAddr> ; address the VM jumps to in test mode
+            //   ASSERT_FAIL               ; pops trampoline addr, source text, reason
             //   :skipAddr (continue normally)
 
             Compile(assertStatement.condition);
@@ -1790,8 +1814,32 @@ namespace FadeBasic.Virtual
             AddPushInt(_buffer, int.MaxValue);
             _buffer.Add(OpCodes.JUMP_GT_ZERO);
 
-            // Failure branch: push the captured source text string and fail.
+            // Failure branch — only reached when the condition is zero. Because
+            // this comes after JUMP_GT_ZERO, the reason expression is evaluated
+            // lazily: a side-effecting reason (a function call, etc.) only runs
+            // when the assertion actually fails.
+            //
+            // Push the optional reason string first so it sits below the source
+            // text on the stack, then push the source text, then fail. Literal
+            // strings are interned via the standard literal-string compile path;
+            // variable references compile to a heap-pointer push.
+            if (assertStatement.reason != null)
+            {
+                Compile(assertStatement.reason);
+            }
+            else
+            {
+                Compile(new LiteralStringExpression(assertStatement.startToken, ""));
+            }
             Compile(new LiteralStringExpression(assertStatement.startToken, assertStatement.sourceText ?? ""));
+
+            // Push the trampoline address as a placeholder; ASSERT_FAIL reads it
+            // off the stack and (in test mode) jumps there to drain defers. We
+            // patch the real address after the trampoline is emitted.
+            var trampolinePatchIndex = _buffer.Count;
+            AddPushInt(_buffer, int.MaxValue);
+            _assertTrampolinePatches.Add(trampolinePatchIndex);
+
             _buffer.Add(OpCodes.ASSERT_FAIL);
 
             // Patch the skip address to point at the byte right after the failure
@@ -1801,6 +1849,83 @@ namespace FadeBasic.Virtual
             for (var i = 0; i < skipAddrBytes.Length; i++)
             {
                 _buffer[skipAddrIndex + 2 + i] = skipAddrBytes[i];
+            }
+        }
+
+        /// <summary>
+        /// Emit the one-time "assert unwind trampoline" used when an assert
+        /// fails inside a test. The trampoline drains the current scope's
+        /// defers (LIFO), then walks up the scope stack, draining each scope's
+        /// defers in turn, until only the global scope is left. Then it halts.
+        ///
+        /// All assert failure sites push the trampoline's address onto the
+        /// stack and ASSERT_FAIL (in test mode) sets instructionIndex to it.
+        /// In non-test mode ASSERT_FAIL discards the address and crashes the
+        /// VM via TriggerRuntimeError instead, so the trampoline never runs.
+        /// </summary>
+        private void CompileAssertUnwindTrampoline()
+        {
+            // Skip emission entirely if no assert sites exist.
+            if (_assertTrampolinePatches.Count == 0) return;
+
+            var trampolineStart = _buffer.Count;
+
+            // ── Drain loop for the current scope's defers ────────────────
+            // Mirrors HandleDeferExit, but the return address pushed onto the
+            // data stack is `trampolineStart` itself, so a deferred body
+            // returns here and we pop the next defer.
+            AddPushInt(_buffer, trampolineStart);
+            _buffer.Add(OpCodes.POP_DEFER);   // pushes addr or 0
+            _buffer.Add(OpCodes.DUPE);
+            var drainEndPatchIndex = _buffer.Count;
+            AddPushInt(_buffer, int.MaxValue);
+            _buffer.Add(OpCodes.JUMP_ZERO);   // if addr==0, jump out of drain
+            _buffer.Add(OpCodes.JUMP);        // else jump to defer body
+
+            // ── after_drain: defer stack for current scope is empty ──────
+            var afterDrainAddr = _buffer.Count;
+            // Stack here is [trampolineStart, 0] from the JUMP_ZERO path.
+            _buffer.Add(OpCodes.DISCARD_TYPED);
+            _buffer.Add(OpCodes.DISCARD_TYPED);
+
+            // Decide whether to pop another scope. Halt when only global is left.
+            _buffer.Add(OpCodes.PUSH_SCOPE_DEPTH);   // depth
+            AddPushInt(_buffer, 1);                  // 1
+            _buffer.Add(OpCodes.GT);                 // pushes (depth > 1) ? 1 : 0
+
+            var popAndLoopPatchIndex = _buffer.Count;
+            AddPushInt(_buffer, int.MaxValue);       // address placeholder
+            _buffer.Add(OpCodes.JUMP_GT_ZERO);       // if depth > 1, loop back via pop_and_loop
+
+            // ── halt: only global scope remains; halt VM via overshoot ───
+            AddPushInt(_buffer, int.MaxValue);
+            _buffer.Add(OpCodes.JUMP);
+
+            // ── pop_and_loop: pop one scope, jump back to trampolineStart ─
+            var popAndLoopAddr = _buffer.Count;
+            _buffer.Add(OpCodes.POP_SCOPE);
+            AddPushInt(_buffer, trampolineStart);
+            _buffer.Add(OpCodes.JUMP);
+
+            // Back-patch the two forward references inside the trampoline.
+            PatchAddress(drainEndPatchIndex, afterDrainAddr);
+            PatchAddress(popAndLoopPatchIndex, popAndLoopAddr);
+
+            // Back-patch every assert site's trampoline-address placeholder.
+            foreach (var siteIndex in _assertTrampolinePatches)
+            {
+                PatchAddress(siteIndex, trampolineStart);
+            }
+        }
+
+        // Helper: write a 4-byte int into the body of an `AddPushInt(buffer, _)`
+        // placeholder (which lays out [opcode, typecode, b0, b1, b2, b3]).
+        private void PatchAddress(int placeholderIndex, int value)
+        {
+            var bytes = BitConverter.GetBytes(value);
+            for (var i = 0; i < bytes.Length; i++)
+            {
+                _buffer[placeholderIndex + 2 + i] = bytes[i];
             }
         }
 

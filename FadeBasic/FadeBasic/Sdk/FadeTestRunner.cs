@@ -30,11 +30,14 @@ namespace FadeBasic.Sdk
             var sw = Stopwatch.StartNew();
             var vm = new VirtualMachine(bytecode, entry.entryPointAddress)
             {
-                hostMethods = hostMethods
+                hostMethods = hostMethods,
+                // Test-mode: a failed assert (here or in main-program code reached
+                // via `runto`) records a TestFailure instead of throwing.
+                isTestExecution = true
             };
             try
             {
-                vm.Execute().MoveNext();
+                vm.Execute3(0); // infinite budget!
             }
             catch (Exception ex)
             {
@@ -51,12 +54,18 @@ namespace FadeBasic.Sdk
 
             if (vm.assertionFailure != null)
             {
+                var reason = vm.assertionFailure.reason;
+                var hasReason = !string.IsNullOrEmpty(reason);
+                var msg = hasReason
+                    ? $"assert failed: {vm.assertionFailure.sourceText} — {reason}"
+                    : $"assert failed: {vm.assertionFailure.sourceText}";
                 return new FadeTestResult
                 {
                     testName = entry.name,
                     passed = false,
-                    failureMessage = $"assert failed: {vm.assertionFailure.sourceText}",
+                    failureMessage = msg,
                     failureSourceText = vm.assertionFailure.sourceText,
+                    failureReason = reason,
                     failureInstructionIndex = vm.assertionFailure.instructionIndex,
                     duration = sw.Elapsed
                 };
@@ -79,6 +88,9 @@ namespace FadeBasic.Sdk
         public string failureMessage;
         // Captured assertion text from the failing `assert` (when an assert tripped).
         public string failureSourceText;
+        // Optional reason string supplied via `assert <cond>, "<reason>"`. Null
+        // or empty when the user didn't provide one.
+        public string failureReason;
         // IP at the moment of failure; useful for source-mapping when DebugData
         // is available. -1 if not applicable.
         public int failureInstructionIndex = -1;

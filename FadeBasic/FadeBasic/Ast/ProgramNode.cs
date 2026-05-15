@@ -14,7 +14,7 @@ namespace FadeBasic.Ast
         public List<IStatementNode> statements = new List<IStatementNode>();
         public List<TypeDefinitionStatement> typeDefinitions = new List<TypeDefinitionStatement>();
         public List<FunctionStatement> functions = new List<FunctionStatement>();
-        public List<LabelDefinition> labels = new List<LabelDefinition>();
+        public List<LabelDeclarationNode> labels = new List<LabelDeclarationNode>();
         public List<TestNode> tests = new List<TestNode>();
         protected override string GetString()
         {

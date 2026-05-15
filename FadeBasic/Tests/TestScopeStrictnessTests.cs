@@ -169,10 +169,14 @@ endtest
     }
 
     [Test]
-    public void Strictness_AssignmentToProgramVar_PreRunto_Errors()
+    public void Strictness_AssignmentToProgramVar_PreRunto_CreatesImplicitTestLocal()
     {
-        // Writing to a program-scope variable that hasn't been declared yet
-        // (no runto has reached it) should error.
+        // Bare `x = 99` in a test (no runto) follows BASIC's normal "assign
+        // to unbound name creates a local" rule, scoped to the test. The
+        // program-scope `x` is NOT in `visible`, so the test's write is an
+        // implicit-test-local declaration — no error. To actually write
+        // through to program-scope `x`, the test would need a runto past
+        // its declaration so it lands in `visible`.
         var src = @"
 x = 0
 end
@@ -183,8 +187,8 @@ endtest
 ";
         Parse(src, out var errs);
         Assert.That(errs.Any(e => e.errorCode.Equals(ErrorCodes.TestVariableUnreachable)),
-            Is.True,
-            "writing program-scope x pre-runto should error; got: "
+            Is.False,
+            "bare assignment in a test should be an implicit test-local, not an error; got: "
             + string.Join(", ", errs.Select(e => e.Display)));
     }
 
@@ -366,10 +370,14 @@ endtest
     }
 
     [Test]
-    public void Strictness_RuntoFunctionInternalLabel_AssignmentToFunctionLocal_AfterLabel_Errors()
+    public void Strictness_RuntoFunctionInternalLabel_AssignmentToLaterLocal_CreatesImplicitTestLocal()
     {
-        // Test writes to a function local declared *after* the runto target.
-        // LHS visibility is enforced too — should error.
+        // After `runto fnInner`, visible = scope_at[fnInner] = { seed }
+        // (the param) — `late` is declared *after* fnInner so it's NOT in
+        // visible. The test's `late = 7` is bare-assignment-to-unbound,
+        // which creates an implicit test-local rather than writing through
+        // to the function's `late`. To actually mutate that function local,
+        // the runto target would need to be past the `local late` line.
         var src = @"
 do_work(1)
 end
@@ -387,8 +395,8 @@ endtest
 ";
         Parse(src, out var errs);
         Assert.That(errs.Any(e => e.errorCode.Equals(ErrorCodes.TestVariableNotYetDeclared)),
-            Is.True,
-            "writing to function local `late` declared after fnInner should error; got: "
+            Is.False,
+            "bare assignment in a test should be an implicit test-local; got: "
             + string.Join(", ", errs.Select(e => e.Display)));
     }
 

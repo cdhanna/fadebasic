@@ -32,8 +32,8 @@ endtest
         var prog = parser.ParseProgram(new ParseOptions { ignoreChecks = true });
         prog.AssertNoParseErrors();
         Assert.That(prog.tests.Count, Is.EqualTo(1));
-        Assert.That(prog.tests[0].statements.Count, Is.EqualTo(1));
-        var rt = prog.tests[0].statements[0] as RuntoStatement;
+        Assert.That(prog.tests[0].testProgram.statements.Count, Is.EqualTo(1));
+        var rt = prog.tests[0].testProgram.statements[0] as RuntoStatement;
         Assert.That(rt, Is.Not.Null);
         Assert.That(rt.targetLabel, Is.EqualTo("somelabel"));
     }
@@ -52,7 +52,7 @@ endtest
         var parser = new Parser(lex.stream, TestCommands.CommandsForTesting);
         var prog = parser.ParseProgram(new ParseOptions { ignoreChecks = true });
         prog.AssertNoParseErrors();
-        var rt = prog.tests[0].statements[0] as RuntoStatement;
+        var rt = prog.tests[0].testProgram.statements[0] as RuntoStatement;
         Assert.That(rt, Is.Not.Null);
         Assert.That(rt.targetLabel, Is.EqualTo("somelabel"));
         Assert.That(rt.maxCyclesExpression, Is.Not.Null);
@@ -202,7 +202,7 @@ endtest
         var parser = new Parser(lex.stream, TestCommands.CommandsForTesting);
         var prog = parser.ParseProgram(new ParseOptions { ignoreChecks = true });
         prog.AssertNoParseErrors();
-        var rt = prog.tests[0].statements[0] as RuntoStatement;
+        var rt = prog.tests[0].testProgram.statements[0] as RuntoStatement;
         Assert.That(rt, Is.Not.Null);
         Assert.That(rt.targetLabel, Is.EqualTo("mylabel"));
         Assert.That(rt.maxCyclesExpression, Is.Not.Null);

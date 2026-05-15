@@ -47,7 +47,7 @@ endtest
         Assert.That(prog.tests[0].name, Is.EqualTo("foo"));
         Assert.That(prog.tests[0].isAbstract, Is.False);
         Assert.That(prog.tests[0].fromParent, Is.Null);
-        Assert.That(prog.tests[0].statements.Count, Is.EqualTo(0));
+        Assert.That(prog.tests[0].testProgram.statements.Count, Is.EqualTo(0));
     }
 
     [Test]
@@ -168,7 +168,7 @@ endtest
 ";
         var prog = ParseClean(src);
         Assert.That(prog.tests.Count, Is.EqualTo(1));
-        Assert.That(prog.tests[0].statements.Count, Is.EqualTo(2));
+        Assert.That(prog.tests[0].testProgram.statements.Count, Is.EqualTo(2));
     }
 
     [Test]

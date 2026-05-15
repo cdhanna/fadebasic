@@ -74,7 +74,8 @@ namespace FadeBasic.Virtual
         INVALID_ADDRESS,
         INVALID_MEMORY_COPY,
         CANNOT_TOKENIZE_WITHOUT_HIGHER_CONTEXT,
-        EXPLODE
+        EXPLODE,
+        ASSERT_FAILED
     }
 
     public class TokenReplacement
@@ -151,10 +152,20 @@ namespace FadeBasic.Virtual
         /// </summary>
         public TestFailure assertionFailure;
 
+        /// <summary>
+        /// True when this VM is running a test entry point. The test runner sets
+        /// this before <c>Execute</c> so a failed `assert` (anywhere — even in
+        /// main-program code reached via runto) records a TestFailure and halts
+        /// instead of throwing a runtime exception. When false, a failed assert
+        /// triggers a normal VM runtime error, identical to divide-by-zero etc.
+        /// </summary>
+        public bool isTestExecution;
+
         public class TestFailure
         {
             public string sourceText;   // Captured text of the asserted expression.
             public int instructionIndex; // IP at the moment of failure (for source-mapping).
+            public string reason;       // Optional reason string from `assert <cond>, "<reason>"`. Empty when not provided.
         }
 
         /// <summary>
@@ -333,6 +344,25 @@ namespace FadeBasic.Virtual
                      i += incrementer)
                 {
                     cycles++;
+
+                    // Runto max-cycles enforcement. Only the topmost frame ticks,
+                    // so nested runtos each get their own independent budget and
+                    // an outer frame's budget pauses while an inner runto is active.
+                    if (runtoStack.Count > 0)
+                    {
+                        ref var runtoTop = ref runtoStack.buffer[runtoStack.ptr - 1];
+                        if (--runtoTop.cyclesRemaining < 0)
+                        {
+                            assertionFailure = new TestFailure
+                            {
+                                sourceText = "RUNTO exceeded max cycles",
+                                instructionIndex = instructionIndex
+                            };
+                            instructionIndex = int.MaxValue;
+                            break;
+                        }
+                    }
+
                     var ins = Advance();
                     switch (ins)
                     {
@@ -439,6 +469,12 @@ namespace FadeBasic.Virtual
                                 jumpSite = scope.deferredJumps.Pop();
                             }
                             stack.PushSpanAndType(new ReadOnlySpan<byte>(BitConverter.GetBytes(jumpSite)), TypeCodes.INT, TypeCodes.GetByteSize(TypeCodes.INT));
+                            break;
+                        case OpCodes.PUSH_SCOPE_DEPTH:
+                            // Push current scope-stack depth as a typed int. Depth 1 = global only.
+                            stack.PushSpanAndType(
+                                new ReadOnlySpan<byte>(BitConverter.GetBytes(scopeStack.Count)),
+                                TypeCodes.INT, TypeCodes.GetByteSize(TypeCodes.INT));
                             break;
                         case OpCodes.PUSH_DEFER:
                             // read the place we should jump to when the scope is popped. 
@@ -982,14 +1018,16 @@ namespace FadeBasic.Virtual
                         case OpCodes.BREAKPOINT:
                             break;
                         case OpCodes.RUNTO:
-                            // Pop the target address off the data stack.
+                            // Stack at dispatch: [..., maxCycles, target]. Pop target first.
                             VmUtil.ReadAsInt(ref stack, out var runtoTarget);
+                            VmUtil.ReadAsInt(ref stack, out var runtoMaxCycles);
                             // The test-resume IP is the very next instruction after this RUNTO.
                             // (instructionIndex has already been incremented past the RUNTO opcode.)
                             runtoStack.Push(new RuntoFrame
                             {
                                 targetAddr = runtoTarget,
-                                testResumeIp = instructionIndex
+                                testResumeIp = instructionIndex,
+                                cyclesRemaining = runtoMaxCycles
                             });
                             // Switch execution to wherever the program is currently paused.
                             instructionIndex = programResumeIP;
@@ -1014,39 +1052,57 @@ namespace FadeBasic.Virtual
                             break;
                         case OpCodes.ASSERT_FAIL:
                         {
-                            // The data stack holds the source-text. The compiler emits
-                            // it via the LiteralStringExpression path which produces
-                            // [8 ptr bytes][STRING type code] (interned strings get
-                            // CAST to STRING after the PTR push). We accept STRING
-                            // and PTR_HEAP type codes here.
-                            var assertTextTypeCode = stack.Pop();
-                            var ptrBytes = new byte[8];
-                            for (var b = 7; b >= 0; b--) ptrBytes[b] = stack.Pop();
-                            var textPtr = VmPtr.FromBytes(ptrBytes);
-                            string text = "";
-                            try
+                            // Data stack at dispatch (bottom → top):
+                            //   reason (string), sourceText (string), trampolineAddr (int)
+                            // Strings come from the LiteralStringExpression path
+                            // ([8 ptr bytes][STRING type code]); interned strings get
+                            // CAST to STRING after the PTR push, variable refs push the
+                            // same shape with a heap ptr. We accept either STRING or
+                            // PTR_HEAP. trampolineAddr is the compiler-baked address of
+                            // the assert-unwind trampoline, used in test mode only.
+                            VmUtil.ReadAsInt(ref stack, out var trampolineAddr);
+                            var text = PopAssertString();
+                            var reasonText = PopAssertString();
+                            if (isTestExecution)
                             {
-                                if (heap.TryGetAllocationSize(textPtr, out var len) && len > 0)
+                                // Re-entrancy guard: if a deferred body that we're
+                                // running as part of unwinding contains its own
+                                // failing assert, keep the first failure and halt
+                                // instead of restarting the trampoline.
+                                if (assertionFailure != null)
                                 {
-                                    heap.Read(textPtr, len, out var bytes);
-                                    // Fade strings are stored as 4-bytes-per-char (uint codepoints).
-                                    var charCount = len / 4;
-                                    var chars = new char[charCount];
-                                    for (var c = 0; c < charCount; c++)
-                                    {
-                                        chars[c] = (char)BitConverter.ToUInt32(bytes, c * 4);
-                                    }
-                                    text = new string(chars);
+                                    instructionIndex = int.MaxValue;
+                                    break;
                                 }
+                                // Test-mode: record the failure (this path is also
+                                // taken when a test runtos into main-program code
+                                // that hits an assert) and redirect to the trampoline
+                                // so defers in every live scope get drained.
+                                assertionFailure = new TestFailure
+                                {
+                                    sourceText = text,
+                                    reason = reasonText,
+                                    instructionIndex = instructionIndex
+                                };
+                                instructionIndex = trampolineAddr;
                             }
-                            catch { /* best-effort recovery; leave text empty */ }
-                            assertionFailure = new TestFailure
+                            else
                             {
-                                sourceText = text,
-                                instructionIndex = instructionIndex
-                            };
-                            // Halt execution by jumping past program.Length, mirroring CompileEnd.
-                            instructionIndex = int.MaxValue;
+                                // Main-program execution: a failed assert is a
+                                // hard runtime error, on par with divide-by-zero.
+                                // Defers do NOT run; trampolineAddr is ignored.
+                                var hasReason = !string.IsNullOrEmpty(reasonText);
+                                var message = hasReason
+                                    ? $"assert failed: {text} — {reasonText}"
+                                    : $"assert failed: {text}";
+                                TriggerRuntimeError(new VirtualRuntimeError
+                                {
+                                    insIndex = instructionIndex,
+                                    type = VirtualRuntimeErrorType.ASSERT_FAILED,
+                                    message = message
+                                });
+                                instructionIndex = int.MaxValue;
+                            }
                             break;
                         }
                         default:
@@ -1077,6 +1133,7 @@ namespace FadeBasic.Virtual
         {
             public int targetAddr;
             public int testResumeIp;
+            public int cyclesRemaining;
         }
 
         void TriggerRuntimeError(VirtualRuntimeError error)
@@ -1086,6 +1143,35 @@ namespace FadeBasic.Virtual
             {
                 throw new VirtualRuntimeException(error);
             }
+        }
+
+        // Pop one Fade string off the data stack and materialize it as a C# string.
+        // Used by ASSERT_FAIL. The compiler pushes strings as [8 ptr bytes][type code]
+        // and either STRING or PTR_HEAP type codes may appear here. Returns "" if
+        // the pointer is null or the read fails.
+        private string PopAssertString()
+        {
+            stack.Pop(); // type code; accepted unconditionally
+            var ptrBytes = new byte[8];
+            for (var b = 7; b >= 0; b--) ptrBytes[b] = stack.Pop();
+            var ptr = VmPtr.FromBytes(ptrBytes);
+            try
+            {
+                if (heap.TryGetAllocationSize(ptr, out var len) && len > 0)
+                {
+                    heap.Read(ptr, len, out var bytes);
+                    // Fade strings are stored as 4-bytes-per-char (uint codepoints).
+                    var charCount = len / 4;
+                    var chars = new char[charCount];
+                    for (var c = 0; c < charCount; c++)
+                    {
+                        chars[c] = (char)BitConverter.ToUInt32(bytes, c * 4);
+                    }
+                    return new string(chars);
+                }
+            }
+            catch { /* best-effort recovery; fall through */ }
+            return "";
         }
     }
 

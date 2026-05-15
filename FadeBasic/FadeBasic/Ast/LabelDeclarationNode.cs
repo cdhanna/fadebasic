@@ -2,11 +2,6 @@ using System.Collections.Generic;
 
 namespace FadeBasic.Ast
 {
-    public class LabelDefinition
-    {
-        public LabelDeclarationNode node;
-        public int statementIndex;
-    }
     
     public class LabelDeclarationNode : AstNode, IStatementNode, IHasTriviaNode
     {

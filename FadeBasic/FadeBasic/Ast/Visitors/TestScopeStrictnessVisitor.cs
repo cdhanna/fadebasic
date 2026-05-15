@@ -142,6 +142,26 @@ namespace FadeBasic.Ast.Visitors
                         current.Add(vref.variableName);
                         break;
 
+                    case CommandStatement cmd:
+                        // Ref-args at top level introduce variables — the base
+                        // scope checker registers them via Scope.AddCommand ->
+                        // TryAddVariable. Mirror that here so the strict
+                        // test-scope check knows the binding exists.
+                        if (cmd.command.args != null && cmd.argMap != null)
+                        {
+                            for (var i = 0; i < cmd.args.Count && i < cmd.argMap.Count; i++)
+                            {
+                                var descIdx = cmd.argMap[i];
+                                if (descIdx < 0 || descIdx >= cmd.command.args.Length) continue;
+                                if (cmd.command.args[descIdx].isRef
+                                    && cmd.args[i] is VariableRefNode refV)
+                                {
+                                    current.Add(refV.variableName);
+                                }
+                            }
+                        }
+                        break;
+
                     case ForStatement forStmt:
                         if (forStmt.variableNode is VariableRefNode forVar)
                         {
@@ -198,9 +218,10 @@ namespace FadeBasic.Ast.Visitors
             HashSet<string> globalNames,
             HashSet<string> allTopLevelNames)
         {
+            var testProgram = test.testProgram;
             var testLocals = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
             var testFunctions = new HashSet<string>(
-                test.functions.Select(f => f.name),
+                testProgram.functions.Select(f => f.name),
                 StringComparer.OrdinalIgnoreCase);
 
             // Visible program-scope names. Starts with globals only (pre-runto).
@@ -216,11 +237,45 @@ namespace FadeBasic.Ast.Visitors
                         if (scopeAt.TryGetValue(runto.targetLabel, out var snapshot))
                         {
                             visible = new HashSet<string>(snapshot, StringComparer.OrdinalIgnoreCase);
+                            currentRuntoTarget = runto.targetLabel;
+
+                            // Runto-induced visibility colliding with a
+                            // test-local is a real conflict (globals are
+                            // always-shadowable so we exclude them).
+                            foreach (var name in visible)
+                            {
+                                if (globalNames.Contains(name)) continue;
+                                if (testLocals.Contains(name))
+                                {
+                                    runto.Errors.Add(new ParseError(
+                                        runto.targetLabelToken ?? runto.StartToken ?? runto.EndToken,
+                                        ErrorCodes.TestRuntoShadowsLocal,
+                                        name));
+                                }
+                            }
                         }
-                        currentRuntoTarget = runto.targetLabel;
+                        else
+                        {
+                            // Unknown label -> hard parse error. Leave visible /
+                            // currentRuntoTarget unchanged so subsequent refs
+                            // aren't double-flagged with a misleading
+                            // TestVariableNotYetDeclared.
+                            runto.Errors.Add(new ParseError(
+                                runto.targetLabelToken ?? runto.StartToken ?? runto.EndToken,
+                                ErrorCodes.RuntoUnknownLabel,
+                                runto.targetLabel));
+                        }
                         break;
 
                     case DeclarationStatement decl when decl.scopeType == DeclarationScopeType.Local:
+                        // Declaring a test-local for a name that's currently
+                        // visible from a runto'd program scope is a conflict
+                        // (globals are excluded — they're always shadowable).
+                        if (visible.Contains(decl.variable) && !globalNames.Contains(decl.variable))
+                        {
+                            decl.Errors.Add(new ParseError(decl.StartToken,
+                                ErrorCodes.TestRuntoShadowsLocal, decl.variable));
+                        }
                         testLocals.Add(decl.variable);
                         if (decl.initializerExpression != null)
                         {
@@ -233,23 +288,17 @@ namespace FadeBasic.Ast.Visitors
                         // RHS must be visible.
                         CheckExpression(asn.expression, testLocals, testFunctions,
                             visible, currentRuntoTarget, globalNames, allTopLevelNames);
-                        // LHS: if it's a bare variable that's not yet a local AND
-                        // not a known program name, it's an implicit test-local.
+                        // LHS: bare `name = expr` follows BASIC's rule —
+                        // assigning to an unbound name creates a fresh local in
+                        // the enclosing scope (here, the test). When `name` IS
+                        // visible from a runto'd program scope, the assignment
+                        // writes through to that program-scope variable (intentional
+                        // state setup), so no implicit-local is created.
                         if (asn.variable is VariableRefNode vref)
                         {
-                            // If the name doesn't already exist in any scope, it's
-                            // implicitly a test-local. If it exists in program but
-                            // not visible, flag the LHS as well.
                             if (!testLocals.Contains(vref.variableName)
-                                && !visible.Contains(vref.variableName)
-                                && allTopLevelNames.Contains(vref.variableName))
+                                && !visible.Contains(vref.variableName))
                             {
-                                AddVisibilityError(asn, vref.variableName, currentRuntoTarget);
-                            }
-                            else if (!testLocals.Contains(vref.variableName)
-                                     && !visible.Contains(vref.variableName))
-                            {
-                                // Implicit test-local declaration.
                                 testLocals.Add(vref.variableName);
                             }
                         }
@@ -259,6 +308,11 @@ namespace FadeBasic.Ast.Visitors
                         if (assert.condition != null)
                         {
                             CheckExpression(assert.condition, testLocals, testFunctions,
+                                visible, currentRuntoTarget, globalNames, allTopLevelNames);
+                        }
+                        if (assert.reason != null)
+                        {
+                            CheckExpression(assert.reason, testLocals, testFunctions,
                                 visible, currentRuntoTarget, globalNames, allTopLevelNames);
                         }
                         break;
@@ -277,11 +331,23 @@ namespace FadeBasic.Ast.Visitors
 
                     case ForStatement forStmt:
                         if (forStmt.variableNode is VariableRefNode forVar) testLocals.Add(forVar.variableName);
+                        if (forStmt.startValueExpression != null)
+                            CheckExpression(forStmt.startValueExpression, testLocals, testFunctions,
+                                visible, currentRuntoTarget, globalNames, allTopLevelNames);
+                        if (forStmt.endValueExpression != null)
+                            CheckExpression(forStmt.endValueExpression, testLocals, testFunctions,
+                                visible, currentRuntoTarget, globalNames, allTopLevelNames);
+                        if (forStmt.stepValueExpression != null)
+                            CheckExpression(forStmt.stepValueExpression, testLocals, testFunctions,
+                                visible, currentRuntoTarget, globalNames, allTopLevelNames);
                         if (forStmt.statements != null)
                             foreach (var s in forStmt.statements) VisitStatement(s);
                         break;
 
                     case WhileStatement whileStmt:
+                        if (whileStmt.condition != null)
+                            CheckExpression(whileStmt.condition, testLocals, testFunctions,
+                                visible, currentRuntoTarget, globalNames, allTopLevelNames);
                         if (whileStmt.statements != null)
                             foreach (var s in whileStmt.statements) VisitStatement(s);
                         break;
@@ -289,6 +355,67 @@ namespace FadeBasic.Ast.Visitors
                     case DoLoopStatement doStmt:
                         if (doStmt.statements != null)
                             foreach (var s in doStmt.statements) VisitStatement(s);
+                        break;
+
+                    case RepeatUntilStatement repeatStmt:
+                        if (repeatStmt.statements != null)
+                            foreach (var s in repeatStmt.statements) VisitStatement(s);
+                        if (repeatStmt.condition != null)
+                            CheckExpression(repeatStmt.condition, testLocals, testFunctions,
+                                visible, currentRuntoTarget, globalNames, allTopLevelNames);
+                        break;
+
+                    case SwitchStatement switchStmt:
+                        if (switchStmt.expression != null)
+                            CheckExpression(switchStmt.expression, testLocals, testFunctions,
+                                visible, currentRuntoTarget, globalNames, allTopLevelNames);
+                        if (switchStmt.cases != null)
+                            foreach (var c in switchStmt.cases)
+                                if (c.statements != null)
+                                    foreach (var s in c.statements) VisitStatement(s);
+                        if (switchStmt.defaultCase?.statements != null)
+                            foreach (var s in switchStmt.defaultCase.statements) VisitStatement(s);
+                        break;
+
+                    case CommandStatement cmd:
+                        // Ref-args with bare names follow the AssignmentStatement
+                        // LHS rule: known-but-not-visible -> error; otherwise
+                        // implicit test-local. Everything else flows through the
+                        // standard expression check.
+                        if (cmd.command.args != null && cmd.argMap != null)
+                        {
+                            for (var i = 0; i < cmd.args.Count; i++)
+                            {
+                                var argExpr = cmd.args[i];
+                                var descIdx = i < cmd.argMap.Count ? cmd.argMap[i] : -1;
+                                var isRef = descIdx >= 0
+                                    && descIdx < cmd.command.args.Length
+                                    && cmd.command.args[descIdx].isRef;
+                                var refVref = isRef ? argExpr as VariableRefNode : null;
+
+                                if (refVref != null)
+                                {
+                                    var name = refVref.variableName;
+                                    if (testLocals.Contains(name) || visible.Contains(name))
+                                    {
+                                        // already in scope; ref read/write is fine
+                                    }
+                                    else if (allTopLevelNames.Contains(name))
+                                    {
+                                        AddVisibilityError(cmd, name, currentRuntoTarget);
+                                    }
+                                    else
+                                    {
+                                        testLocals.Add(name);
+                                    }
+                                }
+                                else
+                                {
+                                    CheckExpression(argExpr, testLocals, testFunctions,
+                                        visible, currentRuntoTarget, globalNames, allTopLevelNames);
+                                }
+                            }
+                        }
                         break;
 
                     case ExpressionStatement expStmt:
@@ -320,29 +447,44 @@ namespace FadeBasic.Ast.Visitors
                 HashSet<string> globalsRef,
                 HashSet<string> allNamesRef)
             {
-                if (expr == null) return;
-                expr.Visit(child =>
+                Walk(expr);
+
+                void Walk(IAstVisitable node)
                 {
-                    if (child is VariableRefNode vref)
+                    if (node == null) return;
+                    switch (node)
                     {
-                        var name = vref.variableName;
-                        if (testLocalsRef.Contains(name)) return;
-                        if (testFunctionsRef.Contains(name)) return;
-                        if (visibleRef.Contains(name)) return;
-                        // The name is not in test scope and not in the visible
-                        // program-scope. If it's a known program name, it exists
-                        // but isn't reachable from this point — strict error.
-                        if (allNamesRef.Contains(name))
-                        {
-                            AddVisibilityError(vref, name, runtoTargetRef);
-                        }
-                        // If not in allNames either, the main scope checker will
-                        // (or should) flag it as unknown — we don't double-report.
+                        case VariableRefNode vref:
+                            var name = vref.variableName;
+                            if (testLocalsRef.Contains(name)) return;
+                            if (testFunctionsRef.Contains(name)) return;
+                            if (visibleRef.Contains(name)) return;
+                            // Known program name but unreachable from here -> strict error.
+                            // Unknown to allNames is handled by the main scope checker.
+                            if (allNamesRef.Contains(name))
+                            {
+                                AddVisibilityError(vref, name, runtoTargetRef);
+                            }
+                            break;
+
+                        case StructFieldReference sfr:
+                            // The `right` side is a field name on the type, not
+                            // a variable lookup — skip it. The `left` may itself
+                            // be a struct ref / array ref / var ref; recurse.
+                            Walk(sfr.left);
+                            break;
+
+                        default:
+                            foreach (var child in node.IterateChildNodes())
+                            {
+                                Walk(child);
+                            }
+                            break;
                     }
-                });
+                }
             }
 
-            foreach (var stmt in test.statements)
+            foreach (var stmt in testProgram.statements)
             {
                 VisitStatement(stmt);
             }

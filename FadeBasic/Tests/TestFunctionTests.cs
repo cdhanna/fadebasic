@@ -25,7 +25,7 @@ public class TestFunctionTests
         var entry = compiler.TestManifest.First(t => t.name == testName);
         var vm = new VirtualMachine(program, entry.entryPointAddress);
         vm.hostMethods = compiler.methodTable;
-        vm.Execute().MoveNext();
+        vm.Execute3();
         return vm;
     }
 
@@ -42,8 +42,8 @@ endtest
         var parser = new Parser(lex.stream, TestCommands.CommandsForTesting);
         var prog = parser.ParseProgram(new ParseOptions { ignoreChecks = true });
         prog.AssertNoParseErrors();
-        Assert.That(prog.tests[0].functions.Count, Is.EqualTo(1));
-        Assert.That(prog.tests[0].functions[0].name, Is.EqualTo("helper"));
+        Assert.That(prog.tests[0].testProgram.functions.Count, Is.EqualTo(1));
+        Assert.That(prog.tests[0].testProgram.functions[0].name, Is.EqualTo("helper"));
     }
 
     [Test]
@@ -62,6 +62,25 @@ endtest
         var vm = RunTest(src, "foo");
         Assert.That(vm.assertionFailure, Is.Null);
     }
+    
+    
+    [Test]
+    public void MaxCycles_FailsIfNotReached()
+    {
+        var src = @"
+while 1
+    ` loop forever. 
+endwhile
+L1:
+
+test foo
+    RUNTO L1 max cycles 500
+endtest
+";
+        var vm = RunTest(src, "foo");
+        Assert.That(vm.assertionFailure.sourceText, Is.EqualTo("RUNTO exceeded max cycles"));
+    }
+
     
     
     [Test]
@@ -188,6 +207,9 @@ endtest
     public void TestLabel_GotoFromMainProgram_Errors()
     {
         // Main program code cannot goto a label declared inside a test.
+        // Per the "parent never reads into test" rule, the test's labels are
+        // invisible to main — so the goto fails as UnknownLabel rather than
+        // TraverseLabelBetweenScopes. Either error proves the goto is rejected.
         var src = @"
 goto retry
 end
@@ -200,9 +222,11 @@ endtest
         var parser = new Parser(lex.stream, TestCommands.CommandsForTesting);
         var prog = parser.ParseProgram();
         var errs = prog.GetAllErrors();
-        Assert.That(errs.Any(e => e.errorCode.Equals(ErrorCodes.TraverseLabelBetweenScopes)),
+        Assert.That(errs.Any(e =>
+                e.errorCode.Equals(ErrorCodes.UnknownLabel)
+                || e.errorCode.Equals(ErrorCodes.TraverseLabelBetweenScopes)),
             Is.True,
-            "expected cross-namespace goto error; got: " + string.Join(", ", errs.Select(e => e.Display)));
+            "expected goto-into-test to be rejected; got: " + string.Join(", ", errs.Select(e => e.Display)));
     }
 
     [Test]

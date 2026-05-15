@@ -278,6 +278,22 @@ add(1, ""toast"")
         // Assert.That(errors[0].Display, Is.EqualTo($"[1:0] - {ErrorCodes.GotoMissingLabel}"));
     }
     
+
+        [Test]
+    public void ParseError_TypeCheck_FunctionAnd()
+    {
+        var input = @"
+    FUNCTION evenAndPositive(n)
+    isEven = n mod 2 = 0
+    isPositive = n > 0
+    ENDFUNCTION isEven and isPositive
+
+";
+        var parser = MakeParser(input);
+        var prog = parser.ParseProgram();
+        prog.AssertNoParseErrors();
+        // Assert.That(errors[0].Display, Is.EqualTo($"[1:0] - {ErrorCodes.GotoMissingLabel}"));
+    }
     
     [Test]
     public void ParseError_TypeCheck_IntToFloat()

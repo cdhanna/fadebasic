@@ -439,7 +439,7 @@ y$ = ""world"" + x$
     {
         Setup(src, out _, out var prog);
         var vm = new VirtualMachine(prog);
-        vm.Execute().MoveNext();
+        vm.Execute3();
         Assert.That(vm.dataRegisters[0], Is.EqualTo(expected));
         Assert.That(vm.typeRegisters[0], Is.EqualTo(TypeCodes.INT));
     }

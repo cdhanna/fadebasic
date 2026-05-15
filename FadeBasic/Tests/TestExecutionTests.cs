@@ -25,7 +25,7 @@ public class TestExecutionTests
         var entry = compiler.TestManifest.First(t => t.name == testName);
         var vm = new VirtualMachine(program, entry.entryPointAddress);
         vm.hostMethods = compiler.methodTable;
-        vm.Execute().MoveNext();
+        vm.Execute3();
         return vm;
     }
 
@@ -79,7 +79,7 @@ endtest
         var entry = compiler.TestManifest.First(t => t.name == "foo");
         var vm = new VirtualMachine(program, entry.entryPointAddress);
         vm.hostMethods = compiler.methodTable;
-        vm.Execute().MoveNext();
+        vm.Execute3();
 
         // After yield, runtoStack is empty and programResumeIP is the post-yield IP.
         Assert.That(vm.runtoStack.Count, Is.EqualTo(0));
@@ -106,7 +106,7 @@ endtest
         var entry = compiler.TestManifest.First(t => t.name == "foo");
         var vm = new VirtualMachine(program, entry.entryPointAddress);
         vm.hostMethods = compiler.methodTable;
-        vm.Execute().MoveNext();
+        vm.Execute3();
 
         Assert.That(vm.runtoStack.Count, Is.EqualTo(0));
     }
@@ -128,7 +128,7 @@ endtest
         var (compiler, program) = Compile(src);
         var vm = new VirtualMachine(program); // default entry
         vm.hostMethods = compiler.methodTable;
-        vm.Execute().MoveNext();
+        vm.Execute3();
 
         Assert.That(vm.runtoStack.Count, Is.EqualTo(0),
             "default entry runs program code only; runtoStack should never get touched");
@@ -152,11 +152,11 @@ endtest
 
         var vmA = new VirtualMachine(program, alpha.entryPointAddress);
         vmA.hostMethods = compiler.methodTable;
-        vmA.Execute().MoveNext();
+        vmA.Execute3();
 
         var vmB = new VirtualMachine(program, beta.entryPointAddress);
         vmB.hostMethods = compiler.methodTable;
-        vmB.Execute().MoveNext();
+        vmB.Execute3();
 
         // Both halt cleanly.
         Assert.That(vmA.runtoStack.Count, Is.EqualTo(0));
