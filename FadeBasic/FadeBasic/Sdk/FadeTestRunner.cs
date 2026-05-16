@@ -17,6 +17,19 @@ namespace FadeBasic.Sdk
             HostMethodTable hostMethods,
             TestManifestEntry entry)
         {
+            return RunTest(bytecode, hostMethods, entry, debugData: null);
+        }
+
+        // DebugData-aware overload: when supplied, the failure result includes
+        // source-located stack frames built from the VM's methodStack snapshot
+        // at the moment of failure. Call this overload from any caller that
+        // has the program's DebugData (e.g., ILaunchable.DebugData).
+        public static FadeTestResult RunTest(
+            byte[] bytecode,
+            HostMethodTable hostMethods,
+            TestManifestEntry entry,
+            DebugData debugData)
+        {
             if (entry.isAbstract)
             {
                 return new FadeTestResult
@@ -38,6 +51,23 @@ namespace FadeBasic.Sdk
             try
             {
                 vm.Execute3(0); // infinite budget!
+            }
+            catch (VirtualRuntimeException rex)
+            {
+                // The VM threw a structured runtime error. Resolve the
+                // call-stack snapshot it carries into source-located frames
+                // when DebugData is available, so the failure pane shows
+                // where the crash actually happened (not just "VM threw").
+                sw.Stop();
+                return new FadeTestResult
+                {
+                    testName = entry.name,
+                    passed = false,
+                    failureMessage = "VM threw: " + rex.Message,
+                    failureInstructionIndex = rex.Error.insIndex,
+                    failureFrames = BuildFrames(rex.Error.insIndex, rex.Error.callStack, debugData),
+                    duration = sw.Elapsed
+                };
             }
             catch (Exception ex)
             {
@@ -67,6 +97,10 @@ namespace FadeBasic.Sdk
                     failureSourceText = vm.assertionFailure.sourceText,
                     failureReason = reason,
                     failureInstructionIndex = vm.assertionFailure.instructionIndex,
+                    failureFrames = BuildFrames(
+                        vm.assertionFailure.instructionIndex,
+                        vm.assertionFailure.callStack,
+                        debugData),
                     duration = sw.Elapsed
                 };
             }
@@ -78,6 +112,95 @@ namespace FadeBasic.Sdk
                 duration = sw.Elapsed
             };
         }
+
+        // Resolve a VM call-stack snapshot into source-located frames using
+        // DebugData. Returns an empty list when DebugData is null (best-effort:
+        // callers fall back to entry.sourceLine in that case).
+        //
+        // Generic over the error source: both TestFailure (assert in test mode)
+        // and VirtualRuntimeError (any runtime crash) carry the same shape
+        // (instructionIndex + callStack), so this helper takes the two raw
+        // pieces rather than either struct.
+        //
+        // Walk strategy mirrors DebugSession.GetFrames2:
+        //   1. The "innermost" frame's source location is the IP at failure.
+        //   2. For each entry in methodStack (top-down), the function name
+        //      comes from insToFunction[toIns], and the NEXT frame's source
+        //      location comes from the call site (fromIns - 1).
+        public static List<FadeStackFrame> BuildFrames(
+            int instructionIndex,
+            JumpHistoryData[] callStack,
+            DebugData debugData)
+        {
+            var frames = new List<FadeStackFrame>();
+            if (debugData == null) return frames;
+            callStack = callStack ?? System.Array.Empty<JumpHistoryData>();
+
+            var indexMap = new IndexCollection(debugData.statementTokens);
+
+            // Start with the failure site itself.
+            if (!indexMap.TryFindClosestTokenBeforeIndex(instructionIndex, out var currentToken))
+            {
+                return frames;
+            }
+
+            // Walk the snapshotted methodStack. callStack[0] is innermost.
+            for (var i = 0; i < callStack.Length; i++)
+            {
+                var frame = callStack[i];
+                var functionName = "<unknown>";
+                if (debugData.insToFunction.TryGetValue(frame.toIns, out var fnToken))
+                {
+                    functionName = fnToken.token?.raw ?? functionName;
+                }
+                frames.Add(new FadeStackFrame
+                {
+                    functionName = functionName,
+                    lineNumber = currentToken.token.lineNumber,
+                    charNumber = currentToken.token.charNumber,
+                    instructionIndex = instructionIndex
+                });
+                // Resolve the next frame's location to the call site of this
+                // frame (fromIns - 1, matching DebugSession.GetFrames2).
+                if (!indexMap.TryFindClosestTokenBeforeIndex(frame.fromIns - 1, out currentToken))
+                {
+                    return frames;
+                }
+            }
+
+            // Outermost frame: code that wasn't inside any function call —
+            // either the test body itself or main-program code reached via
+            // runto. Function name is left empty; consumers can substitute
+            // their own label (e.g., the test name).
+            frames.Add(new FadeStackFrame
+            {
+                functionName = string.Empty,
+                lineNumber = currentToken.token.lineNumber,
+                charNumber = currentToken.token.charNumber,
+                instructionIndex = callStack.Length > 0
+                    ? callStack[callStack.Length - 1].fromIns - 1
+                    : instructionIndex
+            });
+            return frames;
+        }
+    }
+
+    /// <summary>
+    /// A single source-located frame in an assertion-failure stack trace.
+    /// Built from the VM's methodStack snapshot + DebugData by the test runner.
+    /// </summary>
+    public class FadeStackFrame
+    {
+        // Name of the function the frame is inside, or "" for the outermost
+        // (test body / main-program) frame.
+        public string functionName;
+        // Source line in the same coordinate space the rest of the compiler
+        // uses (0-based, as emitted by the lexer). Consumers that need to
+        // display 1-based line numbers should add 1. Source-map resolution
+        // for multi-file projects happens upstream of the runner.
+        public int lineNumber;
+        public int charNumber;
+        public int instructionIndex;
     }
 
     public class FadeTestResult
@@ -94,6 +217,10 @@ namespace FadeBasic.Sdk
         // IP at the moment of failure; useful for source-mapping when DebugData
         // is available. -1 if not applicable.
         public int failureInstructionIndex = -1;
+        // Source-located stack frames at the moment of failure (innermost first,
+        // outermost last). Empty when DebugData wasn't available at run time;
+        // callers should fall back to entry.sourceLine in that case.
+        public List<FadeStackFrame> failureFrames = new List<FadeStackFrame>();
         public TimeSpan duration;
     }
 
@@ -148,7 +275,11 @@ namespace FadeBasic.Sdk
 
         public FadeTestResult RunTest(TestManifestEntry entry)
         {
-            return FadeTestExecutor.RunTest(Machine.program, Compiler.methodTable, entry);
+            return FadeTestExecutor.RunTest(
+                Machine.program,
+                Compiler.methodTable,
+                entry,
+                Compiler.DebugData);
         }
 
         public FadeTestRunResult RunAllTests()

@@ -358,7 +358,15 @@ namespace FadeBasic.Testing
             {
                 msg += $"\n  source: {r.failureSourceText}";
             }
-            if (r.failureInstructionIndex >= 0)
+            if (r.failureFrames != null && r.failureFrames.Count > 0)
+            {
+                foreach (var frame in r.failureFrames)
+                {
+                    var label = string.IsNullOrEmpty(frame.functionName) ? "" : frame.functionName + " ";
+                    msg += $"\n  at {label}line {frame.lineNumber}";
+                }
+            }
+            else if (r.failureInstructionIndex >= 0)
             {
                 msg += $"\n  ip: {r.failureInstructionIndex}";
             }

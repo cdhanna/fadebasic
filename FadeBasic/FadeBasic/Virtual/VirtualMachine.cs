@@ -64,6 +64,11 @@ namespace FadeBasic.Virtual
         public VirtualRuntimeErrorType type;
         public int insIndex;
         public string message;
+        // Snapshot of the VM's methodStack at the moment the error was raised
+        // (innermost frame first). Resolution to source locations is done by
+        // a downstream consumer that has access to DebugData. Empty when the
+        // error happened with no function calls in flight.
+        public JumpHistoryData[] callStack;
     }
 
     public enum VirtualRuntimeErrorType
@@ -166,6 +171,13 @@ namespace FadeBasic.Virtual
             public string sourceText;   // Captured text of the asserted expression.
             public int instructionIndex; // IP at the moment of failure (for source-mapping).
             public string reason;       // Optional reason string from `assert <cond>, "<reason>"`. Empty when not provided.
+            // Snapshot of methodStack at the moment of failure. Innermost frame
+            // first (top of stack). Each entry's fromIns is the call site of
+            // that frame; toIns is the function's entry address. Empty when the
+            // assert fired at the test entry level with no function calls in
+            // between. Used to build a source-mapped call stack for the failure
+            // report; resolution happens in the test runner, not the VM.
+            public JumpHistoryData[] callStack = System.Array.Empty<JumpHistoryData>();
         }
 
         /// <summary>
@@ -177,6 +189,15 @@ namespace FadeBasic.Virtual
         /// </summary>
         public Dictionary<int, MockBehavior> mockTable;
 
+        /// <summary>
+        /// Per-VM host-call counter. Incremented on every CALL_HOST (mocked or
+        /// not) when <see cref="isTestExecution"/> is true. Read by the
+        /// <c>call count &lt;command&gt;</c> expression so tests can assert
+        /// how often a command was invoked. Keyed by host method id, same as
+        /// <see cref="mockTable"/>. Null until the first increment.
+        /// </summary>
+        public Dictionary<int, int> hostCallCounts;
+
         public class MockBehavior
         {
             // 0 = void (skip), 1 = returns (push value), 2 = forbid (assert-fail).
@@ -184,6 +205,12 @@ namespace FadeBasic.Virtual
             // For kind = Returns: the typed return value to push.
             public byte returnTypeCode;
             public byte[] returnBytes;
+            // For kind = Forbid: optional user-supplied reason text (empty
+            // when the user wrote `forbid` with no reason) and the address
+            // of the assert-unwind trampoline so a forbid failure can drain
+            // defers the same way an assert failure does.
+            public string forbidReason;
+            public int forbidTrampolineAddr;
         }
 
         public VirtualMachine(IEnumerable<byte> program) : this(program.ToArray())
@@ -476,6 +503,20 @@ namespace FadeBasic.Virtual
                                 new ReadOnlySpan<byte>(BitConverter.GetBytes(scopeStack.Count)),
                                 TypeCodes.INT, TypeCodes.GetByteSize(TypeCodes.INT));
                             break;
+                        case OpCodes.CALL_COUNT:
+                        {
+                            // Inline 4-byte command id; push that command's
+                            // host-call count as a typed int. Unknown command
+                            // ids (never invoked) push 0.
+                            var cmdId = BitConverter.ToInt32(program, instructionIndex);
+                            instructionIndex += 4;
+                            var count = 0;
+                            hostCallCounts?.TryGetValue(cmdId, out count);
+                            stack.PushSpanAndType(
+                                new ReadOnlySpan<byte>(BitConverter.GetBytes(count)),
+                                TypeCodes.INT, TypeCodes.GetByteSize(TypeCodes.INT));
+                            break;
+                        }
                         case OpCodes.PUSH_DEFER:
                             // read the place we should jump to when the scope is popped. 
                             VmUtil.ReadAsInt(ref stack, out var a);
@@ -868,6 +909,18 @@ namespace FadeBasic.Virtual
                             VmUtil.ReadAsInt(ref stack, out var hostMethodPtr);
                             hostMethods.FindMethod(hostMethodPtr, out var method);
 
+                            // Per-command invocation counting. We tally every
+                            // CALL_HOST in test mode regardless of mock state
+                            // so `call count <cmd>` works even before any
+                            // mock is installed. Outside test mode the count
+                            // is unused, so skip the dictionary work.
+                            if (isTestExecution)
+                            {
+                                hostCallCounts ??= new Dictionary<int, int>();
+                                hostCallCounts.TryGetValue(hostMethodPtr, out var prevCount);
+                                hostCallCounts[hostMethodPtr] = prevCount + 1;
+                            }
+
                             if (mockTable != null && mockTable.TryGetValue(hostMethodPtr, out var mock))
                             {
                                 // Mocked: pop the args off the stack as the real
@@ -888,13 +941,31 @@ namespace FadeBasic.Virtual
                                 }
                                 else if (mock.kind == 2)
                                 {
-                                    // forbid: record an assertion failure naming the command
+                                    // Forbid: same shape as a failing assert.
+                                    // Capture the call stack, build a TestFailure
+                                    // carrying the user's reason (if supplied),
+                                    // and redirect to the unwind trampoline so
+                                    // defers in every live scope drain before
+                                    // the test runner reports the result.
+                                    // Re-entrancy guard: if a prior failure is
+                                    // already recorded (e.g., a deferred body
+                                    // re-fires forbid or assert), just halt
+                                    // and keep the first failure.
+                                    if (assertionFailure != null)
+                                    {
+                                        instructionIndex = int.MaxValue;
+                                        break;
+                                    }
                                     assertionFailure = new TestFailure
                                     {
                                         sourceText = "forbidden command was called: " + method.name,
-                                        instructionIndex = instructionIndex
+                                        reason = mock.forbidReason ?? "",
+                                        instructionIndex = instructionIndex,
+                                        callStack = CaptureCallStack()
                                     };
-                                    instructionIndex = int.MaxValue;
+                                    instructionIndex = mock.forbidTrampolineAddr > 0
+                                        ? mock.forbidTrampolineAddr
+                                        : int.MaxValue;
                                 }
                                 // kind == 0 (void): nothing else to do; args are gone
                             }
@@ -929,9 +1000,18 @@ namespace FadeBasic.Virtual
                         }
                         case OpCodes.MOCK_FORBID:
                         {
+                            // Stack at dispatch (bottom→top):
+                            //   reason (string), trampolineAddr (int), commandId (int)
                             VmUtil.ReadAsInt(ref stack, out var forbidId);
+                            VmUtil.ReadAsInt(ref stack, out var forbidTrampoline);
+                            var forbidReason = PopAssertString();
                             mockTable ??= new Dictionary<int, MockBehavior>();
-                            mockTable[forbidId] = new MockBehavior { kind = 2 };
+                            mockTable[forbidId] = new MockBehavior
+                            {
+                                kind = 2,
+                                forbidReason = forbidReason,
+                                forbidTrampolineAddr = forbidTrampoline
+                            };
                             break;
                         }
                         case OpCodes.MOCK_CLEAR:
@@ -1077,12 +1157,16 @@ namespace FadeBasic.Virtual
                                 // Test-mode: record the failure (this path is also
                                 // taken when a test runtos into main-program code
                                 // that hits an assert) and redirect to the trampoline
-                                // so defers in every live scope get drained.
+                                // so defers in every live scope get drained. Capture
+                                // the call chain now; the trampoline doesn't pop
+                                // methodStack, but a stable snapshot decouples
+                                // downstream consumers from VM state.
                                 assertionFailure = new TestFailure
                                 {
                                     sourceText = text,
                                     reason = reasonText,
-                                    instructionIndex = instructionIndex
+                                    instructionIndex = instructionIndex,
+                                    callStack = CaptureCallStack()
                                 };
                                 instructionIndex = trampolineAddr;
                             }
@@ -1138,11 +1222,36 @@ namespace FadeBasic.Virtual
 
         void TriggerRuntimeError(VirtualRuntimeError error)
         {
+            // Stamp a call-stack snapshot onto the error unless the caller
+            // already provided one. This gives every runtime-error consumer
+            // (test runner, future crash reporter, DAP) the same shape used
+            // for assert-mode failures.
+            if (error.callStack == null)
+            {
+                error.callStack = CaptureCallStack();
+            }
             this.error = error;
             if (shouldThrowRuntimeException)
             {
                 throw new VirtualRuntimeException(error);
             }
+        }
+
+        /// <summary>
+        /// Snapshot the current methodStack into a stable array. Index 0 is the
+        /// innermost (most recent) call; the last entry is the outermost.
+        /// Used by ASSERT_FAIL test-mode and TriggerRuntimeError to attach a
+        /// call-chain to the error, decoupled from later VM state changes.
+        /// </summary>
+        public JumpHistoryData[] CaptureCallStack()
+        {
+            var depth = methodStack.Count;
+            var copy = new JumpHistoryData[depth];
+            for (var i = 0; i < depth; i++)
+            {
+                copy[i] = methodStack.buffer[depth - 1 - i];
+            }
+            return copy;
         }
 
         // Pop one Fade string off the data stack and materialize it as a C# string.

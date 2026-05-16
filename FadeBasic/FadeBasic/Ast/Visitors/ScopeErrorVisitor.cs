@@ -20,6 +20,11 @@ namespace FadeBasic.Ast.Visitors
 
 
             var scope = program.scope = new Scope();
+            // Plumb the program's CommandCollection onto the scope so visitors
+            // can look up command metadata (return type, args) without taking
+            // it as a parameter. Test sub-programs inherit from the parent.
+            scope.commands = program.commands ?? parentProgram?.commands;
+
             // Region name used to tag this program's top-level labels and to seed
             // GetCurrentFunctionName() so EnsureLabel can detect cross-scope gotos
             // between a test and its parent. Null for the outermost program (matches
@@ -675,31 +680,134 @@ namespace FadeBasic.Ast.Visitors
         }
         
         // mock and clear-mock validation. Command-existence is enforced by the
-        // lexer's CommandNameTree pass (an unknown command name doesn't tokenize
-        // as CommandWord, so the parser already errors). Here we walk the entry
-        // expressions to catch general scope errors (unknown variable refs in
-        // `returns` expressions, etc.) and emit unreachable-entry warnings.
+        // lexer's CommandNameTree pass (an unknown command name doesn't
+        // tokenize as CommandWord, so the parser already errors). Here we:
+        //   - Walk body expressions for unknown-symbol errors.
+        //   - Enforce body structure: at most one `returns`, at most one
+        //     `forbid`, never both.
+        //   - Type-check the `forbid` reason expression (string).
+        //   - Validate the `returns` expression against the command's
+        //     declared return type. Multi-overload commands must accept the
+        //     same expression for every overload, so we intersect: if any
+        //     overload would reject the expression, error.
         static void ValidateMockStatement(MockStatement mock, Scope scope, EnsureTypeContext ctx)
         {
-            var sawAlways = false;
-            for (var i = 0; i < mock.entries.Count; i++)
-            {
-                var entry = mock.entries[i];
-                if (sawAlways)
-                {
-                    entry.Errors.Add(new ParseError(entry.StartToken, ErrorCodes.MockUnreachableEntry));
-                }
-                if (entry.frequency == MockFrequencyKind.Always) sawAlways = true;
+            MockReturnsStatement seenReturns = null;
+            MockForbidStatement seenForbid = null;
 
-                if (entry.returnExpression != null)
+            foreach (var stmt in mock.body)
+            {
+                switch (stmt)
                 {
-                    entry.returnExpression.EnsureVariablesAreDefined(scope, ctx);
-                }
-                if (entry.countExpression != null)
-                {
-                    entry.countExpression.EnsureVariablesAreDefined(scope, ctx);
+                    case MockReturnsStatement rs:
+                        if (seenReturns != null)
+                        {
+                            rs.Errors.Add(new ParseError(rs.StartToken, ErrorCodes.MockMultipleReturns));
+                        }
+                        seenReturns = rs;
+                        if (rs.expression != null)
+                        {
+                            rs.expression.EnsureVariablesAreDefined(scope, ctx);
+                        }
+                        break;
+
+                    case MockForbidStatement fs:
+                        if (seenForbid != null)
+                        {
+                            fs.Errors.Add(new ParseError(fs.StartToken, ErrorCodes.MockMultipleForbid));
+                        }
+                        seenForbid = fs;
+                        if (fs.reason != null)
+                        {
+                            fs.reason.EnsureVariablesAreDefined(scope, ctx);
+                            if (fs.reason.ParsedType.type != VariableType.String
+                                && !fs.reason.ParsedType.unset)
+                            {
+                                fs.Errors.Add(new ParseError(fs.reason, ErrorCodes.MockForbidReasonMustBeString));
+                            }
+                        }
+                        break;
                 }
             }
+
+            if (seenReturns != null && seenForbid != null)
+            {
+                // `returns` + `forbid` in the same body is nonsensical — the
+                // forbid prevents the return path from being reached.
+                seenForbid.Errors.Add(new ParseError(seenForbid.StartToken, ErrorCodes.MockReturnsAndForbid));
+            }
+
+            // Look up the command in the scope's CommandCollection to validate
+            // `returns` against the command's declared return type. We need
+            // ALL overloads — a mock applies to every overload of the same
+            // name, so the returns expression must satisfy every one of them.
+            //
+            // Type compatibility uses EnforceTypeAssignment so the same numeric
+            // coercion rules that apply to `local n as long = 5` apply here:
+            // an int literal is fine as a `returns` value for a long-returning
+            // command, etc. Anything else surfaces an InvalidCast/InvalidType
+            // error on the expression — we then translate the first such error
+            // into a clearer MockReturnsTypeMismatch and stop.
+            if (scope.commands != null && mock.commandName != null && seenReturns != null)
+            {
+                if (scope.commands.Lookup.TryGetValue(mock.commandName, out var overloads)
+                    && overloads.Count > 0)
+                {
+                    var reportedTypeMismatch = false;
+                    foreach (var overload in overloads)
+                    {
+                        var isVoid = overload.returnType == TypeCodes.VOID;
+
+                        if (isVoid)
+                        {
+                            // `returns` against any void overload is illegal.
+                            // One error per mock is enough — break out.
+                            seenReturns.Errors.Add(new ParseError(seenReturns.StartToken,
+                                ErrorCodes.MockReturnsOnVoidCommand));
+                            break;
+                        }
+
+                        if (seenReturns.expression == null
+                            || seenReturns.expression.ParsedType.unset) continue;
+
+                        if (!TypeInfo.TryGetFromTypeCode(overload.returnType, out var expectedType))
+                        {
+                            continue;
+                        }
+
+                        // Probe assignability without committing errors to
+                        // the real expression node — call into the same path
+                        // the declaration init uses, on a throwaway node. If
+                        // it flags any errors, the types are incompatible.
+                        var probe = new ProbeNode();
+                        scope.EnforceTypeAssignment(probe,
+                            seenReturns.expression.ParsedType, expectedType,
+                            softLeft: false, out _);
+                        if (probe.Errors.Count > 0 && !reportedTypeMismatch)
+                        {
+                            seenReturns.expression.Errors.Add(new ParseError(
+                                seenReturns.expression,
+                                ErrorCodes.MockReturnsTypeMismatch));
+                            reportedTypeMismatch = true;
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+
+        // Throwaway IAstNode used to capture errors from EnforceTypeAssignment
+        // without polluting a real source node. EnforceTypeAssignment adds
+        // ParseErrors to whatever node is passed in; we want to test assignment
+        // legality without committing those errors to the user's expression.
+        sealed class ProbeNode : IAstNode
+        {
+            public List<ParseError> Errors { get; } = new List<ParseError>();
+            public Token StartToken => null;
+            public Token EndToken => null;
+            public TypeInfo ParsedType => TypeInfo.Unset;
+            public TransitiveTypeFlags TransitiveFlags { get; set; }
+            public Symbol DeclaredFromSymbol { get; set; }
         }
 
         static void ValidateClearMockStatement(ClearMockStatement clear)
@@ -1103,6 +1211,12 @@ namespace FadeBasic.Ast.Visitors
                     break;
                 case LiteralRealExpression literalReal:
                     literalReal.ParsedType = TypeInfo.Real;
+                    break;
+                case CallCountExpression callCountExpr:
+                    // `call count <cmd>` always evaluates to an int. The
+                    // command name was already validated by the lexer's
+                    // CommandNameTree pass; nothing further to do.
+                    callCountExpr.ParsedType = TypeInfo.Int;
                     break;
                 default:
                     break;

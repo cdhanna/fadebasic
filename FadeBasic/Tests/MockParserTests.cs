@@ -40,107 +40,121 @@ public class MockParserTests
         return null;
     }
 
-    [Test]
-    public void Mock_InlineReturns_ParsesAsAlwaysFrequency()
-    {
-        var src = @"
-test foo
-    mock screen width returns 10
-endtest
-";
-        var prog = Parse(src, out var errs);
-        Assert.That(errs, Is.Empty,
-            "no parse errors expected; got: " + string.Join(", ", errs.Select(e => e.Display)));
-
-        var mock = FindFirstMock(prog);
-        Assert.That(mock, Is.Not.Null);
-        Assert.That(mock.commandName, Is.EqualTo("screen width"));
-        Assert.That(mock.entries.Count, Is.EqualTo(1));
-        Assert.That(mock.entries[0].kind, Is.EqualTo(MockEntryKind.Returns));
-        Assert.That(mock.entries[0].frequency, Is.EqualTo(MockFrequencyKind.Always));
-        Assert.That(mock.entries[0].returnExpression, Is.Not.Null);
-    }
+    // ── Block-form shape ───────────────────────────────────────────────────
 
     [Test]
-    public void Mock_InlineForbid_ParsesAsAlwaysFrequency()
+    public void Mock_Empty_Body_ParsesAsVoidMock()
     {
+        // Empty block = suppress the call. No inline form: `endmock` is
+        // required even for void mocks.
         var src = @"
 test foo
-    mock screen width forbid
-endtest
-";
-        var prog = Parse(src, out var errs);
-        Assert.That(errs, Is.Empty);
-        var mock = FindFirstMock(prog);
-        Assert.That(mock.entries.Count, Is.EqualTo(1));
-        Assert.That(mock.entries[0].kind, Is.EqualTo(MockEntryKind.Forbid));
-        Assert.That(mock.entries[0].frequency, Is.EqualTo(MockFrequencyKind.Always));
-    }
-
-    [Test]
-    public void Mock_FrequencyOnce_Parses()
-    {
-        var src = @"
-test foo
-    mock screen width returns 10 once
-endtest
-";
-        var prog = Parse(src, out var errs);
-        Assert.That(errs, Is.Empty);
-        var mock = FindFirstMock(prog);
-        Assert.That(mock.entries[0].frequency, Is.EqualTo(MockFrequencyKind.Once));
-    }
-
-    [Test]
-    public void Mock_FrequencyNTimes_Parses()
-    {
-        var src = @"
-test foo
-    mock screen width returns 10 3 times
-endtest
-";
-        var prog = Parse(src, out var errs);
-        Assert.That(errs, Is.Empty,
-            "expected clean parse; got: " + string.Join(", ", errs.Select(e => e.Display)));
-        var mock = FindFirstMock(prog);
-        Assert.That(mock.entries[0].frequency, Is.EqualTo(MockFrequencyKind.NTimes));
-        Assert.That(mock.entries[0].countExpression, Is.Not.Null);
-    }
-
-    [Test]
-    public void Mock_FrequencyAlwaysExplicit_Parses()
-    {
-        var src = @"
-test foo
-    mock screen width returns 10 always
-endtest
-";
-        var prog = Parse(src, out var errs);
-        Assert.That(errs, Is.Empty);
-        var mock = FindFirstMock(prog);
-        Assert.That(mock.entries[0].frequency, Is.EqualTo(MockFrequencyKind.Always));
-    }
-
-    [Test]
-    public void Mock_BlockForm_MultipleEntries_Parses()
-    {
-        var src = @"
-test foo
-    mock screen width
-        returns 10 once
-        returns 20 once
-        returns 5 always
+    mock wait ms
     endmock
 endtest
 ";
         var prog = Parse(src, out var errs);
         Assert.That(errs, Is.Empty,
-            "expected clean parse; got: " + string.Join(", ", errs.Select(e => e.Display)));
+            "no parse errors expected; got: " + string.Join(", ", errs.Select(e => e.Display)));
         var mock = FindFirstMock(prog);
-        Assert.That(mock.entries.Count, Is.EqualTo(3));
-        Assert.That(mock.entries[0].frequency, Is.EqualTo(MockFrequencyKind.Once));
-        Assert.That(mock.entries[1].frequency, Is.EqualTo(MockFrequencyKind.Once));
-        Assert.That(mock.entries[2].frequency, Is.EqualTo(MockFrequencyKind.Always));
+        Assert.That(mock, Is.Not.Null);
+        Assert.That(mock.commandName, Is.EqualTo("wait ms"));
+        Assert.That(mock.body, Is.Empty);
+    }
+
+    [Test]
+    public void Mock_Returns_ParsesAsReturnsStatement()
+    {
+        var src = @"
+test foo
+    mock screen width
+        returns 10
+    endmock
+endtest
+";
+        var prog = Parse(src, out var errs);
+        Assert.That(errs, Is.Empty,
+            "no parse errors expected; got: " + string.Join(", ", errs.Select(e => e.Display)));
+        var mock = FindFirstMock(prog);
+        Assert.That(mock.body.Count, Is.EqualTo(1));
+        Assert.That(mock.body[0], Is.TypeOf<MockReturnsStatement>());
+        var rs = (MockReturnsStatement)mock.body[0];
+        Assert.That(rs.expression, Is.Not.Null);
+    }
+
+    [Test]
+    public void Mock_Forbid_ParsesAsForbidStatement()
+    {
+        var src = @"
+test foo
+    mock screen width
+        forbid
+    endmock
+endtest
+";
+        var prog = Parse(src, out var errs);
+        Assert.That(errs, Is.Empty);
+        var mock = FindFirstMock(prog);
+        Assert.That(mock.body.Count, Is.EqualTo(1));
+        Assert.That(mock.body[0], Is.TypeOf<MockForbidStatement>());
+        var fs = (MockForbidStatement)mock.body[0];
+        Assert.That(fs.reason, Is.Null);
+    }
+
+    [Test]
+    public void Mock_ForbidWithReason_ParsesReason()
+    {
+        var src = @"
+test foo
+    mock wait ms
+        forbid ""no waiting in tests""
+    endmock
+endtest
+";
+        var prog = Parse(src, out var errs);
+        Assert.That(errs, Is.Empty,
+            "no parse errors expected; got: " + string.Join(", ", errs.Select(e => e.Display)));
+        var mock = FindFirstMock(prog);
+        var fs = (MockForbidStatement)mock.body[0];
+        Assert.That(fs.reason, Is.Not.Null);
+    }
+
+    // ── Error paths ────────────────────────────────────────────────────────
+
+    [Test]
+    public void Mock_InlineForm_NoLongerSupported_Errors()
+    {
+        // `mock cmd returns X` on one line is no longer valid — the parser
+        // expects a newline and `endmock`. The `returns 10` token sequence
+        // now sits in an empty mock body, awaiting `endmock`; eventually
+        // the surrounding `endtest` is hit and MockMissingEndMock fires.
+        var src = @"
+test foo
+    mock screen width returns 10
+endtest
+";
+        Parse(src, out var errs);
+        Assert.That(errs.Any(e => e.errorCode.Equals(ErrorCodes.MockMissingEndMock)),
+            Is.True,
+            "inline mock should now require endmock; got: " +
+            string.Join(", ", errs.Select(e => e.Display)));
+    }
+
+    [Test]
+    public void Mock_BareForm_NoLongerSupported_Errors()
+    {
+        // `mock cmd` with no `endmock` used to install a void mock. Now
+        // every mock requires `endmock`.
+        var src = @"
+test foo
+    mock wait ms
+endtest
+";
+        Parse(src, out var errs);
+        Assert.That(errs.Any(e => e.errorCode.Equals(ErrorCodes.MockMissingEndMock)),
+            Is.True,
+            "bare mock should now require endmock; got: " +
+            string.Join(", ", errs.Select(e => e.Display)));
     }
 
     [Test]
@@ -149,7 +163,7 @@ endtest
         var src = @"
 test foo
     mock screen width
-        returns 10 once
+        returns 10
 endtest
 ";
         Parse(src, out var errs);
@@ -165,7 +179,9 @@ endtest
         // parser sees a missing command name.
         var src = @"
 test foo
-    mock not_a_real_command returns 10
+    mock not_a_real_command
+        returns 10
+    endmock
 endtest
 ";
         Parse(src, out var errs);
@@ -175,21 +191,97 @@ endtest
     }
 
     [Test]
-    public void Mock_UnreachableEntry_AfterAlways_Warns()
+    public void Mock_MultipleReturns_Errors()
     {
+        // A body may have at most one `returns`. (Frequency is gone, so the
+        // old "stacked returns with different frequencies" use case is too.)
         var src = @"
 test foo
     mock screen width
-        returns 10 always
-        returns 20 once
+        returns 10
+        returns 20
     endmock
 endtest
 ";
         Parse(src, out var errs);
-        Assert.That(errs.Any(e => e.errorCode.Equals(ErrorCodes.MockUnreachableEntry)),
+        Assert.That(errs.Any(e => e.errorCode.Equals(ErrorCodes.MockMultipleReturns)),
             Is.True,
-            "expected MockUnreachableEntry; got: " + string.Join(", ", errs.Select(e => e.Display)));
+            "expected MockMultipleReturns; got: " + string.Join(", ", errs.Select(e => e.Display)));
     }
+
+    [Test]
+    public void Mock_MultipleForbid_Errors()
+    {
+        var src = @"
+test foo
+    mock screen width
+        forbid
+        forbid
+    endmock
+endtest
+";
+        Parse(src, out var errs);
+        Assert.That(errs.Any(e => e.errorCode.Equals(ErrorCodes.MockMultipleForbid)),
+            Is.True,
+            "expected MockMultipleForbid; got: " + string.Join(", ", errs.Select(e => e.Display)));
+    }
+
+    [Test]
+    public void Mock_ReturnsAndForbid_Errors()
+    {
+        // `returns` + `forbid` together is nonsensical: forbid prevents the
+        // return path from ever running.
+        var src = @"
+test foo
+    mock screen width
+        returns 10
+        forbid
+    endmock
+endtest
+";
+        Parse(src, out var errs);
+        Assert.That(errs.Any(e => e.errorCode.Equals(ErrorCodes.MockReturnsAndForbid)),
+            Is.True,
+            "expected MockReturnsAndForbid; got: " + string.Join(", ", errs.Select(e => e.Display)));
+    }
+
+    [Test]
+    public void Mock_ForbidReasonMustBeString()
+    {
+        var src = @"
+test foo
+    mock wait ms
+        forbid 42
+    endmock
+endtest
+";
+        Parse(src, out var errs);
+        Assert.That(errs.Any(e => e.errorCode.Equals(ErrorCodes.MockForbidReasonMustBeString)),
+            Is.True,
+            "expected MockForbidReasonMustBeString; got: " + string.Join(", ", errs.Select(e => e.Display)));
+    }
+
+    [Test]
+    public void Mock_BlockForm_MissingEndMock_DoesNotConsumeEndTest()
+    {
+        // When `endmock` is missing, the mock parser must NOT consume the
+        // surrounding `endtest`; the missing-endmock error is reported and
+        // the test parser still terminates correctly.
+        var src = @"
+test foo
+    mock screen width
+        returns 10
+endtest
+";
+        var prog = Parse(src, out var errs);
+        Assert.That(errs.Any(e => e.errorCode.Equals(ErrorCodes.MockMissingEndMock)),
+            Is.True,
+            "expected MockMissingEndMock; got: " + string.Join(", ", errs.Select(e => e.Display)));
+        // The test should still be properly closed.
+        Assert.That(prog.tests.Count, Is.EqualTo(1));
+    }
+
+    // ── ClearMock ──────────────────────────────────────────────────────────
 
     [Test]
     public void ClearMock_SingleCommand_Parses()
@@ -236,73 +328,17 @@ endtest
             "expected ClearMockMissingTarget; got: " + string.Join(", ", errs.Select(e => e.Display)));
     }
 
-    [Test]
-    public void Mock_BlockForm_MixedReturnsAndForbid_Parses()
-    {
-        var src = @"
-test foo
-    mock screen width
-        returns 10 once
-        forbid always
-    endmock
-endtest
-";
-        var prog = Parse(src, out var errs);
-        Assert.That(errs, Is.Empty,
-            "no parse errors expected; got: " + string.Join(", ", errs.Select(e => e.Display)));
-        var mock = FindFirstMock(prog);
-        Assert.That(mock.entries.Count, Is.EqualTo(2));
-        Assert.That(mock.entries[0].kind, Is.EqualTo(MockEntryKind.Returns));
-        Assert.That(mock.entries[1].kind, Is.EqualTo(MockEntryKind.Forbid));
-    }
-
-    [Test]
-    public void Mock_StackedInline_StopsAtNewline_NoEndMockNeeded()
-    {
-        // Stacked inline form via colon — DEFER-style. No endmock required;
-        // the statement ends at the first newline.
-        var src = @"
-test foo
-    mock screen width returns 10 once: returns 20 once
-endtest
-";
-        var prog = Parse(src, out var errs);
-        Assert.That(errs, Is.Empty,
-            "no parse errors expected; got: " + string.Join(", ", errs.Select(e => e.Display)));
-        var mock = FindFirstMock(prog);
-        Assert.That(mock.entries.Count, Is.EqualTo(2));
-        Assert.That(mock.entries[0].frequency, Is.EqualTo(MockFrequencyKind.Once));
-        Assert.That(mock.entries[1].frequency, Is.EqualTo(MockFrequencyKind.Once));
-    }
-
-    [Test]
-    public void Mock_BlockForm_MissingEndMock_DoesNotConsumeEndTest()
-    {
-        // When `endmock` is missing, the mock parser must NOT consume the
-        // surrounding `endtest`; the missing-endmock error is reported and
-        // the test parser still terminates correctly.
-        var src = @"
-test foo
-    mock screen width
-        returns 10 once
-endtest
-";
-        var prog = Parse(src, out var errs);
-        Assert.That(errs.Any(e => e.errorCode.Equals(ErrorCodes.MockMissingEndMock)),
-            Is.True,
-            "expected MockMissingEndMock; got: " + string.Join(", ", errs.Select(e => e.Display)));
-        // The test should still be properly closed (the test node exists with
-        // the mock as its only top-level statement).
-        Assert.That(prog.tests.Count, Is.EqualTo(1));
-    }
+    // ── Scope enforcement ──────────────────────────────────────────────────
 
     [Test]
     public void Mock_OutsideTest_Errors()
     {
         var src = @"
-mock screen width returns 10
+mock screen width
+    returns 10
+endmock
 ";
-        var prog = Parse(src, out var errs);
+        Parse(src, out var errs);
         Assert.That(errs.Any(e => e.errorCode.Equals(ErrorCodes.MockOutsideTest)),
             Is.True,
             "expected MockOutsideTest; got: " + string.Join(", ", errs.Select(e => e.Display)));
@@ -314,18 +350,114 @@ mock screen width returns 10
         var src = @"
 clear mocks
 ";
-        var prog = Parse(src, out var errs);
+        Parse(src, out var errs);
         Assert.That(errs.Any(e => e.errorCode.Equals(ErrorCodes.ClearMockOutsideTest)),
             Is.True,
             "expected ClearMockOutsideTest; got: " + string.Join(", ", errs.Select(e => e.Display)));
     }
 
+    // ── Type validation (Phase C) ──────────────────────────────────────────
+
+    [Test]
+    public void Mock_ReturnsOnVoidCommand_Errors()
+    {
+        // `wait ms` is void — `returns 0` against it must error rather than
+        // silently degrade (the old behavior).
+        var src = @"
+test foo
+    mock wait ms
+        returns 0
+    endmock
+endtest
+";
+        Parse(src, out var errs);
+        Assert.That(errs.Any(e => e.errorCode.Equals(ErrorCodes.MockReturnsOnVoidCommand)),
+            Is.True,
+            "expected MockReturnsOnVoidCommand; got: " + string.Join(", ", errs.Select(e => e.Display)));
+    }
+
+    [Test]
+    public void Mock_ReturnsTypeMismatch_Errors()
+    {
+        // `screen width` returns an int — returning a string should error.
+        var src = @"
+test foo
+    mock screen width
+        returns ""nope""
+    endmock
+endtest
+";
+        Parse(src, out var errs);
+        Assert.That(errs.Any(e => e.errorCode.Equals(ErrorCodes.MockReturnsTypeMismatch)),
+            Is.True,
+            "expected MockReturnsTypeMismatch; got: " + string.Join(", ", errs.Select(e => e.Display)));
+    }
+
+    [Test]
+    public void Mock_ReturnsNumericCoercion_Ok()
+    {
+        // `now` returns a long. `returns 5` (int literal) should coerce
+        // cleanly — same rule that lets `local n as long = 5` work. We use
+        // EnforceTypeAssignment so the coercion semantics stay consistent
+        // with the rest of the language.
+        var src = @"
+test foo
+    mock now
+        returns 5
+    endmock
+endtest
+";
+        Parse(src, out var errs);
+        Assert.That(errs.Any(e => e.errorCode.Equals(ErrorCodes.MockReturnsTypeMismatch)),
+            Is.False,
+            "int → long coercion should be allowed in mock returns; got: " +
+            string.Join(", ", errs.Select(e => e.Display)));
+    }
+
+    [Test]
+    public void Mock_ReturnsMatchingType_Ok()
+    {
+        // `screen width` returns int; `returns 42` should be fine.
+        var src = @"
+test foo
+    mock screen width
+        returns 42
+    endmock
+endtest
+";
+        Parse(src, out var errs);
+        Assert.That(errs.Any(e =>
+                e.errorCode.Equals(ErrorCodes.MockReturnsOnVoidCommand)
+             || e.errorCode.Equals(ErrorCodes.MockReturnsTypeMismatch)),
+            Is.False,
+            "no type errors expected; got: " + string.Join(", ", errs.Select(e => e.Display)));
+    }
+
+    [Test]
+    public void Mock_EmptyBodyOnAnyCommand_Ok()
+    {
+        // Empty mock body = suppress the call. Always valid regardless of
+        // whether the command returns a value (the caller of a value-
+        // returning command gets a stack-leak if it reads the return — but
+        // that's a separate runtime concern; the parser accepts it).
+        var src = @"
+test foo
+    mock screen width
+    endmock
+endtest
+";
+        Parse(src, out var errs);
+        Assert.That(errs, Is.Empty,
+            "empty mock body should parse cleanly; got: " +
+            string.Join(", ", errs.Select(e => e.Display)));
+    }
+
     [Test]
     public void Assert_OutsideTest_IsAllowed()
     {
-        // `assert` is now legal in the main program. When the VM runs the
-        // program directly and an assert fails, it triggers a runtime crash
-        // (verified by VM-side tests). Parse should produce no errors here.
+        // Unrelated to mock but lives in this fixture historically.
+        // `assert` is legal in the main program; the VM crashes at runtime
+        // when one fails outside a test.
         var src = @"
 assert 1 = 1
 ";

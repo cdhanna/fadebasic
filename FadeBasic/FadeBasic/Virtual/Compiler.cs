@@ -1929,6 +1929,18 @@ namespace FadeBasic.Virtual
             }
         }
 
+        // Emit CALL_COUNT with an inline 4-byte command id, pushing that
+        // command's invocation count onto the data stack.
+        private void EmitCallCountInline(int commandId)
+        {
+            _buffer.Add(OpCodes.CALL_COUNT);
+            var bytes = BitConverter.GetBytes(commandId);
+            for (var i = 0; i < bytes.Length; i++)
+            {
+                _buffer.Add(bytes[i]);
+            }
+        }
+
         private void Compile(ReturnStatement _)
         {
             _buffer.Add(OpCodes.RETURN);
@@ -1962,52 +1974,63 @@ namespace FadeBasic.Virtual
                 return;
             }
 
-            // For each entry in source order, emit one install opcode per
-            // overload. The VM keys mocks by host method id, so each overload
-            // gets its own registration.
-            foreach (var entry in mockStatement.entries)
+            // Inspect the body: a mock has at most one `returns` and at most
+            // one `forbid` (the scope visitor enforces this). Pick the install
+            // opcode based on what's present:
+            //   - forbid              → MOCK_FORBID
+            //   - returns <expr>      → MOCK_RETURNS
+            //   - empty body          → MOCK_VOID (suppress the call)
+            // Phase B will replace this with full mock-body compilation.
+            MockReturnsStatement returnsStmt = null;
+            MockForbidStatement forbidStmt = null;
+            foreach (var stmt in mockStatement.body)
             {
-                foreach (var commandId in commandIds)
+                if (stmt is MockReturnsStatement rs && returnsStmt == null) returnsStmt = rs;
+                else if (stmt is MockForbidStatement fs && forbidStmt == null) forbidStmt = fs;
+            }
+
+            foreach (var commandId in commandIds)
+            {
+                if (forbidStmt != null)
                 {
-                    var commandReturnType = methodTable.methods[commandId].returnType;
-                    var isVoidCommand = commandReturnType == TypeCodes.VOID;
-
-                    // `returns <expr>` on a void command is silently degraded
-                    // to a Void mock. The caller doesn't read a return value,
-                    // so pushing one would just leak onto the stack. Users
-                    // sometimes write `mock wait ms returns 0` thinking they
-                    // need a body — make that DWIM.
-                    var effectiveKind = entry.kind;
-                    if (effectiveKind == MockEntryKind.Returns && isVoidCommand)
+                    // Stack at MOCK_FORBID dispatch (bottom→top):
+                    //   reason (string), trampolineAddr (int), commandId (int)
+                    // The reason is an empty literal when the user didn't
+                    // supply one. The trampoline address is patched after the
+                    // assert-unwind trampoline is emitted (same patch list).
+                    if (forbidStmt.reason != null)
                     {
-                        effectiveKind = MockEntryKind.Void;
+                        Compile(forbidStmt.reason);
                     }
-
-                    switch (effectiveKind)
+                    else
                     {
-                        case MockEntryKind.Void:
-                            AddPushInt(_buffer, commandId);
-                            _buffer.Add(OpCodes.MOCK_VOID);
-                            break;
-
-                        case MockEntryKind.Returns:
-                            AddPushInt(_buffer, commandId);
-                            if (entry.returnExpression != null)
-                            {
-                                Compile(entry.returnExpression);
-                            }
-                            else
-                            {
-                                AddPushInt(_buffer, 0);
-                            }
-                            _buffer.Add(OpCodes.MOCK_RETURNS);
-                            break;
-
-                        case MockEntryKind.Forbid:
-                            AddPushInt(_buffer, commandId);
-                            _buffer.Add(OpCodes.MOCK_FORBID);
-                            break;
+                        Compile(new LiteralStringExpression(forbidStmt.startToken, ""));
                     }
+                    var trampolinePatchIndex = _buffer.Count;
+                    AddPushInt(_buffer, int.MaxValue);
+                    _assertTrampolinePatches.Add(trampolinePatchIndex);
+
+                    AddPushInt(_buffer, commandId);
+                    _buffer.Add(OpCodes.MOCK_FORBID);
+                }
+                else if (returnsStmt != null)
+                {
+                    AddPushInt(_buffer, commandId);
+                    if (returnsStmt.expression != null)
+                    {
+                        Compile(returnsStmt.expression);
+                    }
+                    else
+                    {
+                        AddPushInt(_buffer, 0);
+                    }
+                    _buffer.Add(OpCodes.MOCK_RETURNS);
+                }
+                else
+                {
+                    // Empty body → suppress the real call entirely.
+                    AddPushInt(_buffer, commandId);
+                    _buffer.Add(OpCodes.MOCK_VOID);
                 }
             }
         }
@@ -3035,6 +3058,33 @@ namespace FadeBasic.Virtual
                         argMap = commandExpr.argMap
                     });
                     break;
+                case CallCountExpression callCountExpr:
+                {
+                    // Resolve the command name to all overload ids; the count
+                    // is per-id, but `call count <name>` means "across all
+                    // overloads of <name>." Sum the per-id counts at runtime
+                    // by emitting CALL_COUNT for each id and adding the
+                    // results. For the common single-overload case this is
+                    // just one CALL_COUNT instruction. If the name doesn't
+                    // resolve to any command, push 0.
+                    var ids = callCountExpr.commandName != null
+                        ? ResolveMockCommandIds(callCountExpr.commandName)
+                        : new List<int>();
+                    if (ids.Count == 0)
+                    {
+                        AddPushInt(_buffer, 0);
+                    }
+                    else
+                    {
+                        EmitCallCountInline(ids[0]);
+                        for (var i = 1; i < ids.Count; i++)
+                        {
+                            EmitCallCountInline(ids[i]);
+                            _buffer.Add(OpCodes.ADD);
+                        }
+                    }
+                    break;
+                }
                 case LiteralStringExpression literalString:
                     // allocate some memory for a string...
                     var str = literalString.value;

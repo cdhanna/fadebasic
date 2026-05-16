@@ -455,5 +455,15 @@ namespace FadeBasic.Virtual
         /// general primitive any future "unwind to scope N" feature can reuse.
         /// </summary>
         public const byte PUSH_SCOPE_DEPTH = 72;
+
+        /// <summary>
+        /// Reads a 4-byte command id inline from the bytecode (the next 4
+        /// bytes after the opcode) and pushes the current invocation count
+        /// for that host command onto the data stack as an int. Counts are
+        /// maintained on the VM regardless of whether a mock is installed,
+        /// so `call count cmd` works for unmocked commands too — returns 0
+        /// when `cmd` was never called.
+        /// </summary>
+        public const byte CALL_COUNT = 73;
     }
 }

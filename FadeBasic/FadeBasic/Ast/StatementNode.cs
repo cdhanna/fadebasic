@@ -171,56 +171,51 @@ namespace FadeBasic.Ast
         }
     }
 
-    public enum MockEntryKind
+    /// <summary>
+    /// `returns <expr>` inside a mock body. Sets the return value the mocked
+    /// command produces when called. Only valid inside a mock block; the
+    /// scope-error visitor enforces that.
+    /// </summary>
+    public class MockReturnsStatement : AstNode, IStatementNode
     {
-        Returns,
-        Forbid,
-        // Bare-form mock (`mock <command>` with no body). Used for void
-        // commands the test wants to suppress, like `mock wait ms` to skip
-        // the actual sleep during test execution. Args are still consumed
-        // from the stack at dispatch time.
-        Void
-    }
+        public IExpressionNode expression;
 
-    public enum MockFrequencyKind
-    {
-        Always,   // default — applies to every call until exhausted (forbid: every call)
-        Once,     // applies to one call, then the entry is consumed
-        NTimes    // applies to N calls, then the entry is consumed (N from countExpression)
-    }
-
-    public class MockEntry : AstNode
-    {
-        public MockEntryKind kind;
-        public MockFrequencyKind frequency = MockFrequencyKind.Always;
-        // Only set when kind == Returns. The expression evaluated to produce
-        // the mocked return value at dispatch time.
-        public IExpressionNode returnExpression;
-        // Only set when frequency == NTimes. Evaluated once when the mock is
-        // installed; the result is the count of remaining calls for this entry.
-        public IExpressionNode countExpression;
-
-        public MockEntry(Token startToken, Token endToken) : base(startToken, endToken)
+        public MockReturnsStatement(Token startToken, Token endToken) : base(startToken, endToken)
         {
         }
 
         protected override string GetString()
         {
-            var freqStr = frequency switch
-            {
-                MockFrequencyKind.Once => " once",
-                MockFrequencyKind.NTimes => $" {countExpression} times",
-                _ => "" // always is the default, omit for brevity
-            };
-            return kind == MockEntryKind.Forbid
-                ? $"forbid{freqStr}"
-                : $"returns {returnExpression}{freqStr}";
+            return $"returns {expression}";
         }
 
         public override IEnumerable<IAstVisitable> IterateChildNodes()
         {
-            if (returnExpression != null) yield return returnExpression;
-            if (countExpression != null) yield return countExpression;
+            if (expression != null) yield return expression;
+        }
+    }
+
+    /// <summary>
+    /// `forbid [<reason>]` inside a mock body. Causes the test to fail when
+    /// the mocked command is called. The optional reason string surfaces in
+    /// the failure report (mirrors `assert <cond>, "reason"`).
+    /// </summary>
+    public class MockForbidStatement : AstNode, IStatementNode
+    {
+        public IExpressionNode reason; // null when no reason was supplied
+
+        public MockForbidStatement(Token startToken, Token endToken) : base(startToken, endToken)
+        {
+        }
+
+        protected override string GetString()
+        {
+            return reason != null ? $"forbid {reason}" : "forbid";
+        }
+
+        public override IEnumerable<IAstVisitable> IterateChildNodes()
+        {
+            if (reason != null) yield return reason;
         }
     }
 
@@ -231,7 +226,11 @@ namespace FadeBasic.Ast
         // CommandNameTree pass).
         public string commandName;
         public Token commandNameToken;
-        public List<MockEntry> entries = new List<MockEntry>();
+        // Body of the mock block. In Phase A this holds MockReturnsStatement
+        // and MockForbidStatement only; Phase B will broaden it to any
+        // statement so the body acts as a mini-function the VM dispatches.
+        // An empty body means "void mock" — calls are suppressed.
+        public List<IStatementNode> body = new List<IStatementNode>();
 
         public MockStatement(Token startToken, Token endToken) : base(startToken, endToken)
         {
@@ -239,12 +238,12 @@ namespace FadeBasic.Ast
 
         protected override string GetString()
         {
-            return $"mock {commandName} ({string.Join(",", entries.Select(e => e.ToString()))})";
+            return $"mock {commandName} ({string.Join(",", body.Select(s => s.ToString()))})";
         }
 
         public override IEnumerable<IAstVisitable> IterateChildNodes()
         {
-            foreach (var entry in entries) yield return entry;
+            foreach (var stmt in body) yield return stmt;
         }
     }
 

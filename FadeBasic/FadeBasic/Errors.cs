@@ -229,9 +229,7 @@ namespace FadeBasic
         public static readonly ErrorCode MockMissingCommandName = "[0180] mock requires a command name";
         public static readonly ErrorCode MockUnknownCommand = "[0181] mock target is not a known command";
         public static readonly ErrorCode MockMissingEndMock = "[0182] mock block missing endmock clause";
-        public static readonly ErrorCode MockEntryRequiresReturnsOrForbid = "[0183] mock entry must be `returns <expr>` or `forbid`";
-        public static readonly ErrorCode MockUnreachableEntry = "[0184] mock entry is unreachable; a previous entry has frequency `always`";
-        public static readonly ErrorCode MockNTimesRequiresCount = "[0185] mock frequency `times` requires an integer count expression";
+        public static readonly ErrorCode MockEntryRequiresReturnsOrForbid = "[0183] mock body statement must be `returns <expr>` or `forbid`";
         public static readonly ErrorCode MockOutsideTest = "[0186] mock can only be used inside a test block";
         public static readonly ErrorCode ClearMockMissingTarget = "[0187] clear must be followed by `mock <command name>` or `mocks`";
         public static readonly ErrorCode ClearMockOutsideTest = "[0188] clear mock(s) can only be used inside a test block";
@@ -239,6 +237,14 @@ namespace FadeBasic
         public static readonly ErrorCode TestRuntoShadowsLocal = "[0190] runto brings a program-scope variable into view that conflicts with a test-local of the same name";
         public static readonly ErrorCode AssertReasonMissingExpression = "[0191] assert reason clause (after `,`) requires a string expression";
         public static readonly ErrorCode AssertReasonMustBeString = "[0192] assert reason expression must be a string";
+        public static readonly ErrorCode MockReturnsMissingExpression = "[0193] `returns` in a mock body requires an expression";
+        public static readonly ErrorCode MockForbidReasonMustBeString = "[0194] forbid reason expression must be a string";
+        public static readonly ErrorCode MockReturnsOnVoidCommand = "[0195] `returns` in a mock body is not allowed when the command has no return value";
+        public static readonly ErrorCode MockReturnsTypeMismatch = "[0196] mock `returns` expression type does not match the command's return type";
+        public static readonly ErrorCode MockMultipleReturns = "[0197] mock body has multiple `returns` statements; only one is allowed";
+        public static readonly ErrorCode MockMultipleForbid = "[0198] mock body has multiple `forbid` statements; only one is allowed";
+        public static readonly ErrorCode MockReturnsAndForbid = "[0199] mock body cannot mix `returns` and `forbid`";
+        public static readonly ErrorCode CallCountMissingCommand = "[0251] `call count` must be followed by a command name";
 
         // 200 series represents post-parse issues
         public static readonly ErrorCode InvalidReference = "[0200] Invalid reference";

@@ -311,10 +311,35 @@ public class FadeTestAdapterTests
     {
         // The exact format ("at NAME in FILE:line N") is the contract that
         // both Rider and VS Code parse to make stack lines clickable.
+        // Legacy fallback path: no resolved frames, uses entry.sourceLine.
         var entry = new TestManifestEntry { name = "wraps_at_right_edge", sourceLine = 42 };
-        var stack = FadeTestExecutorAdapter.BuildErrorStackTrace("/proj/fish.fbasic", entry);
+        var result = new FadeTestResult();
+        var stack = FadeTestExecutorAdapter.BuildErrorStackTrace(result, "/proj/fish.fbasic", entry);
 
         Assert.That(stack, Does.Match(@"\s+at wraps_at_right_edge in /proj/fish\.fbasic:line 42"));
+    }
+
+    [Test]
+    public void Executor_BuildErrorStackTrace_RendersResolvedFrames()
+    {
+        // When the runner supplied resolved frames, the adapter emits one
+        // "at NAME in FILE:line N" line per frame, innermost first. The
+        // outermost frame uses the test name as its label.
+        var entry = new TestManifestEntry { name = "sample", sourceLine = 7 };
+        var result = new FadeTestResult
+        {
+            failureFrames = new List<FadeStackFrame>
+            {
+                new FadeStackFrame { functionName = "ex", lineNumber = 2 },
+                new FadeStackFrame { functionName = string.Empty, lineNumber = 5 },
+            }
+        };
+        var stack = FadeTestExecutorAdapter.BuildErrorStackTrace(result, "/proj/fish.fbasic", entry);
+
+        Assert.That(stack, Does.Match(@"\s+at ex in /proj/fish\.fbasic:line 2"));
+        Assert.That(stack, Does.Match(@"\s+at sample in /proj/fish\.fbasic:line 5"));
+        // Innermost (ex) must precede outermost (sample).
+        Assert.That(stack.IndexOf("ex"), Is.LessThan(stack.IndexOf("sample")));
     }
 
     [Test]
@@ -323,11 +348,12 @@ public class FadeTestAdapterTests
         // Without source info we can't synthesize a useful frame; emit
         // empty rather than a half-frame the IDE will mis-parse.
         var entry = new TestManifestEntry { name = "x", sourceLine = 0 };
-        var stack = FadeTestExecutorAdapter.BuildErrorStackTrace("/p/main.fbasic", entry);
+        var result = new FadeTestResult();
+        var stack = FadeTestExecutorAdapter.BuildErrorStackTrace(result, "/p/main.fbasic", entry);
         Assert.That(stack, Is.Empty);
 
         var entry2 = new TestManifestEntry { name = "x", sourceLine = 5 };
-        var stack2 = FadeTestExecutorAdapter.BuildErrorStackTrace(string.Empty, entry2);
+        var stack2 = FadeTestExecutorAdapter.BuildErrorStackTrace(result, string.Empty, entry2);
         Assert.That(stack2, Is.Empty);
     }
 

@@ -28,7 +28,6 @@ endfunction sum
 test abc
     print ""running test""
     mock wait ms
-        returns 0
     endmock
 
     runto lbl1

@@ -22,9 +22,9 @@ public class MockExecutionTests
     }
 
     [Test]
-    public void MockVoid_BareForm_SuppressesRealCall()
+    public void MockEmpty_SuppressesRealCall()
     {
-        // `mock wait ms` (no body) installs a void mock. The C# WiatMs
+        // `mock wait ms / endmock` installs a void mock. The C# WaitMs
         // method should NOT be called, so waitMsCallCount stays at 0.
         var src = @"
 checkpoint:
@@ -33,6 +33,7 @@ end
 
 test no_real_wait
     mock wait ms
+    endmock
     runto checkpoint
     wait ms 100
 endtest
@@ -51,7 +52,9 @@ endtest
 end
 
 test mocked_screen_width
-    mock screen width returns 42
+    mock screen width
+        returns 42
+    endmock
     assert screen width() = 42
 endtest
 ";
@@ -84,7 +87,9 @@ endtest
 end
 
 test forbidden
-    mock wait ms forbid
+    mock wait ms
+        forbid
+    endmock
     wait ms 1
 endtest
 ";
@@ -107,7 +112,9 @@ checkpoint:
 end
 
 test mocked_via_runto
-    mock screen width returns 99
+    mock screen width
+        returns 99
+    endmock
     runto checkpoint
     assert w = 99
 endtest
@@ -126,7 +133,9 @@ endtest
 end
 
 test clear_mock
-    mock screen width returns 42
+    mock screen width
+        returns 42
+    endmock
     assert screen width() = 42
     clear mock screen width
     assert screen width() = 5
@@ -146,8 +155,11 @@ endtest
 end
 
 test clear_all
-    mock screen width returns 42
+    mock screen width
+        returns 42
+    endmock
     mock wait ms
+    endmock
     clear mocks
     assert screen width() = 5
     wait ms 1
@@ -161,30 +173,162 @@ endtest
     }
 
     [Test]
-    public void MockReturns_OnVoidCommand_DegradesToVoid()
+    public void MockForbid_WithReason_CapturesReason()
     {
-        // A user mocking a void command sometimes writes a `returns` body
-        // thinking it's required. The compiler should silently treat that
-        // as a void mock (no value pushed) rather than corrupting the stack
-        // and falling through to the real implementation.
         var src = @"
-checkpoint:
-wait ms 50
 end
 
-test mocked_with_returns
+test forbid_with_reason
     mock wait ms
-        returns 0
+        forbid ""no waiting in tests""
     endmock
-    runto checkpoint
-    wait ms 100
+    wait ms 1
 endtest
 ";
         var ctx = CreateContext(src);
-        var result = ctx.RunTest("mocked_with_returns");
+        var result = ctx.RunTest("forbid_with_reason");
+        Assert.That(result.passed, Is.False);
+        Assert.That(result.failureReason, Is.EqualTo("no waiting in tests"));
+        Assert.That(result.failureMessage, Does.Contain("no waiting in tests"),
+            "user-supplied reason should surface in the failure message");
+    }
+
+    [Test]
+    public void MockForbid_RunsDefersOnFailure()
+    {
+        // Forbid now goes through the assert-unwind trampoline, so defers
+        // in every live scope drain before the test runner sees the result.
+        TestCommands.staticPrintBuffer.Clear();
+        var src = @"
+end
+
+test forbid_drains_defers
+    defer static print ""cleanup""
+    mock wait ms
+        forbid
+    endmock
+    wait ms 1
+endtest
+";
+        var ctx = CreateContext(src);
+        var result = ctx.RunTest("forbid_drains_defers");
+        Assert.That(result.passed, Is.False);
+        Assert.That(TestCommands.staticPrintBuffer, Is.EqualTo(new[] { "cleanup" }),
+            "forbid failure must drain test-scope defers");
+    }
+
+    [Test]
+    public void MockForbid_CapturesCallStack()
+    {
+        // Forbid carries a source-located stack like an assert does.
+        var src = @"
+function trigger()
+    wait ms 1
+endfunction
+trigger()
+checkpoint:
+end
+
+test forbid_stack
+    mock wait ms
+        forbid ""nope""
+    endmock
+    runto checkpoint
+endtest
+";
+        var ctx = CreateContext(src);
+        var result = ctx.RunTest("forbid_stack");
+        Assert.That(result.passed, Is.False);
+        Assert.That(result.failureFrames, Is.Not.Empty,
+            "forbid failure should resolve to source frames when DebugData is present");
+        // Innermost frame is inside `trigger()` (where wait ms was called).
+        Assert.That(result.failureFrames[0].functionName, Is.EqualTo("trigger"));
+    }
+
+    // ── call count <command> ───────────────────────────────────────────────
+
+    [Test]
+    public void CallCount_CountsHostInvocations()
+    {
+        // No mock installed — the real command runs and gets counted. The
+        // counter increments on every CALL_HOST in test mode.
+        var src = @"
+end
+
+test count_real_calls
+    wait ms 1
+    wait ms 1
+    wait ms 1
+    assert call count wait ms = 3
+endtest
+";
+        var ctx = CreateContext(src);
+        var result = ctx.RunTest("count_real_calls");
+        Assert.That(result.passed, Is.True,
+            "expected count=3; failure: " + result.failureMessage);
+    }
+
+    [Test]
+    public void CallCount_ZeroForUncalledCommand()
+    {
+        // A command that's never called returns 0. No mock needed; the
+        // counter starts empty and the runtime treats missing keys as 0.
+        var src = @"
+end
+
+test never_called
+    assert call count wait ms = 0
+endtest
+";
+        var ctx = CreateContext(src);
+        var result = ctx.RunTest("never_called");
         Assert.That(result.passed, Is.True, result.failureMessage);
-        Assert.That(TestCommands.waitMsCallCount, Is.EqualTo(0),
-            "wait ms should be fully suppressed even when written as `returns 0`");
+    }
+
+    [Test]
+    public void CallCount_CountsMockedCalls()
+    {
+        // Mocking doesn't suppress counting — the count includes calls that
+        // hit a mock too.
+        var src = @"
+end
+
+test count_mocked
+    mock wait ms
+    endmock
+    wait ms 1
+    wait ms 2
+    assert call count wait ms = 2
+endtest
+";
+        var ctx = CreateContext(src);
+        var result = ctx.RunTest("count_mocked");
+        Assert.That(result.passed, Is.True,
+            "mocked calls should still be counted; failure: " + result.failureMessage);
+    }
+
+    [Test]
+    public void CallCount_IsolatedBetweenTests()
+    {
+        // Counts reset per test (each test gets a fresh VM).
+        var src = @"
+end
+
+test first
+    wait ms 1
+    assert call count wait ms = 1
+endtest
+
+test second
+    assert call count wait ms = 0
+endtest
+";
+        var ctx = CreateContext(src);
+        var first = ctx.RunTest("first");
+        var second = ctx.RunTest("second");
+        Assert.That(first.passed, Is.True, first.failureMessage);
+        Assert.That(second.passed, Is.True,
+            "second test must see count=0; failure: " + second.failureMessage);
     }
 
     [Test]
@@ -196,7 +340,9 @@ endtest
 end
 
 test installs_mock
-    mock screen width returns 42
+    mock screen width
+        returns 42
+    endmock
     assert screen width() = 42
 endtest
 

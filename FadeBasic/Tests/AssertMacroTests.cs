@@ -1,5 +1,6 @@
 using FadeBasic;
 using FadeBasic.Ast;
+using FadeBasic.Sdk;
 using FadeBasic.Virtual;
 
 namespace Tests;
@@ -14,7 +15,10 @@ public class AssertMacroTests
         var parser = new Parser(lex.stream, TestCommands.CommandsForTesting);
         var prog = parser.ParseProgram(new ParseOptions { ignoreChecks = true });
         prog.AssertNoParseErrors();
-        var compiler = new Compiler(TestCommands.CommandsForTesting, new CompilerOptions());
+        // Generate debug data so stack-frame resolution works in tests that
+        // exercise FadeTestExecutor.BuildFrames; the SDK enables this by default.
+        var compiler = new Compiler(TestCommands.CommandsForTesting,
+            new CompilerOptions { GenerateDebugData = true });
         compiler.Compile(prog);
         return (compiler, compiler.Program.ToArray());
     }
@@ -407,5 +411,115 @@ end
         Assert.Throws<VirtualRuntimeException>(() => vm.Execute3());
         Assert.That(TestCommands.staticPrintBuffer, Is.Empty,
             "main-program assert is a hard crash; defers must not run");
+    }
+
+    // ── Call-stack capture & source-location resolution ────────────────────
+    // These exercise BuildFrames against a real compile+run so we know the
+    // VM's methodStack snapshot survives the unwind and that DebugData
+    // resolves it to the expected lines.
+
+    private FadeTestResult RunTestThroughExecutor(string src, string testName)
+    {
+        var (compiler, program) = Compile(src);
+        var entry = compiler.TestManifest.First(t => t.name == testName);
+        return FadeTestExecutor.RunTest(program, compiler.methodTable, entry, compiler.DebugData);
+    }
+
+    [Test]
+    public void Assert_StackTrace_ReportsAssertLine_NotTestLine()
+    {
+        // Mirrors the user-reported scenario: assert lives inside a function
+        // called from the main program, which is reached via runto from a
+        // test. The innermost frame must point at the assert's actual line,
+        // not the test entry's line. Line numbers are 0-based (lexer's
+        // coordinate space); displayed as 1-based by adapters that add 1.
+        var src = @"function ex(x)
+    assert x > 0, ""x must be positive""
+endfunction
+ex(0)
+checkpoint:
+end
+
+test sample
+    runto checkpoint
+endtest
+";
+        var result = RunTestThroughExecutor(src, "sample");
+        Assert.That(result.passed, Is.False);
+        Assert.That(result.failureFrames, Is.Not.Empty,
+            "DebugData was enabled — frames should resolve");
+
+        // Innermost frame = the assert inside `ex`. Source line 1 (0-based),
+        // which is line 2 when displayed.
+        var innermost = result.failureFrames[0];
+        Assert.That(innermost.functionName, Is.EqualTo("ex"));
+        Assert.That(innermost.lineNumber, Is.EqualTo(1));
+    }
+
+    [Test]
+    public void Assert_StackTrace_IncludesCallerOfFunction()
+    {
+        // The frame above the assert is the caller (`ex(0)`), on 0-based
+        // line 3 (displayed as line 4).
+        var src = @"function ex(x)
+    assert x > 0, ""x must be positive""
+endfunction
+ex(0)
+checkpoint:
+end
+
+test sample
+    runto checkpoint
+endtest
+";
+        var result = RunTestThroughExecutor(src, "sample");
+        Assert.That(result.failureFrames.Count, Is.GreaterThanOrEqualTo(2));
+
+        var outermost = result.failureFrames[^1];
+        Assert.That(outermost.functionName, Is.Empty,
+            "outermost frame has no function name (it's the main program / test entry)");
+        Assert.That(outermost.lineNumber, Is.EqualTo(3));
+    }
+
+    [Test]
+    public void Assert_StackTrace_AssertInTestBody_OneFrame()
+    {
+        // No function calls — the entire failure is at the test entry level.
+        // We still get one frame (the assert site at 0-based line 1).
+        var src = @"test sample
+    assert 0, ""boom""
+endtest
+";
+        var result = RunTestThroughExecutor(src, "sample");
+        Assert.That(result.failureFrames, Is.Not.Empty);
+        Assert.That(result.failureFrames.Count, Is.EqualTo(1));
+        Assert.That(result.failureFrames[0].functionName, Is.Empty);
+        Assert.That(result.failureFrames[0].lineNumber, Is.EqualTo(1));
+    }
+
+    [Test]
+    public void Assert_StackTrace_EmptyWhenNoDebugData()
+    {
+        // Without DebugData the runner can't resolve frames; failureFrames
+        // stays empty and the adapter falls back to entry.sourceLine.
+        var src = @"test sample
+    assert 0
+endtest
+";
+        var lex = new Lexer().TokenizeWithErrors(src, TestCommands.CommandsForTesting);
+        lex.AssertNoLexErrors();
+        var parser = new Parser(lex.stream, TestCommands.CommandsForTesting);
+        var prog = parser.ParseProgram(new ParseOptions { ignoreChecks = true });
+        prog.AssertNoParseErrors();
+        var compiler = new Compiler(TestCommands.CommandsForTesting,
+            new CompilerOptions { GenerateDebugData = false });
+        compiler.Compile(prog);
+
+        var entry = compiler.TestManifest.First(t => t.name == "sample");
+        var result = FadeTestExecutor.RunTest(
+            compiler.Program.ToArray(), compiler.methodTable, entry, debugData: null);
+
+        Assert.That(result.passed, Is.False);
+        Assert.That(result.failureFrames, Is.Empty);
     }
 }

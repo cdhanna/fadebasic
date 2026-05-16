@@ -78,11 +78,9 @@ namespace FadeBasic
         KeywordEndMock,
         KeywordReturns,
         KeywordForbid,
-        KeywordOnce,
-        KeywordTimes,
-        KeywordAlways,
         KeywordClear,
         KeywordMocks,
+        KeywordCallCount,
 
         KeywordAs,
         KeywordTypeInteger,
@@ -266,10 +264,11 @@ namespace FadeBasic
             new Lexem(LexemType.KeywordMock, new Regex("^mock\\b")),
             new Lexem(LexemType.KeywordReturns, new Regex("^returns\\b")),
             new Lexem(LexemType.KeywordForbid, new Regex("^forbid\\b")),
-            new Lexem(LexemType.KeywordOnce, new Regex("^once\\b")),
-            new Lexem(LexemType.KeywordTimes, new Regex("^times\\b")),
-            new Lexem(LexemType.KeywordAlways, new Regex("^always\\b")),
             new Lexem(LexemType.KeywordClear, new Regex("^clear\\b")),
+            // Multi-word keyword: `call count`. Higher priority (-2) so it
+            // matches before VariableGeneral; users who write `call` alone
+            // (or `call somethingElse`) still get a VariableGeneral token.
+            new Lexem(-2, LexemType.KeywordCallCount, new Regex("^call[ \\t]+count\\b")),
 
             new Lexem(LexemType.KeywordGoto, new Regex("^goto")),
             new Lexem(LexemType.KeywordGoSub, new Regex("^gosub")),

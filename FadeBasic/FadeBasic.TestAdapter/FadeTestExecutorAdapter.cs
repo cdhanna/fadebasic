@@ -232,7 +232,7 @@ namespace FadeBasic.TestAdapter
             if (!result.passed)
             {
                 vsResult.ErrorMessage = BuildErrorMessage(result, sourceFile, entry);
-                vsResult.ErrorStackTrace = BuildErrorStackTrace(sourceFile, entry);
+                vsResult.ErrorStackTrace = BuildErrorStackTrace(result, sourceFile, entry);
             }
 
             handle.RecordResult(vsResult);
@@ -285,9 +285,10 @@ namespace FadeBasic.TestAdapter
 
         /// <summary>
         /// Format the failure message in a Fade-flavored shape. Surfaces the
-        /// captured assertion source text and the originating <c>.fbasic</c>
-        /// line so the Test Explorer "failure" pane reads as a Fade error,
-        /// not a generic .NET exception dump.
+        /// captured assertion source text and a source-located stack chain
+        /// (when DebugData was available). Falls back to <see cref="TestManifestEntry.sourceLine"/>
+        /// when no frames could be resolved, so old builds still get a usable
+        /// (if coarse) location.
         /// </summary>
         internal static string BuildErrorMessage(FadeTestResult r, string fbasicPath, TestManifestEntry entry)
         {
@@ -297,7 +298,22 @@ namespace FadeBasic.TestAdapter
             {
                 sb.Append("\n  source: ").Append(r.failureSourceText);
             }
-            if (entry.sourceLine > 0 && !string.IsNullOrEmpty(fbasicPath))
+            // Prefer the resolved frames (innermost first). If absent, fall
+            // back to the test entry's line so the message isn't blank.
+            if (r.failureFrames != null && r.failureFrames.Count > 0 && !string.IsNullOrEmpty(fbasicPath))
+            {
+                var file = Path.GetFileName(fbasicPath);
+                foreach (var frame in r.failureFrames)
+                {
+                    sb.Append("\n  at ");
+                    if (!string.IsNullOrEmpty(frame.functionName))
+                    {
+                        sb.Append(frame.functionName).Append(' ');
+                    }
+                    sb.Append(file).Append(':').Append(frame.lineNumber);
+                }
+            }
+            else if (entry.sourceLine > 0 && !string.IsNullOrEmpty(fbasicPath))
             {
                 sb.Append("\n  at ")
                   .Append(Path.GetFileName(fbasicPath))
@@ -308,13 +324,37 @@ namespace FadeBasic.TestAdapter
         }
 
         /// <summary>
-        /// Synthesize a single stack-trace frame in the canonical <c>at &lt;name&gt;
-        /// in &lt;file&gt;:line N</c> format. Both VS Code and Rider parse this
-        /// regex and turn it into a clickable source link in the failure pane.
+        /// Build the stack-trace string the IDE Test Explorer renders. Each
+        /// line follows <c>at &lt;name&gt; in &lt;file&gt;:line N</c>; both
+        /// VS Code and Rider parse that regex and turn it into a clickable
+        /// source link. Innermost frame first; the outermost frame is labeled
+        /// with the test name.
         /// </summary>
-        internal static string BuildErrorStackTrace(string fbasicPath, TestManifestEntry entry)
+        internal static string BuildErrorStackTrace(FadeTestResult r, string fbasicPath, TestManifestEntry entry)
         {
-            if (entry.sourceLine <= 0 || string.IsNullOrEmpty(fbasicPath)) return string.Empty;
+            if (string.IsNullOrEmpty(fbasicPath)) return string.Empty;
+
+            if (r.failureFrames != null && r.failureFrames.Count > 0)
+            {
+                var sb = new StringBuilder();
+                for (var i = 0; i < r.failureFrames.Count; i++)
+                {
+                    var frame = r.failureFrames[i];
+                    // Outermost frame (last) gets the test name as its label
+                    // so the user sees "at <testName> ..." at the bottom.
+                    var name = !string.IsNullOrEmpty(frame.functionName)
+                        ? frame.functionName
+                        : entry.name;
+                    if (i > 0) sb.Append('\n');
+                    sb.Append("   at ").Append(name)
+                      .Append(" in ").Append(fbasicPath)
+                      .Append(":line ").Append(frame.lineNumber);
+                }
+                return sb.ToString();
+            }
+
+            // Legacy fallback: single frame at the test entry's line.
+            if (entry.sourceLine <= 0) return string.Empty;
             return $"   at {entry.name} in {fbasicPath}:line {entry.sourceLine}";
         }
 

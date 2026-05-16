@@ -391,4 +391,35 @@ namespace FadeBasic.Ast
             yield break;
         }
     }
+
+    /// <summary>
+    /// `call count <command>` — integer expression returning the number of
+    /// times the host command was invoked during the current VM execution.
+    /// Counts every CALL_HOST (whether mocked or not) so the user can write
+    /// `assert call count save_file = 1` without having to install a mock
+    /// first. Legal inside a test block.
+    /// </summary>
+    public class CallCountExpression : AstNode, IExpressionNode
+    {
+        // Full command name, lowercased (matches the lexer's
+        // CommandNameTree-normalized form, like MockStatement.commandName).
+        public string commandName;
+        public Token commandNameToken;
+
+        public CallCountExpression(Token startToken, Token endToken, Token nameToken) : base(startToken, endToken)
+        {
+            commandNameToken = nameToken;
+            commandName = nameToken?.caseInsensitiveRaw;
+        }
+
+        protected override string GetString()
+        {
+            return $"call count {commandName}";
+        }
+
+        public override IEnumerable<IAstVisitable> IterateChildNodes()
+        {
+            yield break;
+        }
+    }
 }

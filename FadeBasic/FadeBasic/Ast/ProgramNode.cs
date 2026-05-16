@@ -16,6 +16,10 @@ namespace FadeBasic.Ast
         public List<FunctionStatement> functions = new List<FunctionStatement>();
         public List<LabelDeclarationNode> labels = new List<LabelDeclarationNode>();
         public List<TestNode> tests = new List<TestNode>();
+        // CommandCollection the parser used to resolve command names. Stashed
+        // here so post-parse visitors (e.g., mock-body type validation) can
+        // look up command metadata without taking it as a parameter.
+        public CommandCollection commands;
         protected override string GetString()
         {
             List<IStatementNode> allStatements = new List<IStatementNode>();
