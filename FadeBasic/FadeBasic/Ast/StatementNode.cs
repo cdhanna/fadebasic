@@ -176,11 +176,11 @@ namespace FadeBasic.Ast
     /// command produces when called. Only valid inside a mock block; the
     /// scope-error visitor enforces that.
     /// </summary>
-    public class MockReturnsStatement : AstNode, IStatementNode
+    public class MockExitMockStatement : AstNode, IStatementNode
     {
         public IExpressionNode expression;
 
-        public MockReturnsStatement(Token startToken, Token endToken) : base(startToken, endToken)
+        public MockExitMockStatement(Token startToken, Token endToken) : base(startToken, endToken)
         {
         }
 
@@ -226,10 +226,24 @@ namespace FadeBasic.Ast
         // CommandNameTree pass).
         public string commandName;
         public Token commandNameToken;
-        // Body of the mock block. In Phase A this holds MockReturnsStatement
-        // and MockForbidStatement only; Phase B will broaden it to any
-        // statement so the body acts as a mini-function the VM dispatches.
-        // An empty body means "void mock" — calls are suppressed.
+        // Optional parameter names — `mock find pattern, list` binds the
+        // command's args to locals named `pattern` and `list` inside the body.
+        // Empty means anonymous (args are popped off the stack but not
+        // accessible). The count must match the command's non-VmArg arg count
+        // when names are given; the visitor enforces that.
+        public List<VariableRefNode> parameters = new List<VariableRefNode>();
+        // Optional fall-through return expression on `endmock <expr>` — the
+        // value the body produces when execution reaches the closing
+        // `endmock` without an earlier `exitmock`. Mirrors `endfunction
+        // <expr>` for functions. Null when the user wrote bare `endmock`.
+        public IExpressionNode endmockExpression;
+        // Body of the mock block. Compiled as a mini-function the VM
+        // dispatches to at CALL_HOST time: a scope is pushed, parameters
+        // bound from the call's args, then body statements run. `returns`
+        // (MockExitMockStatement) sets the return value; `forbid`
+        // (MockForbidStatement) fails the test. Other test-block statements
+        // (static print, local, if/then, assert) are legal here too.
+        // An empty body on a void command means "suppress the call."
         public List<IStatementNode> body = new List<IStatementNode>();
 
         public MockStatement(Token startToken, Token endToken) : base(startToken, endToken)
@@ -238,12 +252,17 @@ namespace FadeBasic.Ast
 
         protected override string GetString()
         {
-            return $"mock {commandName} ({string.Join(",", body.Select(s => s.ToString()))})";
+            var paramStr = parameters.Count > 0
+                ? " " + string.Join(",", parameters.Select(p => p.variableName))
+                : "";
+            return $"mock {commandName}{paramStr} ({string.Join(",", body.Select(s => s.ToString()))})";
         }
 
         public override IEnumerable<IAstVisitable> IterateChildNodes()
         {
+            foreach (var p in parameters) yield return p;
             foreach (var stmt in body) yield return stmt;
+            if (endmockExpression != null) yield return endmockExpression;
         }
     }
 

@@ -68,7 +68,7 @@ endtest
         var src = @"
 test foo
     mock screen width
-        returns 10
+        exitmock 10
     endmock
 endtest
 ";
@@ -77,8 +77,8 @@ endtest
             "no parse errors expected; got: " + string.Join(", ", errs.Select(e => e.Display)));
         var mock = FindFirstMock(prog);
         Assert.That(mock.body.Count, Is.EqualTo(1));
-        Assert.That(mock.body[0], Is.TypeOf<MockReturnsStatement>());
-        var rs = (MockReturnsStatement)mock.body[0];
+        Assert.That(mock.body[0], Is.TypeOf<MockExitMockStatement>());
+        var rs = (MockExitMockStatement)mock.body[0];
         Assert.That(rs.expression, Is.Not.Null);
     }
 
@@ -124,19 +124,19 @@ endtest
     [Test]
     public void Mock_InlineForm_NoLongerSupported_Errors()
     {
-        // `mock cmd returns X` on one line is no longer valid — the parser
-        // expects a newline and `endmock`. The `returns 10` token sequence
-        // now sits in an empty mock body, awaiting `endmock`; eventually
-        // the surrounding `endtest` is hit and MockMissingEndMock fires.
+        // Every mock requires its own `endmock`. Even when a body has a
+        // single `exitmock <expr>` on the same line as the mock header,
+        // the parser will still keep looking for `endmock` and eventually
+        // run into the surrounding `endtest`, surfacing MockMissingEndMock.
         var src = @"
 test foo
-    mock screen width returns 10
+    mock screen width exitmock 10
 endtest
 ";
         Parse(src, out var errs);
         Assert.That(errs.Any(e => e.errorCode.Equals(ErrorCodes.MockMissingEndMock)),
             Is.True,
-            "inline mock should now require endmock; got: " +
+            "inline mock should still require endmock; got: " +
             string.Join(", ", errs.Select(e => e.Display)));
     }
 
@@ -163,7 +163,7 @@ endtest
         var src = @"
 test foo
     mock screen width
-        returns 10
+        exitmock 10
 endtest
 ";
         Parse(src, out var errs);
@@ -180,7 +180,7 @@ endtest
         var src = @"
 test foo
     mock not_a_real_command
-        returns 10
+        exitmock 10
     endmock
 endtest
 ";
@@ -198,8 +198,8 @@ endtest
         var src = @"
 test foo
     mock screen width
-        returns 10
-        returns 20
+        exitmock 10
+        exitmock 20
     endmock
 endtest
 ";
@@ -234,7 +234,7 @@ endtest
         var src = @"
 test foo
     mock screen width
-        returns 10
+        exitmock 10
         forbid
     endmock
 endtest
@@ -270,7 +270,7 @@ endtest
         var src = @"
 test foo
     mock screen width
-        returns 10
+        exitmock 10
 endtest
 ";
         var prog = Parse(src, out var errs);
@@ -335,7 +335,7 @@ endtest
     {
         var src = @"
 mock screen width
-    returns 10
+    exitmock 10
 endmock
 ";
         Parse(src, out var errs);
@@ -366,7 +366,7 @@ clear mocks
         var src = @"
 test foo
     mock wait ms
-        returns 0
+        exitmock 0
     endmock
 endtest
 ";
@@ -383,7 +383,7 @@ endtest
         var src = @"
 test foo
     mock screen width
-        returns ""nope""
+        exitmock ""nope""
     endmock
 endtest
 ";
@@ -403,7 +403,7 @@ endtest
         var src = @"
 test foo
     mock now
-        returns 5
+        exitmock 5
     endmock
 endtest
 ";
@@ -415,13 +415,31 @@ endtest
     }
 
     [Test]
+    public void Mock_EndmockExprTypeMismatch_Errors()
+    {
+        // `screen width` returns int. `endmock ""3""` (string literal) is
+        // not assignable to int — should error like `exitmock` does.
+        var src = @"
+test foo
+    mock screen width
+    endmock ""3""
+endtest
+";
+        Parse(src, out var errs);
+        Assert.That(errs.Any(e => e.errorCode.Equals(ErrorCodes.MockReturnsTypeMismatch)),
+            Is.True,
+            "expected MockReturnsTypeMismatch on endmock string→int; got: " +
+            string.Join(", ", errs.Select(e => e.Display)));
+    }
+
+    [Test]
     public void Mock_ReturnsMatchingType_Ok()
     {
         // `screen width` returns int; `returns 42` should be fine.
         var src = @"
 test foo
     mock screen width
-        returns 42
+        exitmock 42
     endmock
 endtest
 ";
@@ -434,12 +452,28 @@ endtest
     }
 
     [Test]
-    public void Mock_EmptyBodyOnAnyCommand_Ok()
+    public void Mock_EmptyBodyOnVoidCommand_Ok()
     {
-        // Empty mock body = suppress the call. Always valid regardless of
-        // whether the command returns a value (the caller of a value-
-        // returning command gets a stack-leak if it reads the return — but
-        // that's a separate runtime concern; the parser accepts it).
+        // Empty mock body = suppress the call. Legal for void commands —
+        // the caller doesn't read a return, so there's nothing to leak.
+        var src = @"
+test foo
+    mock wait ms
+    endmock
+endtest
+";
+        Parse(src, out var errs);
+        Assert.That(errs, Is.Empty,
+            "empty mock body on void command should parse cleanly; got: " +
+            string.Join(", ", errs.Select(e => e.Display)));
+    }
+
+    [Test]
+    public void Mock_EmptyBodyOnValueCommand_Errors()
+    {
+        // A value-returning command's mock body must contain `returns` or
+        // `forbid`. An empty body would leave the caller's expected return
+        // value missing on the stack — that's now a compile-time error.
         var src = @"
 test foo
     mock screen width
@@ -447,9 +481,192 @@ test foo
 endtest
 ";
         Parse(src, out var errs);
-        Assert.That(errs, Is.Empty,
-            "empty mock body should parse cleanly; got: " +
+        Assert.That(errs.Any(e => e.errorCode.Equals(ErrorCodes.MockValueCommandMissingReturns)),
+            Is.True,
+            "expected MockValueCommandMissingReturns; got: " +
             string.Join(", ", errs.Select(e => e.Display)));
+    }
+
+    [Test]
+    public void Mock_RefParamNotAssigned_Errors()
+    {
+        // A ref parameter must be assigned in the mock body — otherwise the
+        // caller's variable is left undefined. `forbid` short-circuits the
+        // check, but otherwise every ref param needs at least one top-level
+        // assignment.
+        var src = @"
+test foo
+    mock inc target, amount
+        ` target (ref) never assigned
+    endmock
+endtest
+";
+        Parse(src, out var errs);
+        Assert.That(errs.Any(e => e.errorCode.Equals(ErrorCodes.MockRefParamNotAssigned)),
+            Is.True,
+            "expected MockRefParamNotAssigned; got: " +
+            string.Join(", ", errs.Select(e => e.Display)));
+    }
+
+    [Test]
+    public void Mock_RefParamAssigned_Ok()
+    {
+        // `inc` takes `(ref int variable, int amount = 1)`. Assigning to
+        // `target` (the ref param) inside the body is the happy path and
+        // should produce no validation errors.
+        var src = @"
+test foo
+    mock inc target, amount
+        target = 99
+    endmock
+endtest
+";
+        Parse(src, out var errs);
+        Assert.That(errs.Any(e => e.errorCode.Equals(ErrorCodes.MockRefParamNotAssigned)),
+            Is.False,
+            "no ref errors expected; got: " +
+            string.Join(", ", errs.Select(e => e.Display)));
+    }
+
+    [Test]
+    public void Mock_RefParamUnassigned_WithForbid_Ok()
+    {
+        // `forbid` halts the test before the caller observes any output,
+        // so unassigned ref params are fine when forbid is present.
+        var src = @"
+test foo
+    mock inc target, amount
+        forbid ""nope""
+    endmock
+endtest
+";
+        Parse(src, out var errs);
+        Assert.That(errs.Any(e => e.errorCode.Equals(ErrorCodes.MockRefParamNotAssigned)),
+            Is.False,
+            "forbid should suppress the ref-assignment requirement; got: " +
+            string.Join(", ", errs.Select(e => e.Display)));
+    }
+
+    [Test]
+    public void Mock_RuntoInBody_Errors()
+    {
+        // `runto` is a test-control primitive and must not appear inside a
+        // mock body. The body is mini-function bytecode run on dispatch,
+        // not a test-navigation context.
+        var src = @"
+checkpoint:
+end
+
+test foo
+    mock screen width
+        runto checkpoint
+    endmock 0
+endtest
+";
+        Parse(src, out var errs);
+        Assert.That(errs.Any(e => e.errorCode.Equals(ErrorCodes.RuntoInsideMockBody)),
+            Is.True,
+            "expected RuntoInsideMockBody; got: " + string.Join(", ", errs.Select(e => e.Display)));
+    }
+
+    [Test]
+    public void Mock_RuntoNestedInBody_Errors()
+    {
+        // Even wrapped in an `if`, runto inside a mock body is illegal —
+        // we walk the body tree recursively.
+        var src = @"
+checkpoint:
+end
+
+test foo
+    mock screen width
+        if 1 then runto checkpoint
+    endmock 0
+endtest
+";
+        Parse(src, out var errs);
+        Assert.That(errs.Any(e => e.errorCode.Equals(ErrorCodes.RuntoInsideMockBody)),
+            Is.True,
+            "expected RuntoInsideMockBody (nested in if); got: " +
+            string.Join(", ", errs.Select(e => e.Display)));
+    }
+
+    [Test]
+    public void Mock_ParamsInParens_ParseOk()
+    {
+        // `mock inc(target, amount)` should parse identically to the bare
+        // `mock inc target, amount` form.
+        var src = @"
+test foo
+    mock inc(target, amount)
+        target = 99
+    endmock
+endtest
+";
+        var prog = Parse(src, out var errs);
+        Assert.That(errs, Is.Empty,
+            "no parse errors expected; got: " + string.Join(", ", errs.Select(e => e.Display)));
+        var mock = FindFirstMock(prog);
+        Assert.That(mock.parameters.Count, Is.EqualTo(2));
+        Assert.That(mock.parameters[0].variableName, Is.EqualTo("target"));
+        Assert.That(mock.parameters[1].variableName, Is.EqualTo("amount"));
+    }
+
+    [Test]
+    public void Mock_ParamsInParens_MissingClose_Errors()
+    {
+        var src = @"
+test foo
+    mock inc(target, amount
+        target = 99
+    endmock
+endtest
+";
+        Parse(src, out var errs);
+        Assert.That(errs.Any(e => e.errorCode.Equals(ErrorCodes.MockParamsMissingCloseParen)),
+            Is.True,
+            "expected MockParamsMissingCloseParen; got: " +
+            string.Join(", ", errs.Select(e => e.Display)));
+    }
+
+    [Test]
+    public void Mock_ParamCountNoMatchingOverload_Errors()
+    {
+        // `inc` has one overload: `(ref int variable, int amount = 1)` — 2
+        // args (the optional one still counts). A mock with 3 named params
+        // matches no overload and should error.
+        var src = @"
+test foo
+    mock inc(a, b, c)
+        a = 1
+    endmock
+endtest
+";
+        Parse(src, out var errs);
+        Assert.That(errs.Any(e => e.errorCode.Equals(ErrorCodes.MockParamCountNoMatchingOverload)),
+            Is.True,
+            "expected MockParamCountNoMatchingOverload; got: " +
+            string.Join(", ", errs.Select(e => e.Display)));
+    }
+
+    [Test]
+    public void Mock_StringParamName_ParseOk()
+    {
+        // String-suffixed param names (`s$`) must be accepted as identifiers.
+        // The actual type comes from the command metadata.
+        var src = @"
+test foo
+    mock tuna_echo a, x$
+        x$ = ""hello""
+    endmock
+endtest
+";
+        var prog = Parse(src, out var errs);
+        Assert.That(errs, Is.Empty,
+            "no parse errors expected; got: " + string.Join(", ", errs.Select(e => e.Display)));
+        var mock = FindFirstMock(prog);
+        Assert.That(mock.parameters.Count, Is.EqualTo(2));
+        Assert.That(mock.parameters[1].variableName.ToLowerInvariant(), Does.Contain("x"));
     }
 
     [Test]

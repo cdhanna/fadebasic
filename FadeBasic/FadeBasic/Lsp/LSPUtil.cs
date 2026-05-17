@@ -120,11 +120,12 @@ namespace FadeBasic.Lsp
                 case LexemType.KeywordMock:
                 case LexemType.KeywordEndMock:
                 case LexemType.KeywordMocks:
-                case LexemType.KeywordReturns:
+                case LexemType.KeywordExitMock:
                 case LexemType.KeywordForbid:
                 case LexemType.KeywordClear:
                 case LexemType.KeywordCallCount:
                 case LexemType.KeywordMaxCycles:
+                case LexemType.KeywordLen:
                     return PortableSemanticTokenType.Keyword;
 
                 case LexemType.KeywordType:

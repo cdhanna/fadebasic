@@ -807,9 +807,48 @@ namespace FadeBasic
             {
                 var arg = args[argIndex];
                 var descriptor = command.args[argMap[argIndex]];
-                            
-                            
+
                 arg.EnsureVariablesAreDefined(this, ctx);
+
+                // Special case: a single array-typed expression at a
+                // `params` arg position spreads the array onto the stack
+                // at compile time. Accept it here without the per-element
+                // type check; the compiler emits SPREAD_ARRAY. Mixing array
+                // with inline values at the same params position is an
+                // error.
+                if (descriptor.isParams && arg.ParsedType.IsArray)
+                {
+                    // Count how many args map to this same descriptor index.
+                    var sameDescriptorCount = 0;
+                    for (var j = 0; j < argMap.Count; j++)
+                    {
+                        if (argMap[j] == argMap[argIndex]) sameDescriptorCount++;
+                    }
+                    if (sameDescriptorCount > 1)
+                    {
+                        arg.Errors.Add(new ParseError(arg,
+                            ErrorCodes.ParamsCannotMixArrayWithInline));
+                        continue;
+                    }
+                    if (arg.ParsedType.rank != 1)
+                    {
+                        arg.Errors.Add(new ParseError(arg,
+                            ErrorCodes.ParamsArrayMustBeRankOne));
+                        continue;
+                    }
+                    // `params object[]` (TypeCodes.ANY) accepts any element
+                    // type — same tolerance the inline-arg path already
+                    // grants below. Without this, `print x$` where x$ is a
+                    // string array trips a 0262 mismatch.
+                    if (descriptor.typeCode != TypeCodes.ANY
+                        && arg.ParsedType.type != ConvertTypeCodeToVariableType(descriptor.typeCode))
+                    {
+                        arg.Errors.Add(new ParseError(arg,
+                            ErrorCodes.ParamsArrayElementTypeMismatch));
+                        continue;
+                    }
+                    continue;
+                }
 
                 if (TypeInfo.TryGetFromTypeCode(descriptor.typeCode, out var guessType))
                 {
@@ -829,8 +868,20 @@ namespace FadeBasic
                         err.message = err.message.Substring(0, err.message.Length - replace.Length ) + "any";
                     }
                 }
-                
+
             }
+        }
+
+        // Helper used by params-array validation: a TypeCode (the byte form
+        // commands use) → the AST VariableType. Returns Void for unmapped
+        // codes, which won't match a real array element type so still errors.
+        private static VariableType ConvertTypeCodeToVariableType(byte typeCode)
+        {
+            if (TypeInfo.TryGetFromTypeCode(typeCode, out var info))
+            {
+                return info.type;
+            }
+            return VariableType.Void;
         }
         
         public void AddCommand(CommandInfo command, List<IExpressionNode> args, List<int> argMap, EnsureTypeContext ctx)
@@ -1669,6 +1720,20 @@ namespace FadeBasic
                         return ParseDimStatement(token);
                     case LexemType.KeywordReDimArray:
                         return ParseRedimStatement(token);
+                    case LexemType.KeywordLen:
+                    {
+                        // `len(<expr>)` at statement level — value is
+                        // discarded but the form is still legal (matches
+                        // older `len(...)` host-command tests). Put the
+                        // token back so the standard expression parser
+                        // picks it up via its KeywordLen case.
+                        _stream.Restore(_stream.Save() - 1);
+                        if (TryParseExpression(out var lenAsExpr))
+                        {
+                            return new ExpressionStatement(lenAsExpr);
+                        }
+                        return new NoOpStatement();
+                    }
                     case LexemType.VariableReal:
                     case LexemType.VariableString:
                     case LexemType.VariableGeneral:
@@ -3431,7 +3496,44 @@ namespace FadeBasic
                 return stmt;
             }
 
-            // Drain end-of-statement separators between the name and the body.
+            // Optional parameter-name list — `mock find pattern, list` binds
+            // the command's args to locals named `pattern` and `list` inside
+            // the body. Two surface forms are accepted:
+            //   • bare:    `mock find pattern, list`
+            //   • parens:  `mock find(pattern, list)`
+            // Names are space- or comma-separated. A newline ends the bare
+            // form; the close paren ends the parens form. Names can be any
+            // variable token shape (general identifier, `s$` for string,
+            // `f#` for float) — the param's TYPE comes from the command's
+            // metadata, not the suffix; the suffix is just naming style.
+            var inParens = _stream.Peek.type == LexemType.ParenOpen;
+            if (inParens) _stream.Advance();
+            while (IsMockParamToken(_stream.Peek.type)
+                || _stream.Peek.type == LexemType.ArgSplitter)
+            {
+                if (_stream.Peek.type == LexemType.ArgSplitter)
+                {
+                    _stream.Advance();
+                    continue;
+                }
+                var paramToken = _stream.Advance();
+                stmt.parameters.Add(new VariableRefNode(paramToken));
+                stmt.endToken = paramToken;
+            }
+            if (inParens)
+            {
+                if (_stream.Peek.type == LexemType.ParenClose)
+                {
+                    stmt.endToken = _stream.Advance();
+                }
+                else
+                {
+                    stmt.Errors.Add(new ParseError(_stream.Peek,
+                        ErrorCodes.MockParamsMissingCloseParen));
+                }
+            }
+
+            // Drain end-of-statement separators between the name/params and the body.
             while (_stream.Peek.type == LexemType.EndStatement) _stream.Advance();
 
             // Body: `endtest`, `test`, `abstract`, and EOF are hard boundaries
@@ -3457,15 +3559,34 @@ namespace FadeBasic
                         break;
 
                     case LexemType.KeywordEndMock:
+                    {
                         stmt.endToken = next;
                         _stream.Advance();
+                        // Optional fall-through return expression — `endmock
+                        // <expr>` matches `endfunction <expr>`. When the body
+                        // reaches its closing `endmock` without an earlier
+                        // `exitmock`, this expression becomes the return.
+                        if (!IsMockBodyTerminator(_stream.Peek.type))
+                        {
+                            var saved = _stream.Save();
+                            if (TryParseExpression(out var endExpr))
+                            {
+                                stmt.endmockExpression = endExpr;
+                                stmt.endToken = endExpr.EndToken;
+                            }
+                            else
+                            {
+                                _stream.Restore(saved);
+                            }
+                        }
                         looking = false;
                         break;
+                    }
 
-                    case LexemType.KeywordReturns:
+                    case LexemType.KeywordExitMock:
                     {
                         var head = _stream.Advance();
-                        var rs = new MockReturnsStatement(head, head);
+                        var rs = new MockExitMockStatement(head, head);
                         if (TryParseExpression(out var expr))
                         {
                             rs.expression = expr;
@@ -3506,11 +3627,17 @@ namespace FadeBasic
 
                     default:
                     {
-                        // Unknown token in mock body — flag and skip one
-                        // token to recover. Phase B will broaden what's
-                        // accepted here (arbitrary test-block statements).
-                        var bad = _stream.Advance();
-                        stmt.Errors.Add(new ParseError(bad, ErrorCodes.MockEntryRequiresReturnsOrForbid));
+                        // Any test-block-legal statement is accepted inside
+                        // the mock body (locals, ifs, asserts, static
+                        // commands, plain assignments — including those that
+                        // target a ref parameter for write-through). Defer
+                        // to the generic statement parser; it'll surface its
+                        // own errors for anything truly malformed.
+                        var parsed = ParseStatement(stmt.body);
+                        if (parsed != null)
+                        {
+                            stmt.body.Add(parsed);
+                        }
                         break;
                     }
                 }
@@ -3525,11 +3652,24 @@ namespace FadeBasic
         {
             return type == LexemType.EndStatement
                 || type == LexemType.KeywordEndMock
-                || type == LexemType.KeywordReturns
+                || type == LexemType.KeywordExitMock
                 || type == LexemType.KeywordForbid
                 || type == LexemType.EOF
                 || type == LexemType.KeywordEndTest
                 || type == LexemType.KeywordTest;
+        }
+
+        // True for tokens that can appear as a mock parameter name. We
+        // accept the three Fade variable lexem types — general identifiers
+        // (no suffix), `s$` style string names, and `f#` style real names.
+        // The param's actual type comes from the command metadata, not the
+        // suffix on the name; this is purely about which lexer tokens we
+        // accept as identifier-like.
+        private static bool IsMockParamToken(LexemType type)
+        {
+            return type == LexemType.VariableGeneral
+                || type == LexemType.VariableString
+                || type == LexemType.VariableReal;
         }
 
         // True when the token is a colon-induced EndStatement (same line)
@@ -3998,6 +4138,42 @@ namespace FadeBasic
             recovery = null;
             switch (token.type)
             {
+                case LexemType.KeywordLen:
+                {
+                    // `len(<expr>)` — returns array element count or string
+                    // character count as an int. Parens are required for
+                    // clarity (matches the BASIC family's usual `LEN(x)`
+                    // form). The inner expression's type (array or string)
+                    // determines element size at compile time.
+                    var lenTok = _stream.Advance();
+                    if (_stream.Peek.type != LexemType.ParenOpen)
+                    {
+                        var badLen = new LenExpression(lenTok, lenTok, null);
+                        badLen.Errors.Add(new ParseError(lenTok, ErrorCodes.LenMissingParens));
+                        outputExpression = badLen;
+                        break;
+                    }
+                    _stream.Advance(); // consume `(`
+                    if (!TryParseExpression(out var lenInner))
+                    {
+                        var badLen = new LenExpression(lenTok, lenTok, null);
+                        badLen.Errors.Add(new ParseError(lenTok, ErrorCodes.LenMissingExpression));
+                        outputExpression = badLen;
+                        break;
+                    }
+                    if (_stream.Peek.type != LexemType.ParenClose)
+                    {
+                        var badLen = new LenExpression(lenTok, lenInner.EndToken, lenInner);
+                        badLen.Errors.Add(new ParseError(lenTok, ErrorCodes.LenMissingCloseParen));
+                        outputExpression = badLen;
+                        break;
+                    }
+                    var closeTok = _stream.Advance();
+                    var lenExpr = new LenExpression(lenTok, closeTok, lenInner);
+                    lenExpr.ParsedType = TypeInfo.Int;
+                    outputExpression = lenExpr;
+                    break;
+                }
                 case LexemType.KeywordCallCount:
                 {
                     // `call count <command>` is a single keyword followed by

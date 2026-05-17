@@ -526,4 +526,40 @@ endtest
             "test `bDoesntSeeA` should error referencing aLocal at labelB; errors: "
             + string.Join(", ", errs.Select(e => e.Display)));
     }
+
+    [Test]
+    public void Strictness_TestFromParent_InheritsParentRuntoScope()
+    {
+        // `test sample2 from sample` should inherit sample's runto-scope
+        // position so any main-body names sample had brought into view via
+        // runto are also visible inside sample2. Without this, the child
+        // test can't reference anything the parent unlocked, which defeats
+        // the point of `from`.
+        //
+        // STATUS: this currently fails — `fromParent` is parsed and stored
+        // (TestNode.fromParent, surfaced in the test manifest) but the
+        // strictness visitor doesn't propagate the parent's runto-visible
+        // set to the child. The child starts fresh with globals only and
+        // flags `x` as unreachable.
+        var src = @"
+x = 3
+_L1:
+end
+
+test sample
+    runto _L1
+    assert x = 3
+endtest
+
+test sample2 from sample
+    print ""hahahah""
+    assert x = 3
+endtest
+";
+        Parse(src, out var errs);
+        Assert.That(errs.Any(e => e.errorCode.Equals(ErrorCodes.TestVariableUnreachable)),
+            Is.False,
+            "expected `x` to be visible in `sample2` via `from sample`'s runto inheritance; got: "
+            + string.Join(", ", errs.Select(e => e.Display)));
+    }
 }

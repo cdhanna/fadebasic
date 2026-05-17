@@ -1384,7 +1384,7 @@ ENDTEST
 ` a
 ```
 
-Instead, test blocks are run as distinct top level programs using the `dotnet test` command. #TODO, insert guide to this. `--logger "console;verbosity=detailed"`
+Instead, test blocks are run as distinct top level programs. 
 When `dotnet test` is run, all of the test blocks will run in sequence, in the order they are defined in the program. 
 ```basic
 TEST tuna
@@ -1399,7 +1399,7 @@ ENDTEST
 ` b
 ```
 
-Test blocks have a unique access to the scope of the main program. They can _access_ variables defined in the global [scope](#scopes) of the program, but by default, they do not have access to local scoped variables. However, the test program does not run the main program, so global values are _declared_, but they will not have their actual assigned values. 
+Test blocks have a unique access to the scope of the main program. They can _access_ variables defined in the global [scope](#scopes) of the program, but by default, they do not have access to local scoped variables. However, the test program does not run the main program, so global values are _declared_, but they will not have their actual assigned values. In other words, the test starts executing before the main program.
 ```basic
 GLOBAL x = 42
 TEST sample
@@ -1433,7 +1433,7 @@ ENDTEST
 ` end
 ```
 
-The `RUNTO` statement can take an optional `MAX CYCLES` cluase followed by an integer expression. The value represents the max number of instructions that the _Fade Basic_ virtual machine will allow before causing the test to _fail_. For example, if the main program would never reach the desired label, the `MAX CYCLES` clause can be used to prevent the test from running forever. 
+The `RUNTO` statement can take an optional `MAX CYCLES` clause followed by an integer expression. The value represents the max number of instructions that the _Fade Basic_ virtual machine will allow before causing the test to _fail_. For example, if the main program would never reach the desired label, the `MAX CYCLES` clause can be used to prevent the test from running forever. 
 ```basic
 WHILE 1
     `loop forever
@@ -1452,10 +1452,62 @@ ENDTEST
 ` <fail>
 ```
 
+A label can be `RUNTO` multiple times, if it is in a loop.
+```basic
+counter = 0
+DO
+    counter = counter + 1
+    _L1:
+LOOP
+
+TEST sample
+    RUNTO _L1
+    PRINT counter
+
+    PRINT "Mid Test"
+
+    RUNTO _L1
+    PRINT counter
+ENDTEST
+
+`test output
+` 1
+` Mid Test
+` 2
+```
+
+The `RUNTO` syntax can be combined with other _Fade Basic_ language primitives to make conditional `RUNTO` sections.
+```basic
+counter = 0
+_L1:
+DO
+    counter = counter + 1
+    _L2:
+LOOP
+
+TEST sample
+    RUNTO _L1
+    
+    WHILE counter < 3
+        PRINT "looping"
+        RUNTO _L2:
+    ENDWHILE
+
+    PRINT counter
+
+ENDTEST
+
+`test output
+` looping
+` looping
+` looping
+` 3
+```
+
 ----
 #### Test Scope
 
-By default, test blocks can only reference global scope from the main program. However, anytime a `RUNTO` statement resumes execution into the test program, the current available scope in the test block is equivilent to the scope from where the main program was paused. 
+By default, test blocks can only reference global scope from the main program. However, anytime a `RUNTO` statement resumes execution into the test program, the current available scope in the test block is equivalent to the scope from where the main program was paused. 
 ```basic
 x = 42
 _L1:
@@ -1554,10 +1606,23 @@ ENDTEST
 ` 1
 ```
 
+Each test can declare variables in isolation of _other_ tests. 
+```basic
+TEST t1
+    LOCAL x = 4
+    PRINT x
+ENDTEST
+
+TEST t2
+    LOCAL x = 80
+    PRINT x
+ENDTEST
+```
+
 ----
 #### Asserts
 
-A test block can use the `ASSERT` statement to cause a test to pass or fail. An `ASSERT` statement must be followed by an expression that resolves to a boolean. When the expresion resolves to a truthy value, the assert statement is valid. Otherwise, the assert statement is considered _invalid_. The test block will stop executing and be marked as a failure at the first invalid `ASSERT` statement. 
+A test block can use the `ASSERT` statement to cause a test to pass or fail. An `ASSERT` statement must be followed by an expression that resolves to a boolean. When the expression resolves to a truthy value, the assert statement is valid. Otherwise, the assert statement is considered _invalid_. The test block will stop executing and be marked as a failure at the first invalid `ASSERT` statement. 
 ```basic
 TEST sample
     x = 1
@@ -1590,8 +1655,8 @@ ENDTEST
 `ASSERT` statements can optionally include a _reason_ phrase after the condition. The _reason_ phrase will be included the output if the assert ever fails. These are useful for adding documentation to failed assertions. 
 ```basic
 TEST sample
-    x = 12
-    ASSERT x > 100, "x should be greater than zero"
+    x = -12
+    ASSERT x > 0, "x should be greater than zero"
 ENDTEST
 ```
 
@@ -1688,16 +1753,360 @@ ENDFUNCTION x
 ----
 #### Mocks
 
+During a test block, it is possible to change what happens when a [command](#commands) executes. This is called _mocking_. 
+
+To create a mock, use the `MOCK` block. The name of the command must follow immediately after the opening `MOCK` keyword. The block must end with an `ENDMOCK` keyword.
+```basic
+WAIT MS(1000) `WAIT MS() waits for the given number of milliseconds
+_L1:
+TEST sample
+    `mock the WAIT MS(1000) so that the test does not need to wait at all.
+    MOCK WAIT MS
+        PRINT "simulating instant wait."
+    ENDMOCK
+    RUNTO _L1
+ENDTEST
+
+`test output
+` simulating instant wait.
+```
+
+If the mocked command returns a value, then the `ENDMOCK` statement must be followed by a mocked return value. 
+```basic
+x = TIMER() `TIMER() is a command that returns the number of milliseconds since the program started. 
+_L1:
+TEST sample
+    MOCK TIMER
+    ENDMOCK 42
+
+    RUNTO _L1
+    ASSERT x = 42
+ENDTEST
+```
+
+The mock block may exit early with the `EXITMOCK` keyword. If the command is supposed to return a value, the `EXITMOCK` keyword must be followed by the mocked value. 
+```basic
+x = TIMER() `TIMER() is a command that returns the number of milliseconds since the program started. 
+_L1:
+TEST sample
+    MOCK TIMER
+        EXITMOCK 11
+    ENDMOCK 42
+
+    RUNTO _L1
+    ASSERT x = 11
+ENDTEST
+```
+
+Mock blocks can access global scope from the test block.
+```basic
+x = TIMER() `TIMER() is a command that returns the number of milliseconds since the program started. 
+_L1:
+TEST sample
+    GLOBAL t = 42
+    MOCK TIMER
+    ENDMOCK t
+
+    RUNTO _L1
+    ASSERT x = t
+ENDTEST
+```
+
+The mock block can access the parameters passed to the command.
+```basic
+WAIT MS(1000)
+_L1:
+TEST sample
+    MOCK WAIT MS(time)
+        PRINT "simulating wait for " + str$(time)
+    ENDMOCK
+    RUNTO _L1
+ENDTEST
+
+`test output
+` simulating wait for 1000
+```
+
+When the command has parameters that must be assigned, the mock block must assign them.
+```basic
+`normally, the INPUT command accepts a line of input from the terminal, and puts the value in x$
+INPUT "enter name", x$
+_L1:
+TEST sample
+    MOCK INPUT(_, val$)
+        `override the terminal input so the test does not need the user to type anything
+        val$ = "mr tuna"
+    ENDMOCK
+    RUNTO _L1
+
+    ASSERT x$ = "mr tuna"
+ENDTEST
+```
+
+Instead of returning a value and setting out parameters, a mocked command can use the `FORBID` keyword to signal that the command must not be called at all. 
+```basic
+WAIT MS(1000)
+_L1:
+
+TEST sample
+    MOCK WAIT MS
+        FORBID `if the WAIT MS command is called at all, the test will fail.
+    ENDMOCK
+
+    RUNTO _L1 
+ENDTEST
+
+`the test will fail.
+```
+
+It is not valid to put a `FORBID` statement as a sub statement in a mock block. It must be part of the top level scope. 
+
+Once a command is mocked, the mock will be called for every call to the command.
+```basic
+FOR n = 1 to 3
+    WAIT MS(n)
+NEXT
+
+_L1:
+
+TEST sample
+    MOCK WAIT MS(n)
+        PRINT "waiting: " + str$(n)
+    ENDMOCK
+    RUNTO _L1
+ENDTEST
+
+`test output
+` waiting: 1
+` waiting: 2
+` waiting: 3
+```
+
+Any mocked command can be overridden if a new mock block targets the command.
+```basic
+FOR n = 1 to 3
+    WAIT MS(n)
+    _L1:
+NEXT
+
+TEST sample
+    MOCK WAIT MS(n)
+        PRINT "a: " + str$(n)
+    ENDMOCK
+    RUNTO _L1
+
+    MOCK WAIT MS(n)
+        PRINT "b: " + str$(n)
+    ENDMOCK
+    RUNTO _L1
+
+    MOCK WAIT MS(n)
+        PRINT "c: " + str$(n)
+    ENDMOCK
+    RUNTO _L1
+ENDTEST
+
+`test output
+` a: 1
+` b: 2
+` c: 3
+```
+
+The `CLEAR MOCK` syntax will remove any mocks for the given command. The name of the command must follow.
+```basic
+FOR n = 1 to 3
+    WAIT MS(n)
+    _L1:
+NEXT
+
+_L2:
+
+TEST sample
+    MOCK WAIT MS(n)
+        PRINT "a: " + str$(n)
+    ENDMOCK
+    RUNTO _L1
+
+    CLEAR MOCK WAIT MS
+    RUNTO _L2
+ENDTEST
+
+`test output
+` a: 1
+```
 
 ----
 #### Child Tests
 
+A test block can use the `FROM` keyword to pick up where a previous test block ended.
+```basic
+TEST parent
+    x = 1
+ENDTEST
+
+TEST child FROM parent
+    assert x = 1
+ENDTEST
+
+`in this case, there are 2 successful tests, parent, and child.
+```
+
+A test block can be prefixed with the `ABSTRACT` keyword to prevent it from running or counting as a test. However, an abstract test can still be used as a parent.
+```basic
+ABSTRACT TEST parent
+    x = 1
+ENDTEST
+
+TEST child FROM parent
+    assert x = 1
+ENDTEST
+
+`now there is only one runnable test, child
+```
+
+When a test starts from the end of a previous test, it will inherit the current scope semantics.
+```basic
+x = 42
+_L1:
+
+ABSTRACT TEST parent
+    RUNTO _L1
+ENDTEST
+
+TEST child FROM parent
+    assert x = 42 `x is in scope, because the parent ran to _L1
+ENDTEST
+```
+
+A test will inherit function declarations and mocks from a parent test.
+```basic
+WAIT MS(1000)
+x = 42
+_L1:
+
+ABSTRACT TEST parent
+
+	` configure mock for children.
+	MOCK WAIT MS
+	ENDMOCK
+
+	FUNCTION add(a, b)
+	ENDFUNCTION a + b
+ENDTEST
+
+TEST child FROM parent
+    RUNTO _L1
+
+	` use function from parent
+	n = add(21, 21)
+    assert x = n 
+ENDTEST
+```
+
+When multiple test blocks continue from the same parent, they each get an isolated continuation. Modifications from one child test will not modify the initial parent scope for the next child test. 
+```basic
+ABSTRACT TEST parent
+	x = 1
+ENDTEST
+
+TEST child1 FROM parent
+	x = x + 1
+	assert x = 2
+ENDTEST
+
+TEST child2 FROM parent 
+	x = x + 2
+	assert x = 3
+ENDTEST
+
+TEST child3 FROM parent 
+	x = x + 3
+	assert x = 4
+ENDTEST
+```
+
+Deferred statements in a parent test run as if they were deferred from a child test. This can be used to set up re-usable teardown. 
+```basic
+counter = 0
+_L1:
+DO
+    counter = counter + 1
+    _L2:
+LOOP
+
+ABSTRACT TEST parent 
+	DEFER
+		PRINT "teardown"
+	ENDDEFER
+ENDTEST
+
+TEST sample FROM parent
+    RUNTO _L1
+    
+    WHILE counter < 3
+        PRINT "looping"
+        RUNTO _L2:
+    ENDWHILE
+
+    PRINT counter
+
+ENDTEST
+
+`test output
+` teardown
+` looping
+` looping
+` looping
+` 3
+
+```
+
+
 ----
-#### Testing Edge Cases
-- defer statements?
-- type definitions? 
-- 
+#### Call Counts
+The `CALL COUNT` keyword allows a test block to get the number of times a command has been invoked, since the start of the test. 
+```basic
+FOR n = 1 to 3
+    WAIT MS(n)
+NEXT
+
+_L1:
+
+TEST sample
+    RUNTO _L1
+    x = CALL COUNT WAIT MS
+    ASSERT x = 3
+ENDTEST
+```
+
+The `CALL COUNT` is not reset between parent and child test runs. 
+```basic
+
+ABSTRACT TEST parent 
+    WAIT MS(1)
+ENDTEST
+
+TEST sample FROM parent
+    WAIT MS(1)
+    PRINT CALL COUNT WAIT MS
+ENDTEST
+`test output
+` 2
+```
 
 ----
 #### Calling Tests
-- quirks with `dotnet test`
+
+Tests can be invoked from the command line in 2 ways, either through `dotnet test` to integrate with the dotnet ecosystem, or directly through reserved program flags using `dotnet run`. 
+
+| Action | `dotnet test` | `dotnet run` |
+| :----- | :------------ | :----------- |
+| Run all tests | `dotnet test` | `dotnet run --fade-test-all` |
+| List all tests | `dotnet test --list-tests` | `dotnet run --fade-list-tests` |
+| Run a test | <not implemented> | `dotnet run --fade-test <name>` |
+
+> [!TIP]
+> By default, `dotnet test` hides the standard out logging during testing. To see it, you must include the `--logger` switch.
+> ```bash
+> dotnet test --logger "console;verbosity=detailed"
+> ```

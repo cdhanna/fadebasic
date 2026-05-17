@@ -32,10 +32,177 @@ namespace FadeBasic.Ast.Visitors
             // Users who want test-visibility for shared variables should use `global`.)
             ComputeFunctionInternalScopeAts(program, globalNames, scopeAt, allTopLevelNames);
 
+            // Build a lookup from test name to TestNode (case-insensitive).
+            // Used to resolve `from <name>` and to walk the from-chain when
+            // computing scope inheritance.
+            var testsByName = new Dictionary<string, TestNode>(StringComparer.OrdinalIgnoreCase);
             foreach (var test in program.tests)
             {
-                ValidateTest(test, scopeAt, globalNames, allTopLevelNames);
+                if (test.name != null)
+                {
+                    testsByName[test.name] = test;
+                }
             }
+
+            // Flag unknown-parent and cycle errors up front. A test in a
+            // broken chain still gets its body validated (so the user can
+            // see all relevant errors at once), but with NO parent state
+            // seeded — otherwise we'd risk infinite walks or stale data.
+            var inBrokenChain = DetectFromChainErrors(program.tests, testsByName);
+
+            // Topological order by from-chain: parents always validate
+            // before children. Tests not in a chain order as-encountered.
+            // We compute each test's end-state (visible set, last runto
+            // target, test-locals, test-functions) during ValidateTest so
+            // descendants can pick it up.
+            var endStates = new Dictionary<string, TestEndState>(StringComparer.OrdinalIgnoreCase);
+            var ordered = TopologicalOrderByFromChain(program.tests, testsByName, inBrokenChain);
+
+            foreach (var test in ordered)
+            {
+                TestEndState parentState = null;
+                if (test.fromParent != null
+                    && !inBrokenChain.Contains(test.name ?? "")
+                    && endStates.TryGetValue(test.fromParent, out var foundParentState))
+                {
+                    parentState = foundParentState;
+                }
+
+                var endState = ValidateTest(test, scopeAt, globalNames,
+                    allTopLevelNames, parentState);
+                if (test.name != null)
+                {
+                    endStates[test.name] = endState;
+                }
+            }
+        }
+
+        // Snapshot of a test's final scope state at the end of its body —
+        // what a child should see as its starting visibility/locals when it
+        // inherits via `from`. Test-locals and test-functions piggyback
+        // because runtime register sharing already makes them physically
+        // present in the child's run; we just need the visitor to know
+        // they're visible to keep static checks aligned.
+        private sealed class TestEndState
+        {
+            public HashSet<string> Visible;
+            public string LastRuntoTarget;
+            public HashSet<string> TestLocals;
+            public HashSet<string> TestFunctions;
+        }
+
+        // Walk the from-chain graph once: report unknown parents and
+        // cycles. Return the set of test names that are in a broken chain
+        // so the per-test validator can skip parent-state inheritance for
+        // them. We still validate their bodies so the user gets a complete
+        // error picture in one pass.
+        private static HashSet<string> DetectFromChainErrors(
+            List<TestNode> tests,
+            Dictionary<string, TestNode> testsByName)
+        {
+            var broken = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            foreach (var test in tests)
+            {
+                if (test.fromParent == null) continue;
+                if (test.name == null) continue;
+
+                // Unknown parent — single, decisive error.
+                if (!testsByName.ContainsKey(test.fromParent))
+                {
+                    test.Errors.Add(new ParseError(
+                        test.fromParentToken ?? test.startToken,
+                        ErrorCodes.TestFromParentUnknown, test.fromParent));
+                    broken.Add(test.name);
+                    continue;
+                }
+
+                // Cycle check: walk up the chain from this test, marking
+                // visited names. Re-encountering one means a cycle includes
+                // this test (or an ancestor of it).
+                var visited = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                var cursor = test;
+                while (cursor != null)
+                {
+                    if (cursor.name == null) break;
+                    if (!visited.Add(cursor.name))
+                    {
+                        // Cycle — flag every test we passed through. Pin
+                        // the error on the test that triggered the walk
+                        // (the user-facing one) so the message is local.
+                        test.Errors.Add(new ParseError(
+                            test.fromParentToken ?? test.startToken,
+                            ErrorCodes.TestFromParentCycle, test.fromParent));
+                        broken.Add(test.name);
+                        break;
+                    }
+                    if (cursor.fromParent == null) break;
+                    if (!testsByName.TryGetValue(cursor.fromParent, out var nextCursor))
+                    {
+                        break; // unknown parent handled above for the originator
+                    }
+                    cursor = nextCursor;
+                }
+            }
+            return broken;
+        }
+
+        // Kahn-style topological sort by from-chain. Tests with no parent
+        // (or with a broken chain) come first. Children come after their
+        // parents. Cycle members appear in `broken` — they're placed at
+        // the end with no parent-state inheritance to avoid infinite walks.
+        private static List<TestNode> TopologicalOrderByFromChain(
+            List<TestNode> tests,
+            Dictionary<string, TestNode> testsByName,
+            HashSet<string> broken)
+        {
+            var result = new List<TestNode>(tests.Count);
+            var emitted = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+            bool TryEmit(TestNode t)
+            {
+                if (t.name == null) return false;
+                if (emitted.Contains(t.name)) return true;
+                if (t.fromParent == null
+                    || broken.Contains(t.name)
+                    || !testsByName.TryGetValue(t.fromParent, out var parent))
+                {
+                    result.Add(t);
+                    emitted.Add(t.name);
+                    return true;
+                }
+                if (!emitted.Contains(parent.name)) return false;
+                result.Add(t);
+                emitted.Add(t.name);
+                return true;
+            }
+
+            // Iterate until no progress — at most O(tests^2), trivial for
+            // realistic test counts.
+            var pending = new List<TestNode>(tests);
+            var madeProgress = true;
+            while (pending.Count > 0 && madeProgress)
+            {
+                madeProgress = false;
+                for (var i = pending.Count - 1; i >= 0; i--)
+                {
+                    if (TryEmit(pending[i]))
+                    {
+                        pending.RemoveAt(i);
+                        madeProgress = true;
+                    }
+                }
+            }
+            // Anything still pending is in a chain with a cycle we already
+            // flagged — append without parent-state inheritance.
+            foreach (var t in pending)
+            {
+                if (t.name != null && !emitted.Contains(t.name))
+                {
+                    result.Add(t);
+                    emitted.Add(t.name);
+                }
+            }
+            return result;
         }
 
         private static void ComputeFunctionInternalScopeAts(
@@ -212,22 +379,37 @@ namespace FadeBasic.Ast.Visitors
             }
         }
 
-        private static void ValidateTest(
+        private static TestEndState ValidateTest(
             TestNode test,
             Dictionary<string, HashSet<string>> scopeAt,
             HashSet<string> globalNames,
-            HashSet<string> allTopLevelNames)
+            HashSet<string> allTopLevelNames,
+            TestEndState parentState)
         {
             var testProgram = test.testProgram;
-            var testLocals = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-            var testFunctions = new HashSet<string>(
-                testProgram.functions.Select(f => f.name),
-                StringComparer.OrdinalIgnoreCase);
 
-            // Visible program-scope names. Starts with globals only (pre-runto).
-            // Updated to scope_at(target) when a runto is encountered.
-            var visible = new HashSet<string>(globalNames, StringComparer.OrdinalIgnoreCase);
-            string currentRuntoTarget = null;
+            // Seed test-locals and test-functions from the parent so the
+            // child's body can reference names the parent declared. The
+            // runtime makes them physically available (shared compile/run
+            // scope + GOSUB launcher), and we mirror that visibility here.
+            var testLocals = parentState != null
+                ? new HashSet<string>(parentState.TestLocals, StringComparer.OrdinalIgnoreCase)
+                : new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            var testFunctions = parentState != null
+                ? new HashSet<string>(parentState.TestFunctions, StringComparer.OrdinalIgnoreCase)
+                : new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            foreach (var fn in testProgram.functions)
+            {
+                testFunctions.Add(fn.name);
+            }
+
+            // Visible program-scope names. Inherited from parent when
+            // available so any names the parent unlocked via runto are
+            // already in view at the child's first statement.
+            var visible = parentState != null
+                ? new HashSet<string>(parentState.Visible, StringComparer.OrdinalIgnoreCase)
+                : new HashSet<string>(globalNames, StringComparer.OrdinalIgnoreCase);
+            string currentRuntoTarget = parentState?.LastRuntoTarget;
 
             void VisitStatement(IStatementNode stmt)
             {
@@ -488,6 +670,14 @@ namespace FadeBasic.Ast.Visitors
             {
                 VisitStatement(stmt);
             }
+
+            return new TestEndState
+            {
+                Visible = visible,
+                LastRuntoTarget = currentRuntoTarget,
+                TestLocals = testLocals,
+                TestFunctions = testFunctions
+            };
         }
     }
 }

@@ -245,20 +245,71 @@ namespace FadeBasic.Ast.Visitors
 
             scope.DoDelayedTypeChecks();
             
-            // as the very last part of verifying the scope, 
-            //  we need to verify the child scopes, which at this point, are just tests 
+            // as the very last part of verifying the scope,
+            //  we need to verify the child scopes, which at this point, are just tests
             scope.currentRegionName.Pop(); // remove the top level region.
-            foreach (var test in program.tests)
+
+            // Flag duplicate test names (case-insensitive — matches the
+            // lookup semantics used by FindTestByName + the runner's
+            // manifest lookup). The first occurrence keeps the name; every
+            // later sibling with the same name gets an error pinned on its
+            // own name token. We don't drop them from validation — the
+            // user might want to fix one at a time, and downstream checks
+            // still produce useful errors for both bodies.
+            {
+                var seenTestNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                foreach (var t in program.tests)
+                {
+                    if (t.name == null) continue;
+                    if (!seenTestNames.Add(t.name))
+                    {
+                        Token dupTok = t.nameToken ?? t.StartToken;
+                        t.Errors.Add(new ParseError(dupTok,
+                            ErrorCodes.TestDuplicateName, t.name));
+                    }
+                }
+            }
+            //
+            // A test with `from <parent>` must validate AFTER its parent so we can
+            // pass the parent's testProgram as the scope baseline — the same
+            // program→test copy logic above then folds parent's locals/functions
+            // into the child's fresh scope. Order tests Kahn-style by from-chain;
+            // anything still unordered after a full pass is in a cycle (the strict
+            // visitor will flag it) and falls back to the program baseline so the
+            // child still validates against globals and doesn't lose unrelated
+            // errors.
+            var orderedTests = OrderTestsByFromChain(program.tests);
+            foreach (var test in orderedTests)
             {
                 // Tests cannot be nested inside another test. parentProgram != null
                 // means *we* are already a test sub-program, so any tests we contain
                 // are an invalid nesting.
                 if (parentProgram != null)
                 {
-                    test.Errors.Add(new ParseError(test.nameToken ?? test.StartToken, ErrorCodes.TestNestingNotAllowed));
+                    Token nestingTok = test.nameToken ?? test.StartToken;
+                    test.Errors.Add(new ParseError(nestingTok, ErrorCodes.TestNestingNotAllowed));
                     continue;
                 }
-                test.testProgram.AddScopeRelatedErrors(options, knownFunctionTypes, program);
+
+                // Default baseline = the outer program (program-level globals,
+                // labels, types, functions). If this test has a resolvable,
+                // already-validated parent test, use the parent's testProgram
+                // instead so child picks up parent's locals/functions on top
+                // of the program baseline (parent's own validation already
+                // folded the program-level state into its scope, so the
+                // baselines compose transitively).
+                ProgramNode baseline = program;
+                if (test.fromParent != null)
+                {
+                    var parentTest = FindTestByName(program.tests, test.fromParent);
+                    if (parentTest != null
+                        && parentTest != test
+                        && parentTest.testProgram.scope != null)
+                    {
+                        baseline = parentTest.testProgram;
+                    }
+                }
+                test.testProgram.AddScopeRelatedErrors(options, knownFunctionTypes, baseline);
             }
 
             // Strict scope_at(:L) enforcement runs after all test sub-scopes are built,
@@ -270,6 +321,85 @@ namespace FadeBasic.Ast.Visitors
             }
         }
 
+
+        // Locate a sibling test by name (case-insensitive). Used by the
+        // test-iteration loop to resolve `from <parent>` references. Returns
+        // null when the parent name doesn't match any test — the strict
+        // visitor handles that with a clean TestFromParentUnknown error;
+        // here we just fall back to using the outer program as the baseline.
+        static TestNode FindTestByName(List<TestNode> tests, string name)
+        {
+            if (name == null || tests == null) return null;
+            foreach (var t in tests)
+            {
+                if (t.name != null
+                    && string.Equals(t.name, name, StringComparison.OrdinalIgnoreCase))
+                {
+                    return t;
+                }
+            }
+            return null;
+        }
+
+        // Order tests so each child appears after its `from`-parent. Anything
+        // unreachable (cycle members, tests whose chain hits an unknown name)
+        // appends at the end and gets validated against the outer program
+        // baseline — preserves error coverage without infinite-recursing.
+        // Kahn-style: repeatedly emit any test whose parent has been emitted
+        // (or whose parent is missing/null), until no progress is possible.
+        static List<TestNode> OrderTestsByFromChain(List<TestNode> tests)
+        {
+            var byName = new Dictionary<string, TestNode>(StringComparer.OrdinalIgnoreCase);
+            foreach (var t in tests)
+            {
+                if (t.name != null) byName[t.name] = t;
+            }
+
+            var emitted = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            var result = new List<TestNode>(tests.Count);
+            var pending = new List<TestNode>(tests);
+
+            bool TryEmit(TestNode t)
+            {
+                if (t.name == null) return false;
+                if (emitted.Contains(t.name)) return true;
+                // Tests with no parent, an unknown parent, or a parent that
+                // resolves to themselves can emit immediately — there's
+                // nothing to wait for in the inheritance chain.
+                if (t.fromParent == null
+                    || !byName.TryGetValue(t.fromParent, out var parent)
+                    || parent == t)
+                {
+                    result.Add(t);
+                    emitted.Add(t.name);
+                    return true;
+                }
+                if (!emitted.Contains(parent.name)) return false;
+                result.Add(t);
+                emitted.Add(t.name);
+                return true;
+            }
+
+            var madeProgress = true;
+            while (pending.Count > 0 && madeProgress)
+            {
+                madeProgress = false;
+                for (var i = pending.Count - 1; i >= 0; i--)
+                {
+                    if (TryEmit(pending[i]))
+                    {
+                        pending.RemoveAt(i);
+                        madeProgress = true;
+                    }
+                }
+            }
+            // Anything still pending is in a cycle. Append them in source
+            // order with no parent-state inheritance available — they'll
+            // validate against the program baseline. The strict visitor
+            // has already flagged the cycle.
+            foreach (var t in pending) result.Add(t);
+            return result;
+        }
 
         static void CheckTypesForUnknownReferences(Scope scope)
         {
@@ -692,23 +822,23 @@ namespace FadeBasic.Ast.Visitors
         //     overload would reject the expression, error.
         static void ValidateMockStatement(MockStatement mock, Scope scope, EnsureTypeContext ctx)
         {
-            MockReturnsStatement seenReturns = null;
+            MockExitMockStatement seenReturns = null;
             MockForbidStatement seenForbid = null;
 
+            // Collect structure-validation findings up front (multiple returns,
+            // multiple forbids, returns+forbid). We still need to walk the
+            // body with the full visitor so locals/ifs/etc. type-check, but
+            // we can detect these duplicates by scanning the body shallowly.
             foreach (var stmt in mock.body)
             {
                 switch (stmt)
                 {
-                    case MockReturnsStatement rs:
+                    case MockExitMockStatement rs:
                         if (seenReturns != null)
                         {
                             rs.Errors.Add(new ParseError(rs.StartToken, ErrorCodes.MockMultipleReturns));
                         }
                         seenReturns = rs;
-                        if (rs.expression != null)
-                        {
-                            rs.expression.EnsureVariablesAreDefined(scope, ctx);
-                        }
                         break;
 
                     case MockForbidStatement fs:
@@ -717,6 +847,168 @@ namespace FadeBasic.Ast.Visitors
                             fs.Errors.Add(new ParseError(fs.StartToken, ErrorCodes.MockMultipleForbid));
                         }
                         seenForbid = fs;
+                        if (fs.reason != null
+                            && fs.reason.ParsedType.type != VariableType.String
+                            && !fs.reason.ParsedType.unset)
+                        {
+                            // Type check happens after we visit the body
+                            // (so the reason expression's ParsedType is set).
+                            // We re-check after CheckStatements below.
+                        }
+                        break;
+                }
+            }
+
+            // Push a body scope. Parameters become locals with types derived
+            // from the command's arg metadata. This mirrors BeginFunction:
+            // the body's local symbol table is independent of the test's,
+            // and `local` declarations inside the body add to it.
+            //
+            // Pick the overload that MATCHES the user's named param count.
+            // Falling back to overloads[0] would mis-type params and skip
+            // the ref-assignment check when overloads have different arg
+            // counts (e.g. `input(ref string)` vs `input(string, ref string)`).
+            CommandInfo? bodyOverload = null;
+            if (scope.commands != null
+                && mock.commandName != null
+                && scope.commands.Lookup.TryGetValue(mock.commandName, out var bodyOverloads)
+                && bodyOverloads.Count > 0)
+            {
+                if (mock.parameters.Count == 0)
+                {
+                    bodyOverload = bodyOverloads[0];
+                }
+                else
+                {
+                    foreach (var ov in bodyOverloads)
+                    {
+                        var ovArgs = ov.args ?? System.Array.Empty<CommandArgInfo>();
+                        var realCount = 0;
+                        foreach (var a in ovArgs) if (!a.isVmArg) realCount++;
+                        if (realCount == mock.parameters.Count)
+                        {
+                            bodyOverload = ov;
+                            break;
+                        }
+                    }
+                }
+            }
+
+            var bodyTable = new SymbolTable();
+            scope.localVariables.Push(bodyTable);
+            if (bodyOverload.HasValue && mock.parameters.Count > 0)
+            {
+                var args = bodyOverload.Value.args ?? System.Array.Empty<CommandArgInfo>();
+                var realArgIndices = new List<int>();
+                for (var ai = 0; ai < args.Length; ai++)
+                {
+                    if (!args[ai].isVmArg) realArgIndices.Add(ai);
+                }
+                for (var pi = 0; pi < mock.parameters.Count && pi < realArgIndices.Count; pi++)
+                {
+                    var p = mock.parameters[pi];
+                    var argDesc = args[realArgIndices[pi]];
+                    var typeCode = argDesc.typeCode;
+                    if (argDesc.isParams && typeCode == TypeCodes.ANY)
+                    {
+                        // `params object[]` — TypeCodes.ANY has no Fade
+                        // variable-type mapping, and the body's gathered
+                        // array would need per-element type storage that
+                        // the current array model doesn't support. Surface
+                        // a clean error here instead of letting the compiler
+                        // crash on SIZE_TABLE[ANY]. The user can still mock
+                        // the command; they just can't reference the args.
+                        var cmdName = mock.commandName ?? "<command>";
+                        var detail =
+                            $"`{p.variableName}` is bound to the `params object[]` parameter of `{cmdName}`. " +
+                            $"That parameter accepts a mix of element types at runtime, so there's no single Fade " +
+                            $"element type the body's array could have. Rewrite as `mock {cmdName}` (no parameter name) " +
+                            $"to install the mock without naming the args.";
+                        p.Errors.Add(new ParseError(p,
+                            ErrorCodes.MockParamsObjectArrayUnnamable, detail));
+                    }
+                    else if (VmUtil.TryGetVariableType(typeCode, out var varType))
+                    {
+                        // A params arg is bound as a rank-1 array of the
+                        // element type so the body can `len(p)` and `p(i)`.
+                        var paramTypeInfo = argDesc.isParams
+                            ? TypeInfo.FromVariableType(varType, new IExpressionNode[1])
+                            : TypeInfo.FromVariableType(varType);
+                        bodyTable.Add(p.variableName, new Symbol
+                        {
+                            text = p.variableName,
+                            typeInfo = paramTypeInfo,
+                            source = p
+                        });
+                    }
+                }
+            }
+
+            // Set active-mock context so any PassthroughExpression we
+            // encounter in the body knows what return type to wear and
+            // doesn't trip its outside-mock-body error.
+            var prevInsideMock = ctx.insideMockBody;
+            var prevMockReturnTc = ctx.activeMockReturnTypeCode;
+            var prevMockReturnInfo = ctx.activeMockReturnTypeInfo;
+            var prevMockArgInfos = ctx.activeMockArgInfos;
+            var prevMockBoundRefs = ctx.activeMockBoundRefParamNames;
+            ctx.insideMockBody = true;
+            ctx.activeMockReturnTypeCode = bodyOverload?.returnType ?? TypeCodes.VOID;
+            if (bodyOverload.HasValue
+                && bodyOverload.Value.returnType != TypeCodes.VOID
+                && VmUtil.TryGetVariableType(bodyOverload.Value.returnType, out var mockRetVarType))
+            {
+                ctx.activeMockReturnTypeInfo = TypeInfo.FromVariableType(mockRetVarType);
+            }
+            else
+            {
+                ctx.activeMockReturnTypeInfo = TypeInfo.Void;
+            }
+            // Build the real-arg list (in declaration order) and the
+            // set of names bound to a ref param. PassthroughExpression's
+            // validator reads these.
+            if (bodyOverload.HasValue)
+            {
+                var ovArgs = bodyOverload.Value.args ?? System.Array.Empty<CommandArgInfo>();
+                var realArgsOrdered = new List<CommandArgInfo>();
+                var boundRefs = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                var paramIdx = 0;
+                for (var ai = 0; ai < ovArgs.Length; ai++)
+                {
+                    if (ovArgs[ai].isVmArg) continue;
+                    realArgsOrdered.Add(ovArgs[ai]);
+                    if (ovArgs[ai].isRef && paramIdx < mock.parameters.Count)
+                    {
+                        boundRefs.Add(mock.parameters[paramIdx].variableName);
+                    }
+                    paramIdx++;
+                }
+                ctx.activeMockArgInfos = realArgsOrdered.ToArray();
+                ctx.activeMockBoundRefParamNames = boundRefs;
+            }
+            else
+            {
+                ctx.activeMockArgInfos = System.Array.Empty<CommandArgInfo>();
+                ctx.activeMockBoundRefParamNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            }
+
+            // Walk the body with the standard statement checker so locals,
+            // ifs, expression statements, asserts, etc. all get proper
+            // type-checking and symbol resolution. The dedicated
+            // MockExitMockStatement / MockForbidStatement / MockRefStatement
+            // cases below resolve their internal expressions; the generic
+            // dispatch handles the rest.
+            foreach (var stmt in mock.body)
+            {
+                switch (stmt)
+                {
+                    case MockExitMockStatement rs:
+                        if (rs.expression != null)
+                        {
+                            rs.expression.EnsureVariablesAreDefined(scope, ctx);
+                        }
+                        break;
+                    case MockForbidStatement fs:
                         if (fs.reason != null)
                         {
                             fs.reason.EnsureVariablesAreDefined(scope, ctx);
@@ -727,8 +1019,159 @@ namespace FadeBasic.Ast.Visitors
                             }
                         }
                         break;
+                    default:
+                        // Send single-statement lists through CheckStatements
+                        // so it shares all the path-aware infrastructure
+                        // (loops, defers, declarations, etc.).
+                        var oneShot = new List<IStatementNode> { stmt };
+                        oneShot.CheckStatements(scope, ctx);
+                        break;
                 }
             }
+
+            // `runto` is a test-flow primitive — it switches execution
+            // between the test body and main-program code. It has no
+            // sensible meaning inside a mock body (which is run when a
+            // command is invoked, not when the test is navigating). Catch
+            // any occurrence anywhere in the body tree, not just top-level,
+            // so wrapping in `if`/`while` doesn't sneak past the check.
+            foreach (var stmt in mock.body)
+            {
+                stmt.Visit(node =>
+                {
+                    if (node is RuntoStatement runtoNode)
+                    {
+                        runtoNode.Errors.Add(new ParseError(runtoNode.StartToken,
+                            ErrorCodes.RuntoInsideMockBody));
+                    }
+                });
+            }
+
+            // Validate self-recursive calls to the mocked command — these
+            // get rewritten to CALL_HOST_REAL with a scope swap, so any
+            // ref arg's address must point into the caller's scope. The
+            // only body-level names that satisfy that are the mock's own
+            // bound ref params (their hidden ptr targets the caller).
+            // Any other expression at a ref slot is a hard error.
+            if (mock.commandName != null
+                && ctx.activeMockBoundRefParamNames != null)
+            {
+                var boundRefNames = ctx.activeMockBoundRefParamNames;
+                foreach (var stmt in mock.body)
+                {
+                    stmt.Visit(node =>
+                    {
+                        if (node is CommandStatement cs
+                            && cs.command.name != null
+                            && string.Equals(cs.command.name, mock.commandName,
+                                StringComparison.OrdinalIgnoreCase))
+                        {
+                            ValidateSelfRecursiveRefArgs(cs.command, cs.args,
+                                cs.argMap, boundRefNames);
+                        }
+                        else if (node is CommandExpression ce
+                            && ce.command.name != null
+                            && string.Equals(ce.command.name, mock.commandName,
+                                StringComparison.OrdinalIgnoreCase))
+                        {
+                            ValidateSelfRecursiveRefArgs(ce.command, ce.args,
+                                ce.argMap, boundRefNames);
+                        }
+                    });
+                }
+            }
+
+            // Resolve symbols + type on `endmock <expr>` while the body
+            // scope (with params) is still pushed.
+            if (mock.endmockExpression != null)
+            {
+                mock.endmockExpression.EnsureVariablesAreDefined(scope, ctx);
+            }
+
+            // Strict ref-arg validation: every ref param must have at least
+            // one top-level assignment in the body. Otherwise the caller's
+            // variable is left in an undefined state when the mock runs.
+            // `forbid` short-circuits this — the test halts before the
+            // caller observes anything, so no writes are needed.
+            if (bodyOverload.HasValue && seenForbid == null && mock.parameters.Count > 0)
+            {
+                var args = bodyOverload.Value.args ?? System.Array.Empty<CommandArgInfo>();
+                var realArgIndices = new List<int>();
+                for (var ai = 0; ai < args.Length; ai++)
+                {
+                    if (!args[ai].isVmArg) realArgIndices.Add(ai);
+                }
+
+                // A self-recursive call to the mocked command inside the
+                // body invokes the real host, which writes through every
+                // ref it's passed. If the body contains such a call (at
+                // any nesting level) we treat every ref param as assigned
+                // — the user delegated the writes to the real host. The
+                // compiler still enforces, per call, that each ref arg
+                // names a bound ref param (MockBodyRefArgMustBeBoundRefParam).
+                var hasSelfCall = false;
+                var mockedName = mock.commandName;
+                if (mockedName != null)
+                {
+                    foreach (var stmt in mock.body)
+                    {
+                        stmt.Visit(node =>
+                        {
+                            if (node is CommandStatement cs
+                                && cs.command.name != null
+                                && string.Equals(cs.command.name, mockedName,
+                                    StringComparison.OrdinalIgnoreCase))
+                            {
+                                hasSelfCall = true;
+                            }
+                            if (node is CommandExpression ce
+                                && ce.command.name != null
+                                && string.Equals(ce.command.name, mockedName,
+                                    StringComparison.OrdinalIgnoreCase))
+                            {
+                                hasSelfCall = true;
+                            }
+                        });
+                        if (hasSelfCall) break;
+                    }
+                }
+
+                for (var pi = 0; pi < mock.parameters.Count && pi < realArgIndices.Count; pi++)
+                {
+                    if (!args[realArgIndices[pi]].isRef) continue;
+                    if (hasSelfCall) continue;
+                    var paramName = mock.parameters[pi].variableName;
+                    var assigned = false;
+                    foreach (var stmt in mock.body)
+                    {
+                        if (stmt is AssignmentStatement asn
+                            && asn.variable is VariableRefNode lhs
+                            && string.Equals(lhs.variableName, paramName,
+                                StringComparison.OrdinalIgnoreCase))
+                        {
+                            assigned = true;
+                            break;
+                        }
+                    }
+                    if (!assigned)
+                    {
+                        mock.parameters[pi].Errors.Add(new ParseError(mock.parameters[pi],
+                            ErrorCodes.MockRefParamNotAssigned));
+                    }
+                }
+            }
+
+            scope.localVariables.Pop();
+
+            // Restore the outer ctx now that we're done walking this
+            // mock body. Nested mocks aren't legal (mock is block-only at
+            // the top level of a test), but this still keeps the stack
+            // discipline tidy in case a future change allows them.
+            ctx.insideMockBody = prevInsideMock;
+            ctx.activeMockReturnTypeCode = prevMockReturnTc;
+            ctx.activeMockReturnTypeInfo = prevMockReturnInfo;
+            ctx.activeMockArgInfos = prevMockArgInfos;
+            ctx.activeMockBoundRefParamNames = prevMockBoundRefs;
 
             if (seenReturns != null && seenForbid != null)
             {
@@ -748,50 +1191,128 @@ namespace FadeBasic.Ast.Visitors
             // command, etc. Anything else surfaces an InvalidCast/InvalidType
             // error on the expression — we then translate the first such error
             // into a clearer MockReturnsTypeMismatch and stop.
-            if (scope.commands != null && mock.commandName != null && seenReturns != null)
+            if (scope.commands != null && mock.commandName != null
+                && scope.commands.Lookup.TryGetValue(mock.commandName, out var overloads)
+                && overloads.Count > 0)
             {
-                if (scope.commands.Lookup.TryGetValue(mock.commandName, out var overloads)
-                    && overloads.Count > 0)
+                // When the user names params, at least one overload must
+                // have a matching non-VmArg arg count. Otherwise the mock
+                // can't bind cleanly and the compiler will refuse to emit
+                // any body (silent no-op without an error).
+                if (mock.parameters.Count > 0)
                 {
-                    var reportedTypeMismatch = false;
-                    foreach (var overload in overloads)
+                    var hasMatchingOverload = false;
+                    foreach (var ov in overloads)
                     {
-                        var isVoid = overload.returnType == TypeCodes.VOID;
-
-                        if (isVoid)
-                        {
-                            // `returns` against any void overload is illegal.
-                            // One error per mock is enough — break out.
-                            seenReturns.Errors.Add(new ParseError(seenReturns.StartToken,
-                                ErrorCodes.MockReturnsOnVoidCommand));
-                            break;
-                        }
-
-                        if (seenReturns.expression == null
-                            || seenReturns.expression.ParsedType.unset) continue;
-
-                        if (!TypeInfo.TryGetFromTypeCode(overload.returnType, out var expectedType))
-                        {
-                            continue;
-                        }
-
-                        // Probe assignability without committing errors to
-                        // the real expression node — call into the same path
-                        // the declaration init uses, on a throwaway node. If
-                        // it flags any errors, the types are incompatible.
-                        var probe = new ProbeNode();
-                        scope.EnforceTypeAssignment(probe,
-                            seenReturns.expression.ParsedType, expectedType,
-                            softLeft: false, out _);
-                        if (probe.Errors.Count > 0 && !reportedTypeMismatch)
-                        {
-                            seenReturns.expression.Errors.Add(new ParseError(
-                                seenReturns.expression,
-                                ErrorCodes.MockReturnsTypeMismatch));
-                            reportedTypeMismatch = true;
-                            break;
-                        }
+                        var ovArgs = ov.args ?? System.Array.Empty<CommandArgInfo>();
+                        var realCount = 0;
+                        foreach (var a in ovArgs) if (!a.isVmArg) realCount++;
+                        if (realCount == mock.parameters.Count) { hasMatchingOverload = true; break; }
                     }
+                    if (!hasMatchingOverload)
+                    {
+                        mock.Errors.Add(new ParseError(
+                            mock.commandNameToken ?? mock.StartToken,
+                            ErrorCodes.MockParamCountNoMatchingOverload));
+                    }
+                }
+
+                // Strict body validation: a value-returning command's mock
+                // body must produce a return value via one of three paths:
+                //   - exitmock <expr> somewhere in the body (top level)
+                //   - endmock <expr> as the closing form (fall-through)
+                //   - forbid (the test halts before the caller observes the
+                //     missing return)
+                // Without one of these the caller pops a return value that
+                // was never pushed → stack corruption at the call site.
+                if (seenReturns == null && seenForbid == null && mock.endmockExpression == null)
+                {
+                    var anyValueReturning = false;
+                    foreach (var ov in overloads)
+                    {
+                        if (ov.returnType != TypeCodes.VOID) { anyValueReturning = true; break; }
+                    }
+                    if (anyValueReturning)
+                    {
+                        mock.Errors.Add(new ParseError(mock.StartToken ?? mock.commandNameToken,
+                            ErrorCodes.MockValueCommandMissingReturns));
+                    }
+                }
+
+                // Return-type checks against each overload. Apply to both
+                // `exitmock <expr>` (seenReturns) and `endmock <expr>`
+                // (mock.endmockExpression). Each one must satisfy the
+                // command's return type or — if the command is void — not
+                // appear at all.
+                CheckMockReturnAgainstOverloads(seenReturns?.expression,
+                    seenReturns?.StartToken, overloads, scope);
+                CheckMockReturnAgainstOverloads(mock.endmockExpression,
+                    mock.endmockExpression?.StartToken, overloads, scope);
+            }
+        }
+
+        // For a self-recursive call inside a mock body, each ref-position
+        // user arg must be a VariableRefNode naming one of the mock's
+        // bound ref params. Anything else would push a pointer that the
+        // CALL_HOST_REAL scope swap can't make sense of (a body-local
+        // address means "register N in body scope"; after the swap that
+        // address indexes the wrong scope and would clobber unrelated
+        // data). Skip non-ref slots — they're plain expressions and the
+        // standard command-arg checks cover them.
+        static void ValidateSelfRecursiveRefArgs(CommandInfo command,
+            List<IExpressionNode> args, List<int> argMap,
+            HashSet<string> boundRefNames)
+        {
+            if (command.args == null) return;
+            var argCounter = 0;
+            for (var i = 0; i < command.args.Length; i++)
+            {
+                if (command.args[i].isVmArg) continue;
+                if (command.args[i].isParams) break;
+                if (argCounter >= args.Count) break;
+                if (command.args[i].isRef)
+                {
+                    var userExpr = args[argCounter];
+                    if (!(userExpr is VariableRefNode vn)
+                        || boundRefNames == null
+                        || !boundRefNames.Contains(vn.variableName))
+                    {
+                        userExpr.Errors.Add(new ParseError(userExpr,
+                            ErrorCodes.MockBodyRefArgMustBeBoundRefParam));
+                    }
+                }
+                argCounter++;
+            }
+        }
+
+        // Helper: validate a single return-expression (from exitmock or
+        // endmock) against every overload of the mocked command. Adds the
+        // appropriate error to the expression node on the first mismatch.
+        static void CheckMockReturnAgainstOverloads(
+            IExpressionNode returnExpr, Token reportToken,
+            List<CommandInfo> overloads, Scope scope)
+        {
+            if (returnExpr == null) return;
+            foreach (var overload in overloads)
+            {
+                if (overload.returnType == TypeCodes.VOID)
+                {
+                    returnExpr.Errors.Add(new ParseError(reportToken ?? returnExpr.StartToken,
+                        ErrorCodes.MockReturnsOnVoidCommand));
+                    return;
+                }
+                if (returnExpr.ParsedType.unset) continue;
+                if (!TypeInfo.TryGetFromTypeCode(overload.returnType, out var expectedType)) continue;
+
+                var probe = new ProbeNode();
+                scope.EnforceTypeAssignment(probe,
+                    returnExpr.ParsedType, expectedType,
+                    softLeft: false, out _);
+                if (probe.Errors.Count > 0)
+                {
+                    returnExpr.Errors.Add(new ParseError(returnExpr,
+                        ErrorCodes.MockReturnsTypeMismatch));
+                    return;
                 }
             }
         }
@@ -1218,6 +1739,24 @@ namespace FadeBasic.Ast.Visitors
                     // CommandNameTree pass; nothing further to do.
                     callCountExpr.ParsedType = TypeInfo.Int;
                     break;
+                case LenExpression lenExpr:
+                    // `len(...)` always evaluates to an int. Resolve inner
+                    // expression first so its ParsedType is set, then
+                    // validate it's array- or string-typed.
+                    lenExpr.ParsedType = TypeInfo.Int;
+                    if (lenExpr.inner != null)
+                    {
+                        lenExpr.inner.EnsureVariablesAreDefined(scope, ctx);
+                        var innerType = lenExpr.inner.ParsedType;
+                        if (!innerType.unset
+                            && !innerType.IsArray
+                            && innerType.type != VariableType.String)
+                        {
+                            lenExpr.inner.Errors.Add(new ParseError(lenExpr.inner,
+                                ErrorCodes.LenInvalidType));
+                        }
+                    }
+                    break;
                 default:
                     break;
             }
@@ -1229,6 +1768,28 @@ namespace FadeBasic.Ast.Visitors
     {
         public HashSet<string> functionHistory = new HashSet<string>();
         public bool HasLoop { get; private set; }
+
+        // Set while walking the body of a `mock` statement. Drives:
+        //  - PassthroughExpression validation: passthrough outside a mock
+        //    body is an error.
+        //  - PassthroughExpression ParsedType: set to the active mock
+        //    command's return type so callers like `r = passthrough` get
+        //    the right type info.
+        public bool insideMockBody;
+        public byte activeMockReturnTypeCode;
+        public TypeInfo activeMockReturnTypeInfo;
+
+        // Active mock command's full (non-VmArg) arg metadata, in
+        // declaration order. PassthroughExpression uses this to validate
+        // explicit `passthrough(...)` arg count + per-position kind
+        // (value / ref / params).
+        public CommandArgInfo[] activeMockArgInfos;
+
+        // Names of the mock's bound REF parameters. A ref argument in
+        // `passthrough(...)` must name one of these — otherwise we'd
+        // hand the real command a ptr that doesn't actually target the
+        // caller's scope and the writeback would land in the wrong place.
+        public HashSet<string> activeMockBoundRefParamNames;
 
         public EnsureTypeContext WithFunction(FunctionStatement function)
         {

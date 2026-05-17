@@ -237,14 +237,31 @@ namespace FadeBasic
         public static readonly ErrorCode TestRuntoShadowsLocal = "[0190] runto brings a program-scope variable into view that conflicts with a test-local of the same name";
         public static readonly ErrorCode AssertReasonMissingExpression = "[0191] assert reason clause (after `,`) requires a string expression";
         public static readonly ErrorCode AssertReasonMustBeString = "[0192] assert reason expression must be a string";
-        public static readonly ErrorCode MockReturnsMissingExpression = "[0193] `returns` in a mock body requires an expression";
+        public static readonly ErrorCode MockReturnsMissingExpression = "[0193] `exitmock` requires an expression";
         public static readonly ErrorCode MockForbidReasonMustBeString = "[0194] forbid reason expression must be a string";
-        public static readonly ErrorCode MockReturnsOnVoidCommand = "[0195] `returns` in a mock body is not allowed when the command has no return value";
-        public static readonly ErrorCode MockReturnsTypeMismatch = "[0196] mock `returns` expression type does not match the command's return type";
-        public static readonly ErrorCode MockMultipleReturns = "[0197] mock body has multiple `returns` statements; only one is allowed";
+        public static readonly ErrorCode MockReturnsOnVoidCommand = "[0195] `exitmock`/`endmock <expr>` is not allowed when the command has no return value";
+        public static readonly ErrorCode MockReturnsTypeMismatch = "[0196] mock return-value expression type does not match the command's return type";
+        public static readonly ErrorCode MockMultipleReturns = "[0197] mock body has multiple `exitmock` statements; only one is allowed";
         public static readonly ErrorCode MockMultipleForbid = "[0198] mock body has multiple `forbid` statements; only one is allowed";
         public static readonly ErrorCode MockReturnsAndForbid = "[0199] mock body cannot mix `returns` and `forbid`";
+        public static readonly ErrorCode MockValueCommandMissingReturns = "[0252] mock body for a value-returning command must contain `exitmock`, `endmock <expr>`, or `forbid`";
+        public static readonly ErrorCode MockRefParamNotAssigned = "[0253] ref parameter must be assigned in the mock body — the caller's variable is left undefined otherwise";
+        public static readonly ErrorCode RuntoInsideMockBody = "[0257] `runto` is a test-control statement and cannot appear inside a mock body";
+        public static readonly ErrorCode MockParamsMissingCloseParen = "[0258] mock parameter list opened with `(` is missing its closing `)`";
+        public static readonly ErrorCode MockParamCountNoMatchingOverload = "[0259] mock parameter count does not match any overload of the command";
+        public static readonly ErrorCode ParamsCannotMixArrayWithInline = "[0260] cannot mix an array spread with inline values at the same `params` position";
+        public static readonly ErrorCode ParamsArrayMustBeRankOne = "[0261] only single-dimensional arrays can be spread into a `params` arg";
+        public static readonly ErrorCode ParamsArrayElementTypeMismatch = "[0262] array element type does not match the `params` arg's element type";
+        public static readonly ErrorCode LenMissingParens = "[0263] `len` requires parentheses around its argument";
+        public static readonly ErrorCode LenMissingExpression = "[0264] `len(...)` requires an array or string expression inside";
+        public static readonly ErrorCode LenMissingCloseParen = "[0265] `len(<expr>` is missing its closing `)`";
+        public static readonly ErrorCode LenInvalidType = "[0266] `len` only accepts array or string expressions";
         public static readonly ErrorCode CallCountMissingCommand = "[0251] `call count` must be followed by a command name";
+        public static readonly ErrorCode MockBodyRefArgMustBeBoundRefParam = "[0267] inside a mock body, a self-recursive call to the mocked command must pass one of the mock's bound ref parameters at each ref position";
+        public static readonly ErrorCode TestFromParentUnknown = "[0269] `test ... from <name>` references a parent test that does not exist";
+        public static readonly ErrorCode TestFromParentCycle = "[0270] `from`-chain forms a cycle — a test cannot transitively inherit from itself";
+        public static readonly ErrorCode TestDuplicateName = "[0271] another test with this name already exists; test names must be unique within a program";
+        public static readonly ErrorCode MockParamsObjectArrayUnnamable = "[0268] cannot bind a name to a `params object[]` argument in a mock body";
 
         // 200 series represents post-parse issues
         public static readonly ErrorCode InvalidReference = "[0200] Invalid reference";

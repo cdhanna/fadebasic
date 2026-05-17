@@ -2074,7 +2074,7 @@ x = a.b + len(a.c)
         var code = prog.ToString();
         Console.WriteLine(code);
         Assert.That(code, Is.EqualTo(@"(
-(= (ref x),(+ ((ref a).(ref b)),(xcall len ((ref a).(ref c)))))
+(= (ref x),(+ ((ref a).(ref b)),(len ((ref a).(ref c)))))
 )".ReplaceLineEndings("")));
     }
 

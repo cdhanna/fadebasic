@@ -393,6 +393,33 @@ namespace FadeBasic.Ast
     }
 
     /// <summary>
+    /// `len(<expr>)` — integer expression returning the element count of
+    /// an array or the character count of a string. The inner expression
+    /// must be array- or string-typed; the visitor enforces that. Element
+    /// size is determined at compile time and emitted as an inline byte
+    /// after the LENGTH opcode.
+    /// </summary>
+    public class LenExpression : AstNode, IExpressionNode
+    {
+        public IExpressionNode inner;
+
+        public LenExpression(Token startToken, Token endToken, IExpressionNode inner) : base(startToken, endToken)
+        {
+            this.inner = inner;
+        }
+
+        protected override string GetString()
+        {
+            return $"len {inner}";
+        }
+
+        public override IEnumerable<IAstVisitable> IterateChildNodes()
+        {
+            if (inner != null) yield return inner;
+        }
+    }
+
+    /// <summary>
     /// `call count <command>` — integer expression returning the number of
     /// times the host command was invoked during the current VM execution.
     /// Counts every CALL_HOST (whether mocked or not) so the user can write
@@ -422,4 +449,5 @@ namespace FadeBasic.Ast
             yield break;
         }
     }
+
 }

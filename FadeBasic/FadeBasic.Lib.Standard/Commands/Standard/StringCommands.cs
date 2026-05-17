@@ -74,11 +74,6 @@ namespace FadeBasic.Lib.Standard
             return val;
         }
         
-        [FadeBasicCommand("len", FadeBasicCommandUsage.Both)]
-        public static int StringLen(string str)
-        {
-            return str.Length;
-        }
         
         [FadeBasicCommand("asc", FadeBasicCommandUsage.Both)]
         public static int StringAsc(string str)

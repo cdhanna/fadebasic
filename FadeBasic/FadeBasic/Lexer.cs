@@ -76,11 +76,12 @@ namespace FadeBasic
         KeywordAssert,
         KeywordMock,
         KeywordEndMock,
-        KeywordReturns,
+        KeywordExitMock,
         KeywordForbid,
         KeywordClear,
         KeywordMocks,
         KeywordCallCount,
+        KeywordLen,
 
         KeywordAs,
         KeywordTypeInteger,
@@ -262,13 +263,14 @@ namespace FadeBasic
             new Lexem(LexemType.KeywordEndMock, new Regex("^endmock\\b")),
             new Lexem(LexemType.KeywordMocks, new Regex("^mocks\\b")),
             new Lexem(LexemType.KeywordMock, new Regex("^mock\\b")),
-            new Lexem(LexemType.KeywordReturns, new Regex("^returns\\b")),
+            new Lexem(LexemType.KeywordExitMock, new Regex("^exitmock\\b")),
             new Lexem(LexemType.KeywordForbid, new Regex("^forbid\\b")),
             new Lexem(LexemType.KeywordClear, new Regex("^clear\\b")),
             // Multi-word keyword: `call count`. Higher priority (-2) so it
             // matches before VariableGeneral; users who write `call` alone
             // (or `call somethingElse`) still get a VariableGeneral token.
             new Lexem(-2, LexemType.KeywordCallCount, new Regex("^call[ \\t]+count\\b")),
+            new Lexem(-2, LexemType.KeywordLen, new Regex("^len\\b")),
 
             new Lexem(LexemType.KeywordGoto, new Regex("^goto")),
             new Lexem(LexemType.KeywordGoSub, new Regex("^gosub")),
@@ -805,6 +807,10 @@ namespace FadeBasic
             for (var i = 0; i < tokens.Count; i++)
             {
                 var token = tokens[i];
+                // Don't rewrite a token that's already been tagged as a
+                // language keyword. Words like `len` collide with legacy
+                // host commands but the keyword wins.
+                if (token.type == LexemType.KeywordLen) continue;
                 var curr = tree;
                 var j = i;
                 while (tokens[j].caseInsensitiveRaw != null && curr.sub.TryGetValue(tokens[j].caseInsensitiveRaw, out var next))

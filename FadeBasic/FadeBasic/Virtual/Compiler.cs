@@ -536,9 +536,23 @@ namespace FadeBasic.Virtual
             // program's functions but before interned data. Each test gets its own
             // entry point recorded in the manifest. A test instance is launched via
             // `new VirtualMachine(program, manifest.entryPointAddress)`.
+            //
+            // Two-phase emission so `from`-chains work without duplicating body
+            // bytecode: phase 1 lays down each test's body region (statements +
+            // RETURN, then any test-scoped functions) and records its start
+            // address; phase 2 lays down each test's launcher region (a flat
+            // sequence of JUMP_HISTORY → ancestor-body, ..., JUMP_HISTORY → self-
+            // body, HALT) and stamps the manifest with the launcher address.
+            // Running a test = jump to its launcher, which GOSUBs through the
+            // full chain in order, sharing the VM's scope/registers/mock-table.
+            var testBodyAddresses = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
             foreach (var test in program.tests)
             {
-                CompileTest(test);
+                CompileTestBody(test, testBodyAddresses);
+            }
+            foreach (var test in program.tests)
+            {
+                CompileTestLauncher(test, testBodyAddresses, program.tests);
             }
 
             // Emit the assert-unwind trampoline after tests, before interned
@@ -575,21 +589,20 @@ namespace FadeBasic.Virtual
             }
         }
 
-        private void CompileTest(TestNode test)
+        // Phase 1: emit a test's body region (statements + RETURN), then any
+        // test-scoped functions. Records the body's start address in
+        // `bodyAddresses` so phase 2 launchers can GOSUB to it. Manifest
+        // entry is added in phase 2 (so it points at the launcher, not the
+        // body) — but we tag the body's start instruction for debugger
+        // function-name resolution here.
+        private void CompileTestBody(TestNode test,
+            Dictionary<string, int> bodyAddresses)
         {
-            // Abstract tests still produce bytecode (they may be `from`-parents of
-            // concrete tests, which Stage 8 will leverage), but they don't appear
-            // as runnable manifest entries.
-            var entryPoint = _buffer.Count;
-            _testManifest.Add(new TestManifestEntry
+            var bodyStart = _buffer.Count;
+            if (test.name != null)
             {
-                name = test.name,
-                entryPointAddress = entryPoint,
-                isAbstract = test.isAbstract,
-                fromParent = test.fromParent,
-                sourceLine = test.startToken?.lineNumber ?? 0,
-                sourceChar = test.startToken?.charNumber ?? 0
-            });
+                bodyAddresses[test.name] = bodyStart;
+            }
 
             // Compile the test body. The dispatch in Compile(IStatementNode) skips
             // FunctionStatement nodes — they're emitted separately below — so the
@@ -600,9 +613,19 @@ namespace FadeBasic.Virtual
                 Compile(statement);
             }
 
-            // Halt at the end of the test body so execution doesn't fall into
-            // whatever follows in the bytecode blob.
-            CompileEnd();
+            // RETURN instead of HALT: when invoked via the launcher's
+            // JUMP_HISTORY, this returns control so the next ancestor-or-
+            // self body in the chain can run.
+            //
+            // DEFER drains here are intentionally OMITTED. A `from`-child
+            // is semantically a continuation of its parent — parent's
+            // teardown (defer) statements should fire at the END of the
+            // chain, after the child's body, not at parent's RETURN.
+            // Defers register on the shared deferredJumps stack; the
+            // launcher's CompileEnd() drains them once after every body
+            // in the chain has run. Standalone tests get identical
+            // behavior — the launcher's drain runs after a single body.
+            _buffer.Add(OpCodes.RETURN);
 
             // Now compile any test-scoped functions. They live alongside program
             // functions in the bytecode blob and register themselves in the
@@ -613,6 +636,82 @@ namespace FadeBasic.Virtual
             {
                 Compile(function);
             }
+        }
+
+        // Phase 2: emit a test's launcher region — what the manifest's
+        // entryPointAddress points to. Walks the from-chain (root → self,
+        // skipping any test whose body we don't have, which covers
+        // chain-broken cases the visitor already errored on) and emits a
+        // JUMP_HISTORY → body for each, finishing with a HALT.
+        //
+        // Each ancestor's body ends with RETURN, popping the launcher's
+        // pushed return frame so the next JUMP_HISTORY fires. State
+        // (registers, mock table, runto position) flows naturally between
+        // segments because they share the same VM context.
+        private void CompileTestLauncher(TestNode test,
+            Dictionary<string, int> bodyAddresses,
+            List<TestNode> allTests)
+        {
+            var launcherStart = _buffer.Count;
+            _testManifest.Add(new TestManifestEntry
+            {
+                name = test.name,
+                entryPointAddress = launcherStart,
+                isAbstract = test.isAbstract,
+                fromParent = test.fromParent,
+                sourceLine = test.startToken?.lineNumber ?? 0,
+                sourceChar = test.startToken?.charNumber ?? 0
+            });
+
+            var chain = ResolveTestFromChain(test, allTests);
+            foreach (var member in chain)
+            {
+                if (!bodyAddresses.TryGetValue(member.name ?? "", out var bodyAddr))
+                {
+                    // No body recorded — likely a cycle-broken test the
+                    // visitor already flagged. Skip it to avoid an unresolved
+                    // GOSUB target.
+                    continue;
+                }
+                AddPushInt(_buffer, bodyAddr);
+                _buffer.Add(OpCodes.JUMP_HISTORY_LAUNCH);
+            }
+            CompileEnd();
+        }
+
+        // Walk a test's from-chain from root to self. Bail with just
+        // [self] if we detect a cycle so we don't loop forever; the
+        // visitor's TestFromParentCycle error tells the user what's wrong.
+        // Unknown parents are similarly cut off — the chain stops where
+        // the name fails to resolve.
+        private List<TestNode> ResolveTestFromChain(TestNode test,
+            List<TestNode> allTests)
+        {
+            var byName = new Dictionary<string, TestNode>(StringComparer.OrdinalIgnoreCase);
+            foreach (var t in allTests)
+            {
+                if (t.name != null) byName[t.name] = t;
+            }
+
+            var chain = new List<TestNode> { test };
+            var visited = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            if (test.name != null) visited.Add(test.name);
+
+            var cursor = test;
+            while (cursor.fromParent != null
+                && byName.TryGetValue(cursor.fromParent, out var parent))
+            {
+                if (parent.name != null && !visited.Add(parent.name))
+                {
+                    // Cycle — bail. The chain we have so far isn't useful
+                    // (we'd loop), so prefer "self only" semantics.
+                    return new List<TestNode> { test };
+                }
+                chain.Add(parent);
+                cursor = parent;
+            }
+            chain.Reverse(); // root first
+            return chain;
         }
 
         public void CompileJumpReplacements()
@@ -887,6 +986,12 @@ namespace FadeBasic.Virtual
                     break;
                 case MockStatement mockStatement:
                     Compile(mockStatement);
+                    break;
+                case MockExitMockStatement mockReturnsStatement:
+                    Compile(mockReturnsStatement);
+                    break;
+                case MockForbidStatement mockForbidStatement:
+                    Compile(mockForbidStatement);
                     break;
                 case ClearMockStatement clearMockStatement:
                     Compile(clearMockStatement);
@@ -1966,73 +2071,589 @@ namespace FadeBasic.Virtual
 
         private void Compile(MockStatement mockStatement)
         {
-            var commandIds = ResolveMockCommandIds(mockStatement.commandName);
-            if (commandIds.Count == 0)
+            var allCommandIds = ResolveMockCommandIds(mockStatement.commandName);
+            if (allCommandIds.Count == 0)
             {
                 // Unknown command — the lexer would normally have caught this
                 // (CommandWord token doesn't form). Skip silently here.
                 return;
             }
 
-            // Inspect the body: a mock has at most one `returns` and at most
-            // one `forbid` (the scope visitor enforces this). Pick the install
-            // opcode based on what's present:
-            //   - forbid              → MOCK_FORBID
-            //   - returns <expr>      → MOCK_RETURNS
-            //   - empty body          → MOCK_VOID (suppress the call)
-            // Phase B will replace this with full mock-body compilation.
-            MockReturnsStatement returnsStmt = null;
-            MockForbidStatement forbidStmt = null;
-            foreach (var stmt in mockStatement.body)
+            // Filter to overloads whose non-VmArg arg count matches the
+            // user-named param count. When the user gives zero names, the
+            // mock applies to every overload (the body's prelude pops every
+            // arg via DISCARD_TYPED, so any arg count is handled).
+            //
+            // Filtering is necessary because a single mock body's prelude
+            // is tied to one specific overload's signature — different
+            // overloads with different arg counts need different prelude
+            // bytecode, which is what the per-overload loop below emits.
+            var matchingIds = new List<int>();
+            foreach (var id in allCommandIds)
             {
-                if (stmt is MockReturnsStatement rs && returnsStmt == null) returnsStmt = rs;
-                else if (stmt is MockForbidStatement fs && forbidStmt == null) forbidStmt = fs;
+                if (mockStatement.parameters.Count == 0)
+                {
+                    matchingIds.Add(id);
+                    continue;
+                }
+                var methodArgs = methodTable.methods[id].args ?? System.Array.Empty<CommandArgInfo>();
+                var realCount = 0;
+                for (var ai = 0; ai < methodArgs.Length; ai++)
+                {
+                    if (!methodArgs[ai].isVmArg) realCount++;
+                }
+                if (realCount == mockStatement.parameters.Count)
+                {
+                    matchingIds.Add(id);
+                }
+            }
+            if (matchingIds.Count == 0)
+            {
+                // The visitor surfaces this as a validation error; the
+                // compiler just bails on emitting any bytecode.
+                return;
             }
 
-            foreach (var commandId in commandIds)
+            // Per-overload: emit a separate body block tailored to that
+            // overload's signature, then install it for that overload's
+            // method id. Bodies share source statements but get independent
+            // register allocations because each body pushes its own
+            // CompilePushScope before binding args.
+            foreach (var commandId in matchingIds)
             {
-                if (forbidStmt != null)
-                {
-                    // Stack at MOCK_FORBID dispatch (bottom→top):
-                    //   reason (string), trampolineAddr (int), commandId (int)
-                    // The reason is an empty literal when the user didn't
-                    // supply one. The trampoline address is patched after the
-                    // assert-unwind trampoline is emitted (same patch list).
-                    if (forbidStmt.reason != null)
-                    {
-                        Compile(forbidStmt.reason);
-                    }
-                    else
-                    {
-                        Compile(new LiteralStringExpression(forbidStmt.startToken, ""));
-                    }
-                    var trampolinePatchIndex = _buffer.Count;
-                    AddPushInt(_buffer, int.MaxValue);
-                    _assertTrampolinePatches.Add(trampolinePatchIndex);
+                CompileMockBodyForOverload(mockStatement, commandId);
+            }
+        }
 
-                    AddPushInt(_buffer, commandId);
-                    _buffer.Add(OpCodes.MOCK_FORBID);
-                }
-                else if (returnsStmt != null)
+        // Emit one mock-body block + install op for a single overload.
+        private void CompileMockBodyForOverload(MockStatement mockStatement, int commandId)
+        {
+            var argMethod = methodTable.methods[commandId];
+
+            // Skip-over JUMP so normal execution flows past this body.
+            var skipBodyPatchIndex = _buffer.Count;
+            AddPushInt(_buffer, int.MaxValue);
+            _buffer.Add(OpCodes.JUMP);
+
+            var bodyStart = _buffer.Count;
+            // Register in DebugData so call-stack frames inside this body
+            // get a sensible function name (the mocked command's name).
+            if (mockStatement.commandNameToken != null)
+            {
+                _dbg?.AddFunction(bodyStart, mockStatement.commandNameToken);
+            }
+            CompilePushScope();
+
+            // Build the list of real (non-VmArg) arg indices for this overload.
+            var commandArgs = argMethod.args ?? System.Array.Empty<CommandArgInfo>();
+            var realArgIndices = new List<int>();
+            for (var ai = 0; ai < commandArgs.Length; ai++)
+            {
+                if (!commandArgs[ai].isVmArg) realArgIndices.Add(ai);
+            }
+
+            // Per-ref-param bookkeeping used to emit writebacks at every
+            // body exit. Independent per overload.
+            var prevRefMap = _activeMockRefBindings;
+            _activeMockRefBindings = new List<MockRefBinding>();
+
+            // Args were pushed LIFO; pop in reverse to bind to user-named
+            // positions left-to-right. If the user gave no param names,
+            // DISCARD_TYPED keeps the stack clean.
+            for (var i = realArgIndices.Count - 1; i >= 0; i--)
+            {
+                var argInfo = commandArgs[realArgIndices[i]];
+                var paramIndex = i;
+                if (paramIndex < mockStatement.parameters.Count)
                 {
-                    AddPushInt(_buffer, commandId);
-                    if (returnsStmt.expression != null)
+                    var paramRef = mockStatement.parameters[paramIndex];
+                    if (argInfo.isParams)
                     {
-                        Compile(returnsStmt.expression);
+                        // `params object[]` (ANY) named in the mock body
+                        // is rejected by the visitor (MockParamsObjectArrayUnnamable)
+                        // because the gathered array would need mixed-type
+                        // element storage. Skip the binding here so we
+                        // don't crash on SIZE_TABLE[ANY]; the visitor's
+                        // ParseError is what the user sees.
+                        if (argInfo.typeCode == TypeCodes.ANY)
+                        {
+                            // Drain count + values off the stack so later
+                            // bindings line up.
+                            _buffer.Add(OpCodes.DISCARD_TYPED); // count
+                            // We don't know how many were pushed at compile
+                            // time, so we can't drain values without a
+                            // loop. Bail — the program won't run correctly,
+                            // but the user has the validation error to fix.
+                            continue;
+                        }
+                        // Params arg. The caller pushed `[values..., count]`
+                        // on the stack. Materialize a Fade single-dimensional
+                        // array from those, bind it to a body-local that the
+                        // user can index and pass to `len`. Shape mirrors
+                        // `dim xs(N)` so existing array-access machinery
+                        // works without further changes.
+                        var paramsArrayVar = scope.CreateArray(
+                            paramRef.variableName, rankLength: 1,
+                            typeCode: argInfo.typeCode, isGlobal: false);
+                        // CreateArray just sizes the rank-arrays; we still
+                        // need to allocate distinct register slots for the
+                        // rank size and scaler — mirrors what the regular
+                        // `dim` codegen does (Compile(DeclarationStatement)).
+                        paramsArrayVar.rankSizeRegisterAddresses[0] = scope.AllocateRegister();
+                        paramsArrayVar.rankIndexScalerRegisterAddresses[0] = scope.AllocateRegister();
+
+                        // 1) DUPE the count so we can stash it in the
+                        //    rank-size register before GATHER consumes it.
+                        _buffer.Add(OpCodes.DUPE);
+                        PushStore(_buffer, paramsArrayVar.rankSizeRegisterAddresses[0], isGlobal: false);
+
+                        // 2) Rank-0 scaler is 1 for a 1-D array.
+                        AddPushInt(_buffer, 1);
+                        PushStore(_buffer, paramsArrayVar.rankIndexScalerRegisterAddresses[0], isGlobal: false);
+
+                        // 3) GATHER pops count + values and leaves a fresh
+                        //    PTR_HEAP on top. Store it into the array's
+                        //    main register.
+                        _buffer.Add(OpCodes.GATHER_ARRAY);
+                        _buffer.Add(argInfo.typeCode);
+                        PushStorePtr(_buffer, paramsArrayVar.registerAddress, isGlobal: false);
+                        continue;
+                    }
+                    if (argInfo.isRef)
+                    {
+                        // Ref param. Hidden ptr reg + user-visible value reg.
+                        var hiddenPtrName = "$$mockptr_" + paramRef.variableName;
+                        var hiddenRef = new VariableRefNode(paramRef.startToken, hiddenPtrName);
+                        var hiddenDecl = new DeclarationStatement
+                        {
+                            variableNode = hiddenRef,
+                            scopeType = DeclarationScopeType.Local,
+                            type = new TypeReferenceNode(VariableType.Integer, paramRef.startToken)
+                        };
+                        Compile(hiddenDecl);
+                        scope.TryGetVariable(hiddenPtrName, out var hiddenPtrVar);
+
+                        _buffer.Add(OpCodes.STORE_REF);
+                        AddPushULongNoTypeCode(_buffer, hiddenPtrVar.registerAddress);
+
+                        VmUtil.TryGetVariableType(argInfo.typeCode, out var valueType);
+                        var valueDecl = new DeclarationStatement
+                        {
+                            variableNode = paramRef,
+                            scopeType = DeclarationScopeType.Local,
+                            type = new TypeReferenceNode(valueType, paramRef.startToken)
+                        };
+                        Compile(valueDecl);
+                        scope.TryGetVariable(paramRef.variableName, out var valueVar);
+
+                        _buffer.Add(OpCodes.LOAD_REF);
+                        AddPushULongNoTypeCode(_buffer, hiddenPtrVar.registerAddress);
+                        _buffer.Add(OpCodes.CAST);
+                        _buffer.Add(argInfo.typeCode);
+                        CompileAssignmentLeftHandSide(paramRef);
+
+                        _activeMockRefBindings.Add(new MockRefBinding
+                        {
+                            paramName = paramRef.variableName,
+                            valueRegAddr = valueVar.registerAddress,
+                            ptrRegAddr = hiddenPtrVar.registerAddress,
+                            argTypeCode = argInfo.typeCode
+                        });
                     }
                     else
                     {
-                        AddPushInt(_buffer, 0);
+                        VmUtil.TryGetVariableType(argInfo.typeCode, out var paramType);
+                        var fakeDecl = new DeclarationStatement
+                        {
+                            variableNode = paramRef,
+                            scopeType = DeclarationScopeType.Local,
+                            type = new TypeReferenceNode(paramType, paramRef.startToken)
+                        };
+                        Compile(fakeDecl);
+                        _buffer.Add(OpCodes.CAST);
+                        _buffer.Add(argInfo.typeCode);
+                        CompileAssignmentLeftHandSide(paramRef);
                     }
-                    _buffer.Add(OpCodes.MOCK_RETURNS);
                 }
                 else
                 {
-                    // Empty body → suppress the real call entirely.
-                    AddPushInt(_buffer, commandId);
-                    _buffer.Add(OpCodes.MOCK_VOID);
+                    _buffer.Add(OpCodes.DISCARD_TYPED);
                 }
             }
+
+            // Active-mock context for nested compile of body statements.
+            var prevReturnTc = _activeMockReturnTypeCode;
+            var prevCmdName = _activeMockCommandName;
+            var prevHostId = _activeMockHostMethodId;
+            var prevParamBindings = _activeMockParamBindings;
+            var prevBypassIds = _activeMockBypassIds;
+            _activeMockReturnTypeCode = argMethod.returnType;
+            _activeMockCommandName = argMethod.name;
+            _activeMockHostMethodId = commandId;
+            // All overloads of the mocked command name route to real
+            // inside this body — gather their ids once. Compile of
+            // CommandStatement/CommandExpression checks this set.
+            _activeMockBypassIds = new HashSet<int>(
+                ResolveMockCommandIds(mockStatement.commandName));
+
+            // Build the ordered param-binding table used by
+            // PassthroughExpression: one entry per real (non-VmArg) arg,
+            // in declaration order, paired with the mock's body-local
+            // name (null when the mock didn't name that position).
+            _activeMockParamBindings = new List<MockParamBinding>();
+            for (var ri = 0; ri < realArgIndices.Count; ri++)
+            {
+                var argInfo = commandArgs[realArgIndices[ri]];
+                var paramName = (ri < mockStatement.parameters.Count)
+                    ? mockStatement.parameters[ri].variableName
+                    : null;
+                _activeMockParamBindings.Add(new MockParamBinding
+                {
+                    paramName = paramName,
+                    argTypeCode = argInfo.typeCode,
+                    isRef = argInfo.isRef,
+                    isParams = argInfo.isParams
+                });
+            }
+
+            foreach (var stmt in mockStatement.body)
+            {
+                Compile(stmt);
+            }
+
+            // endmock <expr> fall-through return value.
+            if (mockStatement.endmockExpression != null)
+            {
+                Compile(mockStatement.endmockExpression);
+                if (_activeMockReturnTypeCode != 0 && _activeMockReturnTypeCode != TypeCodes.VOID)
+                {
+                    _buffer.Add(OpCodes.CAST);
+                    _buffer.Add(_activeMockReturnTypeCode);
+                }
+            }
+
+            // Ref-arg writebacks before scope-pop (still need the binding map).
+            EmitMockRefWritebacks();
+
+            _activeMockReturnTypeCode = prevReturnTc;
+            _activeMockCommandName = prevCmdName;
+            _activeMockRefBindings = prevRefMap;
+            _activeMockHostMethodId = prevHostId;
+            _activeMockParamBindings = prevParamBindings;
+            _activeMockBypassIds = prevBypassIds;
+
+            CompilePopScope();
+            _buffer.Add(OpCodes.RETURN);
+
+            // Patch the skip-over JUMP to land past this body.
+            PatchAddress(skipBodyPatchIndex, _buffer.Count);
+
+            // Install the body for this specific overload's id.
+            AddPushInt(_buffer, bodyStart);
+            AddPushInt(_buffer, commandId);
+            _buffer.Add(OpCodes.MOCK_INSTALL);
+        }
+
+        // The active mock's return-type code, set while compiling a mock
+        // body. MockExitMockStatement reads this to cast the user's return
+        // expression to the right shape before pushing it on the stack and
+        // returning. Outside a mock-body compile, this is 0 (VOID).
+        private byte _activeMockReturnTypeCode;
+
+        private void Compile(MockExitMockStatement returnsStatement)
+        {
+            // `exitmock expr` inside a mock body: push the value, cast it to
+            // the command's declared return type, emit ref-arg writebacks,
+            // pop the body's scope and RETURN. The writebacks read each
+            // ref param's value-register (last write the user did) and
+            // store it back to the caller's variable via the saved ptr.
+            if (returnsStatement.expression != null)
+            {
+                Compile(returnsStatement.expression);
+                if (_activeMockReturnTypeCode != 0 && _activeMockReturnTypeCode != TypeCodes.VOID)
+                {
+                    _buffer.Add(OpCodes.CAST);
+                    _buffer.Add(_activeMockReturnTypeCode);
+                }
+            }
+            EmitMockRefWritebacks();
+            CompilePopScope();
+            _buffer.Add(OpCodes.RETURN);
+        }
+
+        private void Compile(MockForbidStatement forbidStatement)
+        {
+            // `forbid [reason]` inside a mock body: shape-compatible with
+            // ASSERT_FAIL. The body is already running inside a pushed scope
+            // (set up by the mock body prelude); the trampoline drains
+            // defers across every live scope and halts the test.
+            //
+            // Stack at ASSERT_FAIL (bottom→top):
+            //   reason, sourceText, trampolineAddr.
+            if (forbidStatement.reason != null)
+            {
+                Compile(forbidStatement.reason);
+            }
+            else
+            {
+                Compile(new LiteralStringExpression(forbidStatement.startToken, ""));
+            }
+            // Synthesize a sourceText that names the command being forbidden.
+            // Walk up to the enclosing MockStatement for the name; if we
+            // somehow have none, fall back to a generic message.
+            var cmdName = _activeMockCommandName ?? "<unknown>";
+            Compile(new LiteralStringExpression(forbidStatement.startToken,
+                "forbidden command was called: " + cmdName));
+            var trampolinePatchIndex = _buffer.Count;
+            AddPushInt(_buffer, int.MaxValue);
+            _assertTrampolinePatches.Add(trampolinePatchIndex);
+            _buffer.Add(OpCodes.ASSERT_FAIL);
+        }
+
+        // Command name of the mock currently being compiled. Read by
+        // MockForbidStatement so the failure message names the command.
+        private string _activeMockCommandName;
+
+        // Per-ref-param bookkeeping for the active mock-body compile.
+        // Populated by the body prelude with one entry per ref parameter,
+        // then read at every exit site (exitmock, endmock fall-through) to
+        // emit the writeback sequence. Empty when the active mock has no
+        // ref params (or when we're not inside a mock body).
+        private List<MockRefBinding> _activeMockRefBindings;
+
+        // Emit ref writebacks for every ref param in the current mock.
+        // Called from each body exit point: pushes nothing net onto the
+        // stack (each writeback loads the value reg and consumes it via
+        // WRITE_REF). Order is irrelevant — each binding writes to a
+        // distinct caller register.
+        private void EmitMockRefWritebacks()
+        {
+            if (_activeMockRefBindings == null) return;
+            foreach (var binding in _activeMockRefBindings)
+            {
+                // Load the value-register's current value.
+                PushLoad(_buffer, binding.valueRegAddr, isGlobal: false);
+                // CAST to the ref's underlying type — defensive in case the
+                // user did any unusual arithmetic that widened the type.
+                _buffer.Add(OpCodes.CAST);
+                _buffer.Add(binding.argTypeCode);
+                // Write through the saved pointer to the caller's register.
+                _buffer.Add(OpCodes.WRITE_REF);
+                AddPushULongNoTypeCode(_buffer, binding.ptrRegAddr);
+            }
+        }
+
+        struct MockRefBinding
+        {
+            public string paramName;
+            // Body-local register holding the value the user reads/writes.
+            // Typed as the arg's base type (int / float / etc).
+            public ulong valueRegAddr;
+            // Hidden body-local register holding the typed caller pointer
+            // (PTR_REG or PTR_GLOBAL_REG). Used by WRITE_REF at writeback.
+            public ulong ptrRegAddr;
+            // The command arg's underlying TypeCode (e.g. TypeCodes.INTEGER).
+            public byte argTypeCode;
+        }
+
+        // Per-arg binding info for the currently-compiling mock body — one
+        // entry per real (non-VmArg) command arg, in declaration order.
+        // PassthroughExpression iterates these to re-construct the call.
+        struct MockParamBinding
+        {
+            public string paramName;
+            public byte argTypeCode;
+            public bool isRef;
+            public bool isParams;
+        }
+
+        // Host-method id of the command currently being mocked. Read by
+        // PassthroughExpression to emit the CALL_HOST_REAL target. Zero
+        // outside a mock body.
+        private int _activeMockHostMethodId;
+
+        // Ordered list of bindings for the active mock body. Index matches
+        // the order in which args are pushed at a normal call site (which
+        // is also the order CALL_HOST_REAL expects).
+        private List<MockParamBinding> _activeMockParamBindings;
+
+        // `passthrough` inside a mock body — re-pushes the body's currently
+        // bound argument values, then dispatches to the real underlying
+        // command via CALL_HOST_REAL (which bypasses the mock table).
+        // Leaves the real command's return value (if any) on the stack;
+        // when used as a statement, the wrapping ExpressionStatement
+        // emits a DISCARD_TYPED.
+        //
+        // Args are re-built from body-locals in declaration order:
+        //   - value: LOAD <valReg> + CAST <argTc>
+        //   - ref:   flush user-side write through hidden ptr (LOAD val,
+        //            CAST, WRITE_REF <ptrReg>), then LOAD <ptrReg> so the
+        //            real host can read AND write through it.
+        //   - params: LOAD_PTR <arrReg> + SPREAD_ARRAY <argTc>.
+        //
+        // After the call we refresh each ref param's value-reg from the
+        // caller (which the real command may have updated) so subsequent
+        // body reads see the real output.
+        // Set of host-method ids that, when invoked inside the current
+        // mock body, should dispatch to the real host (CALL_HOST_REAL)
+        // instead of looking up the mock table. Populated per body with
+        // every overload id of the mocked command name. Null outside a
+        // mock body. Read at the top of Compile(CommandStatement) and
+        // Compile(CommandExpression) for the self-recursive rewrite.
+        private HashSet<int> _activeMockBypassIds;
+
+        // Compile a CommandStatement or CommandExpression whose target
+        // is the mocked command. Emits the same shape as a normal call
+        // (push each arg, then PUSH cmd-id, then CALL_HOST_REAL), but
+        // ref args route through the body's bound ref-param table so
+        // writes land in the caller's scope. After the call, refresh
+        // each refreshed ref's value-reg from the caller so later body
+        // reads see the real-output. Caller is responsible for emitting
+        // the final DISCARD when used as a statement (the regular
+        // CommandStatement compile already handles void-return discard).
+        private void CompileMockedCommandSelfCall(CommandInfo command,
+            List<IExpressionNode> args, int commandId, bool isStatement)
+        {
+            var refsRefreshed = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+            var argCounter = 0;
+            for (var i = 0; i < command.args.Length; i++)
+            {
+                var argDesc = command.args[i];
+                if (argDesc.isVmArg) continue;
+
+                if (argDesc.isParams)
+                {
+                    // Spread shape OR inline. Mirror the regular
+                    // CommandStatement params logic: if the only
+                    // remaining user arg is an array-typed expression,
+                    // compile it and SPREAD_ARRAY. Otherwise compile each
+                    // inline arg in reverse and push the count.
+                    var remaining = args.Count - argCounter;
+                    if (remaining == 1
+                        && args[argCounter].ParsedType.IsArray
+                        && args[argCounter].ParsedType.rank == 1)
+                    {
+                        Compile(args[argCounter]);
+                        _buffer.Add(OpCodes.SPREAD_ARRAY);
+                        _buffer.Add(argDesc.typeCode);
+                    }
+                    else
+                    {
+                        for (var j = args.Count - 1; j >= argCounter; j--)
+                        {
+                            Compile(args[j]);
+                        }
+                        AddPushInt(_buffer, args.Count - argCounter);
+                    }
+                    break;
+                }
+
+                if (argCounter >= args.Count)
+                {
+                    if (argDesc.isOptional)
+                    {
+                        AddPush(_buffer, new byte[] { }, TypeCodes.VOID);
+                        continue;
+                    }
+                    throw new Exception(
+                        "Compiler: self-recursive mock call missing required arg");
+                }
+
+                var userExpr = args[argCounter];
+
+                if (argDesc.isRef)
+                {
+                    // Visitor already required this to be a bound ref-param
+                    // name. Route through the binding so the host writes
+                    // into the caller's scope (where the original ref lives).
+                    string refName = (userExpr is VariableRefNode vn) ? vn.variableName : null;
+                    if (refName == null)
+                    {
+                        throw new Exception(
+                            "Compiler: self-recursive mock ref arg must be a variable ref by validation");
+                    }
+                    EmitMockedCallRefByBoundName(argDesc.typeCode, refName, refsRefreshed);
+                    argCounter++;
+                    continue;
+                }
+
+                // Value arg — compile the user's expression normally, cast.
+                Compile(userExpr);
+                if (argDesc.typeCode != TypeCodes.ANY)
+                {
+                    CompileCast(argDesc.typeCode);
+                }
+                argCounter++;
+            }
+
+            // Push the host method id and dispatch to the real command.
+            _buffer.Add(OpCodes.PUSH);
+            _buffer.Add(TypeCodes.INT);
+            var idBytes = BitConverter.GetBytes(commandId);
+            for (var i = 0; i < idBytes.Length; i++) _buffer.Add(idBytes[i]);
+            _buffer.Add(OpCodes.CALL_HOST_REAL);
+
+            // Refresh ref bindings that this call wrote through, so later
+            // body reads observe the real output. Untouched bindings stay
+            // as the user left them (preserves any pre-call user write).
+            if (_activeMockRefBindings != null)
+            {
+                foreach (var rb in _activeMockRefBindings)
+                {
+                    if (!refsRefreshed.Contains(rb.paramName)) continue;
+                    _buffer.Add(OpCodes.LOAD_REF);
+                    AddPushULongNoTypeCode(_buffer, rb.ptrRegAddr);
+                    _buffer.Add(OpCodes.CAST);
+                    _buffer.Add(rb.argTypeCode);
+                    var refNode = new VariableRefNode(null, rb.paramName);
+                    CompileAssignmentLeftHandSide(refNode);
+                }
+            }
+
+            // For void real-commands invoked at statement position there
+            // is nothing on the stack to discard. For value-returning
+            // ones at statement position, the regular CommandStatement
+            // caller doesn't emit a discard either — the value is left
+            // on the stack. Match that behavior here (the caller stack
+            // hygiene is the same as a normal CALL_HOST).
+        }
+
+        // Flush the body-visible value-reg through the hidden ptr (so
+        // the real host reads the user's latest write), then push the
+        // ptr itself as PTR_REG / PTR_GLOBAL_REG. Records the binding
+        // name in `refsRefreshed` so we know which value-regs to reload
+        // from the caller after the call.
+        private void EmitMockedCallRefByBoundName(byte argTypeCode,
+            string boundName, HashSet<string> refsRefreshed)
+        {
+            MockRefBinding refBinding = default;
+            var found = false;
+            if (_activeMockRefBindings != null)
+            {
+                foreach (var rb in _activeMockRefBindings)
+                {
+                    if (string.Equals(rb.paramName, boundName,
+                        StringComparison.OrdinalIgnoreCase))
+                    {
+                        refBinding = rb;
+                        found = true;
+                        break;
+                    }
+                }
+            }
+            if (!found)
+            {
+                throw new Exception(
+                    "Compiler: self-recursive mock call missing ref binding for " + boundName);
+            }
+            PushLoad(_buffer, refBinding.valueRegAddr, isGlobal: false);
+            _buffer.Add(OpCodes.CAST);
+            _buffer.Add(argTypeCode);
+            _buffer.Add(OpCodes.WRITE_REF);
+            AddPushULongNoTypeCode(_buffer, refBinding.ptrRegAddr);
+            PushLoad(_buffer, refBinding.ptrRegAddr, isGlobal: false);
+            refsRefreshed.Add(refBinding.paramName);
         }
 
         private void Compile(ClearMockStatement clearMockStatement)
@@ -2227,7 +2848,23 @@ namespace FadeBasic.Virtual
         }
 
         public void Compile(CommandStatement commandStatement)
-        { 
+        {
+            // Inside a mock body, a call to the mocked command itself
+            // (any overload) dispatches to the real host via
+            // CALL_HOST_REAL — the mock body is transparent to its own
+            // command. Ref args route through the body's bound ref-param
+            // table (validation enforced this) so writes land in the
+            // caller's scope through the scope-swap in CALL_HOST_REAL.
+            if (_activeMockBypassIds != null
+                && _commandToPtr.TryGetValue(
+                    commandStatement.command.UniqueName, out var bypassIdStmt)
+                && _activeMockBypassIds.Contains(bypassIdStmt))
+            {
+                CompileMockedCommandSelfCall(commandStatement.command,
+                    commandStatement.args, bypassIdStmt, isStatement: true);
+                return;
+            }
+
             // TODO: save local state?
             // put each expression on the stack.
             var argCounter = 0;
@@ -2237,14 +2874,39 @@ namespace FadeBasic.Virtual
 
                 if (commandStatement.command.args[i].isParams)
                 {
-                    
-                    // and then, compile the rest of the args
+                    // Spread shape: exactly one remaining arg, and it's an
+                    // array-typed expression matching the params element
+                    // type. Compile the array (which puts its heap ptr on
+                    // the stack), then SPREAD_ARRAY pushes each element +
+                    // count — the same shape as the inline loop below.
+                    var remaining = commandStatement.args.Count - argCounter;
+                    if (remaining == 1
+                        && commandStatement.args[argCounter].ParsedType.IsArray
+                        && commandStatement.args[argCounter].ParsedType.rank == 1)
+                    {
+                        Compile(commandStatement.args[argCounter]);
+                        _buffer.Add(OpCodes.SPREAD_ARRAY);
+                        // Use the array's actual element type, not the
+                        // descriptor's — for `params object[]` (TypeCodes.ANY)
+                        // the descriptor doesn't carry a usable byte size,
+                        // but the source array always has a concrete element
+                        // type the VM can size and tag per-element.
+                        var descTc = commandStatement.command.args[i].typeCode;
+                        var spreadTc = descTc == TypeCodes.ANY
+                            ? VmUtil.GetTypeCode(commandStatement.args[argCounter].ParsedType.type)
+                            : descTc;
+                        _buffer.Add(spreadTc);
+                        break;
+                    }
+
+                    // Inline-list shape (existing): compile each arg in
+                    // reverse, then push the count.
                     for (var j = commandStatement.args.Count - 1; j >= argCounter; j --)
                     {
                         var argExpr2 = commandStatement.args[j];
                         Compile(argExpr2);
                     }
-                    
+
                     // first, we need to tell the program how many arguments there are left in the set
                     // , which of course, is args - i.
                     AddPushInt(_buffer, commandStatement.args.Count - argCounter);
@@ -2939,13 +3601,18 @@ namespace FadeBasic.Virtual
              * If it is an array, then it lives in memory.
              */
 
+            // Note: assignment to a ref param inside a mock body is NOT
+            // special-cased here — the body's value register is a regular
+            // local. The writeback to the caller's variable happens at
+            // every body exit (exitmock + endmock fall-through) via the
+            // ref-binding list.
 
             if (assignmentStatement.variable is VariableRefNode leftRef &&
                 scope.TryGetVariable(leftRef.variableName, out var leftVar) && leftVar.typeCode == TypeCodes.STRUCT)
             {
                 // _buffer.Add(OpCodes.BREAKPOINT);
             }
-            
+
             // compile the rhs of the assignment...
             Compile(assignmentStatement.expression);
             CompileAssignmentLeftHandSide(assignmentStatement.variable);
@@ -3058,6 +3725,33 @@ namespace FadeBasic.Virtual
                         argMap = commandExpr.argMap
                     });
                     break;
+                case LenExpression lenExpr:
+                {
+                    // `len(<expr>)` — push the inner expression (an array
+                    // or string heap pointer), then LENGTH with the
+                    // element-size byte to divide the allocation size and
+                    // push the count.
+                    if (lenExpr.inner == null) { AddPushInt(_buffer, 0); break; }
+                    Compile(lenExpr.inner);
+                    var innerType = lenExpr.inner.ParsedType;
+                    byte elemSize;
+                    if (innerType.type == VariableType.String)
+                    {
+                        // Fade chars are uint codepoints — 4 bytes each.
+                        elemSize = TypeCodes.GetByteSize(TypeCodes.INT);
+                    }
+                    else
+                    {
+                        // Array: take the inner element type's byte size.
+                        // ParsedType.type for an array variable is its
+                        // element type (Integer for `dim x(...)`, etc).
+                        var elemTc = VmUtil.GetTypeCode(innerType.type);
+                        elemSize = TypeCodes.GetByteSize(elemTc);
+                    }
+                    _buffer.Add(OpCodes.LENGTH);
+                    _buffer.Add(elemSize);
+                    break;
+                }
                 case CallCountExpression callCountExpr:
                 {
                     // Resolve the command name to all overload ids; the count
