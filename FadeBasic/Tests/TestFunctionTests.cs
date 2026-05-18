@@ -271,10 +271,6 @@ endtest
         var parser = new Parser(lex.stream, TestCommands.CommandsForTesting);
         var prog = parser.ParseProgram();
         var errs = prog.GetAllErrors();
-        // Reasonably expecting same-name in different tests to work. If labelTable
-        // is global, this might error — and we'd need namespacing.
-        // For now, document the expectation.
-        Assert.That(errs.Where(e => !e.errorCode.Equals(ErrorCodes.TraverseLabelBetweenScopes)).Count(),
-            Is.GreaterThanOrEqualTo(0));
+        prog.AssertNoParseErrors();
     }
 }

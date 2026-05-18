@@ -1,6 +1,6 @@
 ﻿
 Microsoft Visual Studio Solution File, Format Version 12.00
-# 
+
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "FadeBasic", "FadeBasic\FadeBasic.csproj", "{57007F64-F4ED-4979-BC09-1F58502953A2}"
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "CommandSourceGenerator", "CommandSourceGenerator\CommandSourceGenerator.csproj", "{E7702D0D-11F7-43E6-9574-C4DF0C1410A7}"

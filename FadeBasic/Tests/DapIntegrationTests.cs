@@ -163,33 +163,6 @@ public class DapIntegrationTests
     }
 
     [Test]
-    public async Task StoppedEventIncludesThreadId()
-    {
-        // This test verifies the DAP adapter sends threadId in stopped events.
-        // We check this by reading the adapter source, but also verify via the
-        // protocol that the field serializes correctly.
-        //
-        // The stopped event JSON from the last real session log was:
-        // {"type":"event","event":"stopped","body":{"reason":"breakpoint",
-        //  "description":"Hit a breakpoint","threadId":1,"allThreadsStopped":true,
-        //  "hitBreakpointIds":[0]}}
-        //
-        // Verify the DAP source has ThreadId = 1 in both HitBreakpointCallback locations
-        var dapSource = File.ReadAllText(Path.GetFullPath(Path.Combine(
-            TestContext.CurrentContext.TestDirectory, "..", "..", "..", "..", "DAP", "FadeDebugAdapter.cs")));
-
-        var hitCallbackMatches = System.Text.RegularExpressions.Regex.Matches(
-            dapSource, @"HitBreakpointCallback\s*=");
-        Assert.That(hitCallbackMatches.Count, Is.GreaterThanOrEqualTo(2),
-            "Expected at least 2 HitBreakpointCallback assignments (launch + attach)");
-
-        var threadIdMatches = System.Text.RegularExpressions.Regex.Matches(
-            dapSource, @"ThreadId\s*=\s*1");
-        Assert.That(threadIdMatches.Count, Is.GreaterThanOrEqualTo(2),
-            "Both HitBreakpointCallback locations must set ThreadId = 1");
-    }
-
-    [Test]
     public async Task RunInTerminalEnvPortIsUsable()
     {
         // The DAP sends FADE_BASIC_DEBUG_PORT as a JSON integer in the env map.

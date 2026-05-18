@@ -1,5 +1,6 @@
 using FadeBasic;
 using FadeBasic.Ast;
+using FadeBasic.Sdk;
 using FadeBasic.Virtual;
 
 namespace Tests;
@@ -71,12 +72,15 @@ n = len(""hello"")
         var src = @"
 n = len("""")
 ";
-        var vm = RunMain(src);
+        var (compiler, program) = Compile(src);
+        var vm = new VirtualMachine(program) { hostMethods = compiler.methodTable };
+        vm.Execute3();
+
         Assert.That(vm.error.type, Is.EqualTo(VirtualRuntimeErrorType.NONE));
-        // The default for n (an int that gets assigned 0) is already 0, so
-        // we can't distinguish from "uninitialized" by just searching for
-        // the value. But no runtime error proves the path didn't trip on
-        // an empty allocation.
+        Assert.That(compiler.globalScope.TryGetVariable("n", out var nVar), Is.True,
+            "compiler should have allocated a register for `n`");
+        Assert.That(vm.globalScope.dataRegisters[nVar.registerAddress], Is.EqualTo(0UL),
+            "expected len(\"\") to write 0 into n's register");
     }
 
     [Test]

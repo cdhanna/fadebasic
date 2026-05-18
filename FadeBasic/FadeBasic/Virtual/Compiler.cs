@@ -109,6 +109,11 @@ namespace FadeBasic.Virtual
     public struct LabelReplacement
     {
         public int InstructionIndex;
+        // Region-prefixed label key (see Compiler.MakeLabelKey). Built
+        // at emit time from the current label region + the user-written
+        // label name so two tests / two functions with same-named labels
+        // resolve independently. Runto replacements use the main-body
+        // region prefix regardless of where the `runto X` was written.
         public string Label;
     }
 
@@ -424,7 +429,23 @@ namespace FadeBasic.Virtual
         private Stack<List<int>> _skipInstructionIndexes = new Stack<List<int>>();
 
         private List<LabelReplacement> _labelReplacements = new List<LabelReplacement>();
+        // Keyed by region-prefixed label name. Region is empty for main
+        // body, "test:<name>" inside a test body, "fn:<name>" inside a
+        // function body. Each region has its own label namespace so two
+        // tests / two functions can share label names without collision.
         private Dictionary<string, int> _labelToInstructionIndex = new Dictionary<string, int>();
+        // The region currently being compiled. Compile(LabelDeclarationNode)
+        // builds the key from this region; Compile(GotoStatement) /
+        // Compile(GoSubStatement) stamp the region-prefixed key into the
+        // emitted replacement so resolution stays scoped.
+        private string _currentLabelRegion = "";
+
+        // Compose a label dictionary key from a region + user-written
+        // label name. The `::` separator can't appear in either piece
+        // (region names are compiler-generated, label names are restricted
+        // to identifier characters) so the encoding is unambiguous.
+        private static string MakeLabelKey(string region, string label)
+            => (region ?? "") + "::" + label;
 
         // For each `runto label` call site, record where in the bytecode the
         // PUSH int placeholder lives so we can patch the resolved post-yield
@@ -604,6 +625,13 @@ namespace FadeBasic.Virtual
                 bodyAddresses[test.name] = bodyStart;
             }
 
+            // Set the label region for this test so two tests with same-
+            // named labels don't collide at jump-replacement time. Restore
+            // on the way out — nested compile of test-scoped functions
+            // below will set their own regions over this.
+            var prevRegion = _currentLabelRegion;
+            _currentLabelRegion = "test:" + (test.name ?? "<anon>");
+
             // Compile the test body. The dispatch in Compile(IStatementNode) skips
             // FunctionStatement nodes — they're emitted separately below — so the
             // body's own function declarations don't pollute the test's entry-point
@@ -626,6 +654,10 @@ namespace FadeBasic.Virtual
             // in the chain has run. Standalone tests get identical
             // behavior — the launcher's drain runs after a single body.
             _buffer.Add(OpCodes.RETURN);
+
+            // Restore the label region. Test-scoped functions emitted below
+            // re-set their own region inside Compile(FunctionStatement).
+            _currentLabelRegion = prevRegion;
 
             // Now compile any test-scoped functions. They live alongside program
             // functions in the bytecode blob and register themselves in the
@@ -720,7 +752,6 @@ namespace FadeBasic.Virtual
             // replace all label instructions...
             foreach (var replacement in _labelReplacements)
             {
-                // TODO: look up in labelTable
                 if (!_labelToInstructionIndex.TryGetValue(replacement.Label, out var location))
                 {
                     throw new Exception("Compiler: unknown label location " + replacement.Label);
@@ -738,10 +769,13 @@ namespace FadeBasic.Virtual
             // the byte AFTER the label's RUNTO_YIELD opcode (= label_addr + 2).
             // RUNTO_YIELD checks `runtoStack.Peek().target == instructionIndex`,
             // and instructionIndex at that point is post-RUNTO_YIELD, so we need
-            // to bake `label_addr + 2` into the PUSH int placeholder.
+            // to bake `label_addr + 2` into the PUSH int placeholder. Runto
+            // always targets MAIN-BODY labels regardless of where `runto X`
+            // was written, so the lookup uses the main-body region prefix.
             foreach (var replacement in _runtoReplacements)
             {
-                if (!_labelToInstructionIndex.TryGetValue(replacement.Label, out var location))
+                var mainKey = MakeLabelKey("", replacement.Label);
+                if (!_labelToInstructionIndex.TryGetValue(mainKey, out var location))
                 {
                     throw new Exception("Compiler: unknown runto target label " + replacement.Label);
                 }
@@ -1296,7 +1330,13 @@ namespace FadeBasic.Virtual
 
             // push a new scope
             CompilePushScope();
-            
+
+            // Labels inside this function get their own region — two
+            // functions can share label names without resolving to each
+            // other's body. Restored at function end.
+            var prevRegion = _currentLabelRegion;
+            _currentLabelRegion = "fn:" + functionStatement.name;
+
             // now, we need to pull values off the stack and put them into variable declarations...
             // foreach (var arg in functionStatement.parameters)
             for (var i = functionStatement.parameters.Count - 1; i >= 0; i --) // read in reverse order due to stack
@@ -1345,12 +1385,13 @@ namespace FadeBasic.Virtual
             // at the end of the function, we need to jump home
             // pop a scope
             CompilePopScope();
-            
+
             // and then jump home
             _buffer.Add(OpCodes.RETURN);
-            
+
+            _currentLabelRegion = prevRegion;
         }
-        
+
         private void Compile(ExitLoopStatement exitLoopStatement)
         {
             // immediately jump to the exit...
@@ -1863,7 +1904,7 @@ namespace FadeBasic.Virtual
         private void Compile(LabelDeclarationNode labelStatement)
         {
             // take note of instruction number...
-            _labelToInstructionIndex[labelStatement.label] = _buffer.Count;
+            _labelToInstructionIndex[MakeLabelKey(_currentLabelRegion, labelStatement.label)] = _buffer.Count;
             _buffer.Add(OpCodes.NOOP);
             // Emit RUNTO_YIELD only for labels that some test targets via `runto`.
             // In `dotnet run` builds where no tests exist, this set is empty and
@@ -2691,20 +2732,20 @@ namespace FadeBasic.Virtual
             _labelReplacements.Add(new LabelReplacement
             {
                 InstructionIndex = _buffer.Count,
-                Label = goSubStatement.label
+                Label = MakeLabelKey(_currentLabelRegion, goSubStatement.label)
             });
             AddPushInt(_buffer, int.MaxValue);
             _buffer.Add(OpCodes.JUMP_HISTORY);
-            
+
         }
-        
+
         private void Compile(GotoStatement gotoStatement)
         {
             // identify the instruction ID of the label
             _labelReplacements.Add(new LabelReplacement
             {
                 InstructionIndex = _buffer.Count,
-                Label = gotoStatement.label
+                Label = MakeLabelKey(_currentLabelRegion, gotoStatement.label)
             });
             AddPushInt(_buffer, int.MaxValue);
             _buffer.Add(OpCodes.JUMP);

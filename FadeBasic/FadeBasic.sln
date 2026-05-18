@@ -1,6 +1,6 @@
 ﻿
 Microsoft Visual Studio Solution File, Format Version 12.00
-# 
+
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "FadeBasic", "FadeBasic\FadeBasic.csproj", "{57007F64-F4ED-4979-BC09-1F58502953A2}"
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Tests", "Tests\Tests.csproj", "{F08EFE79-1EF3-440C-BB3E-50840E774E60}"

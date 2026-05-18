@@ -425,6 +425,64 @@ endtest
             "standalone defer should fire after body — same as before");
     }
 
+    [Test]
+    public void LabelScoping_SameLabelInTwoTests_DoesNotCollide()
+    {
+        // Bug repro: each test's `retry_done` label was sharing a global
+        // dictionary entry, so test alpha's `goto retry_done` resolved to
+        // beta's label and execution fell into beta's `assert 0`.
+        // Both tests should resolve their labels independently — alpha
+        // passes, beta fails as intended.
+        var src = @"
+end
+
+test alpha
+retry:
+    goto retry_done
+retry_done:
+endtest
+
+test beta
+retry:
+    goto retry_done
+retry_done:
+    assert 0, ""boooo""
+endtest
+";
+        var ctx = CreateContext(src);
+        var alpha = ctx.RunTest("alpha");
+        Assert.That(alpha.passed, Is.True,
+            "alpha has no failing assert — should pass; got: " + alpha.failureMessage);
+        var beta = ctx.RunTest("beta");
+        Assert.That(beta.passed, Is.False,
+            "beta's assert 0 must fail when its OWN label was reached");
+        Assert.That(beta.failureMessage, Does.Contain("boooo"),
+            "beta should fail with its own message; got: " + beta.failureMessage);
+    }
+
+    [Test]
+    public void LabelScoping_RuntoFromTest_StillFindsMainBodyLabel()
+    {
+        // Sanity check: even though labels are region-scoped, runto from
+        // a test resolves against the main-body region. Otherwise the
+        // visitor would flag it and the compiler would fail to bake the
+        // runto target's address.
+        var src = @"
+n = 0
+_pause:
+n = n + 5
+end
+
+test foo
+    runto _pause
+    assert n = 0
+endtest
+";
+        var ctx = CreateContext(src);
+        var result = ctx.RunTest("foo");
+        Assert.That(result.passed, Is.True, result.failureMessage);
+    }
+
     // ── Compile-time validation: cycles and unknown parents ────────────────
 
     [Test]

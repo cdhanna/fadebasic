@@ -188,6 +188,9 @@ end
     [Test]
     public void Execute_GlobalVariables()
     {
+        // `GLOBAL x = 32` lives inside the test body, so `x` is scoped to
+        // the test — main-body code cannot see it. Referencing `x` from
+        // the main program is a hard parse error.
         var src = @"
 test foo
     GLOBAL x = 32
@@ -195,9 +198,14 @@ endtest
 
 print x `this should result in an error.
 ";
-        var (compiler, program) = Compile(src);
-        var vm = new VirtualMachine(program);
-        vm.hostMethods = compiler.methodTable;
-        vm.Execute3();
+        var lex = new Lexer().TokenizeWithErrors(src, TestCommands.CommandsForTesting);
+        lex.AssertNoLexErrors();
+        var parser = new Parser(lex.stream, TestCommands.CommandsForTesting);
+        var prog = parser.ParseProgram();
+        var errs = prog.GetAllErrors();
+        Assert.That(errs.Any(e => e.errorCode.Equals(ErrorCodes.SymbolNotDeclaredYet)),
+            Is.True,
+            "expected SymbolNotDeclaredYet on the main-body `print x` reference; got: "
+            + string.Join("; ", errs.Select(e => e.Display)));
     }
 }

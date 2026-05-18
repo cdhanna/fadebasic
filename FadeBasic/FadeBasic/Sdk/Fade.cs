@@ -37,9 +37,9 @@ namespace FadeBasic.Sdk
         
         
         public static bool TryCreateFromProject(
-            string csProjPath, 
-            CommandCollection availableCommands, 
-            out FadeRuntimeContext context, 
+            string csProjPath,
+            CommandCollection availableCommands,
+            out FadeRuntimeContext context,
             out FadeErrors errors)
         {
             context = null;
@@ -91,10 +91,10 @@ namespace FadeBasic.Sdk
             return TryCreateFromString(sourceMap.fullSource, commandCollection, out context, out errors, sourceMap);
 
         }
-        
+
         public static bool TryCreateFromString(
-            string src, 
-            CommandCollection commands, 
+            string src,
+            CommandCollection commands,
             out FadeRuntimeContext context,
             out FadeErrors errors,
             SourceMap map=null)
@@ -759,8 +759,8 @@ namespace FadeBasic.Sdk
             return false;
         }
         
-        public static bool TryFromSource(string src, 
-            CommandCollection commands, 
+        public static bool TryFromSource(string src,
+            CommandCollection commands,
             out FadeRuntimeContext context,
             out FadeErrors errors,
             SourceMap map = null)
