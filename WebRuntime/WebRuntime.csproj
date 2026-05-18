@@ -15,6 +15,12 @@
   <ItemGroup>
     <ProjectReference Include="..\FadeBasic\FadeBasic\FadeBasic.csproj" />
     <ProjectReference Include="..\FadeBasic\FadeBasic.Lib.Standard\FadeBasic.Lib.Standard.csproj" />
+    <ProjectReference Include="..\FadeBasic\LSP.Core\FadeBasic.LSP.Core.csproj" />
+    <!-- ApplicationSupport gives us ProjectDocs + MarkdownDocParser so we
+         can reuse the same XML-doc → markdown pipeline the native LSP uses
+         (instead of re-implementing it here). Microsoft.Build refs inside
+         it use ExcludeAssets="runtime", so they don't ship to WASM. -->
+    <ProjectReference Include="..\FadeBasic\ApplicationSupport\ApplicationSupport.csproj" />
     <ProjectReference Include="..\FadeBasic\CommandSourceGenerator\CommandSourceGenerator.csproj"
                       OutputItemType="Analyzer"
                       ReferenceOutputAssembly="false" />

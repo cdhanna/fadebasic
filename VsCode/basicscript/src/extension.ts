@@ -163,17 +163,17 @@ export async function activate(context: vscode.ExtensionContext) {
 	// 	transport: TransportKind.pipe
 	// }
 
-	config = {
-		command: '/usr/local/share/dotnet/dotnet',
-		args: [
-			'run',
-			'--project',
-			'/Users/chrishanna/Documents/Github/dby/FadeBasic/LSP',
-			'--',
-			'--use-log-path'
-		],
-		transport: TransportKind.pipe
-	}
+	// config = {
+	// 	command: '/usr/local/share/dotnet/dotnet',
+	// 	args: [
+	// 		'run',
+	// 		'--project',
+	// 		'/Users/chrishanna/Documents/Github/dby/FadeBasic/LSP',
+	// 		'--',
+	// 		'--use-log-path'
+	// 	],
+	// 	transport: TransportKind.pipe
+	// }
 
 	logMessage('fade LSP config', config)
 	

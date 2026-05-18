@@ -15,6 +15,7 @@
 
     <ItemGroup>
       <ProjectReference Include="..\FadeBasic\FadeBasic.csproj" />
+      <ProjectReference Include="..\LSP.Core\FadeBasic.LSP.Core.csproj" />
     </ItemGroup>
 
     <ItemGroup>

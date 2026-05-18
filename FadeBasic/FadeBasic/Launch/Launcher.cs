@@ -27,21 +27,35 @@ namespace FadeBasic.Launch
         public static readonly LaunchOptions DefaultOptions;
         static LaunchOptions()
         {
-            var debugEnv = Environment.GetEnvironmentVariable(ENV_ENABLE_DEBUG)?.ToLowerInvariant();
-            var debugDontWait = Environment.GetEnvironmentVariable(ENV_ENABLE_DEBUG_DONT_WAIT)?.ToLowerInvariant();
+            // Best-effort: in WASM there are no env vars / TCP sockets, and
+            // any throw here gets wrapped in a TypeInitializationException
+            // for every later access to ANY LaunchOptions field. Swallow
+            // failures so the type stays usable.
             DefaultOptions = new LaunchOptions
             {
-                debug = debugEnv == "true" || debugEnv == "1",
+                debug = false,
                 debugPort = 0,
-                debugWaitForConnection = !(debugDontWait == "true" || debugDontWait == "1"),
-                debugLogPath = Environment.GetEnvironmentVariable(ENV_DEBUG_LOG_PATH)
+                debugWaitForConnection = true,
+                debugLogPath = null,
             };
-
-            if (!int.TryParse(Environment.GetEnvironmentVariable(ENV_DEBUG_PORT), out DefaultOptions.debugPort))
+            try
             {
-                DefaultOptions.debugPort = LaunchUtil.FreeTcpPort();
-            }
+                var debugEnv = Environment.GetEnvironmentVariable(ENV_ENABLE_DEBUG)?.ToLowerInvariant();
+                var debugDontWait = Environment.GetEnvironmentVariable(ENV_ENABLE_DEBUG_DONT_WAIT)?.ToLowerInvariant();
+                DefaultOptions.debug = debugEnv == "true" || debugEnv == "1";
+                DefaultOptions.debugWaitForConnection = !(debugDontWait == "true" || debugDontWait == "1");
+                DefaultOptions.debugLogPath = Environment.GetEnvironmentVariable(ENV_DEBUG_LOG_PATH);
 
+                if (!int.TryParse(Environment.GetEnvironmentVariable(ENV_DEBUG_PORT), out DefaultOptions.debugPort))
+                {
+                    DefaultOptions.debugPort = LaunchUtil.FreeTcpPort();
+                }
+            }
+            catch
+            {
+                // Browser / sandboxed environment — DefaultOptions retains
+                // the safe defaults set above.
+            }
         }
 
     }

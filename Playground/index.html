@@ -1,0 +1,1014 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8" />
+    <title>Fade Playground</title>
+    <style>
+        :root {
+            --bg: #1e1e1e;
+            --bg-2: #252526;
+            --bg-3: #2d2d2d;
+            --fg: #d4d4d4;
+            --fg-2: #cccccc;
+            --fg-muted: #8a8a8a;
+            --border: #1e1e1e;
+            --border-2: #333;
+            --accent: #0e639c;
+            --accent-hover: #1177bb;
+            --tab-active-bg: #1e1e1e;
+            --tab-inactive-bg: #2d2d2d;
+            --tab-border: #252526;
+            --tab-active-border: #0e639c;
+            --hover-bg: #2a2d2e;
+        }
+        html, body { margin: 0; padding: 0; height: 100%; overflow: hidden; }
+        body {
+            background: var(--bg);
+            color: var(--fg);
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+            font-size: 13px;
+        }
+        /* App = header on top, dockview filling the rest. Dockview manages
+           all internal sizing via its own grid + splitter primitives. */
+        #app {
+            display: flex;
+            flex-direction: column;
+            height: 100vh;
+        }
+        #dock-root {
+            flex: 1;
+            min-height: 0;
+            position: relative;
+        }
+        /* Panel content cells start in an offscreen container; dockview
+           reparents them into panel shells as needed. */
+        .panel-cell {
+            width: 100%;
+            height: 100%;
+            display: flex;
+            flex-direction: column;
+            min-height: 0;
+            overflow: hidden;
+        }
+        .panel-cell .sidebar-host {
+            display: flex;
+            flex-direction: column;
+            min-height: 0;
+            height: 100%;
+            background: var(--bg-2);
+        }
+        .panel-cell .editor-host {
+            display: flex;
+            flex-direction: column;
+            min-height: 0;
+            height: 100%;
+        }
+        .panel-cell .editor-host > #editor {
+            flex: 1;
+            min-height: 0;
+        }
+        .panel-cell #output,
+        .panel-cell #problems,
+        .panel-cell #tests-pane,
+        .panel-cell #debug-pane {
+            flex: 1;
+            min-height: 0;
+        }
+        header {
+            grid-area: header;
+            display: flex;
+            align-items: center;
+            gap: 1rem;
+            padding: 0.4rem 0.8rem;
+            background: var(--bg-3);
+            border-bottom: 1px solid var(--border-2);
+            user-select: none;
+        }
+        header h1 { font-size: 0.85rem; font-weight: 500; margin: 0; }
+        #status { color: var(--fg-muted); font-size: 0.78rem; }
+        .grow { flex: 1; }
+        button {
+            padding: 0.3rem 0.9rem;
+            background: var(--accent);
+            color: white;
+            border: none;
+            border-radius: 2px;
+            font-size: 0.78rem;
+            cursor: pointer;
+            font-family: inherit;
+        }
+        button:hover:not(:disabled) { background: var(--accent-hover); }
+        button:disabled { opacity: 0.5; cursor: default; }
+        vscode-button { --vscode-button-foreground: white; }
+
+        /* Sidebar header inside the workspace panel */
+        .sidebar-header {
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            padding: 0.4rem 0.6rem 0.4rem 1rem;
+            font-size: 0.7rem;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+            color: var(--fg-muted);
+            border-bottom: 1px solid var(--border-2);
+        }
+        .icon-btn {
+            background: transparent;
+            color: var(--fg-2);
+            padding: 2px 6px;
+            font-size: 0.85rem;
+            line-height: 1;
+        }
+        .icon-btn:hover { background: var(--hover-bg); }
+        #file-list {
+            list-style: none;
+            margin: 0;
+            padding: 0.3rem 0;
+            overflow-y: auto;
+            flex: 1;
+        }
+        #file-list li {
+            padding: 0.25rem 1rem;
+            cursor: pointer;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+        #file-list li:hover { background: var(--hover-bg); }
+        #file-list li.active { background: #37373d; }
+
+        /* File tabs (top of editor panel) */
+        .tabs {
+            display: flex;
+            background: var(--bg-3);
+            border-bottom: 1px solid var(--border-2);
+            min-height: 32px;
+            overflow-x: auto;
+            flex-shrink: 0;
+        }
+        .tab {
+            display: flex;
+            align-items: center;
+            gap: 0.4rem;
+            padding: 0.4rem 0.8rem;
+            border-right: 1px solid var(--border-2);
+            background: var(--tab-inactive-bg);
+            color: var(--fg-muted);
+            font-size: 0.78rem;
+            cursor: pointer;
+            user-select: none;
+            border-top: 1px solid transparent;
+        }
+        .tab:hover { background: #2a2a2a; }
+        .tab.active {
+            background: var(--tab-active-bg);
+            color: var(--fg);
+            border-top-color: var(--tab-active-border);
+        }
+        .tab .close {
+            color: var(--fg-muted);
+            padding: 0 2px;
+            border-radius: 2px;
+        }
+        .tab .close:hover { background: rgba(255,255,255,0.1); color: var(--fg); }
+        .tab .dirty { color: var(--fg); }
+
+        /* Editor area */
+        #editor {
+            min-height: 0;
+            flex: 1;
+        }
+        #editor-placeholder {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: var(--fg-muted);
+            font-size: 0.85rem;
+            flex: 1;
+        }
+
+        /* Old vscode-tabs styles removed — dockview owns panel tabs now. */
+        /* Fade semantic-token colors — applied via Monaco decorations. */
+        /* Monaco's default token classes have higher specificity, so we need
+           !important to win against them. */
+        .monaco-editor .fade-token-comment   { color: #6A9955 !important; font-style: italic; }
+        .monaco-editor .fade-token-keyword   { color: #C586C0 !important; }
+        .monaco-editor .fade-token-function  { color: #DCDCAA !important; }
+        .monaco-editor .fade-token-method    { color: #DCDCAA !important; }
+        .monaco-editor .fade-token-macro     { color: #C586C0 !important; }
+        .monaco-editor .fade-token-parameter { color: #9CDCFE !important; }
+        .monaco-editor .fade-token-struct    { color: #4EC9B0 !important; }
+        .monaco-editor .fade-token-type      { color: #4EC9B0 !important; }
+        .monaco-editor .fade-token-operator  { color: #D4D4D4 !important; }
+        .monaco-editor .fade-token-number    { color: #B5CEA8 !important; }
+        .monaco-editor .fade-token-string    { color: #CE9178 !important; }
+
+        vscode-tab-panel {
+            overflow: auto;
+            background: var(--bg);
+        }
+        #output {
+            margin: 0;
+            padding: 0.5rem 0.9rem;
+            white-space: pre-wrap;
+            font-family: ui-monospace, 'SF Mono', Menlo, monospace;
+            font-size: 0.78rem;
+            line-height: 1.5;
+            color: var(--fg);
+        }
+        #problems {
+            min-height: 100%;
+        }
+        #problems-list {
+            list-style: none;
+            margin: 0;
+            padding: 0.2rem 0;
+        }
+        .problem-item {
+            display: grid;
+            grid-template-columns: 1.2rem 1fr auto;
+            align-items: center;
+            gap: 0.5rem;
+            padding: 0.15rem 0.9rem;
+            cursor: pointer;
+            font-size: 0.82rem;
+            line-height: 1.6;
+        }
+        .problem-item:hover { background: rgba(255,255,255,0.06); }
+        .problem-item vscode-icon.error   { color: #f14c4c; }
+        .problem-item vscode-icon.warning { color: #cca700; }
+        .problem-item vscode-icon.info    { color: #3794ff; }
+        .problem-message {
+            color: var(--fg);
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+        .problem-message .code {
+            color: var(--fg-muted);
+            font-size: 0.72rem;
+            margin-left: 0.5rem;
+            opacity: 0.7;
+        }
+        .problem-location {
+            color: var(--fg-muted);
+            font-family: ui-monospace, 'SF Mono', Menlo, monospace;
+            font-size: 0.74rem;
+            opacity: 0.85;
+        }
+        .problem-empty {
+            padding: 0.8rem 0.9rem;
+            color: var(--fg-muted);
+            font-size: 0.78rem;
+        }
+        /* Tests pane */
+        #tests-pane {
+            display: flex;
+            flex-direction: column;
+            min-height: 100%;
+        }
+        .tests-toolbar {
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            padding: 0.35rem 0.7rem;
+            border-bottom: 1px solid var(--border-2);
+            background: var(--bg-2);
+        }
+        .tests-status {
+            font-size: 0.74rem;
+            color: var(--fg-muted);
+        }
+        .tests-search-row {
+            display: flex;
+            align-items: center;
+            gap: 0.4rem;
+            padding: 0.3rem 0.7rem;
+            border-bottom: 1px solid var(--border-2);
+            background: var(--bg-1);
+        }
+        .tests-search-row .codicon {
+            color: var(--fg-muted);
+            font-size: 0.9rem;
+        }
+        #tests-search {
+            flex: 1;
+            background: var(--bg-2);
+            border: 1px solid var(--border-2);
+            border-radius: 3px;
+            color: var(--fg);
+            font: inherit;
+            font-size: 0.78rem;
+            padding: 0.2rem 0.45rem;
+            outline: none;
+        }
+        #tests-search:focus { border-color: var(--accent, #007fd4); }
+        #tests-search-clear {
+            background: transparent;
+            border: 0;
+            color: var(--fg-muted);
+            cursor: pointer;
+            padding: 0 0.2rem;
+            font-size: 0.9rem;
+            line-height: 1;
+        }
+        #tests-search-clear:hover { color: var(--fg); }
+        #tests-search-clear[hidden] { display: none; }
+        .tests-empty {
+            padding: 0.8rem 0.9rem;
+            color: var(--fg-muted);
+            font-size: 0.78rem;
+        }
+        #tests-list {
+            list-style: none;
+            margin: 0;
+            padding: 0.2rem 0;
+            overflow-y: auto;
+            flex: 1 1 auto;
+            min-height: 0;
+        }
+        /* Inline test log — shows captured stdout + summary right under the
+           list, so test output is reachable without flipping over to the
+           Output panel. Collapsible via the header chevron. */
+        .tests-log-region {
+            border-top: 1px solid var(--border-2);
+            display: flex;
+            flex-direction: column;
+            min-height: 0;
+            max-height: 45%;
+            flex: 0 0 auto;
+        }
+        .tests-log-header {
+            display: flex;
+            align-items: center;
+            gap: 0.4rem;
+            padding: 0.3rem 0.7rem;
+            background: var(--bg-2);
+            cursor: pointer;
+            user-select: none;
+            font-size: 0.74rem;
+            text-transform: uppercase;
+            letter-spacing: 0.04em;
+            color: var(--fg-muted);
+        }
+        .tests-log-header .codicon { font-size: 0.85rem; }
+        .tests-log-header .grow { flex: 1; }
+        .tests-log-clear {
+            background: transparent;
+            border: 0;
+            color: var(--fg-muted);
+            cursor: pointer;
+            font-size: 0.78rem;
+            padding: 0 0.3rem;
+        }
+        .tests-log-clear:hover { color: var(--fg); }
+        #tests-log {
+            margin: 0;
+            padding: 0.4rem 0.7rem;
+            font-family: ui-monospace, 'SF Mono', Menlo, monospace;
+            font-size: 0.74rem;
+            color: var(--fg);
+            white-space: pre-wrap;
+            overflow-y: auto;
+            flex: 1;
+            min-height: 0;
+        }
+        .tests-log-region.collapsed #tests-log { display: none; }
+        .tests-log-region.collapsed { max-height: none; flex: 0 0 auto; }
+        .tests-log-line { display: block; }
+        .tests-log-line.pass { color: #4caf50; }
+        .tests-log-line.fail { color: #f14c4c; }
+        .tests-log-line.dim  { color: var(--fg-muted); }
+        .test-failure-frame {
+            color: #f0a070;
+            cursor: pointer;
+            text-decoration: underline dotted transparent;
+        }
+        .test-failure-frame:hover { text-decoration-color: currentColor; }
+        .test-item {
+            display: grid;
+            grid-template-columns: 1.2rem 1fr auto auto auto;
+            align-items: center;
+            gap: 0.5rem;
+            padding: 0.2rem 0.9rem;
+            font-size: 0.82rem;
+        }
+        .test-item:hover { background: rgba(255,255,255,0.04); }
+        .test-status-icon.pass    { color: #4caf50; }
+        .test-status-icon.fail    { color: #f14c4c; }
+        .test-status-icon.idle    { color: var(--fg-muted); }
+        .test-status-icon.running { color: #3794ff; }
+        .test-name {
+            color: var(--fg);
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+        .test-name.abstract { color: var(--fg-muted); font-style: italic; }
+        .test-duration {
+            color: var(--fg-muted);
+            font-family: ui-monospace, 'SF Mono', Menlo, monospace;
+            font-size: 0.74rem;
+        }
+        .test-failure {
+            grid-column: 2 / -1;
+            color: #f14c4c;
+            font-size: 0.74rem;
+            white-space: pre-wrap;
+            margin-top: 0.15rem;
+        }
+        .test-failure-link {
+            cursor: pointer;
+            text-decoration: underline dotted transparent;
+        }
+        .test-failure-link:hover { text-decoration-color: currentColor; }
+        .test-failure-loc {
+            display: block;
+            color: #f0a070;
+            margin-top: 0.1rem;
+            font-size: 0.72rem;
+        }
+        /* ─── Floating debug toolbar ─────────────────────────────────────
+           Anchored to the top-center of the viewport, overlaying the
+           editor area while a debug session is active. Matches VSCode's
+           floating debug widget — including the drag handle on the left,
+           the subtle shadow, the status pill, and per-button icon colors. */
+        .debug-control-bar {
+            position: fixed;
+            top: 6px;
+            /* Snap to the right of the header, just left of the Run/Debug
+               cluster. Approximate width of Reset+Run+Debug + padding. */
+            right: 360px;
+            display: flex;
+            align-items: center;
+            gap: 0.1rem;
+            background: #2d2d30;
+            border: 1px solid #454545;
+            border-radius: 6px;
+            padding: 0.3rem 0.5rem 0.3rem 0.2rem;
+            box-shadow: 0 4px 14px rgba(0,0,0,0.5), 0 0 0 1px rgba(0,0,0,0.3);
+            z-index: 100;
+            user-select: none;
+        }
+        .debug-control-bar[hidden] { display: none; }
+        .debug-control-bar.dragging { transition: none; cursor: grabbing; }
+        .debug-control-bar vscode-button {
+            --vscode-button-padding-horizontal: 0.35rem;
+        }
+        /* Drag handle (the 4-dot grip on the left, like VSCode's). */
+        .debug-drag-handle {
+            display: inline-block;
+            width: 0.6rem;
+            height: 1.3rem;
+            cursor: grab;
+            background-image:
+                radial-gradient(circle, rgba(255,255,255,0.35) 1px, transparent 1.5px),
+                radial-gradient(circle, rgba(255,255,255,0.35) 1px, transparent 1.5px),
+                radial-gradient(circle, rgba(255,255,255,0.35) 1px, transparent 1.5px),
+                radial-gradient(circle, rgba(255,255,255,0.35) 1px, transparent 1.5px);
+            background-size: 4px 4px;
+            background-repeat: no-repeat;
+            background-position:
+                2px 4px, 2px 11px, 2px 18px,
+                2px 4px;
+            margin-right: 0.2rem;
+        }
+        .debug-drag-handle:active { cursor: grabbing; }
+        .debug-status {
+            color: var(--fg-muted);
+            font-size: 0.72rem;
+            padding: 0 0.6rem 0 0.3rem;
+            text-transform: lowercase;
+            min-width: 6.5rem;
+            white-space: nowrap;
+        }
+        .debug-status.paused { color: #cca700; }
+        .debug-status.running { color: #4ec9b0; }
+        .debug-status.error { color: #f14c4c; }
+        .debug-control-divider {
+            width: 1px;
+            height: 1.1rem;
+            background: var(--border-2);
+            margin: 0 0.15rem;
+        }
+        /* Toolbar button shell — flat, no border. The codicon glyph
+           inside picks up `color` directly. */
+        .debug-tb-btn {
+            background: transparent;
+            border: none;
+            padding: 0.3rem 0.45rem;
+            border-radius: 4px;
+            color: #aeaeae;
+            cursor: pointer;
+            line-height: 1;
+            font-family: codicon, sans-serif;
+            font-size: 0.95rem;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+        }
+        .debug-tb-btn:hover:not(:disabled) {
+            background: rgba(255,255,255,0.08);
+        }
+        .debug-tb-btn:disabled {
+            color: #5f6368;
+            cursor: default;
+        }
+        /* Per-button icon colors when ENABLED — matches VSCode palette. */
+        #debug-continue:not(:disabled)   { color: #75c855; }
+        #debug-pause:not(:disabled)      { color: #c5c5c5; }
+        #debug-step-over:not(:disabled),
+        #debug-step-in:not(:disabled),
+        #debug-step-out:not(:disabled)   { color: #75beff; }
+        #debug-stop:not(:disabled)       { color: #f14c4c; }
+
+        /* ─── Debug pane: sections ─────────────────────────────────── */
+        .debug-pane-host {
+            display: flex;
+            flex-direction: column;
+            min-height: 0;
+            height: 100%;
+            background: var(--bg);
+            font-size: 0.78rem;
+            overflow: auto;
+        }
+        .debug-section { display: flex; flex-direction: column; min-height: 0; }
+        .debug-section-toggle {
+            display: flex;
+            align-items: center;
+            gap: 0.35rem;
+            padding: 0.3rem 0.7rem;
+            color: var(--fg);
+            font-size: 0.7rem;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.06em;
+            background: var(--bg-2);
+            border-top: 1px solid var(--border-2);
+            cursor: pointer;
+            user-select: none;
+        }
+        .debug-section-toggle:hover { background: #2a2d2e; }
+        .debug-section-toggle .section-twisty {
+            font-size: 0.65rem;
+            min-width: 0.7rem;
+            text-align: center;
+            color: var(--fg-muted);
+            transition: transform 0.1s;
+        }
+        .debug-section-toggle.collapsed .section-twisty { transform: rotate(-90deg); }
+        .debug-section-toggle .section-title { color: var(--fg); }
+        .debug-section-toggle .section-action {
+            background: transparent;
+            border: none;
+            color: var(--fg-muted);
+            padding: 0 0.35rem;
+            font-size: 0.85rem;
+            cursor: pointer;
+            border-radius: 3px;
+        }
+        .debug-section-toggle .section-action:hover {
+            background: rgba(255,255,255,0.08);
+            color: var(--fg);
+        }
+        .debug-section-body { display: block; }
+        .debug-section-body.collapsed { display: none; }
+
+        /* Watch */
+        #watch-list {
+            list-style: none;
+            margin: 0;
+            padding: 0.15rem 0;
+        }
+        .watch-item {
+            display: grid;
+            grid-template-columns: 0.9rem 1fr auto;
+            gap: 0.35rem;
+            align-items: baseline;
+            padding: 0.08rem 0.9rem 0.08rem 0.3rem;
+            font-family: ui-monospace, 'SF Mono', Menlo, monospace;
+            font-size: 0.78rem;
+            white-space: nowrap;
+            overflow: hidden;
+        }
+        .watch-item:hover { background: rgba(255,255,255,0.04); }
+        .watch-item .watch-expr { color: #9CDCFE; overflow: hidden; text-overflow: ellipsis; cursor: text; }
+        .watch-item .watch-value { color: var(--fg); overflow: hidden; text-overflow: ellipsis; }
+        .watch-item .watch-value.string { color: #CE9178; }
+        .watch-item .watch-value.number { color: #B5CEA8; }
+        .watch-item .watch-value.error { color: #f14c4c; font-style: italic; }
+        .watch-item .watch-remove {
+            background: transparent;
+            border: none;
+            color: var(--fg-muted);
+            cursor: pointer;
+            opacity: 0;
+            padding: 0 0.2rem;
+        }
+        .watch-item:hover .watch-remove { opacity: 1; }
+        .watch-input-row {
+            padding: 0.2rem 0.9rem;
+            border-top: 1px solid var(--border-2);
+            background: var(--bg-3);
+        }
+        #watch-input {
+            width: 100%;
+            background: var(--bg-3);
+            border: 1px solid var(--accent);
+            color: var(--fg);
+            font-family: ui-monospace, 'SF Mono', Menlo, monospace;
+            font-size: 0.78rem;
+            padding: 2px 4px;
+            outline: none;
+        }
+
+        /* Breakpoints */
+        #breakpoints-list {
+            list-style: none;
+            margin: 0;
+            padding: 0.15rem 0;
+        }
+        .bp-item {
+            display: grid;
+            grid-template-columns: auto 1fr auto;
+            gap: 0.35rem;
+            align-items: center;
+            padding: 0.15rem 0.9rem;
+            font-size: 0.78rem;
+            cursor: pointer;
+        }
+        .bp-item:hover { background: rgba(255,255,255,0.04); }
+        .bp-item .bp-dot {
+            width: 9px;
+            height: 9px;
+            border-radius: 50%;
+            background: #e51400;
+        }
+        .bp-item .bp-loc { color: var(--fg); overflow: hidden; text-overflow: ellipsis; }
+        .bp-item .bp-loc .bp-line { color: var(--fg-muted); margin-left: 0.3rem; }
+        .bp-item .bp-remove {
+            background: transparent;
+            border: none;
+            color: var(--fg-muted);
+            cursor: pointer;
+            opacity: 0;
+            padding: 0 0.2rem;
+        }
+        .bp-item:hover .bp-remove { opacity: 1; }
+        .debug-empty {
+            padding: 0.8rem 0.9rem;
+            color: var(--fg-muted);
+            font-size: 0.78rem;
+            font-style: italic;
+        }
+        #debug-frames-list {
+            list-style: none;
+            margin: 0;
+            padding: 0.15rem 0;
+        }
+        .debug-frame {
+            padding: 0.2rem 0.9rem;
+            cursor: pointer;
+            display: flex;
+            align-items: baseline;
+            gap: 0.4rem;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+        .debug-frame:hover { background: rgba(255,255,255,0.05); }
+        .debug-frame.active {
+            background: rgba(9, 71, 113, 0.55);
+            color: var(--fg);
+        }
+        .debug-frame .frame-name {
+            color: var(--fg);
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+        .debug-frame .frame-loc {
+            color: var(--fg-muted);
+            font-family: ui-monospace, 'SF Mono', Menlo, monospace;
+            font-size: 0.72rem;
+        }
+
+        #debug-vars-tree {
+            padding: 0.2rem 0;
+            font-family: ui-monospace, 'SF Mono', Menlo, monospace;
+            font-size: 0.78rem;
+            user-select: none;
+        }
+        .debug-scope-header {
+            display: flex;
+            align-items: center;
+            gap: 0.3rem;
+            color: var(--fg-muted);
+            padding: 0.3rem 0.7rem 0.15rem;
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+            font-size: 0.68rem;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.06em;
+            cursor: pointer;
+            user-select: none;
+        }
+        .debug-scope-header:hover { color: var(--fg-2); }
+        .debug-scope-header .scope-twisty {
+            font-size: 0.62rem;
+            min-width: 0.6rem;
+            color: var(--fg-muted);
+        }
+        .debug-scope-body { display: block; }
+        .debug-var {
+            display: grid;
+            grid-template-columns: 0.9rem 1fr;
+            gap: 0.35rem;
+            align-items: baseline;
+            padding: 0.08rem 0.9rem 0.08rem 0.3rem;
+            white-space: nowrap;
+            overflow: hidden;
+            cursor: default;
+        }
+        .debug-var:hover { background: rgba(255,255,255,0.04); }
+        .debug-var .twisty {
+            color: var(--fg-muted);
+            cursor: pointer;
+            text-align: center;
+            font-size: 0.7rem;
+            user-select: none;
+        }
+        .debug-var .twisty.empty { visibility: hidden; }
+        .debug-var-body {
+            display: inline-flex;
+            align-items: baseline;
+            gap: 0.4rem;
+            overflow: hidden;
+            min-width: 0;
+        }
+        .debug-var-name { color: #9CDCFE; flex-shrink: 0; }
+        .debug-var-sep { color: var(--fg-muted); flex-shrink: 0; }
+        .debug-var-value {
+            color: var(--fg);
+            text-overflow: ellipsis;
+            overflow: hidden;
+            min-width: 0;
+            cursor: text;
+        }
+        .debug-var-value:hover {
+            box-shadow: 0 1px 0 0 rgba(255,255,255,0.18);
+        }
+        .debug-var-value.string { color: #CE9178; }
+        .debug-var-value.number { color: #B5CEA8; }
+        .debug-var-type {
+            color: var(--fg-muted);
+            font-style: italic;
+            font-size: 0.74rem;
+            flex-shrink: 0;
+        }
+        .debug-var-value.editing input {
+            width: 100%;
+            background: var(--bg-3);
+            color: var(--fg);
+            border: 1px solid var(--accent);
+            font-family: inherit;
+            font-size: inherit;
+            padding: 1px 4px;
+        }
+        .debug-var-children { padding-left: 0.9rem; }
+
+        /* ─── Debug Console (bottom panel) ──────────────────────────── */
+        .debug-console-host {
+            display: flex;
+            flex-direction: column;
+            min-height: 0;
+            height: 100%;
+            background: var(--bg);
+        }
+        #debug-repl-output {
+            margin: 0;
+            padding: 0.3rem 0.9rem;
+            flex: 1;
+            overflow: auto;
+            white-space: pre-wrap;
+            font-family: ui-monospace, 'SF Mono', Menlo, monospace;
+            font-size: 0.78rem;
+            color: var(--fg);
+            background: var(--bg);
+        }
+        .debug-repl-input-row {
+            display: flex;
+            align-items: center;
+            gap: 0.3rem;
+            padding: 0.25rem 0.9rem;
+            border-top: 1px solid var(--border-2);
+            background: var(--bg-2);
+        }
+        .debug-repl-prompt {
+            color: #4ec9b0;
+            font-family: ui-monospace, 'SF Mono', Menlo, monospace;
+            font-weight: bold;
+        }
+        #debug-repl-input {
+            flex: 1;
+            background: transparent;
+            color: var(--fg);
+            border: none;
+            outline: none;
+            font-family: ui-monospace, 'SF Mono', Menlo, monospace;
+            font-size: 0.78rem;
+            padding: 0.15rem 0;
+        }
+        /* Breakpoint glyph margin
+           The codicon class injects the glyph via ::before. The default
+           color cascades from `.monaco-editor { color: #d4d4d4 }` so the
+           dot shows up gray — override on the pseudo. VSCode's red is
+           #E51400. */
+        .fade-breakpoint,
+        .fade-breakpoint::before {
+            color: #e51400 !important;
+            font-size: 14px !important;
+            line-height: 1 !important;
+        }
+        .fade-current {
+            background: rgba(255, 220, 0, 0.18);
+        }
+        .fade-current::before {
+            color: #ffcc00 !important;
+        }
+    </style>
+</head>
+
+<body>
+    <div id="app">
+        <header>
+            <h1>Fade Playground</h1>
+            <span id="status">Loading…</span>
+            <span class="grow"></span>
+            <vscode-button id="reset-layout" icon="layout" secondary="true" title="Reset panel layout to default"></vscode-button>
+            <vscode-button id="run" disabled icon="play">Run (⌘R)</vscode-button>
+            <vscode-button id="debug" disabled icon="debug-alt" secondary="true">Debug (⌘D)</vscode-button>
+        </header>
+
+        <!-- VSCode's floating debug toolbar. Plain <button>s + codicon
+             spans (not vscode-button) so we can color the glyphs directly
+             — vscode-button wraps its icon in a shadow-DOM <vscode-icon>
+             whose internal color rule blocks outside inheritance, which
+             made our per-button color CSS no-op. -->
+        <div id="debug-control-bar" class="debug-control-bar" hidden>
+            <span id="debug-drag-handle" class="debug-drag-handle" title="Drag to move"></span>
+            <span id="debug-status" class="debug-status">running</span>
+            <button id="debug-continue" class="debug-tb-btn" title="Continue (F5)" disabled><span class="codicon codicon-debug-continue"></span></button>
+            <button id="debug-pause" class="debug-tb-btn" title="Pause" disabled><span class="codicon codicon-debug-pause"></span></button>
+            <button id="debug-step-over" class="debug-tb-btn" title="Step Over (F10)" disabled><span class="codicon codicon-debug-step-over"></span></button>
+            <button id="debug-step-in" class="debug-tb-btn" title="Step Into (F11)" disabled><span class="codicon codicon-debug-step-into"></span></button>
+            <button id="debug-step-out" class="debug-tb-btn" title="Step Out (Shift+F11)" disabled><span class="codicon codicon-debug-step-out"></span></button>
+            <button id="debug-stop" class="debug-tb-btn" title="Stop" disabled><span class="codicon codicon-debug-stop"></span></button>
+        </div>
+
+        <!-- Dockview owns the rest of the viewport. Its `createComponent`
+             callback returns one of the `.panel-cell` divs below — they
+             live in a hidden offscreen container so the existing
+             document.getElementById('output') etc. lookups still work
+             before dockview reparents them. -->
+        <div id="dock-root"></div>
+    </div>
+
+    <!-- Offscreen pool of panel content. Each .panel-cell is the body of
+         one dockable panel; createComponent moves it into the panel's
+         shell when dockview asks for it. -->
+    <div id="panel-cells" hidden>
+        <div class="panel-cell" data-panel="workspace">
+            <div class="sidebar-host">
+                <div class="sidebar-header">
+                    <span>Workspace</span>
+                    <span class="grow"></span>
+                    <button class="icon-btn" id="new-file" title="New file">+</button>
+                </div>
+                <ul id="file-list"></ul>
+            </div>
+        </div>
+
+        <div class="panel-cell" data-panel="editor">
+            <div class="editor-host">
+                <div class="tabs" id="tabs"></div>
+                <div id="editor"></div>
+                <div id="editor-placeholder" style="display: none;">No file open. Click a file in the sidebar.</div>
+            </div>
+        </div>
+
+        <div class="panel-cell" data-panel="output">
+            <pre id="output">(not yet run)</pre>
+        </div>
+
+        <div class="panel-cell" data-panel="problems">
+            <div id="problems">
+                <div class="problem-empty" id="problems-empty">No problems detected.</div>
+                <ul id="problems-list"></ul>
+            </div>
+        </div>
+
+        <!-- Consolidated Debug panel — Variables / Watch / Call Stack /
+             Breakpoints as collapsible sections, matching VSCode's
+             "Run and Debug" sidebar. -->
+        <div class="panel-cell" data-panel="debug">
+            <div class="debug-pane-host">
+                <!-- VARIABLES section -->
+                <div class="debug-section">
+                    <div class="debug-section-toggle" data-section="variables">
+                        <span class="section-twisty">▾</span>
+                        <span class="section-title">Variables</span>
+                    </div>
+                    <div class="debug-section-body" data-section-body="variables">
+                        <div id="debug-vars-empty" class="debug-empty">No active debug session</div>
+                        <div id="debug-vars-tree"></div>
+                    </div>
+                </div>
+
+                <!-- WATCH section -->
+                <div class="debug-section">
+                    <div class="debug-section-toggle" data-section="watch">
+                        <span class="section-twisty">▾</span>
+                        <span class="section-title">Watch</span>
+                        <span class="grow"></span>
+                        <button class="section-action" id="watch-add-btn" title="Add expression">+</button>
+                    </div>
+                    <div class="debug-section-body" data-section-body="watch">
+                        <ul id="watch-list"></ul>
+                        <div class="watch-input-row" id="watch-input-row" hidden>
+                            <input id="watch-input" type="text" placeholder="Expression to watch…" spellcheck="false" />
+                        </div>
+                    </div>
+                </div>
+
+                <!-- CALL STACK section -->
+                <div class="debug-section">
+                    <div class="debug-section-toggle" data-section="call-stack">
+                        <span class="section-twisty">▾</span>
+                        <span class="section-title">Call Stack</span>
+                    </div>
+                    <div class="debug-section-body" data-section-body="call-stack">
+                        <div id="debug-frames-empty" class="debug-empty">No active debug session</div>
+                        <ul id="debug-frames-list"></ul>
+                    </div>
+                </div>
+
+                <!-- BREAKPOINTS section -->
+                <div class="debug-section">
+                    <div class="debug-section-toggle" data-section="breakpoints">
+                        <span class="section-twisty">▾</span>
+                        <span class="section-title">Breakpoints</span>
+                        <span class="grow"></span>
+                        <button class="section-action" id="breakpoints-clear-btn" title="Remove all">⌫</button>
+                    </div>
+                    <div class="debug-section-body" data-section-body="breakpoints">
+                        <div id="breakpoints-empty" class="debug-empty">No breakpoints set</div>
+                        <ul id="breakpoints-list"></ul>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Debug Console: REPL output + input (VSCode bottom-panel "Debug Console"). -->
+        <div class="panel-cell" data-panel="debug-console">
+            <div class="debug-console-host">
+                <pre id="debug-repl-output"></pre>
+                <div class="debug-repl-input-row">
+                    <span class="debug-repl-prompt">›</span>
+                    <input id="debug-repl-input" type="text" placeholder="Eval expression…" disabled />
+                </div>
+            </div>
+        </div>
+
+        <div class="panel-cell" data-panel="tests">
+            <div id="tests-pane">
+                <div class="tests-toolbar">
+                    <vscode-button id="tests-run-all" icon="run-all">Run all</vscode-button>
+                    <vscode-button id="tests-refresh" secondary="true" icon="refresh">Refresh</vscode-button>
+                    <span class="grow"></span>
+                    <span id="tests-status" class="tests-status"></span>
+                </div>
+                <div class="tests-search-row">
+                    <span class="codicon codicon-search"></span>
+                    <input id="tests-search" type="search" placeholder="Filter tests…" autocomplete="off" spellcheck="false" />
+                    <button id="tests-search-clear" hidden title="Clear filter">&times;</button>
+                </div>
+                <div class="tests-empty" id="tests-empty">No tests in this file.</div>
+                <ul id="tests-list"></ul>
+                <div class="tests-log-region" id="tests-log-region">
+                    <div class="tests-log-header" id="tests-log-toggle">
+                        <span class="codicon codicon-chevron-down" id="tests-log-chev"></span>
+                        <span>Test Output</span>
+                        <span class="grow"></span>
+                        <button class="tests-log-clear" id="tests-log-clear" title="Clear">clear</button>
+                    </div>
+                    <div id="tests-log"></div>
+                </div>
+            </div>
+        </div>
+    </div>
+    <script type="module" src="/src/main.ts"></script>
+</body>
+
+</html>

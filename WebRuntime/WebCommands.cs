@@ -43,6 +43,13 @@ public partial class WebCommands
 
     [FadeBasicCommand("alert")]
     public static void Alert(string msg) => WebInterop.Alert(msg);
+
+    // Synchronous user-input prompt for scripting and tests. Returns the
+    // entered string (or an empty string if the user cancels). The host JS
+    // bridge implements the actual prompt — main-thread mode uses window.prompt,
+    // worker mode posts a request and blocks on the response.
+    [FadeBasicCommand("prompt$")]
+    public static string Prompt(string message) => WebInterop.Prompt(message);
 }
 
 [SupportedOSPlatform("browser")]
@@ -59,4 +66,7 @@ internal static partial class WebInterop
 
     [JSImport("onPrint", "web-commands")]
     internal static partial void OnPrint(string line);
+
+    [JSImport("prompt", "web-commands")]
+    internal static partial string Prompt(string msg);
 }
