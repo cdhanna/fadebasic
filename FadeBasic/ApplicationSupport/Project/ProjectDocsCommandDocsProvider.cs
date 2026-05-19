@@ -3,7 +3,9 @@
 // Lets any host that already has a ProjectDocs (native LSP, WebRuntime,
 // docs site) plug into LSP.Core's hover/completion handlers without
 // duplicating the XML-doc parsing pipeline. The lookup is by
-// `CommandInfo.sig`, matching the key ProjectDocs builds.
+// `CommandInfo.UniqueName` (name + sig), matching the key ProjectDocs
+// builds via LoadDocs. Keying by sig alone collapses commands that share
+// a type signature (e.g. every void-returning string-taking command).
 
 using FadeBasic.LSP.Core;
 using FadeBasic.Virtual;
@@ -24,7 +26,7 @@ public sealed class ProjectDocsCommandDocsProvider : ICommandDocsProvider
     public ICommandDocs? Lookup(CommandInfo command)
     {
         if (_docs?.map == null) return null;
-        if (!_docs.map.TryGetValue(command.sig ?? string.Empty, out var found)) return null;
+        if (!_docs.map.TryGetValue(command.UniqueName ?? string.Empty, out var found)) return null;
         return new CommandDocsAdapter(found, _urlForCommand);
     }
 

@@ -10,6 +10,10 @@ using FadeBasic.Json;
 using FadeBasic.Launch;
 using FadeBasic.Lib.Standard;
 using FadeBasic.Sdk;
+// FadeBasic.Sdk.Fade collides with the Fade.* MonoGame namespaces that
+// arrive transitively via the Fade.MonoGame.Lib ProjectReference. Alias
+// so `FadeSdk.TryCreateFromString(...)` is unambiguous.
+using FadeSdk = FadeBasic.Sdk.Fade;
 using FadeBasic.LSP.Core;
 using FadeBasic.LSP.Core.Handlers;
 
@@ -22,16 +26,109 @@ namespace WebRuntime;
 [SupportedOSPlatform("browser")]
 public static partial class FadeBridge
 {
-    private static readonly FadeWorkspace _workspace = CreateWorkspace();
+    // Active workspace — rebuilt by SetProjectType when the editor switches
+    // between fade.json types. Each project type has a different CommandCollection
+    // so the LSP knows which commands exist (sprite/texture/etc. for monogame,
+    // location/alert/etc. for web).
+    private static FadeWorkspace _workspace = CreateWorkspace("web");
+    private static string _activeProjectType = "web";
 
-    private static FadeWorkspace CreateWorkspace()
+    private static FadeWorkspace CreateWorkspace(string projectType)
     {
-        var ws = new FadeWorkspace(
-            new CommandCollection(new WebCommands(), new StandardCommands()));
-        // Surface rich command markdown on hover (parsed from the XML doc
-        // comments baked into StandardCommandsMetaData.COMMANDS_JSON).
-        ws.Docs = StandardCommandDocs.Build();
+        // Swap the standard `wait ms` to the interruptible JS path so
+        // pause/stop during a long wait isn't blocked by Thread.Sleep on
+        // the VM worker. This MUST run before any user code does — that's
+        // why it's pinned here in the static initializer, alongside the
+        // workspace itself.
+        StandardCommands.WaitImpl = ms =>
+        {
+            if (ms <= 0) return;
+            int kind;
+            try { kind = WebInterop.WaitMsInterruptible(ms); }
+            catch (System.Exception)
+            {
+                System.Threading.Thread.Sleep(ms);
+                return;
+            }
+            // 0 = wait completed normally — nothing to do.
+            // 1 = page wants the VM to pause. Enqueue REQUEST_PAUSE
+            //     synchronously so the very next instruction check
+            //     pauses, instead of waiting up to a full DebugTick
+            //     budget for the worker's debug-pause postMessage to
+            //     drain into the session.
+            // 2 = page wants the VM to terminate. Throw cancellation so
+            //     ctx.Run unwinds without running any more ops; the
+            //     surrounding DebugTick swallows the exception and
+            //     reports complete.
+            if (kind == 1)
+            {
+                EnqueueBasic(DebugMessageType.REQUEST_PAUSE);
+                // Also surface a synthetic stop event so the page's debug
+                // adapter flips into the paused UI state immediately.
+                _debugSession?.EmitStop();
+            }
+            else if (kind == 2)
+            {
+                // Terminate. Throw OperationCanceledException to unwind
+                // mid-instruction so the very next instruction doesn't
+                // run. The VM's Execute3 wrapper catches it and surfaces
+                // a runtime-error message (the "angry JSON" the user
+                // sees in the console); the page's debug-terminate
+                // message then nulls _debugSession on the next worker
+                // tick and the session ends. Imperfect but at least the
+                // VM stops at the right place.
+                throw new System.OperationCanceledException("wait ms interrupted by terminate");
+            }
+            else if (kind == 3)
+            {
+                // Wake-only yield for page→VM updates (breakpoints, etc.).
+                // Flip the session's requestedExit + enqueue a NOOP so
+                // both the inner Execute3 batch AND the outer loop break.
+                // DebugTick resets the flag after StartDebugging returns
+                // (see ClearYieldRequest) so the next worker tick
+                // resumes normally with the new state applied.
+                _debugSession?.RequestYield();
+            }
+        };
+
+        // Pick the command set per project type. Web ships the console-style
+        // surface; monogame swaps in Fade.MonoGame.Lib's graphics commands.
+        // Both register StandardCommands at the bottom of the stack.
+        // Docs come from the source-generator's COMMANDS_JSON blobs and feed
+        // the same MarkdownDocParser pipeline; monogame includes both blobs.
+        CommandCollection commands;
+        ICommandDocsProvider docs;
+        switch (projectType)
+        {
+            case "monogame":
+                commands = new CommandCollection(
+                    new global::Fade.MonoGame.Lib.FadeMonoGameCommands(),
+                    new StandardCommands());
+                docs = StandardCommandDocs.BuildMonoGame();
+                break;
+            default:
+                commands = new CommandCollection(new WebCommands(), new StandardCommands());
+                docs = StandardCommandDocs.BuildWeb();
+                break;
+        }
+
+        var ws = new FadeWorkspace(commands);
+        ws.Docs = docs;
         return ws;
+    }
+
+    // Called by the worker (main.ts → worker.js) when the active fade.json
+    // type changes. Rebuilds the workspace with the right CommandCollection
+    // so the LSP picks up the new command surface. Returns the new type so
+    // the page can log/confirm. Idempotent.
+    [JSExport]
+    public static string SetProjectType(string projectType)
+    {
+        var t = (projectType ?? "web").ToLowerInvariant();
+        if (t == _activeProjectType) return t;
+        _activeProjectType = t;
+        _workspace = CreateWorkspace(t);
+        return t;
     }
 
     // camelCase JSON to match LSP wire-protocol convention; TS interfaces in
@@ -49,33 +146,34 @@ public static partial class FadeBridge
     // ─── Run ──────────────────────────────────────────────────────────────
     [JSInvokable]
     [JSExport]
+    // Returns a JSON envelope so the page can format different kinds of
+    // output (compile errors / runtime errors / printed stdout) with their
+    // own styling. Shape: { compileError, runtimeError, printed }. Any
+    // field may be null/empty. Print output also streams through `onPrint`
+    // during execution; we drain anything that wasn't flushed yet.
     public static string CompileAndRun(string source)
     {
-        var sb = new StringBuilder();
         var commands = _workspace.Commands;
-        if (!Fade.TryCreateFromString(source, commands, out var ctx, out var errors))
+        if (!FadeSdk.TryCreateFromString(source, commands, out var ctx, out var errors))
         {
-            sb.AppendLine("Compile failed:");
-            sb.Append(errors.ToDisplay());
-            return sb.ToString();
+            return JsonSerializer.Serialize(new
+            {
+                compileError = errors.ToDisplay(),
+                runtimeError = (string)null,
+                printed = "",
+            }, _jsonOpts);
         }
 
+        string runtimeError = null;
         try { ctx.Run(); }
-        catch (Exception ex) { sb.AppendLine($"Runtime error: {ex.GetType().Name}: {ex.Message}"); }
+        catch (Exception ex) { runtimeError = ex.GetType().Name + ": " + ex.Message; }
 
-        var printed = WebCommands.DrainPrintBuffer();
-        if (!string.IsNullOrEmpty(printed))
+        return JsonSerializer.Serialize(new
         {
-            sb.AppendLine("--- print output ---");
-            sb.Append(printed);
-        }
-
-        sb.AppendLine("--- variables ---");
-        if (ctx.TryGetInteger("x", out var x)) sb.AppendLine($"x = {x}");
-        if (ctx.TryGetInteger("y", out var y)) sb.AppendLine($"y = {y}");
-        if (ctx.TryGetString("s", out var s)) sb.AppendLine($"s = \"{s}\"");
-
-        return sb.ToString();
+            compileError = (string)null,
+            runtimeError,
+            printed = WebCommands.DrainPrintBuffer() ?? "",
+        }, _jsonOpts);
     }
 
     // ─── LSP entry points — thin adapters over Core ───────────────────────
@@ -227,6 +325,85 @@ public static partial class FadeBridge
         return edit == null ? "null" : JsonSerializer.Serialize(edit, _jsonOpts);
     }
 
+    // ─── Help / command docs ──────────────────────────────────────────────
+    // Returns a JSON array of every command currently loaded in the
+    // workspace's CommandCollection, with the same markdown the hover
+    // provider renders. Used by the page's Help tab to build a TOC +
+    // per-command reader. One row per UNIQUE command name (overloads
+    // collapse — the first signature wins). Sorted alphabetically.
+    [JSExport]
+    public static string ListCommandDocs()
+    {
+        try
+        {
+            var commands = _workspace.Commands?.Commands;
+            if (commands == null)
+            {
+                return "[]";
+            }
+            // Dedupe by command.name. Overloads (e.g. `rgb` with 3 vs 4
+            // args) share a name; we surface one row per name and use the
+            // first CommandInfo we find — BuildCommandMarkdown already
+            // describes all parameter slots from that signature.
+            var seen = new HashSet<string>();
+            var rows = new List<object>();
+            foreach (var c in commands)
+            {
+                if (string.IsNullOrEmpty(c.name)) continue;
+                if (!seen.Add(c.name)) continue;
+                string markdown;
+                try
+                {
+                    markdown = FadeBasic.LSP.Core.Handlers.HoverHandler.BuildCommandMarkdown(
+                        c, _workspace.Docs);
+                }
+                catch (Exception ex)
+                {
+                    markdown = $"### {c.name}\n\n_Failed to render docs: {ex.Message}_";
+                }
+                rows.Add(new
+                {
+                    name = c.name,
+                    signature = c.sig,
+                    // Best-effort: classify into a "group" based on the
+                    // command name's first word for the TOC. The native
+                    // command-doc generator keeps a category in metadata
+                    // we don't propagate here yet; this is a useful
+                    // approximation until that's wired through.
+                    group = GuessGroup(c.name),
+                    markdown,
+                });
+            }
+            // Stable alphabetical order so the TOC is deterministic.
+            rows.Sort((a, b) =>
+                string.Compare(
+                    (string)a.GetType().GetProperty("name").GetValue(a),
+                    (string)b.GetType().GetProperty("name").GetValue(b),
+                    StringComparison.OrdinalIgnoreCase));
+            return JsonSerializer.Serialize(rows, _jsonOpts);
+        }
+        catch (Exception ex)
+        {
+            return JsonSerializer.Serialize(new
+            {
+                error = "Failed to enumerate command docs: " + ex.Message,
+            }, _jsonOpts);
+        }
+    }
+
+    // Cheap heuristic: cluster commands by their first word so the TOC
+    // gets meaningful section headings (e.g. "print", "string", "wait").
+    // For multi-word commands ("wait ms", "wait key") this also yields a
+    // shared bucket. Single-word commands get their own bucket named
+    // after themselves only when no peers share the prefix — to avoid
+    // a 200-bucket TOC, single-words fall back to a generic "Core" group.
+    private static string GuessGroup(string name)
+    {
+        if (string.IsNullOrEmpty(name)) return "Core";
+        var idx = name.IndexOf(' ');
+        return idx > 0 ? name.Substring(0, idx) : "Core";
+    }
+
     // ─── Tests ────────────────────────────────────────────────────────────
     // Compile the source and list the test entry points. Returns a JSON
     // array of { name, isAbstract, fromParent, sourceLine }. On compile
@@ -237,7 +414,7 @@ public static partial class FadeBridge
         try
         {
             var commands = _workspace.Commands;
-            if (!Fade.TryCreateFromString(source, commands, out var ctx, out _))
+            if (!FadeSdk.TryCreateFromString(source, commands, out var ctx, out _))
                 return "[]";
             var tests = new List<object>();
             foreach (var t in ctx.Compiler.TestManifest)
@@ -268,7 +445,7 @@ public static partial class FadeBridge
     {
         var sb = new StringBuilder();
         var commands = _workspace.Commands;
-        if (!Fade.TryCreateFromString(source, commands, out var ctx, out var errors))
+        if (!FadeSdk.TryCreateFromString(source, commands, out var ctx, out var errors))
         {
             return JsonSerializer.Serialize(new
             {
@@ -392,7 +569,7 @@ public static partial class FadeBridge
         {
             DebugTerminate();
             var commands = _workspace.Commands;
-            if (!Fade.TryCreateFromString(source, commands, out var ctx, out var errors))
+            if (!FadeSdk.TryCreateFromString(source, commands, out var ctx, out var errors))
             {
                 return JsonSerializer.Serialize(new
                 {
@@ -466,7 +643,7 @@ public static partial class FadeBridge
         {
             DebugTerminate(); // reset any prior session.
             var commands = _workspace.Commands;
-            if (!Fade.TryCreateFromString(source, commands, out var ctx, out var errors))
+            if (!FadeSdk.TryCreateFromString(source, commands, out var ctx, out var errors))
             {
                 return JsonSerializer.Serialize(new
                 {
@@ -532,6 +709,13 @@ public static partial class FadeBridge
                 messages = Array.Empty<object>(),
             }, _jsonOpts);
         }
+        // If WaitImpl flipped requestedExit to unwind early (kind=3 yield
+        // for breakpoint updates etc., or kind=2 terminate before the
+        // page's debug-terminate has landed), clear the flag now so the
+        // NEXT tick can resume normally. For genuine kind=2 terminate
+        // the debug-terminate message will null _debugSession on the
+        // next worker tick anyway, so the reset is harmless there.
+        _debugSession.ClearYieldRequest();
 
         var drained = _debugSession.DrainOutbound();
         var msgs = new List<object>(drained.Count);
@@ -722,3 +906,4 @@ public static partial class FadeBridge
         public int Column { get; set; }
     }
 }
+

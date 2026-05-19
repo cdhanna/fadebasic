@@ -50,6 +50,57 @@ internal sealed class WebDebugSession : DebugSession
         receivedMessages.Enqueue(msg);
     }
 
+    // Synthesize a "stopped" outbound event. The base session's
+    // SendStopMessage is protected and only fires when a breakpoint is
+    // hit — manual REQUEST_PAUSE acks with a plain PROTO_ACK that the
+    // page's adapter (see DAP_AUDIT.md) reads as "running". WaitImpl
+    // calls this after enqueuing REQUEST_PAUSE so the page transitions
+    // to its paused UI state.
+    public void EmitStop()
+    {
+        outboundMessages.Enqueue(new DebugMessage
+        {
+            id = GetNextMessageId(),
+            type = DebugMessageType.REV_REQUEST_BREAKPOINT,
+        });
+    }
+
+    // True after a kind=3 (yield) interrupt has flipped requestedExit.
+    // DebugTick reads this after StartDebugging returns and resets
+    // requestedExit so the next tick can resume normally. This is the
+    // hook that makes the worker yield between waits — see WaitImpl
+    // in FadeBridge.CreateWorkspace.
+    public bool WasYieldRequest { get; private set; }
+
+    public void RequestYield()
+    {
+        WasYieldRequest = true;
+        requestedExit = true;
+        // VirtualMachine.Execute3 checks `!isSuspendRequested` per
+        // instruction in its inner for-loop. Flipping it short-circuits
+        // the current batch *immediately*, so the very next instruction
+        // doesn't run. Without this, Execute3 keeps going until its
+        // budget exhausts and requestedExit only takes effect at the
+        // outer loop boundary — after at least one more instruction
+        // (the one right after `wait ms`) has already executed.
+        if (_vm != null) _vm.isSuspendRequested = true;
+        // Enqueue a no-op too so the Execute3 lambda's `receivedMessages.Count > 0`
+        // check is an *additional* yield path (some Execute paths take
+        // the lambda route, some take the field-flag route).
+        receivedMessages.Enqueue(new DebugMessage
+        {
+            id = GetNextMessageId(),
+            type = DebugMessageType.NOOP,
+        });
+    }
+
+    public void ClearYieldRequest()
+    {
+        if (!WasYieldRequest) return;
+        WasYieldRequest = false;
+        requestedExit = false;
+    }
+
     // Drain everything the session has produced since the last call. The
     // worker re-posts each as a typed `debug-event` message to the page.
     public List<DebugMessage> DrainOutbound()

@@ -1,0 +1,24 @@
+@page "/"
+@inject IJSRuntime JsRuntime
+
+<PageTitle>Fade WebRuntime.MonoGame</PageTitle>
+
+@*
+    Inline styles (not via css/app.css) so the panel works when this Razor
+    component is dropped into the Playground's dockview — the Playground
+    page doesn't load WebRuntime.MonoGame's app.css. canvasHolder fills
+    whatever parent #mg-blazor-root resolves to; standalone wwwroot/index.html
+    makes that the full viewport, Playground constrains it to a panel cell.
+*@
+<div id="canvasHolder" style="position: absolute; inset: 0; background: #000;">
+    <canvas id="theCanvas" tabindex="0"
+            style="display: block; width: 100%; height: 100%; outline: none;"></canvas>
+</div>
+
+<div id="status" style="
+    position: absolute; top: 8px; left: 8px;
+    padding: 4px 10px;
+    background: rgba(0, 0, 0, 0.6); color: #ccc;
+    font: 12px ui-monospace, 'SF Mono', Menlo, monospace;
+    border-radius: 3px; pointer-events: none; z-index: 10;
+">@_status</div>

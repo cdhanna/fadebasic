@@ -41,6 +41,10 @@ public partial class WebCommands
     public static int TimeMs() =>
         (int)(DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() & 0x7FFFFFFF);
 
+    /// <summary>
+    /// Displays a web based alert to the user
+    /// </summary>
+    /// <param name="str">the message</param>
     [FadeBasicCommand("alert")]
     public static void Alert(string msg) => WebInterop.Alert(msg);
 
@@ -69,4 +73,12 @@ internal static partial class WebInterop
 
     [JSImport("prompt", "web-commands")]
     internal static partial string Prompt(string msg);
+
+    // Cooperative `wait ms` for WASM. The JS-side impl blocks on
+    // Atomics.wait(timeout=ms) over a shared buffer; the main thread can
+    // Atomics.notify the buffer to wake the wait early (e.g. when the
+    // user clicks Pause / Stop). Returns the milliseconds actually waited
+    // — call sites can ignore it.
+    [JSImport("waitMsInterruptible", "web-commands")]
+    internal static partial int WaitMsInterruptible(int milliseconds);
 }

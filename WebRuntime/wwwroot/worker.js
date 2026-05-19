@@ -9,10 +9,36 @@ import { dotnet } from './_framework/dotnet.js';
 
 let exports = null;
 const queue = [];
+// Each worker hosts a .NET runtime + bridge. The page boots TWO of these:
+//
+//   role='lsp' — handles LSP traffic (set-document, hover, completion,
+//                semantic tokens, …) plus the lightweight `list-tests`
+//                compile step. Stays responsive at all times.
+//   role='vm'  — owns the live VM. Handles `run`, `run-tests`, and the
+//                whole `debug-*` family. May get sync-blocked by user
+//                code calling Thread.Sleep (e.g. `wait ms`) — that's
+//                expected; the lsp worker keeps the page responsive.
+//
+// Both workers post heartbeats so the UI can distinguish "page is alive"
+// from "VM is alive". The role flips behavior at message-dispatch time;
+// the .NET runtime + JS module bindings are identical on both.
+let role = 'lsp';
 
 function log(message) {
-    self.postMessage({ type: 'log', message });
+    self.postMessage({ type: 'log', message, role });
 }
+
+// ─── Heartbeat ──────────────────────────────────────────────────────────────
+// Posts a beat to the main thread every 500ms so the UI can show a
+// "worker alive" indicator. A synchronous Thread.Sleep inside the VM
+// (e.g. `wait ms`) blocks this worker thread entirely, which means the
+// heartbeats stop until the sleep returns — that's exactly what we want
+// to surface to the user as a busy state.
+let heartbeatTick = 0;
+setInterval(() => {
+    heartbeatTick = (heartbeatTick + 1) | 0;
+    self.postMessage({ type: 'heartbeat', tick: heartbeatTick, t: Date.now(), role });
+}, 500);
 
 // ─── Synchronous prompt$ handshake ──────────────────────────────────────────
 // `prompt$` is a JSImport that must return synchronously from C#'s
@@ -28,6 +54,31 @@ function log(message) {
 let promptSab = null;
 let promptSync = null;
 let promptBytes = null;
+
+// ─── Interruptible `wait ms` ───────────────────────────────────────────────
+// Atomics.wait blocks the worker thread up to `ms` milliseconds. Pause /
+// stop on the page side writes a non-zero "kind" into the SAB and calls
+// Atomics.notify, which wakes the wait early and tells C# what to do
+// next. Return value is the kind C# should react to:
+//   0 = wait completed normally (timed out, no interrupt)
+//   1 = page wants the VM to PAUSE
+//   2 = page wants the VM to TERMINATE
+let waitSab = null;
+let waitView = null;
+function waitMsInterruptible(ms) {
+    if (!waitView) {
+        // SAB not wired — fall back to busy polling so at least the call
+        // doesn't crash. No interrupt capability in this mode.
+        const end = performance.now() + ms;
+        while (performance.now() < end) { /* spin */ }
+        return 0;
+    }
+    Atomics.store(waitView, 0, 0);
+    Atomics.wait(waitView, 0, 0, ms);
+    // Read + clear in one shot so the next wait starts from a clean slot.
+    const kind = Atomics.exchange(waitView, 0, 0);
+    return kind | 0;
+}
 
 // ─── Debug tick loop ────────────────────────────────────────────────────────
 // While a debug session is active, we yield to the worker's message pump
@@ -56,15 +107,13 @@ function pumpDebugTick() {
             self.postMessage({ type: 'debug-event', event: m });
         }
     }
-    if (result.printed) {
-        // Stream prints from the running program through the same `print`
-        // event channel as normal Run so the output panel updates live.
-        const lines = result.printed.split('\n');
-        for (const line of lines) {
-            if (line.length === 0) continue;
-            self.postMessage({ type: 'print', line });
-        }
-    }
+    // NOTE: do NOT re-emit `result.printed` here. The Print command in
+    // WebCommands.cs streams every line live via the `web-commands.onPrint`
+    // JSImport (handled below in setModuleImports), which means every
+    // line already reached the page as a `print` message during execution.
+    // Re-emitting the drained buffer would duplicate each line — and the
+    // duplicate is especially visible at end-of-session when DebugTick
+    // returns with `complete: true` and a fully-drained buffer.
     if (result.complete) {
         debugTicking = false;
         self.postMessage({ type: 'debug-event', event: { type: 'complete' } });
@@ -111,6 +160,7 @@ async function init() {
         getUserAgent: () => self.navigator?.userAgent ?? '(unavailable)',
         alert: (msg) => self.postMessage({ type: 'alert', msg }),
         prompt: (msg) => syncPromptFromMain(msg),
+        waitMsInterruptible: (ms) => waitMsInterruptible(ms),
     });
 
     log('registering assembly exports...');
@@ -119,10 +169,52 @@ async function init() {
     log('exports loaded');
 
     while (queue.length) handle(queue.shift());
-    self.postMessage({ type: 'ready' });
+    self.postMessage({ type: 'ready', role });
 }
 
+// Op → required role. Anything not listed is treated as either-side.
+const VM_OPS = new Set([
+    'run', 'run-tests', 'prompt-sab',
+    'debug-start', 'debug-start-test', 'debug-terminate',
+    'debug-set-breakpoints', 'debug-step', 'debug-continue', 'debug-pause',
+    'debug-stack-frames', 'debug-scopes', 'debug-variable-expansion',
+    'debug-eval', 'debug-repl', 'debug-set-variable',
+]);
+
 function handle(msg) {
+    // Configuration is always accepted — it's what makes us either role.
+    if (msg.type === 'configure') {
+        role = msg.role === 'vm' ? 'vm' : 'lsp';
+        return;
+    }
+    // Cheap roundtrip for the heartbeat probes.
+    if (msg.type === 'ping') {
+        self.postMessage({ type: 'pong', id: msg.id, t: Date.now() });
+        return;
+    }
+    // Sanity guard: if the page accidentally sends a VM op to the LSP
+    // worker (or vice-versa), surface a clear error instead of silently
+    // dropping the message.
+    const isVmOp = VM_OPS.has(msg.type);
+    if (isVmOp && role !== 'vm') {
+        self.postMessage({
+            type: 'worker-misroute',
+            requested: msg.type,
+            actualRole: role,
+            id: msg.id,
+        });
+        return;
+    }
+    if (!isVmOp && role === 'vm' && /^(lsp-|list-tests|list-command-docs)/.test(msg.type)) {
+        self.postMessage({
+            type: 'worker-misroute',
+            requested: msg.type,
+            actualRole: role,
+            id: msg.id,
+        });
+        return;
+    }
+
     if (msg.type === 'run') {
         let result;
         try {
@@ -258,11 +350,25 @@ function handle(msg) {
             log('lsp-rename failed: ' + (e?.message ?? e));
         }
         self.postMessage({ type: 'lsp-rename-result', id: msg.id, edit: json });
+    } else if (msg.type === 'set-project-type') {
+        // Page sends this when the active fade.json switches between 'web'
+        // and 'monogame' so the LSP swaps its CommandCollection. The page
+        // should re-set every open document after this resolves so tokens
+        // and diagnostics recompute against the new command set.
+        let resolved = msg.projectType;
+        try { resolved = exports.WebRuntime.FadeBridge.SetProjectType(msg.projectType); }
+        catch (e) { log('set-project-type failed: ' + (e?.message ?? e)); }
+        self.postMessage({ type: 'set-project-type-result', id: msg.id, projectType: resolved });
     } else if (msg.type === 'prompt-sab') {
         // Main thread is handing us the SharedArrayBuffer used by syncPromptFromMain.
         promptSab = msg.buffer;
         promptSync = new Int32Array(promptSab, 0, 2);
         promptBytes = new Uint8Array(promptSab, 8);
+    } else if (msg.type === 'wait-interrupt-sab') {
+        // SAB used by waitMsInterruptible() — main thread Atomics.notifies
+        // it to wake an in-flight wait early when the user pauses/stops.
+        waitSab = msg.buffer;
+        waitView = new Int32Array(waitSab, 0, 1);
     } else if (msg.type === 'debug-start' || msg.type === 'debug-start-test') {
         let json = '{}';
         try {
@@ -335,6 +441,14 @@ function handle(msg) {
             log('list-tests failed: ' + (e?.message ?? e));
         }
         self.postMessage({ type: 'list-tests-result', id: msg.id, tests: json });
+    } else if (msg.type === 'list-command-docs') {
+        let json = '[]';
+        try {
+            json = exports.WebRuntime.FadeBridge.ListCommandDocs();
+        } catch (e) {
+            log('list-command-docs failed: ' + (e?.message ?? e));
+        }
+        self.postMessage({ type: 'list-command-docs-result', id: msg.id, docs: json });
     } else if (msg.type === 'run-tests') {
         let json = '{}';
         try {

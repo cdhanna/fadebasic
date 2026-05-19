@@ -603,6 +603,71 @@ test('closing then reopening a fbasic tab does not throw', async () => {
     return { activeTab };
 });
 
+test('compile error appears once (Problems) and not duplicated in Output', async () => {
+    // Type a parse-error source into main.fbasic, click Run, then count
+    // how many times the error message shows up across Problems + Output.
+    await writeFadeJson('{ "name":"demo", "type":"web", "sources":["main.fbasic"] }');
+    await new Promise((r) => setTimeout(r, 400));
+    await page.evaluate(() => {
+        const m = window.monaco.editor.getModels().find((mm) => mm.uri.toString().endsWith('/main.fbasic'));
+        m.applyEdits([{ range: m.getFullModelRange(), text: 'asdf qwert\n' }]);
+    });
+    await new Promise((r) => setTimeout(r, 1200));
+    await page.evaluate(() => document.getElementById('output-clear')?.click());
+    await page.evaluate(() => {
+        const btns = Array.from(document.querySelectorAll('vscode-button, button'));
+        btns.find((b) => /Run \(/.test(b.textContent || ''))?.click();
+    });
+    await new Promise((r) => setTimeout(r, 2000));
+    const counts = await page.evaluate(() => {
+        const problems = Array.from(document.querySelectorAll('#problems-list .problem-item'))
+            .filter((li) => /ambiguous|expression|0107/i.test(li.textContent || '')).length;
+        const output = Array.from(document.querySelectorAll('#output .output-line'))
+            .filter((l) => /ambiguous|expression|0107/i.test(l.textContent || '')).length;
+        return { problems, output };
+    });
+    if (counts.problems < 1) throw new Error('expected the parse error in Problems, got: ' + JSON.stringify(counts));
+    if (counts.output !== 0) {
+        throw new Error('parse error should not also be dumped in Output: ' + JSON.stringify(counts));
+    }
+    return counts;
+});
+
+test('lock: $schema line in fade.json reverts targeted edits', async () => {
+    // Make sure fade.json has the canonical layout with a $schema line.
+    await writeFadeJson(`{
+  "$schema": "/fade.schema.json",
+  "name": "demo",
+  "type": "web",
+  "sources": ["main.fbasic"]
+}
+`);
+    await new Promise((r) => setTimeout(r, 800));
+    // Try to surgically replace ONLY the $schema line — guard should revert.
+    const result = await page.evaluate(() => {
+        const m = window.monaco.editor.getModels().find((mm) => mm.uri.toString().endsWith('/fade.json'));
+        // Locate the $schema line.
+        let schemaLine = -1;
+        for (let i = 1; i <= m.getLineCount(); i++) {
+            if (/\$schema/.test(m.getLineContent(i))) { schemaLine = i; break; }
+        }
+        if (schemaLine < 0) return { failed: 'no $schema line in initial state' };
+        const lineLen = m.getLineMaxColumn(schemaLine);
+        const Range = window.monaco.Range;
+        m.applyEdits([{
+            range: new Range(schemaLine, 1, schemaLine, lineLen),
+            text: '  "$schema": "hijacked",',
+        }]);
+        const after = m.getLineContent(schemaLine);
+        return { after };
+    });
+    if (result.failed) throw new Error(result.failed);
+    if (/hijacked/.test(result.after)) {
+        throw new Error('schema line should have been reverted, got: ' + result.after);
+    }
+    return result;
+});
+
 test('lock: typing "fade.json" into the inline-create row silently discards', async () => {
     await page.locator('#new-file').click();
     await page.waitForSelector('.source-badge-menu[data-menu="file-context"]', { timeout: 3000 });

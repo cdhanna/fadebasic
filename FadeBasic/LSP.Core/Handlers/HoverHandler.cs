@@ -123,7 +123,10 @@ namespace FadeBasic.LSP.Core.Handlers
             };
         }
 
-        private static string BuildCommandMarkdown(CommandInfo command, ICommandDocsProvider docsProvider)
+        // Public so hosts that want to surface command docs in their own
+        // UI (e.g. WebRuntime's Help tab) can reuse the same markdown
+        // renderer the hover uses, keeping both surfaces in sync.
+        public static string BuildCommandMarkdown(CommandInfo command, ICommandDocsProvider docsProvider)
         {
             var docs = docsProvider?.Lookup(command);
             var sb = new StringBuilder();

@@ -340,7 +340,14 @@ public static class ProjectDocMethods
             {
                 var doc = new CommandDocs();
                 group.commands.Add(doc);
-                docs.map[command.sig] = doc;
+                // Key by callName + sig — `command.sig` alone is only the
+                // type signature (e.g. "voidR9"), shared by every command
+                // with the same return type and arg shape. Without callName
+                // in the key, two commands with the same sig clobber each
+                // other in this map and Lookup returns the wrong CommandDocs
+                // (or none, if a later command overwrote the slot). Match
+                // CommandInfo.UniqueName on the lookup side.
+                docs.map[command.callName + command.sig] = doc;
                 doc.command = command;
                 doc.commandName = command.callName;
                 doc.methodDocs = ParseMethodDocs(parser, command.docString, ex =>

@@ -69,6 +69,16 @@ import EditorWorker from '@codingame/monaco-vscode-api/workers/editor.worker?wor
 import { languageForExtra, registerExtraLanguages, extraThemeRules } from './languages';
 import { createMarkdownPreview, previewPanelIdFor } from './markdown-preview';
 import {
+    createBinaryPreview,
+    BINARY_PREVIEW_PANEL_ID,
+    LEGACY_BINARY_PREVIEW_ID_PREFIX,
+    isBinaryFileName,
+} from './binary-preview';
+import { patchSoundEffectForKni } from './xnb/xnb-previews';
+import { mountHelpPanel } from './help';
+import { monoGameHost } from './monogame-host';
+import type { CommandDocEntry as HelpCommandDocEntry } from './help';
+import {
     FADE_JSON_NAME,
     defaultFadeProject,
     stringifyFadeProject,
@@ -99,6 +109,7 @@ const statusEl = document.getElementById('status')!;
 // runBtn is a <vscode-button> custom element; it accepts `disabled` as an
 // attribute just like a native button, but it isn't an HTMLButtonElement.
 const runBtn = document.getElementById('run') as HTMLElement & { disabled: boolean };
+const stopBtn = document.getElementById('stop') as HTMLElement & { disabled: boolean };
 const debugBtn = document.getElementById('debug') as HTMLElement & { disabled: boolean };
 const resetLayoutBtn = document.getElementById('reset-layout') as HTMLElement;
 const newFileBtn = document.getElementById('new-file') as HTMLButtonElement;
@@ -251,6 +262,26 @@ class OpfsWorkspace {
         const fh = await this.dir.getFileHandle(name, { create: true });
         const w = await fh.createWritable();
         await w.write(content);
+        await w.close();
+    }
+
+    // Binary read/write — used for uploaded assets (.xnb, .png, .wav, …).
+    // The text-based read/write above is kept intact; callers route through
+    // one or the other based on the file extension. The underlying OPFS
+    // handle is the same; only the decode/encode shape differs.
+    async readBytes(name: string): Promise<Uint8Array> {
+        const fh = await this.dir.getFileHandle(name);
+        const f = await fh.getFile();
+        return new Uint8Array(await f.arrayBuffer());
+    }
+
+    async writeBytes(name: string, bytes: Uint8Array): Promise<void> {
+        const fh = await this.dir.getFileHandle(name, { create: true });
+        const w = await fh.createWritable();
+        // Wrap in a Blob so the writable stream's union type doesn't
+        // reject Uint8Array<ArrayBufferLike> when SharedArrayBuffer is in
+        // the lib (web-worker.d.ts pulls it in for our prompt$ plumbing).
+        await w.write(new Blob([bytes as BlobPart]));
         await w.close();
     }
 
@@ -448,6 +479,30 @@ function openMarkdownPreview(filename: string) {
     });
 }
 
+// Binary-file preview lives in ONE shared "Asset Preview" tab — clicking
+// a different .xnb / image / sound swaps the contents of that single tab
+// rather than spawning one panel per file. Mirrors VSCode preview-tab
+// behavior. The component handles the actual content swap via update();
+// see createBinaryPreview's update() in binary-preview.ts.
+function openBinaryPreview(filename: string) {
+    const api = (window as any).__fadeDockview;
+    if (!api) return;
+    const existing = api.getPanel?.(BINARY_PREVIEW_PANEL_ID);
+    if (existing) {
+        existing.api.updateParameters({ filename });
+        existing.api.setTitle?.(filename);
+        existing.api.setActive();
+        return;
+    }
+    api.addPanel({
+        id: BINARY_PREVIEW_PANEL_ID,
+        component: 'binary-preview',
+        title: filename,
+        params: { filename },
+        position: { referencePanel: 'editor', direction: 'within' },
+    });
+}
+
 // ─── Project state surface for module-scope renderers ───────────────────
 // renderFileList runs at module scope (used at boot before bootstrap()'s
 // closure exists), but needs to know which sources fade.json lists today
@@ -508,7 +563,17 @@ async function renderFileList(workspace: OpfsWorkspace) {
             li.append(badge);
         }
         if (name === activeName) li.classList.add('active');
-        li.onclick = () => openFile(workspace, name);
+        li.onclick = () => {
+            // Binary files (.xnb, images, audio) go straight to the
+            // preview panel — they aren't opened in Monaco. Text files
+            // (incl. .fbasic, .fx, .json, .txt, .md) keep the existing
+            // model-open path.
+            if (isBinaryFileName(name)) {
+                openBinaryPreview(name);
+            } else {
+                void openFile(workspace, name);
+            }
+        };
         fileListEl.append(li);
     }
 }
@@ -601,6 +666,7 @@ function uriToName(uri: string): string {
 interface RunnerOpts {
     onPrint: (line: string) => void;
     onAlert: (msg: string) => void;
+    onHeartbeat?: (role: 'lsp' | 'vm', tick: number, t: number) => void;
 }
 
 interface Diagnostic {
@@ -620,7 +686,18 @@ interface Diagnostic {
 // now: one worker, both responsibilities. Run blocks LSP for the duration of a
 // program execution, which is acceptable for v1.
 class FadeRunner {
-    public worker: Worker;
+    // Two workers boot in parallel:
+    //   • lspWorker — set-document, hover, completion, semantic tokens,
+    //     symbols, format, rename, references, definition, folding,
+    //     list-tests. Never executes user code — stays responsive even
+    //     while the VM is sync-blocked.
+    //   • vmWorker — run, run-tests, and the entire debug-* surface.
+    //     May get blocked by `wait ms` (Thread.Sleep) or other blocking
+    //     commands; that's by design and isolated from the page.
+    public lspWorker: Worker;
+    public vmWorker: Worker;
+    /** Back-compat alias — old code referenced runner.worker for raw access. */
+    public get worker(): Worker { return this.lspWorker; }
     private opts: RunnerOpts;
     private nextId = 0;
     private pending = new Map<number, (result: any) => void>();
@@ -630,143 +707,192 @@ class FadeRunner {
     private promptSab: SharedArrayBuffer | null = null;
     private promptSync: Int32Array | null = null;
     private promptBytes: Uint8Array | null = null;
+    // Second SAB used to interrupt the vm-worker's `wait ms` early. The C#
+    // call (StandardCommands.Wait) routes through JS's Atomics.wait on
+    // this buffer; the page calls Atomics.notify on pause/terminate.
+    private waitInterruptSab: SharedArrayBuffer | null = null;
+    private waitInterruptView: Int32Array | null = null;
     onPromptRequest?: (msg: string) => Promise<string | null> | string | null;
     onDebugEvent?: (event: DebugEvent) => void;
     ready: Promise<void>;
 
     constructor(opts: RunnerOpts) {
         this.opts = opts;
-        this.worker = new Worker('/runtime/worker.js', { type: 'module' });
+        this.lspWorker = new Worker('/runtime/worker.js', { type: 'module' });
+        this.vmWorker = new Worker('/runtime/worker.js', { type: 'module' });
+        // First message each worker receives. The role flips behavior at
+        // dispatch time (LSP ops are rejected on the vm worker and
+        // vice-versa, surfacing as a `worker-misroute` event).
+        this.lspWorker.postMessage({ type: 'configure', role: 'lsp' });
+        this.vmWorker.postMessage({ type: 'configure', role: 'vm' });
 
-        // Shared buffer for synchronous prompt$. Layout matches worker.js's
-        // syncPromptFromMain — Int32 sync slot + Int32 length + UTF-8 bytes.
-        // crossOriginIsolated may be false in dev; we still post the buffer
-        // so a hosted prod build with COOP/COEP works out of the box.
+        // Shared buffer for synchronous prompt$. Only the vm worker needs
+        // it — prompt$ fires from user code, which only runs there.
         if (typeof SharedArrayBuffer !== 'undefined') {
             try {
                 this.promptSab = new SharedArrayBuffer(4096);
                 this.promptSync = new Int32Array(this.promptSab, 0, 2);
                 this.promptBytes = new Uint8Array(this.promptSab, 8);
-                this.worker.postMessage({ type: 'prompt-sab', buffer: this.promptSab });
+                this.vmWorker.postMessage({ type: 'prompt-sab', buffer: this.promptSab });
+                // Second SAB: interrupt slot for `wait ms`. Single Int32;
+                // page Atomics.notifies it to wake an in-flight wait early.
+                this.waitInterruptSab = new SharedArrayBuffer(4);
+                this.waitInterruptView = new Int32Array(this.waitInterruptSab);
+                this.vmWorker.postMessage({
+                    type: 'wait-interrupt-sab',
+                    buffer: this.waitInterruptSab,
+                });
             } catch (e) {
-                console.warn('[fade] SharedArrayBuffer unavailable — prompt$ will return empty:', e);
+                console.warn('[fade] SharedArrayBuffer unavailable — prompt$ + wait-interrupt disabled:', e);
             }
         }
 
         this.ready = new Promise<void>((resolve, reject) => {
-            this.worker.onmessage = (e) => {
+            // Resolve `ready` only after BOTH workers report ready. Each
+            // hosts its own .NET runtime, so booting in parallel halves
+            // the wall-clock startup vs. sequential.
+            let lspReady = false, vmReady = false;
+            const dispatch = (e: MessageEvent) => {
                 const msg = e.data;
-                if (msg.type === 'ready') resolve();
-                else if (msg.type === 'print') this.opts.onPrint(msg.line);
-                else if (msg.type === 'alert') this.opts.onAlert(msg.msg);
-                else if (msg.type === 'result') {
-                    const r = this.pending.get(msg.id);
-                    this.pending.delete(msg.id);
-                    if (r) r(msg.result);
-                } else if (msg.type === 'lsp-tokens-result') {
-                    const r = this.pending.get(msg.id);
-                    this.pending.delete(msg.id);
-                    if (r) r(msg.tokens);
-                } else if (msg.type === 'lsp-hover-result') {
-                    const r = this.pending.get(msg.id);
-                    this.pending.delete(msg.id);
-                    if (r) r(msg.hover);
-                } else if (msg.type === 'lsp-completion-result') {
-                    const r = this.pending.get(msg.id);
-                    this.pending.delete(msg.id);
-                    if (r) r(msg.items);
-                } else if (msg.type === 'lsp-signature-help-result') {
-                    const r = this.pending.get(msg.id);
-                    this.pending.delete(msg.id);
-                    if (r) r(msg.sig);
-                } else if (msg.type === 'lsp-references-result') {
-                    const r = this.pending.get(msg.id);
-                    this.pending.delete(msg.id);
-                    if (r) r(msg.refs);
-                } else if (msg.type === 'lsp-definition-result') {
-                    const r = this.pending.get(msg.id);
-                    this.pending.delete(msg.id);
-                    if (r) r(msg.def);
-                } else if (msg.type === 'lsp-document-symbols-result') {
-                    const r = this.pending.get(msg.id);
-                    this.pending.delete(msg.id);
-                    if (r) r(msg.symbols);
-                } else if (msg.type === 'lsp-folding-ranges-result') {
-                    const r = this.pending.get(msg.id);
-                    this.pending.delete(msg.id);
-                    if (r) r(msg.ranges);
-                } else if (msg.type === 'lsp-format-result'
-                        || msg.type === 'lsp-format-range-result'
-                        || msg.type === 'lsp-format-on-type-result') {
-                    const r = this.pending.get(msg.id);
-                    this.pending.delete(msg.id);
-                    if (r) r(msg.edits);
-                } else if (msg.type === 'lsp-rename-result') {
-                    const r = this.pending.get(msg.id);
-                    this.pending.delete(msg.id);
-                    if (r) r(msg.edit);
-                } else if (msg.type === 'list-tests-result') {
-                    const r = this.pending.get(msg.id);
-                    this.pending.delete(msg.id);
-                    if (r) r(msg.tests);
-                } else if (msg.type === 'run-tests-result') {
-                    const r = this.pending.get(msg.id);
-                    this.pending.delete(msg.id);
-                    if (r) r(msg.result);
-                } else if (msg.type === 'debug-start-result') {
-                    const r = this.pending.get(msg.id);
-                    this.pending.delete(msg.id);
-                    if (r) r(msg.result);
-                } else if (msg.type === 'debug-terminate-result'
-                        || msg.type === 'debug-set-breakpoints-result'
-                        || msg.type === 'debug-step-result'
-                        || msg.type === 'debug-continue-result'
-                        || msg.type === 'debug-pause-result') {
-                    const r = this.pending.get(msg.id);
-                    this.pending.delete(msg.id);
-                    if (r) r(true);
-                } else if (msg.type === 'debug-stack-frames-result') {
-                    const r = this.pending.get(msg.id);
-                    this.pending.delete(msg.id);
-                    if (r) r(msg.frames);
-                } else if (msg.type === 'debug-scopes-result'
-                        || msg.type === 'debug-variable-expansion-result') {
-                    const r = this.pending.get(msg.id);
-                    this.pending.delete(msg.id);
-                    if (r) r(msg.scopes);
-                } else if (msg.type === 'debug-eval-result'
-                        || msg.type === 'debug-repl-result'
-                        || msg.type === 'debug-set-variable-result') {
-                    const r = this.pending.get(msg.id);
-                    this.pending.delete(msg.id);
-                    if (r) r(msg.result);
-                } else if (msg.type === 'debug-event') {
-                    if (this.onDebugEvent) this.onDebugEvent(msg.event);
-                } else if (msg.type === 'prompt-request') {
-                    this.handlePromptRequest(msg.msg);
-                } else if (msg.type === 'lsp-diagnostics') {
-                    if (this.onDiagnostics) {
-                        const parsed: Diagnostic[] = JSON.parse(msg.diagnostics);
-                        this.onDiagnostics(msg.uri, parsed);
-                    }
-                } else if (msg.type === 'log') {
-                    console.log('[runtime worker]', msg.message);
-                } else if (msg.type === 'boot-error') reject(new Error(msg.message));
+                if (msg.type === 'ready') {
+                    if (msg.role === 'vm') vmReady = true; else lspReady = true;
+                    if (lspReady && vmReady) resolve();
+                    return;
+                }
+                this.handleWorkerMessage(msg, reject);
             };
-            this.worker.onerror = (e) => reject(new Error('runtime worker error: ' + e.message));
+            this.lspWorker.onmessage = dispatch;
+            this.vmWorker.onmessage = dispatch;
+            const handleErr = (label: string) => (e: ErrorEvent) =>
+                reject(new Error(`${label} worker error: ${e.message}`));
+            this.lspWorker.onerror = handleErr('lsp');
+            this.vmWorker.onerror = handleErr('vm');
         });
+    }
+
+    // Dispatches a single message from either worker. The `ready` event
+    // is intercepted before this runs (so it can resolve the boot promise),
+    // and every other message is one of: heartbeat, print/alert, an
+    // *-result reply matching a pending id, a debug event, a prompt
+    // request, a streamed LSP diagnostic, a log line, a boot error, or a
+    // misroute warning.
+    private handleWorkerMessage(msg: any, reject: (err: Error) => void): void {
+        if (msg.type === 'heartbeat') { this.opts.onHeartbeat?.(msg.role ?? 'lsp', msg.tick, msg.t); return; }
+        if (msg.type === 'print') { this.opts.onPrint(msg.line); return; }
+        if (msg.type === 'alert') { this.opts.onAlert(msg.msg); return; }
+        if (msg.type === 'result') {
+            const r = this.pending.get(msg.id);
+            this.pending.delete(msg.id);
+            if (r) r(msg.result);
+            return;
+        }
+        if (msg.type === 'lsp-tokens-result')         { this.resolvePending(msg.id, msg.tokens); return; }
+        if (msg.type === 'lsp-hover-result')          { this.resolvePending(msg.id, msg.hover); return; }
+        if (msg.type === 'lsp-completion-result')     { this.resolvePending(msg.id, msg.items); return; }
+        if (msg.type === 'lsp-signature-help-result') { this.resolvePending(msg.id, msg.sig); return; }
+        if (msg.type === 'lsp-references-result')     { this.resolvePending(msg.id, msg.refs); return; }
+        if (msg.type === 'lsp-definition-result')     { this.resolvePending(msg.id, msg.def); return; }
+        if (msg.type === 'lsp-document-symbols-result') { this.resolvePending(msg.id, msg.symbols); return; }
+        if (msg.type === 'lsp-folding-ranges-result') { this.resolvePending(msg.id, msg.ranges); return; }
+        if (msg.type === 'lsp-format-result'
+            || msg.type === 'lsp-format-range-result'
+            || msg.type === 'lsp-format-on-type-result') {
+            this.resolvePending(msg.id, msg.edits); return;
+        }
+        if (msg.type === 'lsp-rename-result')         { this.resolvePending(msg.id, msg.edit); return; }
+        if (msg.type === 'set-project-type-result')   { this.resolvePending(msg.id, msg.projectType); return; }
+        if (msg.type === 'list-tests-result')         { this.resolvePending(msg.id, msg.tests); return; }
+        if (msg.type === 'list-command-docs-result')  { this.resolvePending(msg.id, msg.docs); return; }
+        if (msg.type === 'run-tests-result')          { this.resolvePending(msg.id, msg.result); return; }
+        if (msg.type === 'debug-start-result')        { this.resolvePending(msg.id, msg.result); return; }
+        if (msg.type === 'debug-terminate-result'
+            || msg.type === 'debug-set-breakpoints-result'
+            || msg.type === 'debug-step-result'
+            || msg.type === 'debug-continue-result'
+            || msg.type === 'debug-pause-result') {
+            this.resolvePending(msg.id, true); return;
+        }
+        if (msg.type === 'debug-stack-frames-result') { this.resolvePending(msg.id, msg.frames); return; }
+        if (msg.type === 'debug-scopes-result'
+            || msg.type === 'debug-variable-expansion-result') {
+            this.resolvePending(msg.id, msg.scopes); return;
+        }
+        if (msg.type === 'debug-eval-result'
+            || msg.type === 'debug-repl-result'
+            || msg.type === 'debug-set-variable-result') {
+            this.resolvePending(msg.id, msg.result); return;
+        }
+        if (msg.type === 'debug-event') {
+            if (this.onDebugEvent) this.onDebugEvent(msg.event);
+            return;
+        }
+        if (msg.type === 'prompt-request') { this.handlePromptRequest(msg.msg); return; }
+        if (msg.type === 'lsp-diagnostics') {
+            if (this.onDiagnostics) {
+                const parsed: Diagnostic[] = JSON.parse(msg.diagnostics);
+                this.onDiagnostics(msg.uri, parsed);
+            }
+            return;
+        }
+        if (msg.type === 'log') { console.log('[runtime worker]', msg.message); return; }
+        if (msg.type === 'boot-error') { reject(new Error(msg.message)); return; }
+        if (msg.type === 'worker-misroute') {
+            console.warn('[fade] worker misroute', msg);
+            // Resolve any pending id with null so callers don't hang.
+            if (msg.id != null) this.resolvePending(msg.id, null);
+            return;
+        }
+    }
+
+    private resolvePending(id: number, value: any): void {
+        const r = this.pending.get(id);
+        this.pending.delete(id);
+        if (r) r(value);
+    }
+
+    // Wake an in-flight `wait ms` in the vm worker. `kind` tells the C#
+    // side why we're waking it:
+    //   1 = pause request — WaitImpl enqueues REQUEST_PAUSE so the VM
+    //       stops on the next instruction step.
+    //   2 = terminate request — WaitImpl flips the session's requestedExit
+    //       so StartDebugging unwinds cleanly (no exception path).
+    //   3 = wake-only — used for breakpoint updates and other page→VM
+    //       state changes. WaitImpl returns without doing anything else;
+    //       the wake just lets DebugTick yield sooner so the worker's
+    //       JS event loop can drain the queued message (the breakpoint
+    //       update itself) and have the next tick see the new state.
+    interruptWait(kind: 1 | 2 | 3): void {
+        if (!this.waitInterruptView) return;
+        Atomics.store(this.waitInterruptView, 0, kind);
+        Atomics.notify(this.waitInterruptView, 0);
     }
 
     run(source: string): Promise<string> {
         const id = ++this.nextId;
         return new Promise<string>((resolve) => {
             this.pending.set(id, resolve);
-            this.worker.postMessage({ type: 'run', id, source });
+            this.vmWorker.postMessage({ type: 'run', id, source });
         });
     }
 
     setDocument(uri: string, text: string) {
         this.worker.postMessage({ type: 'lsp-set', uri, text });
+    }
+
+    // Switch both workers' LSP CommandCollection to match the active
+    // fade.json type. Both workers run worker.js so we fire the message
+    // to each — LSP worker needs the right commands for tokens/hover/
+    // diagnostics, VM worker matters once Run/Tests for that type land
+    // there (today monogame Run/Tests go through WebRuntime.MonoGame
+    // directly, so the vm-worker call is a no-op for monogame but
+    // harmless and keeps the two workers in sync).
+    async setProjectType(projectType: string): Promise<void> {
+        const post = (w: Worker) => new Promise<void>((resolve) => {
+            const id = ++this.nextId;
+            this.pending.set(id, () => resolve());
+            w.postMessage({ type: 'set-project-type', id, projectType });
+        });
+        await Promise.all([post(this.lspWorker), post(this.vmWorker)]);
     }
 
     async getTokens(uri: string): Promise<number[]> {
@@ -934,6 +1060,23 @@ class FadeRunner {
         });
     }
 
+    // Fetches a flat list of every loaded command with its hover-style
+    // markdown. The Help tab calls this once on bootstrap (and again on
+    // any future command-set change). Lives on the LSP worker — pure
+    // metadata read, doesn't touch the VM.
+    async listCommandDocs(): Promise<CommandDocEntry[]> {
+        const id = ++this.nextId;
+        return new Promise<CommandDocEntry[]>((resolve) => {
+            this.pending.set(id, (json: string) => {
+                try {
+                    const parsed = JSON.parse(json);
+                    resolve(Array.isArray(parsed) ? parsed : []);
+                } catch { resolve([]); }
+            });
+            this.lspWorker.postMessage({ type: 'list-command-docs', id });
+        });
+    }
+
     async runTests(source: string, testName?: string): Promise<TestRunResult> {
         const id = ++this.nextId;
         return new Promise<TestRunResult>((resolve) => {
@@ -941,7 +1084,7 @@ class FadeRunner {
                 try { resolve(JSON.parse(json)); }
                 catch { resolve({ passed: 0, failed: 0, duration: 0, results: [], printed: '', error: 'parse failed' }); }
             });
-            this.worker.postMessage({ type: 'run-tests', id, source, testName: testName || '' });
+            this.vmWorker.postMessage({ type: 'run-tests', id, source, testName: testName || '' });
         });
     }
 
@@ -953,7 +1096,7 @@ class FadeRunner {
                 try { resolve(JSON.parse(json)); }
                 catch { resolve({ ok: false, error: 'parse failed', statementLines: [] }); }
             });
-            this.worker.postMessage({ type: 'debug-start', id, source });
+            this.vmWorker.postMessage({ type: 'debug-start', id, source });
         });
     }
     async debugStartTest(source: string, testName: string): Promise<DebugStartResult> {
@@ -963,24 +1106,40 @@ class FadeRunner {
                 try { resolve(JSON.parse(json)); }
                 catch { resolve({ ok: false, error: 'parse failed', statementLines: [] }); }
             });
-            this.worker.postMessage({ type: 'debug-start-test', id, source, testName });
+            this.vmWorker.postMessage({ type: 'debug-start-test', id, source, testName });
         });
     }
-    debugTerminate(): Promise<boolean> { return this.simpleDebugCall('debug-terminate'); }
+    debugTerminate(): Promise<boolean> {
+        this.interruptWait(2);
+        return this.simpleDebugCall('debug-terminate');
+    }
     debugContinue(): Promise<boolean> { return this.simpleDebugCall('debug-continue'); }
-    debugPause(): Promise<boolean> { return this.simpleDebugCall('debug-pause'); }
+    debugPause(): Promise<boolean> {
+        // Wake any in-flight `wait ms` early AND tell C# this was a pause
+        // request — WaitImpl will enqueue REQUEST_PAUSE synchronously so
+        // the next VM instruction check pauses, instead of waiting for
+        // the worker JS event loop to drain the debug-pause postMessage
+        // (which can take up to a full DebugTick budget).
+        this.interruptWait(1);
+        return this.simpleDebugCall('debug-pause');
+    }
     debugStep(kind: 'over' | 'in' | 'out'): Promise<boolean> {
         const id = ++this.nextId;
         return new Promise<boolean>((resolve) => {
             this.pending.set(id, () => resolve(true));
-            this.worker.postMessage({ type: 'debug-step', id, kind });
+            this.vmWorker.postMessage({ type: 'debug-step', id, kind });
         });
     }
     debugSetBreakpoints(breakpoints: BreakpointRequest[]): Promise<boolean> {
         const id = ++this.nextId;
+        // Wake any in-flight `wait ms` so the worker's JS event loop yields
+        // and picks up this breakpoint update without waiting out the rest
+        // of the sleep. Without this, adding/removing a breakpoint mid-
+        // `wait ms(3000)` only takes effect on the next loop iteration.
+        this.interruptWait(3);
         return new Promise<boolean>((resolve) => {
             this.pending.set(id, () => resolve(true));
-            this.worker.postMessage({
+            this.vmWorker.postMessage({
                 type: 'debug-set-breakpoints', id,
                 linesJson: JSON.stringify(breakpoints),
             });
@@ -995,7 +1154,7 @@ class FadeRunner {
                     resolve(Array.isArray(parsed) ? parsed : []);
                 } catch { resolve([]); }
             });
-            this.worker.postMessage({ type: 'debug-stack-frames', id });
+            this.vmWorker.postMessage({ type: 'debug-stack-frames', id });
         });
     }
     debugScopes(frameId: number): Promise<DebugScopesResult> {
@@ -1004,7 +1163,7 @@ class FadeRunner {
             this.pending.set(id, (json: string) => {
                 try { resolve(JSON.parse(json)); } catch { resolve({ scopes: [] }); }
             });
-            this.worker.postMessage({ type: 'debug-scopes', id, frameId });
+            this.vmWorker.postMessage({ type: 'debug-scopes', id, frameId });
         });
     }
     debugExpandVariable(variableId: number): Promise<DebugScopesResult> {
@@ -1013,7 +1172,7 @@ class FadeRunner {
             this.pending.set(id, (json: string) => {
                 try { resolve(JSON.parse(json)); } catch { resolve({ scopes: [] }); }
             });
-            this.worker.postMessage({ type: 'debug-variable-expansion', id, variableId });
+            this.vmWorker.postMessage({ type: 'debug-variable-expansion', id, variableId });
         });
     }
     debugEval(frameId: number, expression: string): Promise<DebugEvalResult | null> {
@@ -1029,7 +1188,7 @@ class FadeRunner {
         const id = ++this.nextId;
         return new Promise<boolean>((resolve) => {
             this.pending.set(id, () => resolve(true));
-            this.worker.postMessage({ type, id });
+            this.vmWorker.postMessage({ type, id });
         });
     }
     private debugTextCall(type: string, payload: object): Promise<DebugEvalResult | null> {
@@ -1038,7 +1197,7 @@ class FadeRunner {
             this.pending.set(id, (json: string) => {
                 try { resolve(JSON.parse(json)); } catch { resolve(null); }
             });
-            this.worker.postMessage({ type, id, ...payload });
+            this.vmWorker.postMessage({ type, id, ...payload });
         });
     }
 
@@ -1103,6 +1262,16 @@ interface TestEntry {
     fromParent: string | null;
     sourceLine: number;
     sourceChar: number;
+}
+// One entry per uniquely-named command, shape matches what
+// `FadeBridge.ListCommandDocs()` emits in [WebRuntime/FadeBridge.cs].
+// The markdown field is the same text the hover provider renders; the
+// Help tab reuses it verbatim so both surfaces stay in sync.
+interface CommandDocEntry {
+    name: string;
+    signature: string;
+    group: string;
+    markdown: string;
 }
 interface FailureFrame {
     functionName: string;
@@ -1285,9 +1454,50 @@ async function bootstrap() {
     monaco.editor.setTheme('fade-dark');
 
     statusEl.textContent = 'Booting Fade runtime worker…';
+
+    // Heartbeat indicators. Each worker (lsp + vm) posts a beat every
+    // 500ms; the corresponding dot pulses while alive and turns red when
+    // we haven't heard from it in >1.2s. The vm dot going red while the
+    // lsp dot stays green is the signature of a Thread.Sleep / `wait ms`
+    // blocking the VM worker — the page itself stays responsive because
+    // the lsp worker keeps draining messages.
+    const heartbeatEl = document.getElementById('worker-heartbeat')!;
+    type BeatState = { lastAt: number; tick: number };
+    const beats: { lsp: BeatState; vm: BeatState } = {
+        lsp: { lastAt: Date.now(), tick: 0 },
+        vm:  { lastAt: Date.now(), tick: 0 },
+    };
+    // Render two dots inside the heartbeat span — lsp on the left, vm
+    // on the right. Tooltip carries the freeze hint for the busy state.
+    heartbeatEl.innerHTML = `
+        <span class="hb-dot" data-role="lsp" data-state="off"></span>
+        <span class="hb-dot" data-role="vm"  data-state="off"></span>
+    `;
+    const dotLsp = heartbeatEl.querySelector<HTMLElement>('.hb-dot[data-role="lsp"]')!;
+    const dotVm  = heartbeatEl.querySelector<HTMLElement>('.hb-dot[data-role="vm"]')!;
+    function paintHeartbeat() {
+        for (const [role, el] of [['lsp', dotLsp], ['vm', dotVm]] as const) {
+            const b = beats[role];
+            const dt = Date.now() - b.lastAt;
+            el.dataset.state = dt > 1200 ? 'busy' : (b.tick % 2 === 0 ? 'on' : 'off');
+            el.title = dt > 1200
+                ? `${role} worker is busy — last beat ${(dt / 1000).toFixed(1)}s ago.`
+                    + (role === 'vm'
+                        ? ' Likely Thread.Sleep / wait ms inside user code.'
+                        : '')
+                : `${role} worker alive — beat ${b.tick}`;
+        }
+    }
+    setInterval(paintHeartbeat, 250);
+
     const runner = new FadeRunner({
         onPrint: (line) => appendOutputLine(line),
         onAlert: (msg) => window.alert(msg),
+        onHeartbeat: (role, tick, t) => {
+            beats[role].tick = tick;
+            beats[role].lastAt = t;
+            paintHeartbeat();
+        },
     });
     await runner.ready;
     // Single worker handles both run and LSP duties.
@@ -1343,17 +1553,27 @@ async function bootstrap() {
     // Hover provider — surfaces diagnostic messages and basic token info.
     // When a debug session is paused, ALSO evaluates the hovered identifier
     // and prepends its live value (VSCode behavior).
+    // Hover markdown is rendered with isTrusted=true so `command:` URIs
+    // are clickable. We register a single `fade.openHelp` command that
+    // takes the command name as its argument and routes through the
+    // Help controller. See the "View in Help" link appended below.
+    monaco.editor.registerCommand('fade.openHelp', (_accessor: unknown, name?: string) => {
+        if (typeof name === 'string' && name) {
+            (window as any).__fadeHelp?.openCommand?.(name);
+        }
+    });
+
     monaco.languages.registerHoverProvider('fade', {
         provideHover: async (model, position) => {
             const uri = model.uri.toString();
             const word = model.getWordAtPosition(position);
 
             // Try debug-eval first when paused.
-            const contents: { value: string }[] = [];
+            const contents: { value: string; isTrusted?: boolean }[] = [];
             let range: monaco.IRange | undefined;
             if (debugSessionActive && debugPaused && word && activeFrameId != null) {
                 try {
-                    const evalResult = await runner.debugEval(activeFrameId, word.word);
+                    const evalResult = await dbg.eval(activeFrameId, word.word);
                     if (evalResult && evalResult.id !== -1 && evalResult.value != null) {
                         const type = evalResult.type ? ` _(${evalResult.type})_` : '';
                         contents.push({ value: `**${word.word}** = \`${evalResult.value}\`${type}` });
@@ -1367,7 +1587,21 @@ async function bootstrap() {
 
             const hover = await runner.getHover(uri, position.lineNumber - 1, position.column - 1);
             if (hover) {
-                contents.push({ value: hover.contents });
+                let value = hover.contents;
+                // BuildCommandMarkdown emits `### commandname\n...` as
+                // the first non-blank line for command hovers. When we
+                // see that shape, append a deep-link to the Help tab
+                // (markdown link with a Monaco command URI). Trusted
+                // markdown lets Monaco invoke our registered command.
+                const m = /^\s*###\s+([^\n]+)/.exec(value);
+                if (m) {
+                    const cmdName = m[1].trim();
+                    const args = encodeURIComponent(JSON.stringify(cmdName));
+                    value = value + `\n\n[View in Help →](command:fade.openHelp?${args})`;
+                    contents.push({ value, isTrusted: true });
+                } else {
+                    contents.push({ value });
+                }
                 if (!range) {
                     range = new monaco.Range(
                         hover.range.start.line + 1,
@@ -1800,11 +2034,10 @@ async function bootstrap() {
     const testsStatusEl = document.getElementById('tests-status')!;
     const testsSearchEl = document.getElementById('tests-search') as HTMLInputElement;
     const testsSearchClearBtn = document.getElementById('tests-search-clear') as HTMLButtonElement;
-    const testsLogEl = document.getElementById('tests-log')!;
-    const testsLogRegion = document.getElementById('tests-log-region')!;
-    const testsLogToggle = document.getElementById('tests-log-toggle')!;
-    const testsLogChev = document.getElementById('tests-log-chev')!;
-    const testsLogClearBtn = document.getElementById('tests-log-clear')!;
+    // Inline test-log region was replaced by streaming directly into the
+    // Output panel. The HTML for the old region is gone; we keep `appendTestLog`
+    // as a thin wrapper so call sites stay readable + can still highlight
+    // failure frames as click-to-jump lines.
 
     type TestUiEntry = TestEntry & {
         status: 'idle' | 'running' | 'pass' | 'fail';
@@ -1824,35 +2057,23 @@ async function bootstrap() {
         editor.focus();
     }
 
-    // Inline log helpers. We keep a small log under the test list — separate
-    // from the global Output panel — so test feedback is always one glance
-    // away. Lines can carry a click-to-jump payload (failure frames).
+    // Test-run output streams directly into the Output panel now. Lines
+    // tagged with a frame become click-to-jump links to the offending
+    // source location, same as the failure-row link in the Tests panel.
     function appendTestLog(text: string, cls?: 'pass' | 'fail' | 'dim', frame?: FailureFrame) {
         if (!text) return;
-        const line = document.createElement('div');
-        line.className = 'tests-log-line' + (cls ? ' ' + cls : '');
+        const kind: OutputKind = cls === 'pass' ? 'pass'
+            : cls === 'fail' ? 'error'
+            : cls === 'dim' ? 'dim'
+            : 'plain';
         if (frame) {
-            const span = document.createElement('span');
-            span.className = 'test-failure-frame';
-            span.textContent = text;
-            // failureFrames are 0-based; +1 to bring into editor coordinates.
             const ln = (frame.lineNumber | 0) + 1;
             const col = ((frame.charNumber | 0) + 1) || 1;
-            span.onclick = () => jumpEditorTo(ln, col);
-            line.append(span);
+            appendOutputLine(text, kind, () => jumpEditorTo(ln, col));
         } else {
-            line.textContent = text;
+            appendOutputLine(text, kind);
         }
-        testsLogEl.append(line);
-        testsLogEl.scrollTop = testsLogEl.scrollHeight;
     }
-    function clearTestLog() { testsLogEl.innerHTML = ''; }
-    testsLogClearBtn.addEventListener('click', clearTestLog);
-    testsLogToggle.addEventListener('click', (e) => {
-        if ((e.target as HTMLElement) === testsLogClearBtn) return;
-        const collapsed = testsLogRegion.classList.toggle('collapsed');
-        testsLogChev.className = collapsed ? 'codicon codicon-chevron-right' : 'codicon codicon-chevron-down';
-    });
 
     function getActiveSource(): string {
         const activeTab = activeName ? tabs.get(activeName) : null;
@@ -1872,6 +2093,11 @@ async function bootstrap() {
     // fade.json sources[] exactly, matching the native SDK behavior.
     let currentProject: FadeProject | null = null;
     let currentProjectErrors: FadeConfigError[] = [];
+    // Last project type we told the worker LSP about. Updated in lock-step
+    // with the call so we only fire setProjectType on actual transitions —
+    // refreshFadeProject runs on every fade.json edit, but most of those
+    // edits don't change the type.
+    let lastWorkerProjectType: string | null = null;
 
     // Live-content lookup: prefer Monaco's model (so dirty edits compile
     // even before the save timer fires), fall back to the OPFS-persisted
@@ -1903,6 +2129,43 @@ async function bootstrap() {
         }
         const r = parseFadeProject(text);
         currentProject = r.ok ? (r.project ?? null) : null;
+
+        // Sync the worker LSP's CommandCollection with fade.json's type so
+        // syntax highlighting / hover / signature help reflect the right
+        // command surface ('web' → WebCommands; 'monogame' → FadeMonoGameCommands).
+        // Idempotent inside setProjectType, but we still gate here to avoid
+        // re-tokenizing every model on every fade.json refresh.
+        const wantedType = currentProject?.type ?? 'web';
+        if (wantedType !== lastWorkerProjectType) {
+            lastWorkerProjectType = wantedType;
+            try {
+                await runner.setProjectType(wantedType);
+                // Re-push every open fbasic model so tokens + diagnostics
+                // recompute against the new command set. The next edit
+                // would do this anyway, but we'd rather not leave stale
+                // highlights/squiggles sitting until then.
+                //
+                // FILTER by language: fade.json + other non-fade files must
+                // NOT go through the Fade LSP — the parser would treat the
+                // JSON's `$schema` as a substitution and flag [0158] errors.
+                // Also evict any stale owner='fade' markers from non-fade
+                // models that an earlier (buggy) push left behind, so the
+                // squiggles disappear on the next paint instead of waiting
+                // for the user to re-edit. Self-healing if a future code
+                // path mis-pushes a non-fade model again.
+                for (const model of monaco.editor.getModels()) {
+                    if (model.getLanguageId() === 'fade') {
+                        runner.setDocument(model.uri.toString(), model.getValue());
+                    } else {
+                        monaco.editor.setModelMarkers(model, 'fade', []);
+                        diagnosticsByUri.delete(model.uri.toString());
+                    }
+                }
+                renderProblems();
+            } catch (e) {
+                console.warn('[fade] setProjectType failed', e);
+            }
+        }
 
         // Attach source ranges to schema errors so the renderer + Monaco
         // markers can highlight the offending key/value precisely.
@@ -1946,6 +2209,10 @@ async function bootstrap() {
 
         currentProjectErrors = errors;
         applyFadeJsonMarkers(text, currentProjectErrors);
+        // Idempotent guard installs the read-only protection for fade.json's
+        // `$schema` line. Safe to call on every refresh — the WeakSet keeps
+        // it from re-binding listeners.
+        protectFadeJsonSchemaLine();
         renderProblems();
         // Republish for module-scope renderers (file list badges) and
         // re-render so the source-order indicators update immediately.
@@ -2119,6 +2386,109 @@ async function bootstrap() {
         },
     };
 
+    // Keep the `$schema` line of fade.json read-only. The page emits this
+    // line via stringifyFadeProject so external editors can resolve the
+    // JSON Schema; if the user edits it, they likely break that linkage
+    // by accident. We protect by:
+    //  - snapshotting the current `$schema` line whenever fade.json's
+    //    model is clean,
+    //  - on every content change, checking whether any edit overlapped
+    //    that line, and if so, splicing the snapshot back in (with a
+    //    reentry guard so our revert doesn't trigger itself).
+    // Also drops a non-editable read-only decoration so the line visibly
+    // hints "you can't edit this".
+    const schemaGuards = new WeakSet<monaco.editor.ITextModel>();
+    function protectFadeJsonSchemaLine() {
+        const uri = monaco.Uri.file(`/workspace/${FADE_JSON_NAME}`);
+        const m = monaco.editor.getModel(uri);
+        if (!m) return;
+        if (schemaGuards.has(m)) return;
+        schemaGuards.add(m);
+        // Pin to a non-null local so the closures below don't trip TS's
+        // possibly-null analysis on the field.
+        const model: monaco.editor.ITextModel = m;
+
+        let suppressing = false;
+        let protectedLine = -1;
+        let protectedText = '';
+        let decorationIds: string[] = [];
+
+        function findSchemaLine(): number {
+            for (let i = 1; i <= model.getLineCount(); i++) {
+                if (/"\$schema"\s*:/.test(model.getLineContent(i))) return i;
+            }
+            return -1;
+        }
+        function snapshot() {
+            protectedLine = findSchemaLine();
+            protectedText = protectedLine > 0 ? model.getLineContent(protectedLine) : '';
+            // Visual cue — non-editable shading + a tooltip.
+            if (protectedLine > 0) {
+                const maxCol = model.getLineMaxColumn(protectedLine);
+                decorationIds = model.deltaDecorations(decorationIds, [{
+                    range: new monaco.Range(protectedLine, 1, protectedLine, maxCol),
+                    options: {
+                        inlineClassName: 'fade-readonly-line',
+                        isWholeLine: true,
+                        hoverMessage: { value: 'Read-only — links fade.json to the published JSON Schema.' },
+                    },
+                }]);
+            } else if (decorationIds.length) {
+                decorationIds = model.deltaDecorations(decorationIds, []);
+            }
+        }
+        snapshot();
+
+        model.onDidChangeContent((e) => {
+            if (suppressing) return;
+            if (protectedLine < 0) { snapshot(); return; }
+            // A whole-document replacement (e.g. formatter, paste-over-all,
+            // or programmatic set-value from a probe) is intentional. Let
+            // it through, then re-snapshot so the new schema line — if any
+            // — gets locked again.
+            const wholeReplace = e.changes.length === 1
+                && e.changes[0].range.startLineNumber === 1
+                && e.changes[0].range.startColumn === 1;
+            if (wholeReplace) { snapshot(); return; }
+            const touched = e.changes.some((c) =>
+                c.range.startLineNumber <= protectedLine
+                && c.range.endLineNumber >= protectedLine,
+            );
+            if (!touched) { snapshot(); return; }
+            suppressing = true;
+            try {
+                // Restore the protected line's exact original text. If the
+                // change shifted the line number (insert/remove above), the
+                // line may now be off — re-find by content match before
+                // patching.
+                const currentLineNow = findSchemaLine();
+                const target = currentLineNow > 0 ? currentLineNow : protectedLine;
+                const maxLines = model.getLineCount();
+                if (target > maxLines) {
+                    // The user removed the line outright. Re-insert it.
+                    model.applyEdits([{
+                        range: new monaco.Range(maxLines, model.getLineMaxColumn(maxLines), maxLines, model.getLineMaxColumn(maxLines)),
+                        text: '\n' + protectedText,
+                    }]);
+                } else {
+                    const lineLen = model.getLineMaxColumn(target);
+                    const live = model.getLineContent(target);
+                    if (live !== protectedText) {
+                        model.applyEdits([{
+                            range: new monaco.Range(target, 1, target, lineLen),
+                            text: protectedText,
+                        }]);
+                    }
+                }
+            } finally {
+                suppressing = false;
+            }
+            // After the revert, the schema line position may have settled
+            // somewhere different; resnapshot to track that.
+            snapshot();
+        });
+    }
+
     // Push schema errors as Monaco markers on the fade.json model so the
     // user sees red/yellow squiggles inline. Owner string scopes them so
     // they don't fight with LSP-emitted markers on other models.
@@ -2286,7 +2656,7 @@ async function bootstrap() {
         outputEl.innerHTML = '';
         outputPrimed = true;
     }
-    function appendOutputLine(text: string, kind: OutputKind = 'plain') {
+    function appendOutputLine(text: string, kind: OutputKind = 'plain', onClick?: () => void) {
         if (text == null) return;
         primeOutput();
         // Split on newlines so each rendered <div> is one logical line — keeps
@@ -2297,6 +2667,10 @@ async function bootstrap() {
             const div = document.createElement('div');
             div.className = 'output-line' + (kind !== 'plain' ? ' ' + kind : '');
             div.textContent = line;
+            if (onClick) {
+                div.classList.add('clickable');
+                div.onclick = onClick;
+            }
             outputEl.append(div);
         }
         outputEl.scrollTop = outputEl.scrollHeight;
@@ -2321,6 +2695,8 @@ async function bootstrap() {
         renderTests();
         setTestsBusy(true);
         testsStatusEl.textContent = `Running ${name}…`;
+        clearOutput();
+        revealPanel('output');
         appendTestLog(`▶ ${name}`, 'dim');
         try {
             const r = await runner.runTests(source, name);
@@ -2349,6 +2725,8 @@ async function bootstrap() {
         renderTests();
         setTestsBusy(true);
         testsStatusEl.textContent = 'Running…';
+        clearOutput();
+        revealPanel('output');
         appendTestLog(`▶ Run all`, 'dim');
         try {
             const r = await runner.runTests(source);
@@ -2360,10 +2738,16 @@ async function bootstrap() {
 
     function applyResult(r: TestRunResult) {
         if (r.error) {
-            appendOutputLine(r.error, 'error');
-            appendTestLog(r.error, 'fail');
+            // r.error is typically a compile-failure dump. Those same
+            // errors already streamed through LSP → Problems with proper
+            // line/col pins; we'd just be duplicating text here. Show a
+            // short pointer instead and reveal Problems.
+            appendTestLog('Test compile failed. See Problems panel.', 'fail');
+            revealPanel('problems');
             for (const t of testEntries) if (t.status === 'running') t.status = 'idle';
-            testsStatusEl.textContent = r.error;
+            // Keep the status bar wording short so the Tests panel stays
+            // readable even with a long backend message.
+            testsStatusEl.textContent = 'Compile failed';
             renderTests();
             return;
         }
@@ -2376,14 +2760,11 @@ async function bootstrap() {
             e.failure = res.passed ? null : (res.failureMessage || res.failureReason || 'Failed');
             e.failureFrames = res.passed ? undefined : (res.failureFrames || []);
         }
-        // Captured stdout still belongs in the Output panel; the headline +
-        // per-test ✓/✗ rollup live in the inline test log only (no more
-        // "--- Tests: ... ---" section header in Output).
         const headline = `Tests: ${r.passed} passed, ${r.failed} failed (${Math.round(r.duration)} ms)`;
-        if (r.printed) appendOutputLine(r.printed.replace(/\n$/, ''));
 
-        // Inline log: include printed stdout, then one block per result. Failure
-        // frames render as click-to-jump links.
+        // All test-side output streams through appendTestLog (which now
+        // writes to the Output panel). Failure frames render as click-to-
+        // jump lines via the optional onClick on appendOutputLine.
         if (r.printed) appendTestLog(r.printed.trimEnd(), 'dim');
         for (const res of r.results) {
             if (res.passed) {
@@ -2481,6 +2862,15 @@ async function bootstrap() {
                     }
                     return createMarkdownPreview(filename);
                 }
+                if (name === 'binary-preview') {
+                    // dockview's createComponent only hands us {id, name} —
+                    // params arrive via the component's init(parameters)
+                    // a moment later. Hand an empty initial filename in;
+                    // init() picks up the real params and calls setFilename.
+                    return createBinaryPreview('', {
+                        readBytes: (n) => workspace.readBytes(n),
+                    });
+                }
                 const cell = panelCells.querySelector<HTMLElement>(
                     `.panel-cell[data-panel="${name}"]`,
                 );
@@ -2546,19 +2936,29 @@ async function bootstrap() {
     const KNOWN_COMPONENTS = new Set([
         'workspace', 'editor', 'debug',
         'output', 'problems', 'tests', 'debug-console',
+        'help',
         // Dynamic — created on demand by the markdown preview button.
         'markdown-preview',
+        // Dynamic — created on demand when a binary file is opened
+        // from the workspace tree (XNB, PNG, WAV, …).
+        'binary-preview',
     ]);
 
     function healLayout(dock: DockviewApi) {
         try {
             // Pass 1: remove any restored panel whose component is unknown
-            // (e.g. an old `debug` panel from a previous version).
+            // (e.g. an old `debug` panel from a previous version), AND any
+            // legacy per-file binary-preview panel id (`binary-preview:foo.xnb`)
+            // — those are dead now that all binary previews share a single
+            // `asset-preview` tab. Saved layouts from before the refactor
+            // may still reference them.
             for (const panel of dock.panels.slice()) {
                 const name = (panel as any).view?.contentComponent
                     ?? (panel as any).contentComponent
                     ?? (panel as any).component;
-                if (typeof name === 'string' && !KNOWN_COMPONENTS.has(name)) {
+                const isLegacyBinaryPreview = panel.id.startsWith(LEGACY_BINARY_PREVIEW_ID_PREFIX);
+                if (isLegacyBinaryPreview ||
+                    (typeof name === 'string' && !KNOWN_COMPONENTS.has(name))) {
                     console.warn('[fade] dropping stale panel', panel.id, 'component=', name);
                     dock.removePanel(panel);
                 }
@@ -2619,6 +3019,14 @@ async function bootstrap() {
             addMissing('debug-console', {
                 position: { referencePanel: bottomRef, direction: 'within' },
                 renderer: RENDER_ALWAYS, title: 'Debug Console',
+            });
+            addMissing('help', {
+                position: { referencePanel: bottomRef, direction: 'within' },
+                renderer: RENDER_ALWAYS, title: 'Help',
+            });
+            addMissing('game', {
+                position: { referencePanel: ref?.id ?? 'editor', direction: 'right' },
+                renderer: RENDER_ALWAYS, title: 'Game',
             });
         } catch (e) {
             console.warn('[fade] healLayout failed — falling back to default', e);
@@ -2702,6 +3110,27 @@ async function bootstrap() {
             position: { referencePanel: outputPanel.id, direction: 'within' },
             renderer: RENDER_ALWAYS,
         });
+        // Help: command reference. Lives in the same bottom tab group
+        // as Output/Problems/Tests so it's a click away from the source.
+        dock.addPanel({
+            id: 'help',
+            component: 'help',
+            title: 'Help',
+            position: { referencePanel: outputPanel.id, direction: 'within' },
+            renderer: RENDER_ALWAYS,
+        });
+        // Game panel — only meaningful for fade.json type='monogame', but we
+        // add it eagerly so users can preview the empty splash and the runOnce
+        // branch always has somewhere to reveal. Initial size budget biased
+        // toward the editor — game is a peek-on-Run thing for v1.
+        dock.addPanel({
+            id: 'game',
+            component: 'game',
+            title: 'Game',
+            position: { referencePanel: editorPanel.id, direction: 'right' },
+            initialWidth: 360,
+            renderer: RENDER_ALWAYS,
+        });
         const out = dock.getPanel('output');
         if (out) out.api.setActive();
 
@@ -2731,6 +3160,30 @@ async function bootstrap() {
     const dockApi = setupDockview();
     // Expose for tests + future "Reset layout" command.
     (window as any).__fadeDockview = dockApi;
+
+    // Mount the Help panel's TOC + search + reader. Populated below
+    // once the LSP worker is ready (no source needed — it reads from
+    // the bridge's loaded CommandCollection).
+    const helpCtl = mountHelpPanel();
+    // Open the Help tab + focus a specific command. Used by the hover
+    // provider's "View in Help →" link and by external probes via
+    // window.__fadeHelp.openCommand(name).
+    function openHelpForCommand(name: string): boolean {
+        try { dockApi.getPanel('help')?.api?.setActive(); } catch { /* ignore */ }
+        return helpCtl.selectCommand(name);
+    }
+    // Fire-and-forget on ready — the LSP worker has the workspace
+    // populated by the time runner.ready resolves, so this returns
+    // every loaded command (Standard + Web + anything else).
+    void runner.listCommandDocs().then((entries: HelpCommandDocEntry[]) => {
+        helpCtl.setEntries(entries);
+    }).catch((e) => console.warn('[fade] help: list-command-docs failed', e));
+
+    // Test probe / public API surface.
+    (window as any).__fadeHelp = {
+        openCommand: (name: string) => openHelpForCommand(name),
+        getController: () => helpCtl,
+    };
 
     // Reset Layout: nuke the persisted layout and reload. Useful when
     // something puts the dock into an awkward state we can't recover via
@@ -3004,6 +3457,34 @@ async function bootstrap() {
     runBtn.disabled = false;
     debugBtn.disabled = false;
 
+    // Walk the active project's OPFS folder for `.xnb` files and push their
+    // bytes into the MonoGame runtime's BrowserContentManager. Called before
+    // each loadProgram/debugStart so any `texture`/`load sfx clip`/`font`
+    // commands fbasic runs can resolve via stock Content.Load<T>(name).
+    //
+    // Asset name = filename minus the `.xnb` extension. So `Catfish.xnb`
+    // registers under "Catfish" — matching what fbasic code passes to
+    // `texture 1, "Catfish"`. Pre-clears the runtime dict so deletions in
+    // OPFS take effect on the next Run.
+    //
+    // SoundEffect XNBs get a loopLength patch on the way through — see
+    // patchSoundEffectForKni for the KNI Blazor bug it works around.
+    async function syncAssetsToRuntime(): Promise<void> {
+        await monoGameHost.clearAssets();
+        const names = await workspace.list();
+        for (const name of names) {
+            if (!/\.xnb$/i.test(name)) continue;
+            try {
+                const raw = await workspace.readBytes(name);
+                const bytes = patchSoundEffectForKni(raw);
+                const assetName = name.replace(/\.xnb$/i, '');
+                await monoGameHost.registerAsset(assetName, bytes);
+            } catch (e) {
+                console.error('[fade] asset push failed for', name, e);
+            }
+        }
+    }
+
     const runOnce = async () => {
         const source = await getProjectSource();
         if (!source) {
@@ -3013,6 +3494,33 @@ async function bootstrap() {
         }
         runBtn.disabled = true;
         clearOutput();
+
+        // ─── 'monogame' branch ──────────────────────────────────────────
+        // Route to the canvas-side runtime (WebRuntime.MonoGame). First
+        // call boots ~8 MB of WASM lazily; subsequent calls hot-reload via
+        // Game1.LoadProgram. Reveal the Game panel so the canvas is visible.
+        if (currentProject?.type === 'monogame') {
+            try {
+                revealPanel('game');
+                appendOutputLine('Booting MonoGame runtime…', 'dim');
+                await syncAssetsToRuntime();
+                const ok = await monoGameHost.loadProgram(source);
+                if (ok) {
+                    appendOutputLine('Running on canvas.', 'info');
+                    // Game is alive — let the user kill it via Stop.
+                    stopBtn.disabled = false;
+                } else {
+                    appendOutputLine('Compile failed. See Problems panel.', 'error');
+                    revealPanel('problems');
+                }
+            } catch (e: any) {
+                appendOutputLine('MonoGame runtime error: ' + (e?.message ?? String(e)), 'error');
+            } finally {
+                runBtn.disabled = false;
+            }
+            return;
+        }
+
         try {
             const result = await runner.run(source);
             // CompileAndRun returns a JSON envelope { compileError, runtimeError, printed }.
@@ -3025,7 +3533,16 @@ async function bootstrap() {
                 // worker's per-line `print` messages (onPrint → appendOutputLine).
                 // We intentionally ignore it here and only render errors + the
                 // empty-state hint.
-                if (env.compileError) appendOutputLine(env.compileError, 'error');
+                //
+                // `env.compileError` would also duplicate what the LSP already
+                // surfaced in the Problems panel (lex/parse/symbol errors all
+                // flow through both paths). Replace the verbose text dump with
+                // a short hint and reveal Problems so the user sees the rich
+                // entries with line/col pins.
+                if (env.compileError) {
+                    appendOutputLine('Compile failed. See Problems panel.', 'error');
+                    revealPanel('problems');
+                }
                 if (env.runtimeError) appendOutputLine(env.runtimeError, 'error');
                 if (!env.compileError && !env.runtimeError && !env.printed) {
                     appendOutputLine('(no output)', 'dim');
@@ -3042,6 +3559,20 @@ async function bootstrap() {
 
     runBtn.addEventListener('click', runOnce);
     editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyR, runOnce);
+
+    // Header Stop button. Delegates to stopAll() so debug sessions get
+    // a clean terminate + the canvas pauses uniformly. For 'web'
+    // projects there's no canvas to pause and no header-level stop for
+    // a CompileAndRun-in-flight; the floating debug-toolbar Stop is
+    // still the right way to end a debug session there.
+    stopBtn.addEventListener('click', async () => {
+        try {
+            await stopAll();
+            appendOutputLine('Stopped.', 'dim');
+        } catch (e: any) {
+            appendOutputLine('Stop failed: ' + (e?.message ?? String(e)), 'error');
+        }
+    });
 
     // ─── Debug session wiring ───────────────────────────────────────────
     const debugControlBar = document.getElementById('debug-control-bar')!;
@@ -3188,6 +3719,10 @@ async function bootstrap() {
         debugReplInput.disabled = !paused;
         debugBtn.disabled = hasSession;
         runBtn.disabled = hasSession;
+        // Header Stop mirrors the floating debug toolbar's Stop while a
+        // session is active; runOnce also flips this on after a plain
+        // (non-debug) monogame Run. Both buttons delegate to stopAll().
+        if (hasSession) stopBtn.disabled = false;
         // The whole control bar is hidden until a session starts (mirrors
         // VSCode's floating debug toolbar — it doesn't exist when nothing
         // is debugging).
@@ -3245,7 +3780,7 @@ async function bootstrap() {
         // Monaco lines are 1-based; the lexer/token lineNumber the bridge
         // expects is 0-based. Drop one.
         const payload: BreakpointRequest[] = lines.map((ln) => ({ line: ln - 1, column: 0 }));
-        void runner.debugSetBreakpoints(payload);
+        void dbg.setBreakpoints(payload);
     }
 
     // Click in the glyph margin toggles a breakpoint on that line.
@@ -3382,7 +3917,7 @@ async function bootstrap() {
                 continue;
             }
             try {
-                const result = await runner.debugEval(activeFrameId, expr);
+                const result = await dbg.eval(activeFrameId, expr);
                 if (!result || result.id === -1) {
                     valEl.textContent = result?.value ?? 'error';
                     valEl.className = 'watch-value error';
@@ -3439,7 +3974,7 @@ async function bootstrap() {
     // are addressed by *index* in the returned list (DebugScopeRequest.frameIndex).
     // Treat that index as the id we surface to the rest of this UI.
     async function refreshDebugView() {
-        const frames = await runner.debugStackFrames();
+        const frames = await dbg.stackFrames();
         renderFrames(frames);
         if (frames.length > 0) {
             activeFrameId = 0;
@@ -3482,7 +4017,16 @@ async function bootstrap() {
     const expandedVars = new Map<number, DebugScope[]>();
 
     async function refreshScopes(frameId: number) {
-        const result = await runner.debugScopes(frameId);
+        const result = await dbg.scopes(frameId);
+        // [DEBUG-LOGGING — remove once scope-after-step issue is resolved]
+        try {
+            const summary = (result?.scopes ?? []).map((s: any) => ({
+                name: s?.scopeName,
+                vars: (s?.variables ?? []).map((v: any) => `${v.name}=${v.value}`),
+            }));
+            // eslint-disable-next-line no-console
+            console.log('[DBG-EV] refreshScopes(' + frameId + ') →', JSON.stringify(summary));
+        } catch { /* logging is best-effort */ }
         renderScopes(result.scopes ?? []);
     }
 
@@ -3596,7 +4140,7 @@ async function bootstrap() {
                 return;
             }
             try {
-                const result = await runner.debugExpandVariable(v.id);
+                const result = await dbg.expandVariable(v.id);
                 expandedVars.set(v.id, result.scopes ?? []);
                 childrenWrap.innerHTML = '';
                 for (const subScope of result.scopes ?? []) {
@@ -3649,7 +4193,7 @@ async function bootstrap() {
                 }
                 const rhs = input.value;
                 try {
-                    const result = await runner.debugSetVariable(activeFrameId!, v.id, rhs);
+                    const result = await dbg.setVariable(activeFrameId!, v.id, rhs);
                     // DebugEvalResult signals failure with id === -1 + value
                     // carrying the error message (there is no `failed`
                     // boolean — Fade DAP uses the id-sentinel convention).
@@ -3685,7 +4229,28 @@ async function bootstrap() {
         } catch { /* dockview may not be ready yet */ }
     }
 
-    runner.onDebugEvent = async (event) => {
+    // Same handler runs for both backends — events from the canvas-side
+    // monogame DebugSession come through monoGameHost's rAF drain rather
+    // than the worker postMessage path, but the event shape is identical.
+    monoGameHost.onDebugEvent = (event) => { void onAnyDebugEvent(event); };
+    runner.onDebugEvent = (event) => { void onAnyDebugEvent(event); };
+
+    async function onAnyDebugEvent(event: any) {
+        // [DEBUG-LOGGING — remove once scope-after-step issue is resolved]
+        // Dump every event with its parsed json so we can see (a) ordering of
+        // REV_REQUEST_BREAKPOINT vs PROTO_ACK, (b) what status/reason each
+        // PROTO_ACK carries, and (c) whether two events race the refresh.
+        try {
+            let parsedDbg: any = null;
+            if (event?.json) { try { parsedDbg = JSON.parse(event.json); } catch { /* opaque */ } }
+            // eslint-disable-next-line no-console
+            console.log('[DBG-EV]', event?.type, {
+                id: event?.id,
+                status: parsedDbg?.status,
+                reason: parsedDbg?.reason,
+                rawJsonPreview: typeof event?.json === 'string' ? event.json.slice(0, 160) : null,
+            });
+        } catch { /* logging is best-effort */ }
         switch (event.type) {
             case 'REV_REQUEST_BREAKPOINT':
                 debugPaused = true;
@@ -3693,6 +4258,8 @@ async function bootstrap() {
                 revealPanel('call-stack');
                 setDebugButtons();
                 await refreshDebugView();
+                // eslint-disable-next-line no-console
+                console.log('[DBG-EV] BREAKPOINT refreshDebugView done');
                 break;
             case 'REV_REQUEST_EXITED':
             case 'complete':
@@ -3704,17 +4271,29 @@ async function bootstrap() {
                 setDebugEmptyStates(true);
                 setDebugButtons();
                 break;
-            case 'REV_REQUEST_EXPLODE':
+            case 'REV_REQUEST_EXPLODE': {
                 debugSessionActive = false;
                 debugPaused = false;
-                setDebugStatus('runtime error', 'error');
-                appendReplLine(event.json ?? event.message ?? 'runtime error', 'err');
-                revealPanel('debug-console');
+                // Filter the synthetic "explode" the bridge throws when
+                // the user clicks Stop mid-`wait ms`: the VM's exception
+                // catch wraps our OperationCanceledException as a runtime
+                // error. It's not actually an error — surface it as a
+                // clean stop instead.
+                const expMsg = (event.json ?? event.message ?? '') as string;
+                const isTerminateUnwind = /interrupted by terminate/i.test(expMsg);
+                if (isTerminateUnwind) {
+                    setDebugStatus('stopped', 'idle');
+                } else {
+                    setDebugStatus('runtime error', 'error');
+                    appendReplLine(expMsg || 'runtime error', 'err');
+                    revealPanel('debug-console');
+                }
                 setCurrentLine(null);
                 clearDebugInspectionPanels();
                 setDebugEmptyStates(true);
                 setDebugButtons();
                 break;
+            }
             case 'PROTO_ACK': {
                 // Two kinds of PROTO_ACKs reach us:
                 //   1. StepNextResponseMessage with status=1 — a step landed
@@ -3734,11 +4313,15 @@ async function bootstrap() {
                         }
                     } catch { /* not a structured response */ }
                 }
+                // eslint-disable-next-line no-console
+                console.log('[DBG-EV] PROTO_ACK stepLanded=', stepLanded);
                 if (stepLanded) {
                     debugPaused = true;
                     setDebugStatus('paused on step', 'paused');
                     setDebugButtons();
                     await refreshDebugView();
+                    // eslint-disable-next-line no-console
+                    console.log('[DBG-EV] STEP refreshDebugView done');
                 } else {
                     debugPaused = false;
                     setDebugStatus('running', 'running');
@@ -3748,6 +4331,8 @@ async function bootstrap() {
                     // a session, the user just can't see anything yet.
                     setDebugEmptyStates(true, 'Running — hit a breakpoint or pause to inspect');
                     setDebugButtons();
+                    // eslint-disable-next-line no-console
+                    console.log('[DBG-EV] PROTO_ACK fell into RUNNING branch — var panel cleared');
                 }
                 break;
             }
@@ -3755,6 +4340,72 @@ async function bootstrap() {
                 appendReplLine(event.message ?? 'error', 'err');
                 break;
         }
+    }
+
+    // Dispatch debug ops to the right backend based on the active fade.json
+    // type. 'web' uses the existing worker debug API; 'monogame' uses the
+    // canvas-side bridge (monoGameHost). Same logical operations on both
+    // sides — the result shapes match so call sites consume them
+    // identically. Parses JSON strings returned by monoGameHost so callers
+    // see the same shape as runner's pre-parsed responses.
+    const dbg = {
+        start: (source: string): Promise<any> =>
+            currentProject?.type === 'monogame'
+                // Push assets first; the canvas runtime needs the dict
+                // populated *before* the user program's `texture`/`sfx`
+                // commands run inside Game1.LoadProgram (the very next call).
+                ? syncAssetsToRuntime()
+                    .then(() => monoGameHost.debugStart(source))
+                    .then((s) => JSON.parse(s))
+                : dbg.start(source),
+        startTest: (source: string, testName: string): Promise<any> =>
+            // No test-debug for monogame yet — tests go through the
+            // worker today.
+            dbg.startTest(source, testName),
+        continue: (): Promise<any> =>
+            currentProject?.type === 'monogame'
+                ? monoGameHost.debugContinue()
+                : dbg.continue(),
+        pause: (): Promise<any> =>
+            currentProject?.type === 'monogame'
+                ? monoGameHost.debugPause()
+                : dbg.pause(),
+        step: (kind: 'over' | 'in' | 'out'): Promise<any> =>
+            currentProject?.type === 'monogame'
+                ? monoGameHost.debugStep(kind)
+                : dbg.step(kind),
+        terminate: (): Promise<any> =>
+            currentProject?.type === 'monogame'
+                ? monoGameHost.debugTerminate()
+                : dbg.terminate(),
+        setBreakpoints: (payload: any): Promise<any> =>
+            currentProject?.type === 'monogame'
+                ? monoGameHost.debugSetBreakpoints(JSON.stringify(payload))
+                : dbg.setBreakpoints(payload),
+        stackFrames: (): Promise<any> =>
+            currentProject?.type === 'monogame'
+                ? monoGameHost.debugStackFrames().then((s) => JSON.parse(s))
+                : dbg.stackFrames(),
+        scopes: (frameId: number): Promise<any> =>
+            currentProject?.type === 'monogame'
+                ? monoGameHost.debugScopes(frameId).then((s) => JSON.parse(s))
+                : dbg.scopes(frameId),
+        expandVariable: (variableId: number): Promise<any> =>
+            currentProject?.type === 'monogame'
+                ? monoGameHost.debugVariableExpansion(variableId).then((s) => JSON.parse(s))
+                : dbg.expandVariable(variableId),
+        eval: (frameId: number, expression: string): Promise<any> =>
+            currentProject?.type === 'monogame'
+                ? monoGameHost.debugEval(frameId, expression).then((s) => JSON.parse(s))
+                : dbg.eval(frameId, expression),
+        repl: (frameId: number, code: string): Promise<any> =>
+            currentProject?.type === 'monogame'
+                ? monoGameHost.debugRepl(frameId, code).then((s) => JSON.parse(s))
+                : dbg.repl(frameId, code),
+        setVariable: (frameId: number, variableId: number, rhs: string): Promise<any> =>
+            currentProject?.type === 'monogame'
+                ? monoGameHost.debugSetVariable(frameId, variableId, rhs).then((s) => JSON.parse(s))
+                : dbg.setVariable(frameId, variableId, rhs),
     };
 
     const startDebug = async () => {
@@ -3764,7 +4415,7 @@ async function bootstrap() {
             appendOutputLine('No file open.', 'dim');
             return;
         }
-        await beginDebugSession(() => runner.debugStart(source));
+        await beginDebugSession(() => dbg.start(source));
     };
 
     // Shared session-start machinery, factored so both Debug-button and
@@ -3787,7 +4438,7 @@ async function bootstrap() {
         setDebugStatus('starting', 'paused');
         setDebugButtons();
         syncBreakpointsToWorker();
-        await runner.debugContinue();
+        await dbg.continue();
         debugPaused = false;
         setDebugStatus('running', 'running');
         setDebugButtons();
@@ -3804,7 +4455,7 @@ async function bootstrap() {
             return;
         }
         appendReplLine(`▶ debug test "${name}"`, 'in');
-        await beginDebugSession(() => runner.debugStartTest(source, name));
+        await beginDebugSession(() => dbg.startTest(source, name));
     }
 
     debugBtn.addEventListener('click', startDebug);
@@ -3866,46 +4517,56 @@ async function bootstrap() {
     });
 
     debugContinueBtn.addEventListener('click', async () => {
-        await runner.debugContinue();
+        await dbg.continue();
         debugPaused = false;
         setDebugStatus('running', 'running');
         setCurrentLine(null);
         setDebugButtons();
     });
     debugPauseBtn.addEventListener('click', async () => {
-        await runner.debugPause();
+        await dbg.pause();
         // The 'paused' state is asserted by the next breakpoint event.
     });
     debugStepOverBtn.addEventListener('click', async () => {
-        await runner.debugStep('over');
+        await dbg.step('over');
         debugPaused = false;
         setCurrentLine(null);
         setDebugButtons();
     });
     debugStepInBtn.addEventListener('click', async () => {
-        await runner.debugStep('in');
+        await dbg.step('in');
         debugPaused = false;
         setCurrentLine(null);
         setDebugButtons();
     });
     debugStepOutBtn.addEventListener('click', async () => {
-        await runner.debugStep('out');
+        await dbg.step('out');
         debugPaused = false;
         setCurrentLine(null);
         setDebugButtons();
     });
-    debugStopBtn.addEventListener('click', async () => {
-        await runner.debugTerminate();
-        debugSessionActive = false;
-        debugPaused = false;
-        setDebugStatus('stopped', 'idle');
-        setCurrentLine(null);
-        // Clear the live content so previous frame/variable data doesn't
-        // linger under the empty-state message.
-        clearDebugInspectionPanels();
-        setDebugEmptyStates(true);
+    // Single point of truth for "stop everything" — terminates an active
+    // debug session AND pauses any running monogame canvas. Both Stop
+    // buttons (header + floating debug toolbar) call this.
+    async function stopAll() {
+        if (debugSessionActive) {
+            await dbg.terminate();
+            debugSessionActive = false;
+            debugPaused = false;
+            setDebugStatus('stopped', 'idle');
+            setCurrentLine(null);
+            clearDebugInspectionPanels();
+            setDebugEmptyStates(true);
+        }
+        // Pause the canvas regardless of debug state — even after debug
+        // terminate, the VM is left running, so this halts ticks too.
+        if (currentProject?.type === 'monogame') {
+            try { await monoGameHost.stop(); } catch { /* best effort */ }
+        }
+        stopBtn.disabled = true;
         setDebugButtons();
-    });
+    }
+    debugStopBtn.addEventListener('click', stopAll);
 
     debugReplInput.addEventListener('keydown', async (e) => {
         if (e.key !== 'Enter') return;
@@ -3913,7 +4574,7 @@ async function bootstrap() {
         if (!expr || activeFrameId == null) return;
         appendReplLine(expr, 'in');
         debugReplInput.value = '';
-        const result = await runner.debugRepl(activeFrameId, expr);
+        const result = await dbg.repl(activeFrameId, expr);
         const failed = !result || result.id === -1;
         appendReplLine(result?.value ?? '(no result)', failed ? 'err' : 'out');
         // Variables may have changed.
@@ -3952,6 +4613,22 @@ async function bootstrap() {
             };
             menu.append(item);
         }
+        // Separator + upload action. Opens a file picker; selected files
+        // land in OPFS under their original names (collision-renamed) and
+        // the first one is auto-previewed.
+        const sep = document.createElement('div');
+        sep.className = 'source-badge-sep';
+        menu.append(sep);
+        const upload = document.createElement('button');
+        upload.className = 'source-badge-item';
+        upload.type = 'button';
+        upload.textContent = 'Upload file…';
+        upload.onclick = (e) => {
+            e.stopPropagation();
+            closeAnyFileMenu();
+            triggerUploadPicker();
+        };
+        menu.append(upload);
         document.body.append(menu);
         menu.style.left = `${x}px`;
         menu.style.top = `${y}px`;
@@ -4034,6 +4711,102 @@ async function bootstrap() {
         input.addEventListener('blur', () => { void finish(true); });
     }
 
+    // ─── Upload + drag-drop binary files into the workspace ──────────────
+    // Both the menu's "Upload file…" item and the file-list drag-drop
+    // handlers route through ingestFiles() so the OPFS write + open-preview
+    // + collision-rename behavior stays in one place.
+    async function ingestFiles(files: FileList | File[]): Promise<void> {
+        const list = Array.from(files);
+        if (list.length === 0) return;
+        const existing = new Set(await workspace.list());
+        let firstUploaded: string | null = null;
+        for (const file of list) {
+            const name = uniqueName(file.name, existing);
+            existing.add(name);
+            try {
+                const bytes = new Uint8Array(await file.arrayBuffer());
+                await workspace.writeBytes(name, bytes);
+                if (!firstUploaded) firstUploaded = name;
+            } catch (e) {
+                console.error('[fade] upload failed:', file.name, e);
+            }
+        }
+        await renderFileList(workspace);
+        if (firstUploaded) {
+            if (isBinaryFileName(firstUploaded)) {
+                openBinaryPreview(firstUploaded);
+            } else {
+                await openFile(workspace, firstUploaded);
+            }
+        }
+    }
+
+    function uniqueName(original: string, taken: Set<string>): string {
+        // Collapse anything OPFS doesn't accept into safe chars so a wild
+        // upload name doesn't ENOENT downstream. Same character class the
+        // inline-create rename validator enforces (letters, digits, dot,
+        // dash, underscore).
+        const sanitized = original.replace(/[^\w.\-]+/g, '_');
+        if (!taken.has(sanitized) && sanitized !== FADE_JSON_NAME) return sanitized;
+        const dot = sanitized.lastIndexOf('.');
+        const base = dot > 0 ? sanitized.slice(0, dot) : sanitized;
+        const ext = dot > 0 ? sanitized.slice(dot) : '';
+        let n = 1;
+        while (true) {
+            const candidate = `${base}-${n}${ext}`;
+            if (!taken.has(candidate) && candidate !== FADE_JSON_NAME) return candidate;
+            n++;
+        }
+    }
+
+    function triggerUploadPicker(): void {
+        const input = document.createElement('input');
+        input.type = 'file';
+        input.multiple = true;
+        input.style.display = 'none';
+        input.addEventListener('change', () => {
+            if (input.files && input.files.length > 0) {
+                void ingestFiles(input.files);
+            }
+            input.remove();
+        });
+        document.body.append(input);
+        input.click();
+    }
+
+    // Drag-drop on the file list. Highlights the list during dragover;
+    // drop hands the FileList off to ingestFiles. Skip drags that don't
+    // carry files (e.g. internal text drags within Monaco) so we don't
+    // steal them.
+    function hasFilesDrag(e: DragEvent): boolean {
+        const types = e.dataTransfer?.types;
+        if (!types) return false;
+        for (let i = 0; i < types.length; i++) {
+            if (types[i] === 'Files') return true;
+        }
+        return false;
+    }
+    fileListEl.addEventListener('dragover', (e) => {
+        if (!hasFilesDrag(e)) return;
+        e.preventDefault();
+        fileListEl.classList.add('file-list-drop-target');
+    });
+    fileListEl.addEventListener('dragleave', (e) => {
+        // Only clear when the drag actually leaves the container — not
+        // when it crosses between child rows.
+        if (e.target === fileListEl) {
+            fileListEl.classList.remove('file-list-drop-target');
+        }
+    });
+    fileListEl.addEventListener('drop', (e) => {
+        if (!hasFilesDrag(e)) return;
+        e.preventDefault();
+        fileListEl.classList.remove('file-list-drop-target');
+        if (e.dataTransfer?.files && e.dataTransfer.files.length > 0) {
+            void ingestFiles(e.dataTransfer.files);
+        }
+    });
+
     newFileBtn.addEventListener('click', (e) => {
         const r = (e.currentTarget as HTMLElement).getBoundingClientRect();
         showNewFileMenu(r.left, r.bottom + 2);
@@ -4093,23 +4866,23 @@ async function bootstrap() {
             },
         },
         debug: {
-            start: ({ source }: { source: string }) => runner.debugStart(source),
+            start: ({ source }: { source: string }) => dbg.start(source),
             startTest: ({ source, name }: { source: string; name: string }) =>
-                runner.debugStartTest(source, name),
-            terminate: () => runner.debugTerminate(),
-            setBreakpoints: ({ breakpoints }: { breakpoints: BreakpointRequest[] }) => runner.debugSetBreakpoints(breakpoints),
-            step: ({ kind }: { kind: 'over' | 'in' | 'out' }) => runner.debugStep(kind),
-            continue: () => runner.debugContinue(),
-            pause: () => runner.debugPause(),
-            stackFrames: () => runner.debugStackFrames(),
-            scopes: ({ frameId }: { frameId: number }) => runner.debugScopes(frameId),
-            expand: ({ variableId }: { variableId: number }) => runner.debugExpandVariable(variableId),
+                dbg.startTest(source, name),
+            terminate: (): Promise<any> => dbg.terminate(),
+            setBreakpoints: ({ breakpoints }: { breakpoints: BreakpointRequest[] }) => dbg.setBreakpoints(breakpoints),
+            step: ({ kind }: { kind: 'over' | 'in' | 'out' }) => dbg.step(kind),
+            continue: (): Promise<any> => dbg.continue(),
+            pause: (): Promise<any> => dbg.pause(),
+            stackFrames: (): Promise<any> => dbg.stackFrames(),
+            scopes: ({ frameId }: { frameId: number }) => dbg.scopes(frameId),
+            expand: ({ variableId }: { variableId: number }) => dbg.expandVariable(variableId),
             eval: ({ frameId, expression }: { frameId: number; expression: string }) =>
-                runner.debugEval(frameId, expression),
+                dbg.eval(frameId, expression),
             repl: ({ frameId, code }: { frameId: number; code: string }) =>
-                runner.debugRepl(frameId, code),
+                dbg.repl(frameId, code),
             setVariable: ({ frameId, variableId, rhs }: { frameId: number; variableId: number; rhs: string }) =>
-                runner.debugSetVariable(frameId, variableId, rhs),
+                dbg.setVariable(frameId, variableId, rhs),
         },
     };
 

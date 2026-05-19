@@ -5,6 +5,7 @@
   "type": "module",
   "scripts": {
     "build:runtime": "node scripts/build-runtime.mjs",
+    "build:monogame-runtime": "node scripts/build-monogame-runtime.mjs",
     "predev": "node scripts/build-runtime.mjs",
     "dev": "vite",
     "build": "tsc -b && vite build",

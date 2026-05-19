@@ -1,16 +1,6 @@
-- test tab
-    - need search bar
-    - need to show logs nearby for test run
-    - need failed line logs to jump to src
-    - need to be able right click on a test in src, and run
-- tabs/docked components should be re-sizable
 - color theming
-- project file; need to be able to assemble multiple fade files together. It can be an enforced file per workspace or something. 
-- DAP
+- need a place to add hidden tabs back
 
-- debugger
-    - needs call stack
-    - needs breakpoint window
-    - maybe the debugger window tab should not be split into separate windows; but should look more like vscode, where they are in dropdowns. 
-    - continue/step button bar should default to being snapped next to the top buttons; Ideally, it can be pulled out, but by default, it sits up there in the top-right.
-    - hovering over a variable during debug should show its value. This works in vscode (or it did anyway) with the HoverHandler / eval stuff. 
+
+- debugger is off by a line or so.
+- cached decoded xnb files in indexdb

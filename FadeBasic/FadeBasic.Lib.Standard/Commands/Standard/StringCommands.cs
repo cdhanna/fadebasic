@@ -6,12 +6,22 @@ namespace FadeBasic.Lib.Standard
 {
     public partial class StandardCommands
     {
+        /// <summary>
+        /// Converts an input string into an upper case string
+        /// </summary>
+        /// <param name="str">the string to convert</param>
+        /// <returns>an upper cased version of in the input string</returns>
         [FadeBasicCommand("upper$", FadeBasicCommandUsage.Both)]
         public static string Upper(string str)
         {
             return str.ToUpperInvariant();
         }
         
+        /// <summary>
+        /// Converts an input string into a lower case string
+        /// </summary>
+        /// <param name="str"></param>
+        /// <returns></returns>
         [FadeBasicCommand("lower$", FadeBasicCommandUsage.Both)]
         public static string Lower(string str)
         {

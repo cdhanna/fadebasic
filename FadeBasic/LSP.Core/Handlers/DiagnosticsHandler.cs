@@ -13,16 +13,29 @@ namespace FadeBasic.LSP.Core.Handlers
             var diagnostics = new List<LspDiagnostic>();
             if (doc == null) return diagnostics;
 
+            // Lex errors and parse errors can describe the same root cause —
+            // e.g. an unclosed string literal surfaces in both passes with
+            // identical code/message/range. De-dup by signature so the UI
+            // shows a single problem per (range, code, message) tuple.
+            var seen = new HashSet<string>();
+            string SigOf(LspDiagnostic d) =>
+                $"{d.Code}|{d.Message}|{d.Range.Start.Line}:{d.Range.Start.Character}-{d.Range.End.Line}:{d.Range.End.Character}";
+
+            void AddUnique(LspDiagnostic d)
+            {
+                if (seen.Add(SigOf(d))) diagnostics.Add(d);
+            }
+
             if (doc.LexResults?.tokenErrors != null)
             {
                 foreach (var err in doc.LexResults.tokenErrors)
-                    diagnostics.Add(MakeDiag(err));
+                    AddUnique(MakeDiag(err));
             }
 
             if (doc.Program != null)
             {
                 foreach (var err in doc.Program.GetAllErrors())
-                    diagnostics.Add(MakeDiag(err));
+                    AddUnique(MakeDiag(err));
             }
 
             return diagnostics;

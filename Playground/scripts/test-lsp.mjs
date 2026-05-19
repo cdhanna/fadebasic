@@ -311,6 +311,33 @@ test('lsp-direct: rename produces a workspace edit', async () => {
     return { edits: allEdits.length };
 });
 
+test('lsp: lex+parse duplicates collapse to a single diagnostic', async () => {
+    // An unclosed string literal historically surfaced in both the lex
+    // pass (tokenErrors) AND the parse pass (Program.GetAllErrors), so the
+    // LSP returned two identical entries. We now dedupe by signature.
+    await seedSource('x$ = "hello\n');
+    const markers = await page.evaluate(() => {
+        const uri = window.monaco.Uri.file('/workspace/main.fbasic');
+        return window.monaco.editor.getModelMarkers({ resource: uri })
+            .filter((m) => m.owner === 'fade')
+            .map((m) => ({ msg: m.message, line: m.startLineNumber, col: m.startColumn }));
+    });
+    if (markers.length === 0) {
+        throw new Error('expected at least one diagnostic for the unclosed string');
+    }
+    // Look for the [0002] code specifically; any two markers with the
+    // identical (msg, line, col) tuple count as a duplicate failure.
+    const seen = new Set();
+    for (const m of markers) {
+        const key = `${m.msg}|${m.line}|${m.col}`;
+        if (seen.has(key)) {
+            throw new Error('duplicate diagnostic emitted: ' + JSON.stringify(markers));
+        }
+        seen.add(key);
+    }
+    return { markers };
+});
+
 test('tests: list+run integration', async () => {
     // Fade test syntax uses bare names: `test foo` / `endtest`.
     const source = [

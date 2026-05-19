@@ -8,7 +8,7 @@
 
 export const FADE_JSON_NAME = 'fade.json';
 
-export type FadeProjectType = 'web';
+export type FadeProjectType = 'web' | 'monogame';
 
 export interface FadeProject {
     name: string;
@@ -42,7 +42,7 @@ export interface FadeConfigParseResult {
 }
 
 const SOURCE_NAME_RE = /^[\w.\-/]+\.(fbasic|fb)$/;
-const ALLOWED_TYPES = new Set<FadeProjectType>(['web']);
+const ALLOWED_TYPES = new Set<FadeProjectType>(['web', 'monogame']);
 
 // Validate a *parsed* JSON value against the fade.json shape. Returns a
 // fully-typed FadeProject only when no `error`-severity issues were found.

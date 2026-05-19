@@ -24,6 +24,18 @@
     <ProjectReference Include="..\FadeBasic\CommandSourceGenerator\CommandSourceGenerator.csproj"
                       OutputItemType="Analyzer"
                       ReferenceOutputAssembly="false" />
+    <!--
+      Fade.MonoGame.Lib's command metadata for LSP. The worker hosts the
+      editor's syntax highlighting / hover / signature help — so it needs
+      to know what `sprite`, `sync`, `texture`, etc. mean when the active
+      fade.json is type='monogame'. SetTargetFramework=net8.0 pulls the
+      browser-friendly flavor (KNI BlazorGL deps) — those assemblies load
+      but their methods never run here; the canvas-side WebRuntime.MonoGame
+      owns actual command execution. See [FadeBridge.SetProjectType].
+    -->
+    <ProjectReference Include="..\..\Fade.MonoGame\Fade.MonoGame\Fade.MonoGame.Lib\Fade.MonoGame.Lib.csproj">
+      <SetTargetFramework>TargetFramework=net8.0</SetTargetFramework>
+    </ProjectReference>
   </ItemGroup>
 
 </Project>

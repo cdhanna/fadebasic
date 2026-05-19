@@ -363,12 +363,13 @@ seem to pick up the change, you forgot this step.
 
 | Suite | Tests |
 |---|---|
-| `test-lsp.mjs` | 16 |
-| `test-dap.mjs` | 6 |
+| `test-lsp.mjs` | 17 |
+| `test-dap.mjs` | 11 |
 | `test-tests-panel.mjs` | 5 |
-| `test-project.mjs` | 28 |
+| `test-project.mjs` | 30 |
 | `test-projects-overlay.mjs` | 9 |
-| **Total** | **64** |
+| `test-help.mjs` | 6 |
+| **Total** | **78** |
 
 Keep this rough count + the suite list current when you add or move
 files; it's a quick sanity check after a big change ("did I just delete

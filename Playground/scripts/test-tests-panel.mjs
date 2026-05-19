@@ -108,38 +108,46 @@ test('ui: running a test writes a row into the inline test log', async () => {
         }
     }
     if (!clickedFail) throw new Error('failing row not found');
+    // Test output now lives in the Output panel — failure rows use the
+    // shared `output-line.error` class.
     await page.waitForFunction(
-        () => document.querySelectorAll('#tests-log .tests-log-line.fail').length > 0,
+        () => document.querySelectorAll('#output .output-line.error').length > 0,
         { timeout: 8000 },
     );
     const lines = await page.evaluate(() =>
-        Array.from(document.querySelectorAll('#tests-log .tests-log-line')).map((l) => l.textContent),
+        Array.from(document.querySelectorAll('#output .output-line')).map((l) => l.textContent),
     );
     const hasFailLine = lines.some((l) => /failsonpurpose/i.test(l));
-    if (!hasFailLine) throw new Error('inline log missing fail row: ' + JSON.stringify(lines));
+    if (!hasFailLine) throw new Error('Output panel missing fail row: ' + JSON.stringify(lines));
     return { lines: lines.length };
 });
 
-test('ui: failure-frame link in inline log jumps editor', async () => {
-    // The previous test populated the log; rerun all to be safe.
-    await page.evaluate(() => document.getElementById('tests-log-clear').click());
+test('ui: failure-frame link in Output panel jumps editor', async () => {
+    // Activate the Tests panel so the run-all button is in the DOM.
+    await page.evaluate(() => window.__fadeDockview?.getPanel?.('tests')?.api?.setActive?.());
+    await page.evaluate(() => document.getElementById('output-clear')?.click());
     await page.locator('#tests-run-all').click();
+    // Activate the Output panel so its DOM is visible — applyResult auto-
+    // reveals it, but be defensive.
+    await page.evaluate(() => window.__fadeDockview?.getPanel?.('output')?.api?.setActive?.());
     await page.waitForFunction(
-        () => document.querySelectorAll('#tests-log .test-failure-frame').length > 0,
+        () => document.querySelectorAll('#output .output-line.clickable').length > 0,
         { timeout: 12000 },
     );
-    // Move cursor far away first so we can verify the click moves it.
     await page.evaluate(() => {
         const ed = window.monaco.editor.getEditors().find((e) => e.getModel()?.getLanguageId() === 'fade');
         ed.setPosition({ lineNumber: 1, column: 1 });
     });
-    const frameEl = page.locator('#tests-log .test-failure-frame').first();
-    await frameEl.click();
+    // Click the clickable line via DOM dispatch so visibility checks don't
+    // matter — the click handler is wired on the element directly.
+    await page.evaluate(() => {
+        const el = document.querySelector('#output .output-line.clickable');
+        el?.click();
+    });
     const newLine = await page.evaluate(() => {
         const ed = window.monaco.editor.getEditors().find((e) => e.getModel()?.getLanguageId() === 'fade');
         return ed.getPosition().lineNumber;
     });
-    // Failing assert is on line 5 (1-based) of TEST_SOURCE.
     if (newLine === 1) throw new Error('editor cursor did not move (still at line 1)');
     return { newLine };
 });
@@ -153,15 +161,15 @@ test('editor action: "Run Test at Cursor" runs the surrounding test', async () =
         ed.setPosition({ lineNumber: 8, column: 1 });
         ed.focus();
     });
-    // Clear the log to make the result observable.
-    await page.evaluate(() => document.getElementById('tests-log-clear').click());
+    // Clear the Output panel so the new run's pass line is unambiguous.
+    await page.evaluate(() => document.getElementById('output-clear')?.click());
     // Trigger via Monaco action API (no need to actually right-click).
     await page.evaluate(() => {
         const ed = window.monaco.editor.getEditors().find((e) => e.getModel()?.getLanguageId() === 'fade');
         return ed.getAction('fade.runTestAtCursor').run();
     });
     await page.waitForFunction(
-        () => Array.from(document.querySelectorAll('#tests-log .tests-log-line.pass'))
+        () => Array.from(document.querySelectorAll('#output .output-line.pass'))
             .some((l) => /anotherpass/i.test(l.textContent)),
         { timeout: 12000 },
     );

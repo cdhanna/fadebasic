@@ -1,0 +1,87 @@
+html, body {
+    margin: 0;
+    padding: 0;
+    height: 100%;
+    overflow: hidden;
+    background: #000;
+    color: #d4d4d4;
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+}
+
+#app {
+    position: fixed;
+    inset: 0;
+    z-index: 5;
+}
+
+/* Blazor mounts here; canvasHolder is inside Index.razor and fills its
+   container. In standalone mode this also covers the viewport via fixed
+   positioning. When loaded inline into the Playground, the parent panel
+   constrains it instead. */
+#mg-blazor-root {
+    position: fixed;
+    inset: 0;
+    z-index: 1;
+}
+
+#canvasHolder {
+    position: absolute;
+    inset: 0;
+    background: #000;
+}
+
+#theCanvas {
+    display: block;
+    width: 100%;
+    height: 100%;
+    outline: none;
+}
+
+#status {
+    position: fixed;
+    top: 8px;
+    left: 8px;
+    padding: 4px 10px;
+    background: rgba(0, 0, 0, 0.6);
+    color: #ccc;
+    font: 12px ui-monospace, 'SF Mono', Menlo, monospace;
+    border-radius: 3px;
+    pointer-events: none;
+    z-index: 10;
+}
+
+/* Splash visible only until Blazor renders the App component into #app. */
+.boot-splash {
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    align-items: center;
+    height: 100%;
+    gap: 0.5rem;
+    text-align: center;
+    padding: 1rem;
+}
+.boot-splash > div:first-child {
+    font-size: 1.4rem;
+    color: #fff;
+}
+.boot-splash-sub {
+    color: #888;
+    font-size: 0.85rem;
+    max-width: 32rem;
+}
+
+#blazor-error-ui {
+    position: fixed;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    background: lemonchiffon;
+    color: #444;
+    padding: 0.6rem 1rem;
+    box-shadow: 0 -1px 2px rgba(0,0,0,0.2);
+    display: none;
+    z-index: 1000;
+    font-size: 0.85rem;
+}
+#blazor-error-ui.show { display: block; }

@@ -98,6 +98,35 @@
             white-space: nowrap;
         }
         .project-name[hidden] { display: none; }
+        /* Worker heartbeat indicators — one dot per worker (lsp + vm).
+           Each pulses while its worker is alive and turns red when its
+           worker hasn't beat in >1.2s. The vm dot going red while the
+           lsp dot stays green is the signature of a Thread.Sleep / `wait ms`
+           blocking the VM worker — page interactivity is preserved
+           because the lsp worker keeps draining messages. */
+        .worker-heartbeat {
+            display: inline-flex;
+            align-items: center;
+            gap: 4px;
+            margin-left: 0.4rem;
+        }
+        .worker-heartbeat .hb-dot {
+            display: inline-block;
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background: #444;
+            transition: background 100ms linear, box-shadow 100ms linear;
+        }
+        .worker-heartbeat .hb-dot[data-state="on"] {
+            background: #4caf50;
+            box-shadow: 0 0 6px rgba(76, 175, 80, 0.6);
+        }
+        .worker-heartbeat .hb-dot[data-state="off"]  { background: #2e7d32; }
+        .worker-heartbeat .hb-dot[data-state="busy"] {
+            background: #f14c4c;
+            box-shadow: 0 0 6px rgba(241, 76, 76, 0.6);
+        }
         .grow { flex: 1; }
         button {
             padding: 0.3rem 0.9rem;
@@ -377,6 +406,210 @@
             font-style: italic;
         }
 
+        /* Binary-file preview panel: XNB metadata + canvas/audio viewers,
+           also reused for raw image/audio uploads. Layout mirrors the
+           markdown preview (toolbar + scrollable body); content is a
+           vertical stack of {meta card, payload viewer, optional empty
+           note}. */
+        .binary-preview-host {
+            display: flex;
+            flex-direction: column;
+            height: 100%;
+            background: var(--bg);
+        }
+        .binary-preview-toolbar {
+            padding: 0.35rem 0.75rem;
+            background: var(--bg-2);
+            border-bottom: 1px solid var(--border-2);
+            font-size: 0.74rem;
+            text-transform: uppercase;
+            letter-spacing: 0.04em;
+            color: var(--fg-muted);
+            user-select: none;
+        }
+        .binary-preview-title { color: var(--fg-muted); }
+        .binary-preview-body {
+            flex: 1;
+            overflow: auto;
+            padding: 1rem 1.5rem 2rem;
+            color: var(--fg);
+            display: flex;
+            flex-direction: column;
+            gap: 1rem;
+        }
+        .binary-preview-meta {
+            display: grid;
+            grid-template-columns: max-content 1fr;
+            column-gap: 1.2rem;
+            row-gap: 0.2rem;
+            font-size: 0.82rem;
+        }
+        .binary-preview-row {
+            display: contents;
+        }
+        .binary-preview-key {
+            color: var(--fg-muted);
+            text-transform: uppercase;
+            font-size: 0.7rem;
+            letter-spacing: 0.04em;
+            padding-top: 0.1rem;
+        }
+        .binary-preview-value {
+            color: var(--fg);
+            font-family: ui-monospace, 'SF Mono', Menlo, monospace;
+            font-size: 0.8rem;
+            word-break: break-all;
+        }
+        .binary-preview-canvas {
+            /* Pixel-art rule: a 16×16 sprite should look crisp, not blurry,
+               when previewed at scale. image-rendering is the modern way
+               to ask the canvas painter for nearest-neighbor upscaling. */
+            image-rendering: pixelated;
+            image-rendering: crisp-edges;
+            border: 1px solid var(--border-2);
+            background:
+                repeating-conic-gradient(#2a2a2a 0% 25%, #3a3a3a 0% 50%)
+                    50% / 16px 16px;
+            max-width: 100%;
+            max-height: 60vh;
+            object-fit: contain;
+            align-self: flex-start;
+        }
+        .binary-preview-image {
+            max-width: 100%;
+            max-height: 60vh;
+            object-fit: contain;
+            align-self: flex-start;
+            background:
+                repeating-conic-gradient(#2a2a2a 0% 25%, #3a3a3a 0% 50%)
+                    50% / 16px 16px;
+            border: 1px solid var(--border-2);
+        }
+        .binary-preview-audio {
+            width: 100%;
+            max-width: 480px;
+        }
+        .binary-preview-empty {
+            color: var(--fg-muted);
+            font-style: italic;
+            font-size: 0.82rem;
+        }
+        .binary-preview-error {
+            color: #f14c4c;
+            font-family: ui-monospace, 'SF Mono', Menlo, monospace;
+            white-space: pre-wrap;
+            font-size: 0.82rem;
+        }
+
+        /* Drag-drop highlight on the workspace file list. Applied while
+           the user is dragging files over the list; cleared on drop or
+           when the drag leaves the container. */
+        #file-list.file-list-drop-target {
+            outline: 2px dashed var(--accent);
+            outline-offset: -4px;
+            background: rgba(14, 99, 156, 0.08);
+        }
+
+        /* ── Help panel: command docs reference ────────────────────────
+           Reuses .md-preview-body for the right-hand reader so the
+           command markdown picks up the same typography hover does. */
+        #help-pane {
+            display: flex;
+            flex-direction: column;
+            min-height: 100%;
+            height: 100%;
+        }
+        .help-toolbar {
+            display: flex;
+            align-items: center;
+            gap: 0.4rem;
+            padding: 0.4rem 0.7rem;
+            border-bottom: 1px solid var(--border-2);
+            background: var(--bg-2);
+        }
+        .help-toolbar .codicon { color: var(--fg-muted); }
+        .help-toolbar .grow { flex: 1; }
+        .help-count {
+            color: var(--fg-muted);
+            font-size: 0.72rem;
+            white-space: nowrap;
+        }
+        #help-search {
+            flex: 1;
+            min-width: 0;
+            background: var(--bg-1);
+            border: 1px solid var(--border-2);
+            color: var(--fg);
+            font: inherit;
+            font-size: 0.8rem;
+            padding: 0.2rem 0.45rem;
+            border-radius: 3px;
+            outline: none;
+        }
+        #help-search:focus { border-color: #007fd4; }
+        #help-search-clear {
+            background: transparent;
+            border: 0;
+            color: var(--fg-muted);
+            font-size: 1rem;
+            cursor: pointer;
+            padding: 0 0.3rem;
+        }
+        #help-search-clear:hover { color: var(--fg); }
+        #help-search-clear[hidden] { display: none; }
+        #help-split {
+            flex: 1;
+            display: grid;
+            grid-template-columns: 220px 1fr;
+            min-height: 0;
+            overflow: hidden;
+        }
+        #help-toc {
+            overflow-y: auto;
+            border-right: 1px solid var(--border-2);
+            padding: 0.4rem 0;
+            background: var(--bg-1);
+            font-size: 0.8rem;
+        }
+        .help-toc-group {
+            color: var(--fg-muted);
+            font-size: 0.7rem;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+            padding: 0.5rem 0.9rem 0.2rem;
+            user-select: none;
+        }
+        .help-toc-item {
+            display: block;
+            padding: 0.18rem 0.9rem 0.18rem 1.25rem;
+            color: var(--fg);
+            cursor: pointer;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            font-family: ui-monospace, 'SF Mono', Menlo, monospace;
+            font-size: 0.78rem;
+        }
+        .help-toc-item:hover { background: rgba(255,255,255,0.05); }
+        .help-toc-item.active {
+            background: #094771;
+            color: #fff;
+        }
+        .help-toc-empty {
+            padding: 1rem 0.9rem;
+            color: var(--fg-muted);
+            font-style: italic;
+            font-size: 0.78rem;
+        }
+        .help-empty {
+            color: var(--fg-muted);
+            font-style: italic;
+        }
+        .help-empty p { margin: 0.5em 0; }
+        /* Reuse .md-preview-body for the help reader; just override the
+           padding to feel a touch tighter inside the split. */
+        #help-body { background: var(--bg); }
+
         /* Editor area */
         #editor {
             min-height: 0;
@@ -578,58 +811,18 @@
             flex: 1 1 auto;
             min-height: 0;
         }
-        /* Inline test log — shows captured stdout + summary right under the
-           list, so test output is reachable without flipping over to the
-           Output panel. Collapsible via the header chevron. */
-        .tests-log-region {
-            border-top: 1px solid var(--border-2);
-            display: flex;
-            flex-direction: column;
-            min-height: 0;
-            max-height: 45%;
-            flex: 0 0 auto;
+        /* Click-to-jump styling for failure-frame lines in the Output panel.
+           Used by appendTestLog when it forwards into appendOutputLine
+           with an onClick. */
+        .output-line.clickable { cursor: pointer; }
+        .output-line.clickable:hover { background: rgba(255,255,255,0.06); }
+        /* fade.json's $schema line is render-only; the guard reverts any
+           edit that touches it. The decoration paints it slightly dimmer
+           so the lock is visually legible. */
+        .monaco-editor .fade-readonly-line {
+            background-color: rgba(127, 127, 127, 0.08);
+            opacity: 0.85;
         }
-        .tests-log-header {
-            display: flex;
-            align-items: center;
-            gap: 0.4rem;
-            padding: 0.3rem 0.7rem;
-            background: var(--bg-2);
-            cursor: pointer;
-            user-select: none;
-            font-size: 0.74rem;
-            text-transform: uppercase;
-            letter-spacing: 0.04em;
-            color: var(--fg-muted);
-        }
-        .tests-log-header .codicon { font-size: 0.85rem; }
-        .tests-log-header .grow { flex: 1; }
-        .tests-log-clear {
-            background: transparent;
-            border: 0;
-            color: var(--fg-muted);
-            cursor: pointer;
-            font-size: 0.78rem;
-            padding: 0 0.3rem;
-        }
-        .tests-log-clear:hover { color: var(--fg); }
-        #tests-log {
-            margin: 0;
-            padding: 0.4rem 0.7rem;
-            font-family: ui-monospace, 'SF Mono', Menlo, monospace;
-            font-size: 0.74rem;
-            color: var(--fg);
-            white-space: pre-wrap;
-            overflow-y: auto;
-            flex: 1;
-            min-height: 0;
-        }
-        .tests-log-region.collapsed #tests-log { display: none; }
-        .tests-log-region.collapsed { max-height: none; flex: 0 0 auto; }
-        .tests-log-line { display: block; }
-        .tests-log-line.pass { color: #4caf50; }
-        .tests-log-line.fail { color: #f14c4c; }
-        .tests-log-line.dim  { color: var(--fg-muted); }
         .test-failure-frame {
             color: #f0a070;
             cursor: pointer;
@@ -833,10 +1026,13 @@
         }
         .watch-item {
             display: grid;
-            grid-template-columns: 0.9rem 1fr auto;
+            /* expression label / live value / remove button. The leading
+               padding-left lines up with .debug-var's name column (which
+               sits at 0.3rem padding + 0.9rem twisty + 0.35rem gap). */
+            grid-template-columns: auto 1fr auto;
             gap: 0.35rem;
             align-items: baseline;
-            padding: 0.08rem 0.9rem 0.08rem 0.3rem;
+            padding: 0.08rem 0.9rem 0.08rem 1.55rem;
             font-family: ui-monospace, 'SF Mono', Menlo, monospace;
             font-size: 0.78rem;
             white-space: nowrap;
@@ -1203,9 +1399,11 @@
             <vscode-button id="open-projects" icon="folder-library" secondary="true" title="Switch / create project (⌘P)"></vscode-button>
             <span id="project-name" class="project-name" title="Active project (fade.json) — click to switch" hidden></span>
             <span id="status">Loading…</span>
+            <span id="worker-heartbeat" class="worker-heartbeat" data-state="off" title="Worker heartbeat"></span>
             <span class="grow"></span>
             <vscode-button id="reset-layout" icon="layout" secondary="true" title="Reset panel layout to default"></vscode-button>
             <vscode-button id="run" disabled icon="play">Run (⌘R)</vscode-button>
+            <vscode-button id="stop" disabled icon="debug-stop" secondary="true">Stop</vscode-button>
             <vscode-button id="debug" disabled icon="debug-alt" secondary="true">Debug (⌘D)</vscode-button>
         </header>
 
@@ -1351,6 +1549,24 @@
             </div>
         </div>
 
+        <!-- Game (canvas) panel for fade.json type='monogame' projects.
+             Contains an empty #mg-blazor-root div — WebRuntime.MonoGame's
+             Program.cs mounts the Blazor app to that selector on first boot.
+             The lazy-boot pipeline lives in src/monogame-host.ts. -->
+        <div class="panel-cell" data-panel="game">
+            <div id="mg-blazor-root" style="position: relative; width: 100%; height: 100%; background: #000;">
+                <div id="mg-blazor-splash" style="
+                    display: flex; flex-direction: column;
+                    align-items: center; justify-content: center;
+                    height: 100%; gap: 0.5rem;
+                    color: #888; font-size: 0.85rem; text-align: center; padding: 1rem;
+                ">
+                    <div style="font-size: 1.1rem; color: #ccc;">Game runtime not started</div>
+                    <div>Hit Run on a project with <code>type: "monogame"</code> in fade.json to boot it.</div>
+                </div>
+            </div>
+        </div>
+
         <div class="panel-cell" data-panel="tests">
             <div id="tests-pane">
                 <div class="tests-toolbar">
@@ -1366,14 +1582,31 @@
                 </div>
                 <div class="tests-empty" id="tests-empty">No tests in this file.</div>
                 <ul id="tests-list"></ul>
-                <div class="tests-log-region" id="tests-log-region">
-                    <div class="tests-log-header" id="tests-log-toggle">
-                        <span class="codicon codicon-chevron-down" id="tests-log-chev"></span>
-                        <span>Test Output</span>
-                        <span class="grow"></span>
-                        <button class="tests-log-clear" id="tests-log-clear" title="Clear">clear</button>
-                    </div>
-                    <div id="tests-log"></div>
+            </div>
+        </div>
+
+        <!-- Command-doc reference panel. Lists every command available
+             in the workspace's CommandCollection, grouped by prefix,
+             with the same markdown the hover provider renders. The TOC
+             on the left filters by search; the body on the right shows
+             the selected command's docs. -->
+        <div class="panel-cell" data-panel="help">
+            <div id="help-pane">
+                <div class="help-toolbar">
+                    <span class="codicon codicon-search"></span>
+                    <input id="help-search" type="search" placeholder="Search commands…" autocomplete="off" spellcheck="false" />
+                    <button id="help-search-clear" hidden title="Clear">&times;</button>
+                    <span class="grow"></span>
+                    <span id="help-count" class="help-count"></span>
+                </div>
+                <div id="help-split">
+                    <nav id="help-toc"></nav>
+                    <article id="help-body" class="md-preview-body">
+                        <div class="help-empty">
+                            <p>Select a command on the left to read its docs.</p>
+                            <p>Documentation comes from the same XML doc comments the LSP uses for hover — they're rendered identically.</p>
+                        </div>
+                    </article>
                 </div>
             </div>
         </div>
