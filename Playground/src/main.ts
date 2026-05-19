@@ -60,8 +60,24 @@ import {
 // file into this when it's opened so the editor service can resolve it.
 const virtualFs = new RegisteredFileSystemProvider(false);
 registerFileSystemOverlay(1, virtualFs);
+// virtualFs.registerFile() throws if called twice for the same URI. We
+// track registered URIs so reopening a previously-closed tab no-ops the
+// registration step instead of crashing with "file already exists".
+const registeredVirtualFsUris = new Set<string>();
 
 import EditorWorker from '@codingame/monaco-vscode-api/workers/editor.worker?worker';
+import { languageForExtra, registerExtraLanguages, extraThemeRules } from './languages';
+import { createMarkdownPreview, previewPanelIdFor } from './markdown-preview';
+import {
+    FADE_JSON_NAME,
+    defaultFadeProject,
+    stringifyFadeProject,
+    parseFadeProject,
+    locateJsonPaths,
+    offsetsToLineCol,
+    type FadeProject,
+    type FadeConfigError,
+} from './fade-config';
 (self as any).MonacoEnvironment = {
     getWorker: () => new EditorWorker(),
 };
@@ -92,19 +108,130 @@ const editorContainer = document.getElementById('editor')!;
 const editorPlaceholder = document.getElementById('editor-placeholder')!;
 const outputEl = document.getElementById('output')!;
 // ─── OPFS workspace ─────────────────────────────────────────────────────────
+// Project-aware (folder-per-project) layout:
+//
+//   workspace/
+//     <project-name>/
+//       fade.json     ← required manifest, locked from create/rename/delete
+//       main.fbasic
+//       util.fbasic
+//       …
+//
+// On first init we migrate any legacy flat files at workspace/<file> into
+// workspace/default/<file> and synthesize a starter fade.json listing the
+// .fbasic files we found. Active project lives in localStorage so reloads
+// land in the same place.
+
+const ACTIVE_PROJECT_KEY = 'fade.activeProject';
+const DEFAULT_PROJECT_NAME = 'default';
+
 class OpfsWorkspace {
-    private dir!: FileSystemDirectoryHandle;
+    private root!: FileSystemDirectoryHandle;       // workspace/
+    private dir!: FileSystemDirectoryHandle;        // workspace/<active-project>/
+    private activeProject: string = DEFAULT_PROJECT_NAME;
 
     async init() {
-        const root = await navigator.storage.getDirectory();
-        this.dir = await root.getDirectoryHandle('workspace', { create: true });
-        // Seed default file if workspace is empty
-        const names = await this.list();
-        if (names.length === 0) {
-            await this.write('main.fbasic', DEFAULT_SOURCE);
+        const opfsRoot = await navigator.storage.getDirectory();
+        this.root = await opfsRoot.getDirectoryHandle('workspace', { create: true });
+
+        // Migrate any legacy flat files (workspace/<file>) into a default
+        // project folder so the new layout invariant holds.
+        await this.migrateLegacyFlatLayout();
+
+        // Determine which project to open. Validated against the actual
+        // folders on disk; if the stored name is gone, fall back to the
+        // first project we find (creating one if none exist).
+        let target = localStorage.getItem(ACTIVE_PROJECT_KEY) || DEFAULT_PROJECT_NAME;
+        const projects = await this.listProjects();
+        if (!projects.includes(target)) target = projects[0] ?? DEFAULT_PROJECT_NAME;
+        await this.setActiveProject(target, /*seedIfEmpty*/ true);
+    }
+
+    // Promote any leaf files at the workspace root into a project folder.
+    // Idempotent: if there are no flat files, this does nothing.
+    private async migrateLegacyFlatLayout(): Promise<void> {
+        const flat: string[] = [];
+        for await (const entry of (this.root as any).values()) {
+            if (entry.kind === 'file') flat.push(entry.name);
+        }
+        if (flat.length === 0) return;
+        const dest = await this.root.getDirectoryHandle(DEFAULT_PROJECT_NAME, { create: true });
+        const movedSources: string[] = [];
+        for (const name of flat) {
+            const srcFh = await this.root.getFileHandle(name);
+            const srcText = await (await srcFh.getFile()).text();
+            const dstFh = await dest.getFileHandle(name, { create: true });
+            const w = await dstFh.createWritable();
+            await w.write(srcText);
+            await w.close();
+            await this.root.removeEntry(name);
+            if (/\.(fbasic|fb)$/i.test(name)) movedSources.push(name);
+        }
+        // Synthesize fade.json if it wasn't part of the legacy set.
+        let alreadyHasManifest = false;
+        for await (const entry of (dest as any).values()) {
+            if (entry.kind === 'file' && entry.name === FADE_JSON_NAME) {
+                alreadyHasManifest = true;
+                break;
+            }
+        }
+        if (!alreadyHasManifest) {
+            const proj = defaultFadeProject(DEFAULT_PROJECT_NAME, movedSources);
+            const mh = await dest.getFileHandle(FADE_JSON_NAME, { create: true });
+            const mw = await mh.createWritable();
+            await mw.write(stringifyFadeProject(proj));
+            await mw.close();
         }
     }
 
+    // Public API for project-level operations.
+    async listProjects(): Promise<string[]> {
+        const names: string[] = [];
+        for await (const entry of (this.root as any).values()) {
+            if (entry.kind === 'directory') names.push(entry.name);
+        }
+        names.sort();
+        return names;
+    }
+
+    currentProject(): string { return this.activeProject; }
+
+    async setActiveProject(name: string, seedIfEmpty: boolean = false): Promise<void> {
+        this.activeProject = name;
+        this.dir = await this.root.getDirectoryHandle(name, { create: true });
+        localStorage.setItem(ACTIVE_PROJECT_KEY, name);
+        if (seedIfEmpty) await this.seedIfEmpty();
+    }
+
+    // If the active project has no files at all, drop in a default main.fbasic
+    // + fade.json so the user lands on something they can run.
+    private async seedIfEmpty(): Promise<void> {
+        const names = await this.list();
+        if (names.length > 0) return;
+        await this.write('main.fbasic', DEFAULT_SOURCE);
+        const proj = defaultFadeProject(this.activeProject, ['main.fbasic']);
+        await this.write(FADE_JSON_NAME, stringifyFadeProject(proj));
+    }
+
+    // Create a fresh project folder with a starter main.fbasic + fade.json.
+    async createProject(name: string): Promise<void> {
+        const dir = await this.root.getDirectoryHandle(name, { create: true });
+        // Avoid clobbering an existing project.
+        let hasAny = false;
+        for await (const _ of (dir as any).values()) { hasAny = true; break; }
+        if (hasAny) return;
+        const mainFh = await dir.getFileHandle('main.fbasic', { create: true });
+        const mainW = await mainFh.createWritable();
+        await mainW.write(DEFAULT_SOURCE);
+        await mainW.close();
+        const proj = defaultFadeProject(name, ['main.fbasic']);
+        const manifestFh = await dir.getFileHandle(FADE_JSON_NAME, { create: true });
+        const manifestW = await manifestFh.createWritable();
+        await manifestW.write(stringifyFadeProject(proj));
+        await manifestW.close();
+    }
+
+    // File-level operations, scoped to the active project.
     async list(): Promise<string[]> {
         const names: string[] = [];
         for await (const entry of (this.dir as any).values()) {
@@ -128,7 +255,39 @@ class OpfsWorkspace {
     }
 
     async delete(name: string): Promise<void> {
+        if (name === FADE_JSON_NAME) {
+            throw new Error('fade.json is required and cannot be deleted.');
+        }
         await this.dir.removeEntry(name);
+    }
+
+    // OPFS has no atomic rename. Read → write under the new name → remove
+    // the old. If write fails partway, the old file is preserved (we only
+    // remove after the new file lands successfully).
+    async rename(oldName: string, newName: string): Promise<void> {
+        if (oldName === FADE_JSON_NAME || newName === FADE_JSON_NAME) {
+            throw new Error('fade.json is required and cannot be renamed.');
+        }
+        if (oldName === newName) return;
+        if (!/^[\w.\-]+$/.test(newName)) {
+            throw new Error('Invalid name. Letters, digits, dot, dash, underscore only.');
+        }
+        // Collision check.
+        let collision = false;
+        try {
+            await this.dir.getFileHandle(newName);
+            collision = true;
+        } catch { /* NotFoundError → free to proceed */ }
+        if (collision) throw new Error(`A file named "${newName}" already exists.`);
+        const content = await this.read(oldName);
+        await this.write(newName, content);
+        try { await this.dir.removeEntry(oldName); }
+        catch (e) {
+            // Best-effort cleanup. The new file already landed, so the
+            // rename is effectively complete even if we couldn't remove
+            // the source.
+            console.warn('[fade] rename: failed to remove old file', oldName, e);
+        }
     }
 }
 
@@ -146,7 +305,8 @@ let editor: monaco.editor.IStandaloneCodeEditor | null = null;
 
 function languageFor(name: string): string {
     if (name.endsWith('.fbasic') || name.endsWith('.fb')) return 'fade';
-    return 'plaintext';
+    const extra = languageForExtra(name);
+    return extra ?? 'plaintext';
 }
 
 async function openFile(workspace: OpfsWorkspace, name: string) {
@@ -158,7 +318,13 @@ async function openFile(workspace: OpfsWorkspace, name: string) {
         const uri = monaco.Uri.file(`/workspace/${name}`);
         // Push this file into the virtual FS overlay so any vscode-side
         // editor open won't fail with "Unable to resolve nonexistent file".
-        virtualFs.registerFile(new RegisteredMemoryFile(uri, text));
+        // The provider throws on duplicate URIs, so skip the registration
+        // if we've already registered this file in a previous open.
+        const uriKey = uri.toString();
+        if (!registeredVirtualFsUris.has(uriKey)) {
+            virtualFs.registerFile(new RegisteredMemoryFile(uri, text));
+            registeredVirtualFsUris.add(uriKey);
+        }
         let model = monaco.editor.getModel(uri);
         if (!model) {
             model = monaco.editor.createModel(text, languageFor(name), uri);
@@ -192,6 +358,13 @@ async function openFile(workspace: OpfsWorkspace, name: string) {
     editorPlaceholder.style.display = 'none';
     renderTabs();
     renderFileList(workspace);
+    // Force a semantic-token refresh for fade models. The diagnostics
+    // handler also applies tokens, but it only runs after an LSP push;
+    // for preloaded-but-untouched files, that may not have happened yet
+    // by the time the user clicks the tab.
+    if (tab.model.getLanguageId() === 'fade') {
+        (window as any).__fadeRefreshSemanticTokens?.(tab.model);
+    }
 }
 
 function closeTab(name: string) {
@@ -230,6 +403,22 @@ function renderTabs() {
             renderTabs();
             renderFileListSelection();
         };
+        el.append(label);
+
+        // Markdown files get a preview-toggle button next to the label.
+        // Clicking activates an existing preview panel or creates one.
+        if (/\.(md|markdown)$/i.test(name)) {
+            const previewBtn = document.createElement('span');
+            previewBtn.className = 'tab-action';
+            previewBtn.title = 'Open Markdown Preview';
+            previewBtn.innerHTML = '<span class="codicon codicon-open-preview"></span>';
+            previewBtn.onclick = (e) => {
+                e.stopPropagation();
+                openMarkdownPreview(name);
+            };
+            el.append(previewBtn);
+        }
+
         const close = document.createElement('span');
         close.className = 'close';
         close.textContent = '×';
@@ -237,26 +426,168 @@ function renderTabs() {
             e.stopPropagation();
             closeTab(name);
         };
-        el.append(label, close);
+        el.append(close);
         tabsEl.append(el);
     }
 }
 
+// Open (or activate, if already present) a markdown preview panel for the
+// given filename. Resolves the dockview API off the window since renderTabs
+// runs at module scope, before the bootstrap closure that owns dockApi.
+function openMarkdownPreview(filename: string) {
+    const api = (window as any).__fadeDockview;
+    if (!api) return;
+    const id = previewPanelIdFor(filename);
+    const existing = api.getPanel?.(id);
+    if (existing) { existing.api.setActive(); return; }
+    api.addPanel({
+        id,
+        component: 'markdown-preview',
+        title: 'Preview: ' + filename,
+        position: { referencePanel: 'editor', direction: 'right' },
+    });
+}
+
+// ─── Project state surface for module-scope renderers ───────────────────
+// renderFileList runs at module scope (used at boot before bootstrap()'s
+// closure exists), but needs to know which sources fade.json lists today
+// and how to mutate them. Bootstrap fills these in; everything reads via
+// the getters so timing doesn't matter.
+let currentProjectRef: FadeProject | null = null;
+interface ProjectOps {
+    addSourceAt(name: string, position: 'start' | 'end'): Promise<void>;
+    removeSource(name: string): Promise<void>;
+    revealSourceInManifest(name: string): Promise<void>;
+    renameFile(name: string): Promise<void>;
+    deleteFile(name: string): Promise<void>;
+}
+let projectOps: ProjectOps | null = null;
+
 async function renderFileList(workspace: OpfsWorkspace) {
     const names = await workspace.list();
     fileListEl.innerHTML = '';
+    const sources = currentProjectRef?.sources ?? [];
     for (const name of names) {
         const li = document.createElement('li');
-        li.textContent = name;
+        li.dataset.name = name;
+        const label = document.createElement('span');
+        label.textContent = name;
+        li.append(label);
+        if (name === FADE_JSON_NAME) {
+            // Visible cue that the manifest is locked from delete/rename
+            // (creation is blocked at the New-File prompt).
+            const lock = document.createElement('span');
+            lock.className = 'file-lock codicon codicon-lock-small';
+            lock.title = 'Project manifest — required, cannot be deleted or renamed.';
+            li.append(lock);
+            li.classList.add('manifest');
+        } else {
+            // Right-click → rename / delete. fade.json is locked above
+            // so it gets no menu and falls through to the browser default.
+            li.addEventListener('contextmenu', (e) => {
+                e.preventDefault();
+                showFileContextMenu(e.clientX, e.clientY, name);
+            });
+        }
+        // Source-membership badge for .fbasic files: numeric index when
+        // listed in fade.json:sources, dash when orphaned. Informational
+        // only — the matching add / remove / jump actions live on the
+        // file row's right-click menu (handled below).
+        if (/\.(fbasic|fb)$/i.test(name)) {
+            const sourceIdx = sources.indexOf(name);
+            const badge = document.createElement('span');
+            if (sourceIdx >= 0) {
+                badge.className = 'source-badge listed';
+                badge.textContent = String(sourceIdx + 1);
+                badge.title = `Source #${sourceIdx + 1} in fade.json`;
+            } else {
+                badge.className = 'source-badge orphan';
+                badge.textContent = '–';
+                badge.title = 'Not listed in fade.json:sources';
+            }
+            li.append(badge);
+        }
         if (name === activeName) li.classList.add('active');
         li.onclick = () => openFile(workspace, name);
         fileListEl.append(li);
     }
 }
 
+// File-list right-click context menu. Source-membership actions (add /
+// remove / reveal-in-manifest) live here alongside Rename + Delete so
+// every file operation is reachable from one consistent gesture.
+function showFileContextMenu(x: number, y: number, fileName: string) {
+    closeAnyFileMenu();
+    if (!projectOps) return;
+    const menu = document.createElement('div');
+    menu.className = 'source-badge-menu';
+    menu.dataset.menu = 'file-context';
+    const addItem = (label: string, handler: () => void) => {
+        const item = document.createElement('button');
+        item.className = 'source-badge-item';
+        item.type = 'button';
+        item.textContent = label;
+        item.onclick = (e) => {
+            e.stopPropagation();
+            closeAnyFileMenu();
+            handler();
+        };
+        menu.append(item);
+    };
+    const addSeparator = () => {
+        const sep = document.createElement('div');
+        sep.className = 'source-badge-sep';
+        menu.append(sep);
+    };
+
+    const ops = projectOps;
+    // Source-membership actions for .fbasic files. Mirrors what used to
+    // live on the badge click, now bundled with rename/delete.
+    if (/\.(fbasic|fb)$/i.test(fileName)) {
+        const sources = currentProjectRef?.sources ?? [];
+        const sourceIdx = sources.indexOf(fileName);
+        if (sourceIdx >= 0) {
+            addItem(`Go to fade.json (source #${sourceIdx + 1})`,
+                () => ops.revealSourceInManifest(fileName));
+            addItem('Remove from sources', () => ops.removeSource(fileName));
+        } else {
+            addItem('Add to sources (end)', () => ops.addSourceAt(fileName, 'end'));
+            addItem('Add to sources (start)', () => ops.addSourceAt(fileName, 'start'));
+        }
+        addSeparator();
+    }
+    addItem(`Rename "${fileName}"…`, () => ops.renameFile(fileName));
+    addItem(`Delete "${fileName}"`, () => ops.deleteFile(fileName));
+    document.body.append(menu);
+    menu.style.left = `${x}px`;
+    menu.style.top = `${y}px`;
+    // Flip into viewport if we'd overflow.
+    const r = menu.getBoundingClientRect();
+    if (r.right > window.innerWidth) menu.style.left = `${window.innerWidth - r.width - 4}px`;
+    if (r.bottom > window.innerHeight) menu.style.top = `${window.innerHeight - r.height - 4}px`;
+    setTimeout(() => {
+        const onClick = (e: MouseEvent) => {
+            if (!(e.target as HTMLElement).closest('.source-badge-menu')) closeAnyFileMenu();
+        };
+        const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') closeAnyFileMenu(); };
+        document.addEventListener('mousedown', onClick, true);
+        document.addEventListener('keydown', onKey, true);
+        (menu as any).__cleanup = () => {
+            document.removeEventListener('mousedown', onClick, true);
+            document.removeEventListener('keydown', onKey, true);
+        };
+    }, 0);
+}
+function closeAnyFileMenu() {
+    for (const m of document.querySelectorAll('[data-menu="file-context"]')) {
+        (m as any).__cleanup?.();
+        m.remove();
+    }
+}
+
 function renderFileListSelection() {
     for (const li of Array.from(fileListEl.children) as HTMLElement[]) {
-        li.classList.toggle('active', li.textContent === activeName);
+        li.classList.toggle('active', li.dataset.name === activeName);
     }
 }
 
@@ -931,6 +1262,7 @@ async function bootstrap() {
     ];
 
     // Fade theme — based on vs-dark with colors for the semantic token types.
+    registerExtraLanguages();
     monaco.editor.defineTheme('fade-dark', {
         base: 'vs-dark',
         inherit: true,
@@ -946,6 +1278,7 @@ async function bootstrap() {
             { token: 'operator',  foreground: 'D4D4D4' },
             { token: 'number',    foreground: 'B5CEA8' },
             { token: 'string',    foreground: 'CE9178' },
+            ...extraThemeRules(),
         ],
         colors: {},
     });
@@ -953,10 +1286,7 @@ async function bootstrap() {
 
     statusEl.textContent = 'Booting Fade runtime worker…';
     const runner = new FadeRunner({
-        onPrint: (line) => {
-            outputEl.textContent += line + '\n';
-            outputEl.scrollTop = outputEl.scrollHeight;
-        },
+        onPrint: (line) => appendOutputLine(line),
         onAlert: (msg) => window.alert(msg),
     });
     await runner.ready;
@@ -974,6 +1304,14 @@ async function bootstrap() {
     // them via Monaco's decoration API with a CSS class per token type. CSS
     // in index.html colors each .fade-token-<type> class.
     const decorationsByUri = new Map<string, string[]>();
+
+    // openFile (module scope) calls into this on every tab activation so
+    // preloaded-but-never-displayed models get tokenized before they're
+    // first shown. Fire-and-forget — applySemanticTokens deduplicates via
+    // deltaDecorations so duplicate calls are cheap.
+    (window as any).__fadeRefreshSemanticTokens = (model: monaco.editor.ITextModel) => {
+        void applySemanticTokens(model);
+    };
 
     async function applySemanticTokens(model: monaco.editor.ITextModel) {
         const uri = model.uri.toString();
@@ -1305,9 +1643,12 @@ async function bootstrap() {
         // all of them so the live editor's model is always covered.
         const allModels = monaco.editor.getModels().filter((m) => m.uri.toString() === uri);
         if (!allModels.length) return;
-        const activeModel = editor?.getModel();
-        if (activeModel && activeModel.uri.toString() === uri) {
-            void applySemanticTokens(activeModel);
+        // Refresh semantic-token decorations on EVERY model with this URI,
+        // not just the editor's active one. Decorations are stored on the
+        // model itself, so doing this for inactive tabs means switching to
+        // them later shows them already highlighted (no edit needed).
+        for (const m of allModels) {
+            void applySemanticTokens(m);
         }
         const markers: monaco.editor.IMarkerData[] = diagnostics.map((d) => ({
             severity: d.severity === 1 ? monaco.MarkerSeverity.Error
@@ -1351,6 +1692,45 @@ async function bootstrap() {
     function renderProblems() {
         problemsList.innerHTML = '';
         let total = 0;
+
+        // fade.json schema problems get their own header row so the user
+        // recognizes them as project-level (not source-file) issues.
+        for (const e of currentProjectErrors) {
+            total++;
+            const li = document.createElement('li');
+            li.className = 'problem-item';
+            const icon = document.createElement('vscode-icon');
+            icon.setAttribute('name', e.severity);
+            icon.className = e.severity;
+            const msg = document.createElement('span');
+            msg.className = 'problem-message';
+            msg.textContent = e.message;
+            if (e.path) {
+                const code = document.createElement('span');
+                code.className = 'code';
+                code.textContent = e.path;
+                msg.append(code);
+            }
+            const loc = document.createElement('span');
+            loc.className = 'problem-location';
+            const where = e.range
+                ? `${FADE_JSON_NAME}:${e.range.startLineNumber}:${e.range.startColumn}`
+                : FADE_JSON_NAME;
+            loc.textContent = where;
+            li.append(icon, msg, loc);
+            li.onclick = async () => {
+                try {
+                    await openFile(workspace, FADE_JSON_NAME);
+                    if (e.range && editor) {
+                        editor.revealLineInCenter(e.range.startLineNumber, monaco.editor.ScrollType.Smooth);
+                        editor.setPosition({ lineNumber: e.range.startLineNumber, column: e.range.startColumn });
+                        editor.focus();
+                    }
+                } catch { /* ignore */ }
+            };
+            problemsList.append(li);
+        }
+
         for (const [uri, diags] of diagnosticsByUri) {
             for (const d of diags) {
                 total++;
@@ -1479,8 +1859,316 @@ async function bootstrap() {
         return activeTab?.model.getValue() ?? '';
     }
 
+    const projectNameEl = document.getElementById('project-name')!;
+    function setProjectStatus(label: string) {
+        projectNameEl.textContent = label;
+        projectNameEl.hidden = !label;
+    }
+
+    // ─── Project (fade.json) state ───────────────────────────────────────
+    // Re-read whenever fade.json's OPFS contents OR its open model changes.
+    // The compile/run/test/debug paths read from `currentProject` to build
+    // their source string instead of just the active tab; ordering follows
+    // fade.json sources[] exactly, matching the native SDK behavior.
+    let currentProject: FadeProject | null = null;
+    let currentProjectErrors: FadeConfigError[] = [];
+
+    // Live-content lookup: prefer Monaco's model (so dirty edits compile
+    // even before the save timer fires), fall back to the OPFS-persisted
+    // copy. Models exist for every workspace file because bootstrap
+    // preloads them; we still tolerate a missing model gracefully.
+    async function readFile(name: string): Promise<string> {
+        const uri = monaco.Uri.file(`/workspace/${name}`);
+        const model = monaco.editor.getModel(uri);
+        if (model) return model.getValue();
+        const tab = tabs.get(name);
+        if (tab) return tab.model.getValue();
+        try { return await workspace.read(name); }
+        catch { return ''; }
+    }
+
+    async function refreshFadeProject(): Promise<void> {
+        let text = '';
+        try {
+            text = await readFile(FADE_JSON_NAME);
+        } catch {
+            currentProject = null;
+            currentProjectErrors = [{
+                path: '', severity: 'error',
+                message: 'fade.json is missing from this project.',
+            }];
+            applyFadeJsonMarkers(text, currentProjectErrors);
+            renderProblems();
+            return;
+        }
+        const r = parseFadeProject(text);
+        currentProject = r.ok ? (r.project ?? null) : null;
+
+        // Attach source ranges to schema errors so the renderer + Monaco
+        // markers can highlight the offending key/value precisely.
+        const paths = locateJsonPaths(text);
+        const decorate = (e: FadeConfigError): FadeConfigError => {
+            if (!e.path) return e;
+            const rng = paths.get(e.path);
+            if (!rng) return e;
+            return { ...e, range: offsetsToLineCol(text, rng.start, rng.end) };
+        };
+        const errors: FadeConfigError[] = r.errors.map(decorate);
+
+        // Cross-check against the actual workspace: every entry in
+        // `sources` must point at a real file. We intentionally do NOT
+        // warn about unlisted .fbasic files in the workspace — keeping
+        // extra source files lying around (linked/unlinked as you iterate)
+        // is a normal workflow, not a misconfiguration. The dash badge
+        // in the file list already surfaces the "not part of the build"
+        // signal without an inline diagnostic.
+        // Sub-folder paths (containing "/") are skipped — OpfsWorkspace
+        // is flat for now, so a "/" path is by definition unresolvable
+        // and would always false-positive.
+        if (currentProject) {
+            try {
+                const workspaceFiles = await workspace.list();
+                const fileSet = new Set(workspaceFiles);
+                currentProject.sources.forEach((src, idx) => {
+                    if (src.includes('/')) return;
+                    if (!fileSet.has(src)) {
+                        errors.push(decorate({
+                            path: `sources[${idx}]`,
+                            severity: 'error',
+                            message: `Source "${src}" not found in this project. Create the file or remove the entry from fade.json.`,
+                        }));
+                    }
+                });
+            } catch (e) {
+                console.warn('[fade] sources cross-check failed', e);
+            }
+        }
+
+        currentProjectErrors = errors;
+        applyFadeJsonMarkers(text, currentProjectErrors);
+        renderProblems();
+        // Republish for module-scope renderers (file list badges) and
+        // re-render so the source-order indicators update immediately.
+        currentProjectRef = currentProject;
+        renderFileList(workspace).catch(() => { /* ignore */ });
+        // Title bar reflects the resolved project name.
+        if (currentProject?.name) {
+            const hasErrors = currentProjectErrors.some((e) => e.severity === 'error');
+            setProjectStatus(hasErrors ? `${currentProject.name} (fade.json invalid)` : currentProject.name);
+        } else {
+            setProjectStatus(workspace.currentProject() + ' (fade.json invalid)');
+        }
+    }
+
+    // Mutations triggered from the file-list source badges. They edit
+    // the live Monaco model for fade.json (rather than the OPFS copy
+    // directly) so the polling loop's refreshFadeProject + LSP push
+    // chain reacts naturally; the model's saveTimer persists to OPFS.
+    async function mutateManifest(
+        mutate: (project: FadeProject) => FadeProject | null,
+    ): Promise<void> {
+        const uri = monaco.Uri.file(`/workspace/${FADE_JSON_NAME}`);
+        const model = monaco.editor.getModel(uri);
+        if (!model) return;
+        const current = parseFadeProject(model.getValue());
+        if (!current.ok || !current.project) {
+            // We don't try to fix invalid manifests; the user is best
+            // positioned to resolve schema problems first.
+            return;
+        }
+        const next = mutate(current.project);
+        if (!next) return;
+        const newText = stringifyFadeProject(next);
+        if (newText === model.getValue()) return;
+        model.applyEdits([{ range: model.getFullModelRange(), text: newText }]);
+        // Immediate state refresh so the file list redraws without waiting
+        // on the 250ms polling loop.
+        await refreshFadeProject();
+    }
+
+    projectOps = {
+        addSourceAt: async (name, position) => {
+            await mutateManifest((p) => {
+                if (p.sources.includes(name)) return null; // already listed
+                const updated = position === 'start'
+                    ? [name, ...p.sources]
+                    : [...p.sources, name];
+                return { ...p, sources: updated };
+            });
+        },
+        removeSource: async (name) => {
+            await mutateManifest((p) => {
+                if (!p.sources.includes(name)) return null;
+                return { ...p, sources: p.sources.filter((s) => s !== name) };
+            });
+        },
+        revealSourceInManifest: async (name) => {
+            try { await openFile(workspace, FADE_JSON_NAME); } catch { /* ignore */ }
+            const uri = monaco.Uri.file(`/workspace/${FADE_JSON_NAME}`);
+            const model = monaco.editor.getModel(uri);
+            if (!model || !editor) return;
+            const text = model.getValue();
+            const ranges = locateJsonPaths(text);
+            // Walk indices until we find the entry that contains the
+            // file name (string compare against the located value).
+            const proj = currentProject;
+            if (!proj) return;
+            const idx = proj.sources.indexOf(name);
+            if (idx < 0) return;
+            const r = ranges.get(`sources[${idx}]`);
+            if (!r) return;
+            const lc = offsetsToLineCol(text, r.start, r.end);
+            editor.revealLineInCenter(lc.startLineNumber, monaco.editor.ScrollType.Smooth);
+            editor.setPosition({ lineNumber: lc.startLineNumber, column: lc.startColumn });
+            editor.focus();
+        },
+        renameFile: async (oldName) => {
+            if (oldName === FADE_JSON_NAME) {
+                alert('fade.json is the project manifest and cannot be renamed.');
+                return;
+            }
+            const newName = prompt(`Rename "${oldName}" to:`, oldName);
+            if (!newName || newName === oldName) return;
+            try {
+                await workspace.rename(oldName, newName);
+            } catch (e: any) {
+                alert('Rename failed: ' + (e?.message ?? e));
+                return;
+            }
+            // Monaco models are immutable on URI — swap by disposing the
+            // old model and creating a new one with the new URI. Any
+            // decorations + markers reattach via the polling loop's next
+            // LSP push.
+            const oldUri = monaco.Uri.file(`/workspace/${oldName}`);
+            const newUri = monaco.Uri.file(`/workspace/${newName}`);
+            const oldModel = monaco.editor.getModel(oldUri);
+            const text = oldModel ? oldModel.getValue() : await workspace.read(newName);
+            const wasActive = activeName === oldName;
+            const wasInEditor = editor?.getModel() === oldModel;
+            // Drop old model + virtualFs registration.
+            if (oldModel) oldModel.dispose();
+            registeredVirtualFsUris.delete(oldUri.toString());
+            // Recreate at new URI.
+            const newModel = monaco.editor.createModel(text, languageFor(newName), newUri);
+            // Move tab entry if open.
+            const oldTab = tabs.get(oldName);
+            if (oldTab) {
+                tabs.delete(oldName);
+                const newTab: Tab = { name: newName, model: newModel, dirty: false };
+                newTab.model.onDidChangeContent(() => {
+                    newTab.dirty = true;
+                    clearTimeout(newTab.saveTimer);
+                    newTab.saveTimer = window.setTimeout(async () => {
+                        try {
+                            await workspace.write(newTab.name, newTab.model.getValue());
+                            newTab.dirty = false;
+                            renderTabs();
+                        } catch (e) {
+                            console.error('[fade] save failed for', newTab.name, e);
+                        }
+                    }, 600);
+                    renderTabs();
+                });
+                tabs.set(newName, newTab);
+                if (wasActive) activeName = newName;
+                if (wasInEditor && editor) editor.setModel(newTab.model);
+            }
+            // If the renamed file was listed in fade.json:sources, rewrite
+            // the manifest so the build keeps working. Preserves position.
+            await mutateManifest((p) => {
+                const idx = p.sources.indexOf(oldName);
+                if (idx < 0) return null;
+                const updated = [...p.sources];
+                updated[idx] = newName;
+                return { ...p, sources: updated };
+            });
+            await refreshFadeProject();
+            renderTabs();
+            await renderFileList(workspace);
+        },
+        deleteFile: async (name) => {
+            if (name === FADE_JSON_NAME) {
+                alert('fade.json is the project manifest and cannot be deleted.');
+                return;
+            }
+            if (!confirm(`Delete "${name}"? This cannot be undone.`)) return;
+            // Close any open tab for this file first.
+            if (tabs.has(name)) closeTab(name);
+            // Dispose the Monaco model so it doesn't linger after the file
+            // is gone — otherwise the polling loop keeps pushing stale
+            // content to LSP under a now-orphan URI.
+            const uri = monaco.Uri.file(`/workspace/${name}`);
+            const model = monaco.editor.getModel(uri);
+            if (model) model.dispose();
+            registeredVirtualFsUris.delete(uri.toString());
+            try {
+                await workspace.delete(name);
+            } catch (e: any) {
+                alert('Delete failed: ' + (e?.message ?? e));
+                return;
+            }
+            // If the deleted file was a listed source, remove it from
+            // fade.json so we don't trip the missing-source error.
+            await mutateManifest((p) => {
+                if (!p.sources.includes(name)) return null;
+                return { ...p, sources: p.sources.filter((s) => s !== name) };
+            });
+            await refreshFadeProject();
+            renderTabs();
+            await renderFileList(workspace);
+        },
+    };
+
+    // Push schema errors as Monaco markers on the fade.json model so the
+    // user sees red/yellow squiggles inline. Owner string scopes them so
+    // they don't fight with LSP-emitted markers on other models.
+    function applyFadeJsonMarkers(text: string, errors: FadeConfigError[]) {
+        const uri = monaco.Uri.file(`/workspace/${FADE_JSON_NAME}`);
+        const model = monaco.editor.getModel(uri);
+        if (!model) return;
+        // If we have no useful text, clear and bail.
+        if (!text) {
+            monaco.editor.setModelMarkers(model, 'fade-config', []);
+            return;
+        }
+        const markers: monaco.editor.IMarkerData[] = [];
+        for (const e of errors) {
+            const r = e.range ?? {
+                // Whole-document fallback for root-level errors (bad JSON).
+                startLineNumber: 1, startColumn: 1,
+                endLineNumber: Math.max(1, model.getLineCount()),
+                endColumn: Math.max(1, model.getLineMaxColumn(model.getLineCount())),
+            };
+            markers.push({
+                severity: e.severity === 'warning'
+                    ? monaco.MarkerSeverity.Warning
+                    : monaco.MarkerSeverity.Error,
+                message: e.message,
+                source: 'fade.json',
+                startLineNumber: r.startLineNumber,
+                startColumn: r.startColumn,
+                endLineNumber: r.endLineNumber,
+                endColumn: r.endColumn,
+            });
+        }
+        monaco.editor.setModelMarkers(model, 'fade-config', markers);
+    }
+
+    // Concatenate the project's .fbasic sources in fade.json order. Falls
+    // back to the active tab's contents when fade.json is missing/invalid
+    // so the playground still runs *something* for new users mid-edit.
+    async function getProjectSource(): Promise<string> {
+        if (!currentProject) return getActiveSource();
+        const parts: string[] = [];
+        for (const name of currentProject.sources) {
+            const text = await readFile(name);
+            parts.push(text);
+        }
+        return parts.join('\n');
+    }
+
     async function refreshTests() {
-        const source = getActiveSource();
+        const source = await getProjectSource();
         if (!source) {
             testEntries = [];
             renderTests();
@@ -1585,13 +2273,36 @@ async function bootstrap() {
         }
     }
 
-    function appendOutput(text: string) {
-        if (!text) return;
-        // Trailing newline strip — drainPrintBuffer adds them.
-        const norm = text.endsWith('\n') ? text : text + '\n';
-        outputEl.textContent += norm;
+    type OutputKind = 'plain' | 'dim' | 'error' | 'warning' | 'info' | 'pass';
+
+    // First write clears the "(not yet run)" placeholder.
+    let outputPrimed = false;
+    function primeOutput() {
+        if (outputPrimed) return;
+        outputEl.innerHTML = '';
+        outputPrimed = true;
+    }
+    function clearOutput() {
+        outputEl.innerHTML = '';
+        outputPrimed = true;
+    }
+    function appendOutputLine(text: string, kind: OutputKind = 'plain') {
+        if (text == null) return;
+        primeOutput();
+        // Split on newlines so each rendered <div> is one logical line — keeps
+        // colored lines distinct and lets long text wrap inside the block.
+        const lines = String(text).split('\n');
+        if (lines.length > 1 && lines[lines.length - 1] === '') lines.pop();
+        for (const line of lines) {
+            const div = document.createElement('div');
+            div.className = 'output-line' + (kind !== 'plain' ? ' ' + kind : '');
+            div.textContent = line;
+            outputEl.append(div);
+        }
         outputEl.scrollTop = outputEl.scrollHeight;
     }
+    const outputClearBtn = document.getElementById('output-clear');
+    outputClearBtn?.addEventListener('click', clearOutput);
 
     function setTestsBusy(busy: boolean) {
         testsRunAllBtn.disabled = busy;
@@ -1599,7 +2310,7 @@ async function bootstrap() {
     }
 
     async function runSingleTest(name: string) {
-        const source = getActiveSource();
+        const source = await getProjectSource();
         if (!source) return;
         const idx = testEntries.findIndex((t) => t.name === name);
         if (idx < 0) return;
@@ -1625,7 +2336,7 @@ async function bootstrap() {
     }
 
     async function runAllTests() {
-        const source = getActiveSource();
+        const source = await getProjectSource();
         if (!source) return;
         for (const t of testEntries) {
             if (!t.isAbstract) {
@@ -1649,7 +2360,7 @@ async function bootstrap() {
 
     function applyResult(r: TestRunResult) {
         if (r.error) {
-            appendOutput(r.error);
+            appendOutputLine(r.error, 'error');
             appendTestLog(r.error, 'fail');
             for (const t of testEntries) if (t.status === 'running') t.status = 'idle';
             testsStatusEl.textContent = r.error;
@@ -1665,15 +2376,11 @@ async function bootstrap() {
             e.failure = res.passed ? null : (res.failureMessage || res.failureReason || 'Failed');
             e.failureFrames = res.passed ? undefined : (res.failureFrames || []);
         }
-        // Headline + per-test rollup go both to Output and the inline log.
+        // Captured stdout still belongs in the Output panel; the headline +
+        // per-test ✓/✗ rollup live in the inline test log only (no more
+        // "--- Tests: ... ---" section header in Output).
         const headline = `Tests: ${r.passed} passed, ${r.failed} failed (${Math.round(r.duration)} ms)`;
-        appendOutput(`\n--- ${headline} ---`);
-        if (r.printed) appendOutput(r.printed.trimEnd());
-        for (const res of r.results) {
-            if (!res.passed) {
-                appendOutput(`  ✗ ${res.name}: ${res.failureMessage || res.failureReason || 'failed'}`);
-            }
-        }
+        if (r.printed) appendOutputLine(r.printed.replace(/\n$/, ''));
 
         // Inline log: include printed stdout, then one block per result. Failure
         // frames render as click-to-jump links.
@@ -1758,7 +2465,22 @@ async function bootstrap() {
             // playground's styling (vs-dark Monaco theme, vscode-elements).
             theme: { name: 'vs', className: 'dockview-theme-vs' },
             disableFloatingGroups: false,
-            createComponent: ({ name }) => {
+            createComponent: ({ name, id }) => {
+                // Dynamic components (one element per panel instance) —
+                // resolved before the static `panel-cell` pool. Each name
+                // here builds its own DOM on demand and owns its lifecycle.
+                // dockview's createComponent contract gives us only id+name,
+                // not panel params — so we encode the filename into the
+                // panel id (e.g. `md-preview:doc.md`) and parse it back here.
+                if (name === 'markdown-preview') {
+                    const filename = id.startsWith('md-preview:') ? id.slice('md-preview:'.length) : '';
+                    if (!filename) {
+                        const err = document.createElement('div');
+                        err.textContent = 'markdown-preview missing filename in panel id';
+                        return { element: err, init() {}, dispose() {} };
+                    }
+                    return createMarkdownPreview(filename);
+                }
                 const cell = panelCells.querySelector<HTMLElement>(
                     `.panel-cell[data-panel="${name}"]`,
                 );
@@ -1824,6 +2546,8 @@ async function bootstrap() {
     const KNOWN_COMPONENTS = new Set([
         'workspace', 'editor', 'debug',
         'output', 'problems', 'tests', 'debug-console',
+        // Dynamic — created on demand by the markdown preview button.
+        'markdown-preview',
     ]);
 
     function healLayout(dock: DockviewApi) {
@@ -2017,6 +2741,187 @@ async function bootstrap() {
         location.reload();
     });
 
+    // Console-only escape hatch — no UI button, intentionally. Wipes
+    // workspace/ from OPFS and clears Playground state in localStorage,
+    // then reloads. Useful when an existing workspace lacks fade.json (so
+    // the manifest lock keeps you from regenerating it) or when migrations
+    // leave things in a confused state.
+    (window as any).forceHardReset = async () => {
+        if (!confirm('forceHardReset(): wipe OPFS workspace + reset state? This deletes every file in every project.')) return;
+        try {
+            const root = await navigator.storage.getDirectory();
+            try { await root.removeEntry('workspace', { recursive: true }); } catch { /* ignore */ }
+        } catch (e) {
+            console.error('[fade] OPFS wipe failed', e);
+        }
+        try {
+            localStorage.removeItem(LAYOUT_STORAGE_KEY);
+            localStorage.removeItem(ACTIVE_PROJECT_KEY);
+        } catch { /* ignore */ }
+        console.warn('[fade] forceHardReset complete — reloading');
+        location.reload();
+    };
+
+    // ─── Project viewer overlay ──────────────────────────────────────────
+    // Modal dialog that lists OPFS projects and offers a "new project"
+    // input. Switching reloads the page — simplest way to ensure all
+    // dock panels, Monaco models, and the polling loop pick up the new
+    // project cleanly (the dockview layout is global and persists
+    // across switches).
+    const projectOverlay = document.getElementById('project-overlay')!;
+    const projectListEl = document.getElementById('project-list')!;
+    const projectOverlayCloseBtn = document.getElementById('project-overlay-close')!;
+    const projectNewInput = document.getElementById('project-new-input') as HTMLInputElement;
+    const projectNewError = document.getElementById('project-new-error')!;
+    const openProjectsBtn = document.getElementById('open-projects')!;
+
+    function showProjectError(msg: string) {
+        projectNewError.textContent = msg;
+        projectNewError.hidden = false;
+    }
+    function clearProjectError() {
+        projectNewError.textContent = '';
+        projectNewError.hidden = true;
+    }
+
+    // Pull a short summary line from a project's fade.json so the list
+    // shows something useful (name + source count or an invalid marker).
+    async function summarizeProject(name: string): Promise<{ label: string; meta: string; invalid: boolean }> {
+        try {
+            const dir = await (await navigator.storage.getDirectory())
+                .getDirectoryHandle('workspace')
+                .then((w) => w.getDirectoryHandle(name));
+            let manifestText: string | null = null;
+            try {
+                const fh = await dir.getFileHandle(FADE_JSON_NAME);
+                manifestText = await (await fh.getFile()).text();
+            } catch { /* no manifest */ }
+            if (!manifestText) return { label: name, meta: 'no fade.json', invalid: true };
+            const r = parseFadeProject(manifestText);
+            if (!r.ok || !r.project) return { label: name, meta: 'fade.json invalid', invalid: true };
+            const count = r.project.sources.length;
+            const label = r.project.name && r.project.name !== name
+                ? `${r.project.name} (${name})`
+                : name;
+            return { label, meta: `${count} source${count === 1 ? '' : 's'}`, invalid: false };
+        } catch {
+            return { label: name, meta: 'unreadable', invalid: true };
+        }
+    }
+
+    async function renderProjectList() {
+        projectListEl.innerHTML = '';
+        const projects = await workspace.listProjects();
+        const active = workspace.currentProject();
+        for (const name of projects) {
+            const li = document.createElement('li');
+            li.className = 'project-row' + (name === active ? ' active' : '');
+            li.dataset.name = name;
+
+            const icon = document.createElement('span');
+            icon.className = 'codicon ' + (name === active ? 'codicon-folder-opened' : 'codicon-folder');
+            li.append(icon);
+
+            const label = document.createElement('span');
+            label.className = 'project-row-name';
+            label.textContent = name;
+            li.append(label);
+
+            const meta = document.createElement('span');
+            meta.className = 'project-row-meta';
+            meta.textContent = name === active ? 'active' : '…';
+            li.append(meta);
+
+            li.onclick = () => {
+                if (name === active) { closeProjectOverlay(); return; }
+                switchToProject(name);
+            };
+            projectListEl.append(li);
+
+            // Resolve the meta line lazily so the list renders fast even
+            // with many projects.
+            summarizeProject(name).then((s) => {
+                if (name !== active) meta.textContent = s.meta;
+                if (s.invalid) li.classList.add('invalid');
+                label.textContent = s.label;
+            });
+        }
+    }
+
+    async function switchToProject(name: string) {
+        try {
+            await workspace.setActiveProject(name);
+        } catch (e: any) {
+            showProjectError('Failed to switch: ' + (e?.message ?? e));
+            return;
+        }
+        // Reload so all in-memory state (models, tabs, dockview) rebinds
+        // to the new project. Layout in localStorage survives.
+        location.reload();
+    }
+
+    async function createNewProject(rawName: string) {
+        const name = rawName.trim();
+        if (!name) return;
+        if (!/^[\w.-]+$/.test(name)) {
+            showProjectError('Invalid name. Letters, digits, dot, dash, underscore only.');
+            return;
+        }
+        const existing = await workspace.listProjects();
+        if (existing.includes(name)) {
+            showProjectError(`A project named "${name}" already exists.`);
+            return;
+        }
+        try {
+            await workspace.createProject(name);
+        } catch (e: any) {
+            showProjectError('Create failed: ' + (e?.message ?? e));
+            return;
+        }
+        clearProjectError();
+        await switchToProject(name);
+    }
+
+    function openProjectOverlay() {
+        clearProjectError();
+        projectNewInput.value = '';
+        projectOverlay.hidden = false;
+        renderProjectList().catch((e) => console.error('[fade] project list render failed', e));
+        // Focus the new-project input on a microtask so screen readers + the
+        // browser's focus ring land correctly after the show animation.
+        setTimeout(() => projectNewInput.focus(), 0);
+    }
+    function closeProjectOverlay() { projectOverlay.hidden = true; }
+
+    openProjectsBtn.addEventListener('click', openProjectOverlay);
+    projectNameEl.addEventListener('click', openProjectOverlay);
+    projectOverlayCloseBtn.addEventListener('click', closeProjectOverlay);
+    projectOverlay.addEventListener('click', (e) => {
+        if (e.target === projectOverlay) closeProjectOverlay();
+    });
+    document.addEventListener('keydown', (e) => {
+        if (e.key === 'Escape' && !projectOverlay.hidden) {
+            e.preventDefault();
+            closeProjectOverlay();
+        } else if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'p' && !e.shiftKey) {
+            // ⌘P / Ctrl+P opens the project switcher. Override the browser
+            // print shortcut since users are editing code, not paper docs.
+            e.preventDefault();
+            openProjectOverlay();
+        }
+    });
+    projectNewInput.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') {
+            e.preventDefault();
+            createNewProject(projectNewInput.value);
+        }
+        if (e.key === 'Escape') {
+            e.stopPropagation();
+            closeProjectOverlay();
+        }
+    });
+    projectNewInput.addEventListener('input', clearProjectError);
+
     statusEl.textContent = 'Mounting editor…';
     editor = monaco.editor.create(editorContainer, {
         value: '',
@@ -2032,29 +2937,63 @@ async function bootstrap() {
     // Watch ALL fade models in the registry and push when any change. Picks
     // up changes regardless of which model object the live editor uses (we
     // can have duplicates with the same URI under codingame's services).
+    // Also watches fade.json so the project manifest stays in sync with
+    // the live editor (drives source-list concat + Problems entries).
     const lastPushedByUri = new Map<string, string>();
     setInterval(() => {
         let anyChanged = false;
+        let manifestChanged = false;
         for (const m of monaco.editor.getModels()) {
-            if (m.getLanguageId() !== 'fade') continue;
+            const lang = m.getLanguageId();
             const uri = m.uri.toString();
             const value = m.getValue();
             if (lastPushedByUri.get(uri) === value) continue;
             lastPushedByUri.set(uri, value);
-            lsp.setDocument(uri, value);
-            anyChanged = true;
+            if (lang === 'fade') {
+                lsp.setDocument(uri, value);
+                anyChanged = true;
+            } else if (uri.endsWith('/' + FADE_JSON_NAME)) {
+                manifestChanged = true;
+            }
         }
         // Re-discover tests in the background whenever the active file moves.
         if (anyChanged) refreshDebounce();
+        if (manifestChanged) {
+            // fade.json edit landed — re-validate + refresh derived state.
+            refreshFadeProject().then(() => refreshDebounce());
+        }
     }, 250);
 
-    // Initial test scan once a file is open.
-    setTimeout(refreshTests, 800);
-
-    // Open the first file in the workspace.
+    // Preload every workspace file's Monaco model first so refreshFadeProject
+    // (and the project source concat) can read live content without an OPFS
+    // round-trip per file. Tabs aren't opened for these — they just sit in
+    // monaco.editor.getModels() until the user clicks them.
     const names = await workspace.list();
+    for (const name of names) {
+        const uri = monaco.Uri.file(`/workspace/${name}`);
+        if (!monaco.editor.getModel(uri)) {
+            const text = await workspace.read(name);
+            monaco.editor.createModel(text, languageFor(name), uri);
+        }
+    }
+
+    // Now that the fade.json model exists, resolve currentProject. We
+    // *must* await this before picking the default-opened file — otherwise
+    // currentProject is null and the preferred logic falls back to
+    // alphabetical, opening the wrong file when fade.json reorders sources.
+    await refreshFadeProject();
+    setTimeout(refreshTests, 200);
+
+    // Open a sensible default. Prefer the first .fbasic listed in fade.json
+    // (so the user lands in source code, not the manifest); fall back to any
+    // .fbasic in the workspace; fall back to whatever's there.
     if (names.length > 0) {
-        await openFile(workspace, names[0]);
+        const manifestSources: string[] = (currentProject as FadeProject | null)?.sources ?? [];
+        const preferred =
+            manifestSources.find((s) => names.includes(s))
+            ?? names.find((n) => /\.(fbasic|fb)$/i.test(n))
+            ?? names[0];
+        await openFile(workspace, preferred);
     } else {
         editorContainer.style.display = 'none';
         editorPlaceholder.style.display = 'flex';
@@ -2066,18 +3005,36 @@ async function bootstrap() {
     debugBtn.disabled = false;
 
     const runOnce = async () => {
-        const activeTab = activeName ? tabs.get(activeName) : null;
-        if (!activeTab) {
-            outputEl.textContent = 'No file open.';
+        const source = await getProjectSource();
+        if (!source) {
+            clearOutput();
+            appendOutputLine('No file open.', 'dim');
             return;
         }
         runBtn.disabled = true;
-        outputEl.textContent = '';
+        clearOutput();
         try {
-            const result = await runner.run(activeTab.model.getValue());
-            outputEl.textContent = result;
+            const result = await runner.run(source);
+            // CompileAndRun returns a JSON envelope { compileError, runtimeError, printed }.
+            // Tolerate the legacy plain-string form too — useful if an older
+            // worker is still in cache mid-deploy.
+            let env: { compileError?: string | null; runtimeError?: string | null; printed?: string } | null = null;
+            try { env = JSON.parse(result); } catch { env = null; }
+            if (env && (typeof env.compileError !== 'undefined' || typeof env.runtimeError !== 'undefined')) {
+                // `env.printed` would duplicate what already streamed via the
+                // worker's per-line `print` messages (onPrint → appendOutputLine).
+                // We intentionally ignore it here and only render errors + the
+                // empty-state hint.
+                if (env.compileError) appendOutputLine(env.compileError, 'error');
+                if (env.runtimeError) appendOutputLine(env.runtimeError, 'error');
+                if (!env.compileError && !env.runtimeError && !env.printed) {
+                    appendOutputLine('(no output)', 'dim');
+                }
+            } else {
+                appendOutputLine(result);
+            }
         } catch (e: any) {
-            outputEl.textContent = 'Error: ' + (e?.message ?? e);
+            appendOutputLine(e?.message ?? String(e), 'error');
         } finally {
             runBtn.disabled = false;
         }
@@ -2801,19 +3758,20 @@ async function bootstrap() {
     };
 
     const startDebug = async () => {
-        const activeTab = activeName ? tabs.get(activeName) : null;
-        if (!activeTab) {
-            outputEl.textContent = 'No file open.';
+        const source = await getProjectSource();
+        if (!source) {
+            clearOutput();
+            appendOutputLine('No file open.', 'dim');
             return;
         }
-        await beginDebugSession(() => runner.debugStart(activeTab.model.getValue()));
+        await beginDebugSession(() => runner.debugStart(source));
     };
 
     // Shared session-start machinery, factored so both Debug-button and
     // per-test Debug share the same "prep UI → start → sync bps → continue"
     // sequence.
     async function beginDebugSession(starter: () => Promise<DebugStartResult>): Promise<boolean> {
-        outputEl.textContent = '';
+        clearOutput();
         debugReplOutput.textContent = '';
         setDebugStatus('starting', 'paused');
         debugBtn.disabled = true;
@@ -2839,13 +3797,14 @@ async function bootstrap() {
     // Per-test debug entry. Compiles the current file, starts a VM at the
     // chosen test's entry point, then proceeds like a normal debug session.
     async function debugSingleTest(name: string) {
-        const activeTab = activeName ? tabs.get(activeName) : null;
-        if (!activeTab) {
-            outputEl.textContent = 'No file open.';
+        const source = await getProjectSource();
+        if (!source) {
+            clearOutput();
+            appendOutputLine('No file open.', 'dim');
             return;
         }
         appendReplLine(`▶ debug test "${name}"`, 'in');
-        await beginDebugSession(() => runner.debugStartTest(activeTab.model.getValue(), name));
+        await beginDebugSession(() => runner.debugStartTest(source, name));
     }
 
     debugBtn.addEventListener('click', startDebug);
@@ -2964,27 +3923,130 @@ async function bootstrap() {
     // Editor option: glyph margin must be on to show breakpoint glyphs.
     editor.updateOptions({ glyphMargin: true });
 
-    // New-file button
-    newFileBtn.addEventListener('click', async () => {
-        const name = prompt('File name (e.g. helper.fbasic)');
-        if (!name) return;
-        if (!/^[\w.-]+$/.test(name)) {
-            alert('Invalid name. Letters, digits, dot, dash, underscore only.');
-            return;
+    // New-file flow: click the +-button OR right-click in the workspace
+    // pane's empty area → small dropdown of allowed extensions → an
+    // inline edit row appears in the file list, pre-filled with a
+    // suggested name (base portion selected). Enter saves; Escape /
+    // blur / invalid name silently discards.
+    const NEW_FILE_EXTENSIONS: Array<{ label: string; ext: string }> = [
+        { label: 'Fade source (.fbasic)', ext: 'fbasic' },
+        { label: 'Shader (.fx)',          ext: 'fx' },
+        { label: 'JSON (.json)',          ext: 'json' },
+        { label: 'Text (.txt)',           ext: 'txt' },
+    ];
+
+    function showNewFileMenu(x: number, y: number) {
+        closeAnyFileMenu();
+        const menu = document.createElement('div');
+        menu.className = 'source-badge-menu';
+        menu.dataset.menu = 'file-context';
+        for (const { label, ext } of NEW_FILE_EXTENSIONS) {
+            const item = document.createElement('button');
+            item.className = 'source-badge-item';
+            item.type = 'button';
+            item.textContent = label;
+            item.onclick = (e) => {
+                e.stopPropagation();
+                closeAnyFileMenu();
+                startInlineCreate(ext);
+            };
+            menu.append(item);
         }
-        try {
-            // Check if already exists
+        document.body.append(menu);
+        menu.style.left = `${x}px`;
+        menu.style.top = `${y}px`;
+        const r = menu.getBoundingClientRect();
+        if (r.right > window.innerWidth) menu.style.left = `${window.innerWidth - r.width - 4}px`;
+        if (r.bottom > window.innerHeight) menu.style.top = `${window.innerHeight - r.height - 4}px`;
+        setTimeout(() => {
+            const onClick = (e: MouseEvent) => {
+                if (!(e.target as HTMLElement).closest('.source-badge-menu')) closeAnyFileMenu();
+            };
+            const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') closeAnyFileMenu(); };
+            document.addEventListener('mousedown', onClick, true);
+            document.addEventListener('keydown', onKey, true);
+            (menu as any).__cleanup = () => {
+                document.removeEventListener('mousedown', onClick, true);
+                document.removeEventListener('keydown', onKey, true);
+            };
+        }, 0);
+    }
+
+    // Insert an inline-edit row at the top of the file list and focus
+    // its input. Commit on Enter; cancel on Escape/blur/invalid.
+    let inlineCreateRow: HTMLLIElement | null = null;
+    async function startInlineCreate(ext: string) {
+        // If a previous row is hanging, kill it first.
+        inlineCreateRow?.remove();
+        inlineCreateRow = null;
+
+        // Find a name that doesn't collide.
+        const existing = new Set(await workspace.list());
+        let base = 'untitled';
+        let candidate = `${base}.${ext}`;
+        let n = 1;
+        while (existing.has(candidate)) candidate = `${base}${++n}.${ext}`;
+
+        const li = document.createElement('li');
+        li.className = 'file-edit-row';
+        const input = document.createElement('input');
+        input.type = 'text';
+        input.spellcheck = false;
+        input.autocomplete = 'off';
+        input.value = candidate;
+        li.append(input);
+        // Insert at the top of the list so it's obvious.
+        fileListEl.prepend(li);
+        inlineCreateRow = li;
+        // Focus + select the base name so users can type-replace it.
+        input.focus();
+        const dot = candidate.lastIndexOf('.');
+        input.setSelectionRange(0, dot >= 0 ? dot : candidate.length);
+
+        let settled = false;
+        const finish = async (commit: boolean) => {
+            if (settled) return;
+            settled = true;
+            const name = input.value.trim();
+            li.remove();
+            inlineCreateRow = null;
+            if (!commit) return;
+            // Silently discard on invalid name — by design, no alerts.
+            if (!name) return;
+            if (!/^[\w.-]+$/.test(name)) return;
+            if (name === FADE_JSON_NAME) return;
             const names = await workspace.list();
-            if (names.includes(name)) {
-                alert('File already exists.');
-                return;
+            if (names.includes(name)) return;
+            try {
+                await workspace.write(name, '');
+                await openFile(workspace, name);
+                if (/\.(fbasic|fb)$/i.test(name)) {
+                    await projectOps?.addSourceAt(name, 'end');
+                }
+            } catch (e) {
+                console.error('[fade] new-file failed:', e);
             }
-            await workspace.write(name, '');
-            await openFile(workspace, name);
-        } catch (e) {
-            console.error('[fade] new-file failed:', e);
-            alert('Failed to create file: ' + e);
-        }
+        };
+        input.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter') { e.preventDefault(); void finish(true); }
+            else if (e.key === 'Escape') { e.preventDefault(); void finish(false); }
+        });
+        input.addEventListener('blur', () => { void finish(true); });
+    }
+
+    newFileBtn.addEventListener('click', (e) => {
+        const r = (e.currentTarget as HTMLElement).getBoundingClientRect();
+        showNewFileMenu(r.left, r.bottom + 2);
+    });
+    // Right-click on the workspace pane's empty area (file rows handle
+    // their own contextmenu and stop propagation via preventDefault +
+    // showFileContextMenu).
+    fileListEl.parentElement?.addEventListener('contextmenu', (e) => {
+        // Skip if the right-click landed inside a file row — those have
+        // their own context menu.
+        if ((e.target as HTMLElement).closest('#file-list li')) return;
+        e.preventDefault();
+        showNewFileMenu(e.clientX, e.clientY);
     });
 
     // Test probe — bypasses Monaco UI and goes straight to the worker. Used by
@@ -3013,6 +4075,23 @@ async function bootstrap() {
     (window as any).__fadeRunnerHelpers = {
         listTests: ({ source }: { source: string }) => runner.listTests(source),
         runTests: ({ source, name }: { source: string; name?: string }) => runner.runTests(source, name),
+        project: {
+            // Refresh fade.json state synchronously and report the resolved
+            // source concat. Used by playwright probes to validate ordering
+            // without racing the 250ms polling loop.
+            getSource: async () => {
+                await refreshFadeProject();
+                return await getProjectSource();
+            },
+            getProject: async () => {
+                await refreshFadeProject();
+                return currentProject;
+            },
+            getErrors: async () => {
+                await refreshFadeProject();
+                return currentProjectErrors;
+            },
+        },
         debug: {
             start: ({ source }: { source: string }) => runner.debugStart(source),
             startTest: ({ source, name }: { source: string; name: string }) =>
