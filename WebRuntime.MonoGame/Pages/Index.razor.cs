@@ -181,6 +181,25 @@ loop
             _game?.BrowserContent?.ClearAssets();
         }
 
+        // Returns JSON with FadeBasic + KNI + .NET version strings for the
+        // browser's Diagnostics panel.
+        [JSInvokable]
+        public string GetVersionInfo()
+        {
+            var asm = typeof(FadeBasic.Virtual.VirtualMachine).Assembly;
+            var attrs = (System.Reflection.AssemblyInformationalVersionAttribute[])
+                asm.GetCustomAttributes(typeof(System.Reflection.AssemblyInformationalVersionAttribute), false);
+            var fadeVersion = attrs.Length > 0 ? attrs[0].InformationalVersion : asm.GetName().Version?.ToString() ?? "unknown";
+            var kniVersion = typeof(Microsoft.Xna.Framework.Game).Assembly.GetName().Version?.ToString() ?? "unknown";
+            var dotnetVersion = System.Runtime.InteropServices.RuntimeInformation.FrameworkDescription;
+            return System.Text.Json.JsonSerializer.Serialize(new
+            {
+                fadeBasic = fadeVersion,
+                kni = kniVersion,
+                dotnet = dotnetVersion,
+            });
+        }
+
         private bool LoadProgramInternal(string source, bool initialBoot)
         {
             try
@@ -423,11 +442,26 @@ loop
                     duration = (DateTime.UtcNow - startedAt).TotalMilliseconds,
                     results = ResultsToObjects(results),
                 };
+
+                // Exit test mode so the next LoadProgram (Run button) can
+                // reload normally. Without this, _testMode stays true and
+                // Game1.Update returns early from the test-mode block before
+                // it ever reaches the _reloadRequestedFromUi check, blocking
+                // any subsequent game run.
+                _game?.SetTestMode(false);
+                _paused = true;
+                try { AudioInstanceSystem.StopAll(); }
+                catch (Exception e) { Console.Error.WriteLine("RunTests StopAll: " + e); }
+                _status = "tests done";
+                StateHasChanged();
+
                 return JsonSerializer.Serialize(payload, _testJsonOpts);
             }
             catch (Exception ex)
             {
                 Console.Error.WriteLine("RunTests threw: " + ex);
+                _game?.SetTestMode(false);
+                _paused = true;
                 return JsonSerializer.Serialize(new
                 {
                     passed = 0,

@@ -98,36 +98,145 @@
             white-space: nowrap;
         }
         .project-name[hidden] { display: none; }
-        /* Worker heartbeat indicators — one dot per worker (lsp + vm).
-           Each pulses while its worker is alive and turns red when its
-           worker hasn't beat in >1.2s. The vm dot going red while the
-           lsp dot stays green is the signature of a Thread.Sleep / `wait ms`
-           blocking the VM worker — page interactivity is preserved
-           because the lsp worker keeps draining messages. */
-        .worker-heartbeat {
-            display: inline-flex;
-            align-items: center;
-            gap: 4px;
-            margin-left: 0.4rem;
+        .grow { flex: 1; }
+
+        /* ─── Diagnostics panel ──────────────────────────────────────────── */
+        .diag-body {
+            padding: 10px 14px;
+            overflow-y: auto;
+            height: 100%;
+            box-sizing: border-box;
+            font-size: 0.78rem;
         }
-        .worker-heartbeat .hb-dot {
+        .diag-section { margin-bottom: 14px; }
+        .diag-section-title {
+            font-size: 0.68rem;
+            text-transform: uppercase;
+            letter-spacing: 0.06em;
+            color: var(--fg-muted);
+            margin-bottom: 6px;
+        }
+        .diag-row {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            padding: 3px 0;
+            border-bottom: 1px solid var(--border-2);
+        }
+        .diag-row:last-child { border-bottom: none; }
+        .diag-label { color: var(--fg-muted); flex: 0 0 110px; }
+        .diag-value { color: var(--fg); flex: 1; word-break: break-all; }
+        /* Heartbeat dot — shared between diag panel and any future surface */
+        .hb-dot {
             display: inline-block;
             width: 8px;
             height: 8px;
             border-radius: 50%;
+            flex-shrink: 0;
             background: #444;
             transition: background 100ms linear, box-shadow 100ms linear;
         }
-        .worker-heartbeat .hb-dot[data-state="on"] {
-            background: #4caf50;
-            box-shadow: 0 0 6px rgba(76, 175, 80, 0.6);
+        .hb-dot[data-state="on"]   { background: #4caf50; box-shadow: 0 0 6px rgba(76,175,80,0.6); }
+        .hb-dot[data-state="off"]  { background: #2e7d32; }
+        .hb-dot[data-state="busy"] { background: #f14c4c; box-shadow: 0 0 6px rgba(241,76,76,0.6); }
+        /* ─────────────────────────────────────────────────────────────────── */
+
+        /* ─── View menu dropdown ─────────────────────────────────────────── */
+        .view-menu-wrap {
+            position: relative;
         }
-        .worker-heartbeat .hb-dot[data-state="off"]  { background: #2e7d32; }
-        .worker-heartbeat .hb-dot[data-state="busy"] {
-            background: #f14c4c;
-            box-shadow: 0 0 6px rgba(241, 76, 76, 0.6);
+        .view-menu {
+            position: absolute;
+            top: calc(100% + 4px);
+            right: 0;
+            z-index: 1000;
+            min-width: 220px;
+            background: var(--bg-3);
+            border: 1px solid var(--border-2);
+            border-radius: 4px;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.4);
+            padding: 4px 0;
+            font-size: 0.78rem;
         }
-        .grow { flex: 1; }
+        .view-menu[hidden] { display: none; }
+        .view-menu-section {
+            padding: 4px 12px 2px;
+            font-size: 0.68rem;
+            text-transform: uppercase;
+            letter-spacing: 0.06em;
+            color: var(--fg-muted);
+            user-select: none;
+        }
+        .view-menu-sep {
+            height: 1px;
+            background: var(--border-2);
+            margin: 4px 0;
+        }
+        .view-menu-item {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            width: 100%;
+            padding: 5px 12px;
+            background: transparent;
+            border: none;
+            border-radius: 0;
+            color: var(--fg);
+            font-size: 0.78rem;
+            font-family: inherit;
+            cursor: pointer;
+            text-align: left;
+            white-space: nowrap;
+        }
+        .view-menu-item:hover { background: var(--bg-hover, rgba(255,255,255,0.06)); }
+        .view-menu-item:disabled { opacity: 0.4; cursor: default; }
+        .view-menu-item--danger { color: var(--fg-muted); }
+        .view-menu-item--danger:hover { color: var(--fg); }
+        .view-menu-item .check-col {
+            width: 14px;
+            text-align: center;
+            flex-shrink: 0;
+            color: var(--accent);
+        }
+        .view-menu-item .item-label { flex: 1; }
+        .view-menu-item .item-del {
+            color: var(--fg-muted);
+            padding: 0 2px;
+            font-size: 0.7rem;
+            line-height: 1;
+        }
+        .view-menu-item .item-del:hover { color: var(--fg); }
+        .view-saved-layout-row {
+            display: flex;
+            align-items: center;
+        }
+        .view-saved-layout-row .layout-name-btn {
+            flex: 1;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            padding: 5px 12px 5px 12px;
+            background: transparent;
+            border: none;
+            color: var(--fg);
+            font-size: 0.78rem;
+            font-family: inherit;
+            cursor: pointer;
+            text-align: left;
+            white-space: nowrap;
+        }
+        .view-saved-layout-row .layout-name-btn:hover { background: var(--bg-hover, rgba(255,255,255,0.06)); }
+        .view-saved-layout-row .layout-del-btn {
+            padding: 4px 10px;
+            background: transparent;
+            border: none;
+            color: var(--fg-muted);
+            font-size: 0.7rem;
+            cursor: pointer;
+        }
+        .view-saved-layout-row .layout-del-btn:hover { color: var(--fg); background: var(--bg-hover, rgba(255,255,255,0.06)); }
+        /* ─────────────────────────────────────────────────────────────────── */
+
         button {
             padding: 0.3rem 0.9rem;
             background: var(--accent);
@@ -1449,9 +1558,25 @@
             <vscode-button id="open-projects" icon="folder-library" secondary="true" title="Switch / create project (⌘P)"></vscode-button>
             <span id="project-name" class="project-name" title="Active project (fade.json) — click to switch" hidden></span>
             <span id="status">Loading…</span>
-            <span id="worker-heartbeat" class="worker-heartbeat" data-state="off" title="Worker heartbeat"></span>
             <span class="grow"></span>
-            <vscode-button id="reset-layout" icon="layout" secondary="true" title="Reset panel layout to default"></vscode-button>
+            <!-- View menu -->
+            <div class="view-menu-wrap" id="view-menu-wrap">
+                <vscode-button id="view-menu-btn" icon="layout" secondary="true" title="View — open panels, manage layouts">View</vscode-button>
+                <div id="view-menu" class="view-menu" hidden>
+                    <div class="view-menu-section">Panels</div>
+                    <div id="view-menu-panels"></div>
+                    <div class="view-menu-sep"></div>
+                    <div class="view-menu-section">Layouts</div>
+                    <button class="view-menu-item" id="view-save-layout">
+                        <span class="codicon codicon-save"></span> Save Layout…
+                    </button>
+                    <div id="view-saved-layouts"></div>
+                    <div class="view-menu-sep"></div>
+                    <button class="view-menu-item view-menu-item--danger" id="view-reset-layout">
+                        <span class="codicon codicon-discard"></span> Reset to Default
+                    </button>
+                </div>
+            </div>
             <vscode-button id="run" disabled icon="play">Run (⌘R)</vscode-button>
             <vscode-button id="stop" disabled icon="debug-stop" secondary="true">Stop</vscode-button>
             <vscode-button id="debug" disabled icon="debug-alt" secondary="true">Debug (⌘D)</vscode-button>
@@ -1640,6 +1765,50 @@
              with the same markdown the hover provider renders. The TOC
              on the left filters by search; the body on the right shows
              the selected command's docs. -->
+        <div class="panel-cell" data-panel="diagnostics">
+            <div class="diag-body">
+                <div class="diag-section">
+                    <div class="diag-section-title">Workers</div>
+                    <div class="diag-row">
+                        <span class="hb-dot" id="diag-dot-lsp" data-state="off" title="LSP worker"></span>
+                        <span class="diag-label">LSP / Compiler</span>
+                        <span class="diag-value" id="diag-lsp-detail">—</span>
+                    </div>
+                    <div class="diag-row">
+                        <span class="hb-dot" id="diag-dot-vm" data-state="off" title="VM worker"></span>
+                        <span class="diag-label">VM</span>
+                        <span class="diag-value" id="diag-vm-detail">—</span>
+                    </div>
+                </div>
+                <div class="diag-section">
+                    <div class="diag-section-title">Worker Runtime</div>
+                    <div class="diag-row">
+                        <span class="diag-label">FadeBasic</span>
+                        <span class="diag-value" id="diag-w-fade">—</span>
+                    </div>
+                    <div class="diag-row">
+                        <span class="diag-label">.NET</span>
+                        <span class="diag-value" id="diag-w-dotnet">—</span>
+                    </div>
+                </div>
+                <div class="diag-section">
+                    <div class="diag-section-title">MonoGame Runtime</div>
+                    <div class="diag-row">
+                        <span class="diag-label">FadeBasic</span>
+                        <span class="diag-value" id="diag-mg-fade">—</span>
+                    </div>
+                    <div class="diag-row">
+                        <span class="diag-label">KNI</span>
+                        <span class="diag-value" id="diag-mg-kni">—</span>
+                    </div>
+                    <div class="diag-row">
+                        <span class="diag-label">.NET</span>
+                        <span class="diag-value" id="diag-mg-dotnet">—</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+
         <div class="panel-cell" data-panel="help">
             <div id="help-pane">
                 <div class="help-toolbar">

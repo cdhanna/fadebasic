@@ -449,6 +449,14 @@ function handle(msg) {
             log('list-command-docs failed: ' + (e?.message ?? e));
         }
         self.postMessage({ type: 'list-command-docs-result', id: msg.id, docs: json });
+    } else if (msg.type === 'get-version-info') {
+        let json = '{}';
+        try {
+            json = exports.WebRuntime.FadeBridge.GetVersionInfo();
+        } catch (e) {
+            log('get-version-info failed: ' + (e?.message ?? e));
+        }
+        self.postMessage({ type: 'get-version-info-result', id: msg.id, info: json });
     } else if (msg.type === 'run-tests') {
         let json = '{}';
         try {

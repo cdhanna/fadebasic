@@ -905,5 +905,18 @@ public static partial class FadeBridge
         public int Line { get; set; }
         public int Column { get; set; }
     }
+
+    // Returns a JSON object with FadeBasic + .NET runtime version strings
+    // for display in the browser's Diagnostics panel.
+    [JSExport]
+    public static string GetVersionInfo()
+    {
+        var asm = typeof(FadeBasic.Virtual.VirtualMachine).Assembly;
+        var attrs = (System.Reflection.AssemblyInformationalVersionAttribute[])
+            asm.GetCustomAttributes(typeof(System.Reflection.AssemblyInformationalVersionAttribute), false);
+        var fadeVersion = attrs.Length > 0 ? attrs[0].InformationalVersion : asm.GetName().Version?.ToString() ?? "unknown";
+        var dotnetVersion = System.Runtime.InteropServices.RuntimeInformation.FrameworkDescription;
+        return JsonSerializer.Serialize(new { fadeBasic = fadeVersion, dotnet = dotnetVersion });
+    }
 }
 

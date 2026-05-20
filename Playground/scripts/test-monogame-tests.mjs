@@ -226,6 +226,42 @@ test('DebugStartTest rejects an unknown test name with a useful error', async ()
     return { ok: r.ok, error: r.error };
 });
 
+test('game can be re-run via LoadProgram after RunTests completes', async () => {
+    // RunTests leaves _testMode=true without the fix, which blocks LoadProgram:
+    // Game1.Update returns early from the test-mode branch before it ever
+    // reaches the _reloadRequestedFromUi check.
+    const src = await page.evaluate(async () => {
+        const root = await navigator.storage.getDirectory();
+        const ws = await root.getDirectoryHandle('workspace');
+        const dir = await ws.getDirectoryHandle('mgtests');
+        const fh = await dir.getFileHandle('main.fbasic');
+        return (await fh.getFile()).text();
+    });
+
+    // Run a test to enter (and exit) test mode.
+    const testJson = await page.evaluate(
+        (s) => window.theInstance.invokeMethodAsync('RunTests', s, 'passes'),
+        src,
+    );
+    const testResult = JSON.parse(testJson);
+    if (testResult.passed !== 1) throw new Error('setup: expected passing test, got ' + JSON.stringify(testResult));
+
+    // Now call LoadProgram — this is the path the Run button takes.
+    const ok = await page.evaluate(() =>
+        window.theInstance.invokeMethodAsync('LoadProgram', 'do\n  sync\nloop\n'),
+    );
+    if (!ok) throw new Error('LoadProgram returned false after tests completed');
+
+    // Wait a few frames and confirm the runtime is still alive (no crash).
+    await page.waitForTimeout(600);
+    const alive = await page.evaluate(() =>
+        typeof window.theInstance?.invokeMethodAsync === 'function',
+    );
+    if (!alive) throw new Error('theInstance died after LoadProgram following RunTests');
+
+    return { ok };
+});
+
 let passed = 0, failed = 0;
 for (const { name, fn } of tests) {
     try {

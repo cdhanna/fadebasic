@@ -248,22 +248,33 @@ namespace WebRuntime.MonoGame.Pages
                 _testCts?.Dispose();
                 _testCts = new CancellationTokenSource();
                 var result = await _testHost.RunTestAsync(runCtx, _testCts.Token).ConfigureAwait(false);
-                // Surface as a one-shot log so the editor's debug console
-                // shows whether the assertion held. Detailed failure data
-                // is also on r.failureMessage/r.failureSourceText.
                 if (result.passed)
-                {
                     Console.WriteLine($"[fade test] {entry.name} passed in {result.duration.TotalMilliseconds:F0}ms");
-                }
                 else
-                {
-                    var msg = result.failureMessage ?? result.failureReason ?? "test failed";
-                    Console.Error.WriteLine($"[fade test] {entry.name} FAILED: {msg}");
-                }
+                    Console.Error.WriteLine($"[fade test] {entry.name} FAILED: {result.failureMessage ?? result.failureReason ?? "test failed"}");
+
+                // Test VM has finished. Send REV_REQUEST_EXITED so the
+                // editor clears its debug UI. The auto-emit is suppressed
+                // by suppressExitOnProgramEnd=true, so we fire it manually.
+                // We do NOT pause here — TickDotNet skips the drain when
+                // _paused=true, so the EXITED message must be left to drain
+                // on the next tick. The game idles safely (Quit() is a no-op
+                // in browser) until the user clicks Run to reload.
+                try { _game?.BrowserDebugSession?.SendExitedMessage(); }
+                catch (Exception e) { Console.Error.WriteLine("QueueTestForDebugAsync SendExited: " + e); }
+
+                // Stop audio and exit test mode so the next LoadProgram
+                // (Run button) reloads normally.
+                try { AudioInstanceSystem.StopAll(); }
+                catch (Exception e) { Console.Error.WriteLine("QueueTestForDebugAsync StopAll: " + e); }
+                _game?.SetTestMode(false);
+                _status = "debug test done";
+                StateHasChanged();
             }
             catch (Exception ex)
             {
                 Console.Error.WriteLine($"DebugStartTest background: {ex}");
+                _game?.SetTestMode(false);
             }
         }
 

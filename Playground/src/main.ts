@@ -111,7 +111,12 @@ const statusEl = document.getElementById('status')!;
 const runBtn = document.getElementById('run') as HTMLElement & { disabled: boolean };
 const stopBtn = document.getElementById('stop') as HTMLElement & { disabled: boolean };
 const debugBtn = document.getElementById('debug') as HTMLElement & { disabled: boolean };
-const resetLayoutBtn = document.getElementById('reset-layout') as HTMLElement;
+const viewMenuBtn = document.getElementById('view-menu-btn') as HTMLElement;
+const viewMenu = document.getElementById('view-menu') as HTMLElement;
+const viewMenuPanels = document.getElementById('view-menu-panels') as HTMLElement;
+const viewSaveLayoutBtn = document.getElementById('view-save-layout') as HTMLButtonElement;
+const viewResetLayoutBtn = document.getElementById('view-reset-layout') as HTMLButtonElement;
+const viewSavedLayouts = document.getElementById('view-saved-layouts') as HTMLElement;
 const newFileBtn = document.getElementById('new-file') as HTMLButtonElement;
 const fileListEl = document.getElementById('file-list')!;
 const tabsEl = document.getElementById('tabs')!;
@@ -803,6 +808,7 @@ class FadeRunner {
         if (msg.type === 'set-project-type-result')   { this.resolvePending(msg.id, msg.projectType); return; }
         if (msg.type === 'list-tests-result')         { this.resolvePending(msg.id, msg.tests); return; }
         if (msg.type === 'list-command-docs-result')  { this.resolvePending(msg.id, msg.docs); return; }
+        if (msg.type === 'get-version-info-result')   { this.resolvePending(msg.id, msg.info); return; }
         if (msg.type === 'run-tests-result')          { this.resolvePending(msg.id, msg.result); return; }
         if (msg.type === 'debug-start-result')        { this.resolvePending(msg.id, msg.result); return; }
         if (msg.type === 'debug-terminate-result'
@@ -1074,6 +1080,17 @@ class FadeRunner {
                 } catch { resolve([]); }
             });
             this.lspWorker.postMessage({ type: 'list-command-docs', id });
+        });
+    }
+
+    async getVersionInfo(): Promise<{ fadeBasic: string; dotnet: string } | null> {
+        const id = ++this.nextId;
+        return new Promise((resolve) => {
+            this.pending.set(id, (json: string) => {
+                try { resolve(JSON.parse(json)); }
+                catch { resolve(null); }
+            });
+            this.lspWorker.postMessage({ type: 'get-version-info', id });
         });
     }
 
@@ -1455,37 +1472,35 @@ async function bootstrap() {
 
     statusEl.textContent = 'Booting Fade runtime worker…';
 
-    // Heartbeat indicators. Each worker (lsp + vm) posts a beat every
-    // 500ms; the corresponding dot pulses while alive and turns red when
-    // we haven't heard from it in >1.2s. The vm dot going red while the
-    // lsp dot stays green is the signature of a Thread.Sleep / `wait ms`
-    // blocking the VM worker — the page itself stays responsive because
-    // the lsp worker keeps draining messages.
-    const heartbeatEl = document.getElementById('worker-heartbeat')!;
+    // Heartbeat indicators — displayed in the Diagnostics panel.
+    // Each worker (lsp + vm) posts a beat every 500ms; the dot pulses
+    // while alive and turns red when we haven't heard from it in >1.2s.
     type BeatState = { lastAt: number; tick: number };
     const beats: { lsp: BeatState; vm: BeatState } = {
         lsp: { lastAt: Date.now(), tick: 0 },
         vm:  { lastAt: Date.now(), tick: 0 },
     };
-    // Render two dots inside the heartbeat span — lsp on the left, vm
-    // on the right. Tooltip carries the freeze hint for the busy state.
-    heartbeatEl.innerHTML = `
-        <span class="hb-dot" data-role="lsp" data-state="off"></span>
-        <span class="hb-dot" data-role="vm"  data-state="off"></span>
-    `;
-    const dotLsp = heartbeatEl.querySelector<HTMLElement>('.hb-dot[data-role="lsp"]')!;
-    const dotVm  = heartbeatEl.querySelector<HTMLElement>('.hb-dot[data-role="vm"]')!;
+    const dotLsp    = document.getElementById('diag-dot-lsp') as HTMLElement;
+    const dotVm     = document.getElementById('diag-dot-vm') as HTMLElement;
+    const detailLsp = document.getElementById('diag-lsp-detail') as HTMLElement;
+    const detailVm  = document.getElementById('diag-vm-detail') as HTMLElement;
     function paintHeartbeat() {
-        for (const [role, el] of [['lsp', dotLsp], ['vm', dotVm]] as const) {
+        for (const [role, dot, detail] of [
+            ['lsp', dotLsp, detailLsp],
+            ['vm',  dotVm,  detailVm],
+        ] as const) {
             const b = beats[role];
             const dt = Date.now() - b.lastAt;
-            el.dataset.state = dt > 1200 ? 'busy' : (b.tick % 2 === 0 ? 'on' : 'off');
-            el.title = dt > 1200
-                ? `${role} worker is busy — last beat ${(dt / 1000).toFixed(1)}s ago.`
-                    + (role === 'vm'
-                        ? ' Likely Thread.Sleep / wait ms inside user code.'
-                        : '')
-                : `${role} worker alive — beat ${b.tick}`;
+            const busy = dt > 1200;
+            dot.dataset.state = busy ? 'busy' : (b.tick % 2 === 0 ? 'on' : 'off');
+            if (busy) {
+                const hint = role === 'vm' ? ' (Thread.Sleep / wait ms?)' : '';
+                dot.title = `${role} worker busy — last beat ${(dt / 1000).toFixed(1)}s ago${hint}`;
+                detail.textContent = `stalled ${(dt / 1000).toFixed(1)}s ago${hint}`;
+            } else {
+                dot.title = `${role} worker alive — beat ${b.tick}`;
+                detail.textContent = `alive — beat #${b.tick}`;
+            }
         }
     }
     setInterval(paintHeartbeat, 250);
@@ -3009,7 +3024,7 @@ async function bootstrap() {
     const KNOWN_COMPONENTS = new Set([
         'workspace', 'editor', 'debug',
         'output', 'problems', 'tests', 'debug-console',
-        'help',
+        'game', 'help', 'diagnostics',
         // Dynamic — created on demand by the markdown preview button.
         'markdown-preview',
         // Dynamic — created on demand when a binary file is opened
@@ -3271,17 +3286,203 @@ async function bootstrap() {
     };
     refreshHelpEntriesFromWorker();
 
+    // Populate the Diagnostics panel version rows from the worker runtime.
+    void runner.getVersionInfo().then((info) => {
+        if (!info) return;
+        const el = (id: string) => document.getElementById(id);
+        const short = (v: string) => v.split('+')[0]; // strip git hash suffix
+        const wFade = el('diag-w-fade');
+        const wDot  = el('diag-w-dotnet');
+        if (wFade) wFade.textContent = short(info.fadeBasic);
+        if (wDot)  wDot.textContent  = info.dotnet;
+    }).catch(() => { /* diagnostics are best-effort */ });
+
+    // MonoGame runtime versions — polled until theInstance is available.
+    // Blazor boots lazily (Game panel must open first), so we wait up to
+    // 5 minutes without forcing a boot ourselves.
+    {
+        let mgVersionFetched = false;
+        const mgPollHandle = setInterval(async () => {
+            if (mgVersionFetched || !window.theInstance?.invokeMethodAsync) return;
+            mgVersionFetched = true;
+            clearInterval(mgPollHandle);
+            try {
+                const json = await window.theInstance.invokeMethodAsync('GetVersionInfo') as string;
+                const info = JSON.parse(json) as { fadeBasic: string; kni: string; dotnet: string };
+                const el = (id: string) => document.getElementById(id);
+                const short = (v: string) => v.split('+')[0];
+                const mgFade = el('diag-mg-fade');
+                const mgKni  = el('diag-mg-kni');
+                const mgDot  = el('diag-mg-dotnet');
+                if (mgFade) mgFade.textContent = short(info.fadeBasic);
+                if (mgKni)  mgKni.textContent  = info.kni;
+                if (mgDot)  mgDot.textContent  = info.dotnet;
+            } catch { /* diagnostics are best-effort */ }
+        }, 1000);
+    }
+
     // Test probe / public API surface.
     (window as any).__fadeHelp = {
         openCommand: (name: string) => openHelpForCommand(name),
         getController: () => helpCtl,
     };
 
-    // Reset Layout: nuke the persisted layout and reload. Useful when
-    // something puts the dock into an awkward state we can't recover via
-    // healLayout alone.
-    resetLayoutBtn.addEventListener('click', () => {
-        if (!confirm('Reset all panel layout to defaults?')) return;
+    // ── View menu ─────────────────────────────────────────────────────────────
+    // All static panels the user can open/close via the View menu.
+    const VIEW_PANELS: Array<{ id: string; label: string }> = [
+        { id: 'editor',        label: 'Editor' },
+        { id: 'workspace',     label: 'Workspace' },
+        { id: 'debug',         label: 'Debug' },
+        { id: 'output',        label: 'Output' },
+        { id: 'problems',      label: 'Problems' },
+        { id: 'tests',         label: 'Tests' },
+        { id: 'debug-console', label: 'Debug Console' },
+        { id: 'game',          label: 'Game' },
+        { id: 'help',          label: 'Help' },
+        { id: 'diagnostics',   label: 'Diagnostics' },
+    ];
+    const SAVED_LAYOUTS_KEY = 'fade.dockview.savedLayouts';
+
+    function loadSavedLayouts(): Array<{ name: string; layout: object }> {
+        try {
+            const raw = localStorage.getItem(SAVED_LAYOUTS_KEY);
+            if (raw) return JSON.parse(raw) as Array<{ name: string; layout: object }>;
+        } catch { /* ignore */ }
+        return [];
+    }
+
+    function saveSavedLayouts(layouts: Array<{ name: string; layout: object }>) {
+        try { localStorage.setItem(SAVED_LAYOUTS_KEY, JSON.stringify(layouts)); } catch { /* ignore */ }
+    }
+
+    // Open a named panel that is currently absent from the dock.
+    // Core panels use healLayout (which knows their default positions).
+    // Panels that are hidden by default (e.g. diagnostics) are added
+    // directly into a sensible group rather than through healLayout,
+    // so they don't get injected into every restored layout.
+    function openPanelById(id: string) {
+        const RENDER_ALWAYS = 'always' as const;
+        if (id === 'diagnostics') {
+            const ref = dockApi.getPanel('output')?.id
+                     ?? dockApi.getPanel('problems')?.id
+                     ?? dockApi.getPanel('editor')?.id;
+            try {
+                dockApi.addPanel({
+                    id: 'diagnostics',
+                    component: 'diagnostics',
+                    title: 'Diagnostics',
+                    position: ref ? { referencePanel: ref, direction: 'within' } : undefined,
+                    renderer: RENDER_ALWAYS,
+                });
+                dockApi.getPanel('diagnostics')?.api?.setActive();
+            } catch (e) { console.warn('[fade] failed to open diagnostics panel', e); }
+        } else {
+            // For standard panels, healLayout handles re-adding with the
+            // right default position.
+            healLayout(dockApi);
+        }
+    }
+
+    function renderViewMenu() {
+        // ── Panels list ───────────────────────────────────────────────────
+        viewMenuPanels.innerHTML = '';
+        const openIds = new Set(dockApi.panels.map((p) => p.id));
+        for (const { id, label } of VIEW_PANELS) {
+            const isOpen = openIds.has(id);
+            const btn = document.createElement('button');
+            btn.className = 'view-menu-item';
+            btn.innerHTML = `<span class="check-col">${isOpen ? '✓' : ''}</span><span class="item-label">${label}</span>`;
+            btn.addEventListener('click', () => {
+                closeViewMenu();
+                if (isOpen) {
+                    // Panel is open — activate it.
+                    try { dockApi.getPanel(id)?.api?.setActive(); } catch { /* ignore */ }
+                } else {
+                    openPanelById(id);
+                }
+            });
+            viewMenuPanels.appendChild(btn);
+        }
+
+        // ── Saved layouts ─────────────────────────────────────────────────
+        viewSavedLayouts.innerHTML = '';
+        const saved = loadSavedLayouts();
+        for (let i = 0; i < saved.length; i++) {
+            const { name, layout } = saved[i];
+            const row = document.createElement('div');
+            row.className = 'view-saved-layout-row';
+
+            const nameBtn = document.createElement('button');
+            nameBtn.className = 'layout-name-btn';
+            nameBtn.innerHTML = `<span class="codicon codicon-versions"></span><span>${name}</span>`;
+            nameBtn.addEventListener('click', () => {
+                closeViewMenu();
+                try {
+                    dockApi.fromJSON(layout as any);
+                } catch (e) {
+                    console.warn('[fade] failed to restore layout', e);
+                    healLayout(dockApi);
+                }
+            });
+
+            const delBtn = document.createElement('button');
+            delBtn.className = 'layout-del-btn';
+            delBtn.title = `Delete "${name}"`;
+            delBtn.textContent = '✕';
+            delBtn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                const layouts = loadSavedLayouts();
+                layouts.splice(i, 1);
+                saveSavedLayouts(layouts);
+                renderViewMenu();
+            });
+
+            row.appendChild(nameBtn);
+            row.appendChild(delBtn);
+            viewSavedLayouts.appendChild(row);
+        }
+    }
+
+    function openViewMenu() {
+        renderViewMenu();
+        viewMenu.removeAttribute('hidden');
+        // Close on outside click.
+        setTimeout(() => document.addEventListener('click', onOutsideClick), 0);
+    }
+
+    function closeViewMenu() {
+        viewMenu.setAttribute('hidden', '');
+        document.removeEventListener('click', onOutsideClick);
+    }
+
+    function onOutsideClick(e: MouseEvent) {
+        if (!viewMenu.contains(e.target as Node) && e.target !== viewMenuBtn) {
+            closeViewMenu();
+        }
+    }
+
+    viewMenuBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        if (viewMenu.hasAttribute('hidden')) openViewMenu();
+        else closeViewMenu();
+    });
+
+    viewSaveLayoutBtn.addEventListener('click', () => {
+        closeViewMenu();
+        const name = prompt('Layout name:');
+        if (!name?.trim()) return;
+        const layouts = loadSavedLayouts();
+        // Replace existing layout with the same name if present.
+        const idx = layouts.findIndex((l) => l.name === name.trim());
+        const entry = { name: name.trim(), layout: dockApi.toJSON() as object };
+        if (idx >= 0) layouts[idx] = entry;
+        else layouts.push(entry);
+        saveSavedLayouts(layouts);
+    });
+
+    viewResetLayoutBtn.addEventListener('click', () => {
+        closeViewMenu();
+        if (!confirm('Reset all panels to the default layout?')) return;
         try { localStorage.removeItem(LAYOUT_STORAGE_KEY); } catch { /* ignore */ }
         location.reload();
     });
@@ -4402,26 +4603,33 @@ async function bootstrap() {
                 break;
             }
             case 'PROTO_ACK': {
-                // Two kinds of PROTO_ACKs reach us:
-                //   1. StepNextResponseMessage with status=1 — a step landed
-                //      successfully. DebugSession only signals step completion
-                //      this way (no separate stop event), so the native DAP
-                //      adapter translates this ACK into a DAP "Stopped" event.
-                //      We do the same here: refresh the call stack + variables
-                //      and stay paused.
-                //   2. Plain ACK for set-breakpoints / continue / etc. —
-                //      treat as "session resumed".
+                // Two kinds of PROTO_ACKs require UI updates:
+                //   1. StepNextResponseMessage with status=1 — a step landed.
+                //      DebugSession signals this only via PROTO_ACK (no separate
+                //      stop event), so we treat it like a "Stopped" event:
+                //      refresh the call stack + variables and stay paused.
+                //   2. Breakpoints-resync ACK — carries a `breakpoints` array.
+                //      Fired whenever syncBreakpointsToWorker() sends
+                //      REQUEST_BREAKPOINTS. No state change; ignore.
+                //
+                // All other PROTO_ACKs (continue, pause, initial-pause) are
+                // handled by their button/call-site handlers, which already
+                // update debugPaused synchronously. Acting on them here would
+                // race or override that state.
                 let stepLanded = false;
+                let isBreakpointsAck = false;
                 if (event.json) {
                     try {
                         const parsed = JSON.parse(event.json);
                         if (parsed && parsed.status === 1 && typeof parsed.reason === 'string') {
                             stepLanded = true;
+                        } else if (parsed && Array.isArray(parsed.breakpoints)) {
+                            isBreakpointsAck = true;
                         }
                     } catch { /* not a structured response */ }
                 }
                 // eslint-disable-next-line no-console
-                console.log('[DBG-EV] PROTO_ACK stepLanded=', stepLanded);
+                console.log('[DBG-EV] PROTO_ACK stepLanded=', stepLanded, 'isBreakpointsAck=', isBreakpointsAck);
                 if (stepLanded) {
                     debugPaused = true;
                     setDebugStatus('paused on step', 'paused');
@@ -4429,17 +4637,6 @@ async function bootstrap() {
                     await refreshDebugView();
                     // eslint-disable-next-line no-console
                     console.log('[DBG-EV] STEP refreshDebugView done');
-                } else {
-                    debugPaused = false;
-                    setDebugStatus('running', 'running');
-                    setCurrentLine(null);
-                    // While running, show a guidance message in the inspection
-                    // panes instead of "No active debug session" — there IS
-                    // a session, the user just can't see anything yet.
-                    setDebugEmptyStates(true, 'Running — hit a breakpoint or pause to inspect');
-                    setDebugButtons();
-                    // eslint-disable-next-line no-console
-                    console.log('[DBG-EV] PROTO_ACK fell into RUNNING branch — var panel cleared');
                 }
                 break;
             }
@@ -4639,7 +4836,16 @@ async function bootstrap() {
     });
     debugPauseBtn.addEventListener('click', async () => {
         await dbg.pause();
-        // The 'paused' state is asserted by the next breakpoint event.
+        // REQUEST_PAUSE is now in-flight. The PROTO_ACK that comes back
+        // is a plain ack with no useful payload — the desktop DAP turns
+        // it into a StoppedEvent via a callback, but we have no callback
+        // here. Update paused state immediately and sample the call stack
+        // from the current instruction pointer — the VM stops on the
+        // next iteration of its debug loop, so frames are accurate enough.
+        debugPaused = true;
+        setDebugStatus('paused', 'paused');
+        setDebugButtons();
+        await refreshDebugView();
     });
     debugStepOverBtn.addEventListener('click', async () => {
         await dbg.step('over');
