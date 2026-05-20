@@ -510,13 +510,63 @@
             background: rgba(14, 99, 156, 0.08);
         }
 
+        /* Monaco overflowing widgets — context menu, suggest popup, hover,
+           signature help — get reparented to document.body via the editor's
+           `fixedOverflowWidgets: true` option (see main.ts editor opts).
+           Belt-and-suspenders z-index in case anything else fights them. */
+        .context-view,
+        .context-view.fixed,
+        .monaco-editor-overflow-widgets-root,
+        body > .monaco-aria-container {
+            z-index: 100000 !important;
+        }
+
+        /* dockview's `.dv-render-overlay` wraps every panel's content
+           and is built with four independent "trap fixed positioning"
+           properties at once:
+               transform: translate3d(0, 0, 0)
+               contain: layout paint
+               isolation: isolate
+               backface-visibility: hidden
+           ALL of these create a containing block for `position: fixed`
+           descendants — overriding only one isn't enough. Monaco's
+           right-click menu is `position: fixed` inside a shadow root
+           attached to the editor, which lives inside the overlay, so
+           without ALL four overrides the menu gets clipped at the
+           editor's panel-cell boundary when it tries to overflow into
+           an adjacent panel (Help, Game, Output tabs).
+
+           Tradeoff: we lose dockview's GPU-compositing hint + paint
+           containment for this layer. Panel resizes still feel smooth
+           in practice; the win is the menu painting freely across
+           panel boundaries. */
+        .dv-render-overlay {
+            transform: none !important;
+            contain: none !important;
+            isolation: auto !important;
+            backface-visibility: visible !important;
+            will-change: auto !important;
+            /* `position: absolute` + `z-index: 1` (dockview's default)
+               creates a stacking context — and even without the four
+               properties above, that means the editor's overlay and the
+               Help panel's overlay each form their own context. The menu
+               (z-index 2575 inside the editor's overlay) can't outrank
+               the Help panel's overlay because they're siblings in a
+               common parent stacking context, paint-ordered by DOM. So
+               drop the z-index too — dockview still positions overlays
+               correctly because `position: absolute` keeps them on top
+               of static content, and the menu can finally win the paint
+               order via its own much-higher z-index. */
+            z-index: auto !important;
+        }
+
         /* ── Help panel: command docs reference ────────────────────────
            Reuses .md-preview-body for the right-hand reader so the
            command markdown picks up the same typography hover does. */
         #help-pane {
             display: flex;
             flex-direction: column;
-            min-height: 100%;
+            min-height: 0;
             height: 100%;
         }
         .help-toolbar {

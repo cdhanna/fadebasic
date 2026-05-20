@@ -6,7 +6,7 @@
 // Decoders never throw on malformed input — they return null. The preview
 // pane falls back to the metadata card when null comes back.
 
-import { ByteCursor, XnbParseError, type XnbClassification } from './xnb-reader';
+import { ByteCursor, XnbParseError, classifyXnb, type XnbClassification } from './xnb-reader';
 
 // MonoGame SurfaceFormat enum values. Mirrors the .NET enum byte-for-byte
 // so the int we read at offset 0 of the Texture2D payload maps directly.
@@ -221,7 +221,172 @@ function writeAscii(out: Uint8Array, offset: number, s: string) {
 //   int32  loopLength   ← patched
 //   int32  durationMs
 
-import { classifyXnb } from './xnb-reader';
+// ─── KNI version-skew workaround: MGFX v11 → v10 downgrader ─────────────────
+// Desktop MGCB (recent NuGets) emits MGFX header Version = 11. KNI 4.2.9001's
+// Effect constructor caps at v10 and throws "This effect seems to be for a
+// newer version of KNI." on anything higher.
+//
+// The v10 → v11 bump (MonoGame PR #8813, commit 08677e96b) added two strings
+// per shader record — `SourceFile` and `Entrypoint` — for runtime error
+// diagnostics. Mainline MonoGame's v10 reader is otherwise byte-identical,
+// so a v11 blob with those two strings spliced out of every shader record is
+// a valid v10 blob.
+//
+// EffectReader payload (objectData) layout:
+//   int32  dataSize         ← length of MGFX blob; needs adjustment
+//   bytes  'MGFX' (4)
+//   byte   version          ← needs to be rewritten to 10
+//   byte   profileId
+//   int32  effectKey        ← content hash; written by MGFXC, ignored on read
+//   ── MGFX body ──
+//   int32  cbufferCount
+//   cbufferCount × ConstantBuffer { string name, int16 size, int32 paramCount,
+//                                    paramCount × (int32 idx, uint16 offset) }
+//   int32  shaderCount
+//   shaderCount × Shader {
+//       bool   isVertexShader
+//       string SourceFile      ← v11 only; SPLICED OUT
+//       string Entrypoint      ← v11 only; SPLICED OUT
+//       int32  shaderLength
+//       bytes  shaderBytecode [shaderLength]
+//       byte   samplerCount
+//       samplerCount × Sampler { byte×3 (type, slots), bool hasState,
+//                                 [if state: byte×8 (addr×3, color×4, filter)
+//                                            + int32×2 (anis, mip)
+//                                            + float (bias)] = 20 bytes,
+//                                 string name, byte parameter }
+//       byte   cbufferRefCount
+//       cbufferRefCount × byte
+//       byte   attributeCount
+//       attributeCount × Attribute { string name, byte usage, byte index,
+//                                     int16 location }
+//   }
+//   …Parameters + Techniques follow (unchanged, not walked here)
+//
+// Outputs a fresh Uint8Array with: spliced shader strings removed, MGFX
+// version byte set to 10, EffectReader dataSize prefix and XNB header
+// fileSize both decremented by the total bytes removed. Idempotent — when
+// the input is already v10 or doesn't look like an MGFX effect, returns the
+// input unchanged.
+const MGFX_VERSION_KNI = 10;
+
+export function patchEffectMgfxVersionForKni(bytes: Uint8Array): Uint8Array {
+    let cls;
+    try { cls = classifyXnb(bytes); } catch { return bytes; }
+    if (cls.kind !== 'effect' || !cls.objectData) return bytes;
+    const payloadStart = cls.objectData.byteOffset - bytes.byteOffset;
+    const od = cls.objectData;
+    // 4-byte dataSize + 4-byte 'MGFX' magic + 1 version + 1 profile minimum
+    if (od.length < 10) return bytes;
+    if (
+        od[4] !== 0x4D || od[5] !== 0x47 || od[6] !== 0x46 || od[7] !== 0x58
+    ) {
+        return bytes; // not an MGFX blob in the expected slot; bail
+    }
+    const version = od[8];
+    if (version === MGFX_VERSION_KNI) return bytes; // already v10
+    if (version !== 11) return bytes; // only v11 → v10 is implemented
+
+    // Walk the MGFX body, recording the byte ranges (in objectData coords)
+    // of every (SourceFile, Entrypoint) string pair so we can splice them
+    // out. Anything goes wrong, leave bytes alone and let KNI surface the
+    // real error.
+    const removeRanges: Array<[number, number]> = [];
+    try {
+        const cur = new ByteCursor(od, /* MGFX body starts after */ 14);
+
+        const cbufferCount = cur.readInt32LE();
+        for (let c = 0; c < cbufferCount; c++) {
+            cur.read7BitPrefixedString();        // name
+            cur.readUint16LE();                  // sizeInBytes (int16)
+            const paramCount = cur.readInt32LE();
+            for (let p = 0; p < paramCount; p++) {
+                cur.readInt32LE();               // paramIdx
+                cur.readUint16LE();              // offset
+            }
+        }
+
+        const shaderCount = cur.readInt32LE();
+        for (let s = 0; s < shaderCount; s++) {
+            cur.readUint8();                     // isVertexShader bool
+            const removeStart = cur.offset;
+            cur.read7BitPrefixedString();        // SourceFile (v11)
+            cur.read7BitPrefixedString();        // Entrypoint (v11)
+            removeRanges.push([removeStart, cur.offset]);
+
+            const shaderLength = cur.readInt32LE();
+            cur.readBytes(shaderLength);         // bytecode
+
+            const samplerCount = cur.readUint8();
+            for (let i = 0; i < samplerCount; i++) {
+                cur.readUint8(); cur.readUint8(); cur.readUint8();
+                if (cur.readUint8() !== 0) {     // hasState
+                    cur.readBytes(20);           // sampler state body
+                }
+                cur.read7BitPrefixedString();    // name
+                cur.readUint8();                 // parameter index
+            }
+
+            const cbufRefCount = cur.readUint8();
+            cur.readBytes(cbufRefCount);         // cbuffer indices
+
+            const attrCount = cur.readUint8();
+            for (let i = 0; i < attrCount; i++) {
+                cur.read7BitPrefixedString();    // name
+                cur.readUint8();                 // usage
+                cur.readUint8();                 // index
+                cur.readUint16LE();              // location (int16; sign-extend
+                                                  // unused — we just skip)
+            }
+        }
+    } catch {
+        return bytes;
+    }
+
+    const totalRemoved = removeRanges.reduce((acc, [a, b]) => acc + (b - a), 0);
+
+    // Build the output. Translate objectData-relative ranges to bytes-relative.
+    const absRanges = removeRanges.map(([s, e]) => [
+        payloadStart + s, payloadStart + e,
+    ] as [number, number]);
+
+    const out = new Uint8Array(bytes.length - totalRemoved);
+    let inOff = 0;
+    let outOff = 0;
+    for (const [absStart, absEnd] of absRanges) {
+        const span = absStart - inOff;
+        out.set(bytes.subarray(inOff, absStart), outOff);
+        outOff += span;
+        inOff = absEnd;
+    }
+    out.set(bytes.subarray(inOff), outOff);
+
+    // Patch the MGFX version byte. All our splice ranges sit AFTER this byte,
+    // so the position is the same in both input and output.
+    out[payloadStart + 8] = MGFX_VERSION_KNI;
+
+    // Patch the EffectReader's `int32 dataSize` prefix (objectData[0..3]).
+    writeUint32LE(out, payloadStart, readUint32LE(bytes, payloadStart) - totalRemoved);
+
+    // Patch the XNB header's `uint32 fileSize` (at byte offset 6 of the
+    // file). Compressed XNBs would also have a `decompressedSize` at offset
+    // 10, but Fade's content pipeline emits with /compress:False, so we don't
+    // chase that here — if a future caller pipes a compressed XNB through,
+    // the classifier returns objectData=null and we bail at the top.
+    writeUint32LE(out, 6, readUint32LE(bytes, 6) - totalRemoved);
+
+    return out;
+}
+
+function readUint32LE(b: Uint8Array, off: number): number {
+    return (b[off] | (b[off + 1] << 8) | (b[off + 2] << 16) | (b[off + 3] << 24)) >>> 0;
+}
+function writeUint32LE(b: Uint8Array, off: number, value: number): void {
+    b[off]     = value         & 0xFF;
+    b[off + 1] = (value >>> 8)  & 0xFF;
+    b[off + 2] = (value >>> 16) & 0xFF;
+    b[off + 3] = (value >>> 24) & 0xFF;
+}
 
 export function patchSoundEffectForKni(bytes: Uint8Array): Uint8Array {
     let cls;

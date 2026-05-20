@@ -313,6 +313,18 @@ class MonoGameHost {
         }
         return await window.theInstance!.invokeMethodAsync('DebugStart') as string;
     }
+
+    /** Compile + start a debug session at a specific test's entry point.
+     *  Mirrors FadeRunner.debugStartTest's contract — same
+     *  `{ok, error, statementLines}` JSON envelope — but the test runs
+     *  through Game1's main tick loop so MonoGame commands (sprite,
+     *  texture, sync, audio, …) actually have a live GraphicsDevice. */
+    async debugStartTest(source: string, testName: string): Promise<string> {
+        await this.ensureBooted();
+        return await window.theInstance!.invokeMethodAsync(
+            'DebugStartTest', source, testName,
+        ) as string;
+    }
     async debugTerminate(): Promise<void> {
         if (!this.isReady()) return;
         await window.theInstance!.invokeMethodAsync('DebugTerminate');

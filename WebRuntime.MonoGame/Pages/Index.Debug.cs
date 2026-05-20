@@ -9,11 +9,21 @@
 using System;
 using System.Collections.Generic;
 using System.Text.Json;
+using System.Threading;
+using System.Threading.Tasks;
+using Fade.MonoGame.Core;
 using FadeBasic;
 using FadeBasic.Json;        // for Jsonify() extension on DebugMessage etc.
 using FadeBasic.Launch;
+using FadeBasic.Lib.Standard;
+using FadeBasic.Sdk;
+using FadeBasic.Testing;     // FadeTestRunContext, FadeTestSessionContext, FadeTestResult
 using FadeBasic.Virtual;
 using Microsoft.JSInterop;
+// `using` aliases are file-scoped — Index.razor.cs aliases Fade as FadeSdk
+// for unambiguous resolution against Fade.MonoGame.* namespaces; mirror
+// that here so DebugStartTest can call FadeSdk.TryCreateFromString.
+using FadeSdk = FadeBasic.Sdk.Fade;
 
 namespace WebRuntime.MonoGame.Pages
 {
@@ -104,6 +114,157 @@ namespace WebRuntime.MonoGame.Pages
                 ok = true,
                 statementLines = lines,
             }, _debugJsonOpts);
+        }
+
+        // Browser-side "debug a single test" — enters test mode WITH
+        // debug enabled, then enqueues the named test through the same
+        // MonoGameTestHost the run-test path uses. Returns immediately
+        // with a `{ok, statementLines}` envelope so the editor can paint
+        // breakpoint hint glyphs; the test runs concurrently via Game1's
+        // tick loop, driving _debugSession just like the regular Debug
+        // button does. When the test VM completes, _debugSession is kept
+        // alive (suppressExitOnProgramEnd) so the user can subsequently
+        // debug another test or resume Run mode.
+        //
+        // Why this isn't async like RunTests: the page wants the
+        // `statementLines` payload synchronously so breakpoints can land
+        // before the test body executes. The test itself is fire-and-
+        // forget from this method's perspective — its outcome surfaces
+        // through the debug event drain (REV_REQUEST_EXPLODE for an
+        // assertion failure, REV_REQUEST_EXIT for clean completion).
+        [JSInvokable]
+        public string DebugStartTest(string source, string testName)
+        {
+            try
+            {
+                if (_game == null)
+                {
+                    return JsonSerializer.Serialize(new
+                    {
+                        ok = false,
+                        error = "Game not booted — Run a monogame program first to warm up the runtime.",
+                        statementLines = Array.Empty<int>(),
+                    }, _debugJsonOpts);
+                }
+
+                var ctx = CompileForTests(source, out var compileError);
+                if (ctx == null)
+                {
+                    return JsonSerializer.Serialize(new
+                    {
+                        ok = false,
+                        error = "Compile failed:\n" + compileError,
+                        statementLines = Array.Empty<int>(),
+                    }, _debugJsonOpts);
+                }
+
+                TestManifestEntry foundEntry = null;
+                foreach (var t in ctx.Compiler.TestManifest)
+                {
+                    if (string.Equals(t.name, testName, StringComparison.OrdinalIgnoreCase))
+                    {
+                        foundEntry = t;
+                        break;
+                    }
+                }
+                if (foundEntry == null || foundEntry.isAbstract)
+                {
+                    return JsonSerializer.Serialize(new
+                    {
+                        ok = false,
+                        error = foundEntry == null
+                            ? $"No test named '{testName}' found in the source."
+                            : $"Test '{testName}' is abstract and cannot be debugged.",
+                        statementLines = Array.Empty<int>(),
+                    }, _debugJsonOpts);
+                }
+
+                // Enter test mode with debug armed. _debugSession's
+                // suppressExitOnProgramEnd is flipped inside SetTestMode
+                // so the session survives the test VM hitting end-of-
+                // program — letting the user pause/step into a second
+                // test without re-booting Game1.
+                _game.SetTestMode(true, withDebug: true);
+                _paused = false;
+
+                // Sync GameReloader.LatestRuntime to the test ctx so
+                // Game1.Update's assertion-failure source-map lookup
+                // reads the right source, not a stale boot stub.
+                GameReloader.SetBuild(ctx);
+
+                // The host lifecycle (Initialize / BeforeAll) is normally
+                // awaited inside RunTests's async flow. For debug we
+                // start the test "fire and forget" so we can return
+                // statementLines synchronously — kick the lifecycle on
+                // a background continuation that the rAF tick can drive
+                // forward while the JS side sets breakpoints + resumes.
+                EnqueueBasic(DebugMessageType.REQUEST_PAUSE);
+                _ = QueueTestForDebugAsync(ctx, foundEntry);
+
+                var lines = new SortedSet<int>();
+                var dbgData = _game.BrowserDebugSession?.DebugDataAccess;
+                if (dbgData != null)
+                {
+                    foreach (var t in dbgData.statementTokens)
+                    {
+                        if (t?.token != null) lines.Add(t.token.lineNumber);
+                    }
+                }
+                _status = $"debug test: {testName}";
+                StateHasChanged();
+                return JsonSerializer.Serialize(new
+                {
+                    ok = true,
+                    statementLines = lines,
+                }, _debugJsonOpts);
+            }
+            catch (Exception ex)
+            {
+                Console.Error.WriteLine("DebugStartTest threw: " + ex);
+                return JsonSerializer.Serialize(new
+                {
+                    ok = false,
+                    error = "DebugStartTest exception: " + ex.Message,
+                    statementLines = Array.Empty<int>(),
+                }, _debugJsonOpts);
+            }
+        }
+
+        // Fire-and-forget continuation for DebugStartTest. Awaits the
+        // host lifecycle + the test's QueueTest TCS in the background;
+        // any exception is logged but not surfaced (the test outcome
+        // flows through the debug-event drain). Cancellation is not
+        // currently wired through — clicking Stop in the debug toolbar
+        // sends REQUEST_TERMINATE through Index.Debug.cs DebugTerminate
+        // (which un-pauses the session); the test continues until end of
+        // program or hits another breakpoint.
+        private async Task QueueTestForDebugAsync(FadeRuntimeContext launchable, TestManifestEntry entry)
+        {
+            try
+            {
+                await EnsureHostInitializedAsync(launchable).ConfigureAwait(false);
+                var hostMethods = HostMethodTable.FromCommandCollection(launchable.CommandCollection);
+                var runCtx = new FadeTestRunContext(launchable, entry, hostMethods);
+                _testCts?.Dispose();
+                _testCts = new CancellationTokenSource();
+                var result = await _testHost.RunTestAsync(runCtx, _testCts.Token).ConfigureAwait(false);
+                // Surface as a one-shot log so the editor's debug console
+                // shows whether the assertion held. Detailed failure data
+                // is also on r.failureMessage/r.failureSourceText.
+                if (result.passed)
+                {
+                    Console.WriteLine($"[fade test] {entry.name} passed in {result.duration.TotalMilliseconds:F0}ms");
+                }
+                else
+                {
+                    var msg = result.failureMessage ?? result.failureReason ?? "test failed";
+                    Console.Error.WriteLine($"[fade test] {entry.name} FAILED: {msg}");
+                }
+            }
+            catch (Exception ex)
+            {
+                Console.Error.WriteLine($"DebugStartTest background: {ex}");
+            }
         }
 
         [JSInvokable]

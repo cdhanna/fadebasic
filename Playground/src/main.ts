@@ -74,7 +74,7 @@ import {
     LEGACY_BINARY_PREVIEW_ID_PREFIX,
     isBinaryFileName,
 } from './binary-preview';
-import { patchSoundEffectForKni } from './xnb/xnb-previews';
+import { patchEffectMgfxVersionForKni, patchSoundEffectForKni } from './xnb/xnb-previews';
 import { mountHelpPanel } from './help';
 import { monoGameHost } from './monogame-host';
 import type { CommandDocEntry as HelpCommandDocEntry } from './help';
@@ -2099,6 +2099,13 @@ async function bootstrap() {
     // edits don't change the type.
     let lastWorkerProjectType: string | null = null;
 
+    // Set after the Help panel is mounted (further down in bootstrap). The
+    // project-type-change branch below uses this to re-fetch the command
+    // doc list so Help reflects whichever CommandCollection the LSP just
+    // swapped to. Null while bootstrap is still wiring things up — the
+    // initial population happens unconditionally after helpCtl mounts.
+    let refreshHelpEntriesFromWorker: (() => void) | null = null;
+
     // Live-content lookup: prefer Monaco's model (so dirty edits compile
     // even before the save timer fires), fall back to the OPFS-persisted
     // copy. Models exist for every workspace file because bootstrap
@@ -2162,6 +2169,11 @@ async function bootstrap() {
                     }
                 }
                 renderProblems();
+                // The LSP worker just swapped its CommandCollection (web →
+                // monogame or vice-versa). Re-fetch the command-doc list
+                // so the Help tab reflects the new surface. Null-safe for
+                // the first refresh that runs before helpCtl is mounted.
+                refreshHelpEntriesFromWorker?.();
             } catch (e) {
                 console.warn('[fade] setProjectType failed', e);
             }
@@ -2544,7 +2556,14 @@ async function bootstrap() {
             renderTests();
             return;
         }
-        const list = await runner.listTests(source);
+        // monogame compiles against FadeMonoGameCommands+StandardCommands;
+        // the worker's command surface may or may not match, depending on
+        // whether the LSP has swapped command sets. Route through the
+        // canvas-side bridge for monogame so the test manifest reflects
+        // the exact compile env the run will use.
+        const list = currentProject?.type === 'monogame'
+            ? await monoGameHost.listTests(source)
+            : await runner.listTests(source);
         testEntries = list.map((t) => ({ ...t, status: 'idle' as const }));
         renderTests();
     }
@@ -2683,6 +2702,34 @@ async function bootstrap() {
         testsRefreshBtn.disabled = busy;
     }
 
+    // Adapt the canvas-side test-run envelope to the worker-side shape
+    // applyResult/applyResultAll consume. The canvas-side result is missing
+    // the `printed` aggregator (test-print streams are best-effort on the
+    // canvas) and may omit `duration` on the all-tests path; fill defaults
+    // so the consumer doesn't need to branch.
+    function mgToTestRunResult(mg: import('./monogame-host').MonoGameRunTestsResult): TestRunResult {
+        return {
+            passed: mg.passed,
+            failed: mg.failed,
+            duration: mg.duration ?? 0,
+            // Reuse the per-test result shape — fields align 1:1 modulo
+            // failureFrames/failureInstructionIndex which the canvas
+            // bridge doesn't populate yet (FailureFrames support is a
+            // worker-only thing today; logic-test failures still surface
+            // via failureMessage + failureSourceText).
+            results: (mg.results || []).map((r) => ({
+                name: r.name,
+                passed: r.passed,
+                duration: r.duration,
+                failureMessage: r.failureMessage,
+                failureReason: r.failureReason,
+                failureSourceText: r.failureSourceText,
+            })),
+            printed: '',
+            error: mg.error,
+        };
+    }
+
     async function runSingleTest(name: string) {
         const source = await getProjectSource();
         if (!source) return;
@@ -2699,7 +2746,24 @@ async function bootstrap() {
         revealPanel('output');
         appendTestLog(`▶ ${name}`, 'dim');
         try {
-            const r = await runner.runTests(source, name);
+            // monogame tests run on the canvas runtime so MonoGame
+            // commands resolve against the live Game1; web tests run
+            // through the LSP/VM worker. Same shape returned either way,
+            // modulo `printed` + `duration` which the canvas bridge
+            // doesn't include — fill them so applyResult can be agnostic.
+            //
+            // For monogame: push assets first. The test's bytecode may
+            // call `texture`/`load sfx clip`/etc. which look the asset
+            // up via Game1.Content (BrowserContentManager). Without this
+            // the asset cache is empty and the asset commands log
+            // "asset 'X' is not registered" — exactly the failure mode
+            // the user reported before the host-driven test path landed.
+            if (currentProject?.type === 'monogame') {
+                await syncAssetsToRuntime();
+            }
+            const r: TestRunResult = currentProject?.type === 'monogame'
+                ? mgToTestRunResult(await monoGameHost.runTests(source, name))
+                : await runner.runTests(source, name);
             applyResult(r);
         } catch (e: any) {
             testEntries[idx].status = 'fail';
@@ -2729,7 +2793,12 @@ async function bootstrap() {
         revealPanel('output');
         appendTestLog(`▶ Run all`, 'dim');
         try {
-            const r = await runner.runTests(source);
+            if (currentProject?.type === 'monogame') {
+                await syncAssetsToRuntime();
+            }
+            const r: TestRunResult = currentProject?.type === 'monogame'
+                ? mgToTestRunResult(await monoGameHost.runTests(source))
+                : await runner.runTests(source);
             applyResult(r);
         } finally {
             setTestsBusy(false);
@@ -2835,7 +2904,11 @@ async function bootstrap() {
     // back into a single `debug` panel with collapsible sections (matches
     // VSCode's Run-and-Debug sidebar). healLayout still recovers older
     // sessions but the version bump avoids a confusing intermediate state.
-    const LAYOUT_STORAGE_KEY = 'fade.dockview.layout.v3';
+    // Bumped v3 → v4 when the bottom-panel default height shrank and
+    // Help moved into that group's tab strip. Old v3 layouts persisted
+    // 240+ px for the bottom group; v4 starts users on the new 180 px
+    // default so the Help tab doesn't feel oversized.
+    const LAYOUT_STORAGE_KEY = 'fade.dockview.layout.v4';
 
     function setupDockview(): DockviewApi {
         const dockRoot = document.getElementById('dock-root')!;
@@ -3020,13 +3093,18 @@ async function bootstrap() {
                 position: { referencePanel: bottomRef, direction: 'within' },
                 renderer: RENDER_ALWAYS, title: 'Debug Console',
             });
-            addMissing('help', {
-                position: { referencePanel: bottomRef, direction: 'within' },
-                renderer: RENDER_ALWAYS, title: 'Help',
-            });
             addMissing('game', {
                 position: { referencePanel: ref?.id ?? 'editor', direction: 'right' },
                 renderer: RENDER_ALWAYS, title: 'Game',
+            });
+            // Help shares the right-column tab group with Game (matches
+            // buildDefaultLayout). Fall back to the bottom group if Game
+            // isn't around — that keeps Help reachable even in
+            // weirdly-broken restored layouts.
+            const helpRef = dock.getPanel('game')?.id ?? bottomRef;
+            addMissing('help', {
+                position: { referencePanel: helpRef, direction: 'within' },
+                renderer: RENDER_ALWAYS, title: 'Help',
             });
         } catch (e) {
             console.warn('[fade] healLayout failed — falling back to default', e);
@@ -3080,13 +3158,17 @@ async function bootstrap() {
             position: { referencePanel: workspacePanel.id, direction: 'below' },
             renderer: RENDER_ALWAYS,
         });
-        // Bottom tab group: Output / Problems / Tests / Debug Console.
+        // Bottom tab group: Output / Problems / Tests / Debug Console / Help.
+        // Default height kept modest — the editor + game canvas should
+        // dominate the viewport, with the bottom panel showing a few lines
+        // of output by default. Users can drag the splitter taller when
+        // they want to dig into Tests / Help / etc.
         const outputPanel = dock.addPanel({
             id: 'output',
             component: 'output',
             title: 'Output',
             position: { referencePanel: editorPanel.id, direction: 'below' },
-            initialHeight: 240,
+            initialHeight: 180,
             renderer: RENDER_ALWAYS,
         });
         dock.addPanel({
@@ -3110,25 +3192,27 @@ async function bootstrap() {
             position: { referencePanel: outputPanel.id, direction: 'within' },
             renderer: RENDER_ALWAYS,
         });
-        // Help: command reference. Lives in the same bottom tab group
-        // as Output/Problems/Tests so it's a click away from the source.
-        dock.addPanel({
-            id: 'help',
-            component: 'help',
-            title: 'Help',
-            position: { referencePanel: outputPanel.id, direction: 'within' },
-            renderer: RENDER_ALWAYS,
-        });
         // Game panel — only meaningful for fade.json type='monogame', but we
         // add it eagerly so users can preview the empty splash and the runOnce
         // branch always has somewhere to reveal. Initial size budget biased
         // toward the editor — game is a peek-on-Run thing for v1.
-        dock.addPanel({
+        const gamePanel = dock.addPanel({
             id: 'game',
             component: 'game',
             title: 'Game',
             position: { referencePanel: editorPanel.id, direction: 'right' },
             initialWidth: 360,
+            renderer: RENDER_ALWAYS,
+        });
+        // Help: command reference. Shares the right-column tab group with
+        // Game so users can flip from the running game to the docs in one
+        // click without losing horizontal real estate to the editor or
+        // bottom panel.
+        dock.addPanel({
+            id: 'help',
+            component: 'help',
+            title: 'Help',
+            position: { referencePanel: gamePanel.id, direction: 'within' },
             renderer: RENDER_ALWAYS,
         });
         const out = dock.getPanel('output');
@@ -3145,7 +3229,7 @@ async function bootstrap() {
                 const ws = dock.getPanel('workspace');
                 if (ws) ws.api.setSize({ width: 220 });
                 const o = dock.getPanel('output');
-                if (o) o.api.setSize({ height: 240 });
+                if (o) o.api.setSize({ height: 180 });
             } catch (e) {
                 console.warn('[fade] dockview setSize failed', e);
             }
@@ -3174,10 +3258,18 @@ async function bootstrap() {
     }
     // Fire-and-forget on ready — the LSP worker has the workspace
     // populated by the time runner.ready resolves, so this returns
-    // every loaded command (Standard + Web + anything else).
-    void runner.listCommandDocs().then((entries: HelpCommandDocEntry[]) => {
-        helpCtl.setEntries(entries);
-    }).catch((e) => console.warn('[fade] help: list-command-docs failed', e));
+    // every loaded command (Standard + Web + Standard+MonoGame depending
+    // on which CommandCollection the worker currently has loaded).
+    //
+    // Stash the fetcher in the closure-scoped slot so refreshFadeProject
+    // (defined earlier in bootstrap) can re-invoke it whenever the LSP's
+    // CommandCollection swaps because fade.json's `type` changed.
+    refreshHelpEntriesFromWorker = () => {
+        void runner.listCommandDocs().then((entries: HelpCommandDocEntry[]) => {
+            helpCtl.setEntries(entries);
+        }).catch((e) => console.warn('[fade] help: list-command-docs failed', e));
+    };
+    refreshHelpEntriesFromWorker();
 
     // Test probe / public API surface.
     (window as any).__fadeHelp = {
@@ -3385,7 +3477,19 @@ async function bootstrap() {
         fontSize: 14,
         hover: { enabled: 'on', delay: 200, sticky: true },
         'semanticHighlighting.enabled': true,
+        // Reparent overflow widgets (suggest popup, hover, signature help)
+        // to document.body. Doesn't cover the right-click context menu —
+        // that one ships via the IContextViewService and uses its own
+        // container; see the reparent-on-mutation observer below.
+        fixedOverflowWidgets: true,
     } as monaco.editor.IStandaloneEditorConstructionOptions);
+
+    // (Earlier attempt to reparent the context-menu container lived here
+    // — turned out vscode-vscode-api creates the menu inside a shadow root
+    // attached to the editor, so a MutationObserver on document.body
+    // couldn't see it. Real fix is the CSS override in index.html that
+    // removes `transform: translate3d(0,0,0)` from .dv-render-overlay so
+    // `position: fixed` once again anchors to the viewport.)
 
     // Watch ALL fade models in the registry and push when any change. Picks
     // up changes regardless of which model object the live editor uses (we
@@ -3468,7 +3572,10 @@ async function bootstrap() {
     // OPFS take effect on the next Run.
     //
     // SoundEffect XNBs get a loopLength patch on the way through — see
-    // patchSoundEffectForKni for the KNI Blazor bug it works around.
+    // patchSoundEffectForKni for the KNI Blazor bug it works around. Effect
+    // XNBs from modern MGCB (MGFX v11) get the version byte downgraded to v10
+    // so KNI 4.2.9001's Effect ctor doesn't reject them; see
+    // patchEffectMgfxVersionForKni.
     async function syncAssetsToRuntime(): Promise<void> {
         await monoGameHost.clearAssets();
         const names = await workspace.list();
@@ -3476,7 +3583,7 @@ async function bootstrap() {
             if (!/\.xnb$/i.test(name)) continue;
             try {
                 const raw = await workspace.readBytes(name);
-                const bytes = patchSoundEffectForKni(raw);
+                const bytes = patchEffectMgfxVersionForKni(patchSoundEffectForKni(raw));
                 const assetName = name.replace(/\.xnb$/i, '');
                 await monoGameHost.registerAsset(assetName, bytes);
             } catch (e) {
@@ -4343,11 +4450,12 @@ async function bootstrap() {
     }
 
     // Dispatch debug ops to the right backend based on the active fade.json
-    // type. 'web' uses the existing worker debug API; 'monogame' uses the
-    // canvas-side bridge (monoGameHost). Same logical operations on both
-    // sides — the result shapes match so call sites consume them
-    // identically. Parses JSON strings returned by monoGameHost so callers
-    // see the same shape as runner's pre-parsed responses.
+    // type. 'web' uses the existing worker debug API (runner.debugX);
+    // 'monogame' uses the canvas-side bridge (monoGameHost.debugX).
+    // Same logical operations on both sides — the result shapes match
+    // so call sites consume them identically. Parses JSON strings
+    // returned by monoGameHost so callers see the same shape as
+    // runner's pre-parsed responses.
     const dbg = {
         start: (source: string): Promise<any> =>
             currentProject?.type === 'monogame'
@@ -4357,55 +4465,61 @@ async function bootstrap() {
                 ? syncAssetsToRuntime()
                     .then(() => monoGameHost.debugStart(source))
                     .then((s) => JSON.parse(s))
-                : dbg.start(source),
+                : runner.debugStart(source),
         startTest: (source: string, testName: string): Promise<any> =>
-            // No test-debug for monogame yet — tests go through the
-            // worker today.
-            dbg.startTest(source, testName),
+            currentProject?.type === 'monogame'
+                // Test debug on the canvas needs Game1 not actively
+                // running the user program — sync assets, then ask the
+                // canvas runtime to swap in a fresh test-VM. See
+                // Index.Debug.cs's DebugStartTest.
+                ? syncAssetsToRuntime()
+                    .then(() => monoGameHost.debugStartTest(source, testName))
+                    .then((s) => JSON.parse(s))
+                : runner.debugStartTest(source, testName),
         continue: (): Promise<any> =>
             currentProject?.type === 'monogame'
                 ? monoGameHost.debugContinue()
-                : dbg.continue(),
+                : runner.debugContinue(),
         pause: (): Promise<any> =>
             currentProject?.type === 'monogame'
                 ? monoGameHost.debugPause()
-                : dbg.pause(),
+                : runner.debugPause(),
         step: (kind: 'over' | 'in' | 'out'): Promise<any> =>
             currentProject?.type === 'monogame'
                 ? monoGameHost.debugStep(kind)
-                : dbg.step(kind),
+                : runner.debugStep(kind),
         terminate: (): Promise<any> =>
             currentProject?.type === 'monogame'
                 ? monoGameHost.debugTerminate()
-                : dbg.terminate(),
+                : runner.debugTerminate(),
         setBreakpoints: (payload: any): Promise<any> =>
             currentProject?.type === 'monogame'
                 ? monoGameHost.debugSetBreakpoints(JSON.stringify(payload))
-                : dbg.setBreakpoints(payload),
+                : runner.debugSetBreakpoints(payload),
         stackFrames: (): Promise<any> =>
             currentProject?.type === 'monogame'
                 ? monoGameHost.debugStackFrames().then((s) => JSON.parse(s))
-                : dbg.stackFrames(),
+                : runner.debugStackFrames(),
         scopes: (frameId: number): Promise<any> =>
             currentProject?.type === 'monogame'
                 ? monoGameHost.debugScopes(frameId).then((s) => JSON.parse(s))
-                : dbg.scopes(frameId),
+                : runner.debugScopes(frameId),
         expandVariable: (variableId: number): Promise<any> =>
             currentProject?.type === 'monogame'
                 ? monoGameHost.debugVariableExpansion(variableId).then((s) => JSON.parse(s))
-                : dbg.expandVariable(variableId),
+                : runner.debugExpandVariable(variableId),
         eval: (frameId: number, expression: string): Promise<any> =>
             currentProject?.type === 'monogame'
                 ? monoGameHost.debugEval(frameId, expression).then((s) => JSON.parse(s))
-                : dbg.eval(frameId, expression),
+                : runner.debugEval(frameId, expression),
         repl: (frameId: number, code: string): Promise<any> =>
             currentProject?.type === 'monogame'
                 ? monoGameHost.debugRepl(frameId, code).then((s) => JSON.parse(s))
-                : dbg.repl(frameId, code),
+                : runner.debugRepl(frameId, code),
         setVariable: (frameId: number, variableId: number, rhs: string): Promise<any> =>
             currentProject?.type === 'monogame'
                 ? monoGameHost.debugSetVariable(frameId, variableId, rhs).then((s) => JSON.parse(s))
-                : dbg.setVariable(frameId, variableId, rhs),
+                : runner.debugSetVariable(frameId, variableId, rhs),
     };
 
     const startDebug = async () => {

@@ -1,12 +1,17 @@
 using System;
 using System.Collections.Generic;
 using System.Text.Json;
+using System.Threading;
 using System.Threading.Tasks;
+using Fade.MonoGame;          // MonoGameTestHost
 using Fade.MonoGame.Core;
 using Fade.MonoGame.Lib;
 using FadeBasic;
+using FadeBasic.Launch;       // ITestLaunchable
 using FadeBasic.Lib.Standard;
 using FadeBasic.Sdk;
+using FadeBasic.Testing;      // IFadeTestHost, FadeTestSessionContext, FadeTestRunContext, FadeTestResult
+using FadeBasic.Virtual;      // HostMethodTable, TestManifestEntry
 // FadeBasic.Sdk.Fade collides with the Fade.* MonoGame namespaces in name
 // resolution. Alias it so `FadeSdk.TryCreateFromString(...)` is unambiguous.
 using FadeSdk = FadeBasic.Sdk.Fade;
@@ -124,11 +129,19 @@ loop
         // keeps Game1 + GraphicsDevice alive so the next LoadProgram reloads
         // instantly. The canvas keeps showing the last frame; we don't
         // black it out so the user can see what they last saw.
+        //
+        // Also halts every active audio instance — WebAudio playback does
+        // not respect _paused on its own (the rAF tick loop only drives
+        // VM update/draw, not the audio output), so without this any
+        // currently-playing `play sfx`-spawned SoundEffectInstance keeps
+        // emitting samples until the clip naturally ends.
         [JSInvokable]
         public void StopGame()
         {
             _paused = true;
             _status = "stopped";
+            try { AudioInstanceSystem.StopAll(); }
+            catch (Exception e) { Console.Error.WriteLine("StopGame: StopAll threw: " + e); }
             StateHasChanged();
         }
 
@@ -216,16 +229,15 @@ loop
         }
 
         // ─── Testing bridge ────────────────────────────────────────────
-        // Mirrors WebRuntime/FadeBridge.cs ListTests/RunTests but compiles
-        // against FadeMonoGameCommands so graphics-touching tests can call
-        // sprite/texture/etc. Tests run via FadeRuntimeContext.RunAllTests
-        // (a fresh VM per test) — they don't disturb the main game's VM.
-        // GameSystem.game stays set, so commands that read graphics state
-        // (e.g., `texture` which loads via ContentWatcher) will *attempt*
-        // their work; commands that need Game1 lifecycle (e.g., `sync`)
-        // run unbatched against the main GraphicsDevice. Good enough for
-        // logic tests; graphics tests will land properly once Game1's
-        // testMode + QueueTest flow is wired into the JS rAF loop.
+        // Lists + runs tests through the same MonoGameTestHost +
+        // Game1.QueueTest plumbing that desktop's MTP-driven test runs
+        // use. Each test runs on the live Game1 VM (so MonoGame commands
+        // like sprite/texture/sync hit a real GraphicsDevice), with the
+        // test-queue Update-loop dispatching dequeues + ResetFade-with-
+        // entry. The host's RunTestAsync awaits a TCS that Game1.Update
+        // SetResults on test-VM completion; the rAF tick loop keeps
+        // ticking under the await thanks to RunContinuationsAsynchronously
+        // on the TCS (see Game1.QueueTest).
 
         private static readonly JsonSerializerOptions _testJsonOpts = new()
         {
@@ -233,16 +245,34 @@ loop
             IncludeFields = true,
         };
 
+        // Test session state. The host + session context are constructed
+        // lazily on first test invocation and reused across calls until
+        // the page reloads — InitializeAsync / BeforeAllTestsAsync fire
+        // once per session, not per test, matching MTP's contract. We
+        // intentionally do NOT call AfterAllTestsAsync between
+        // interactive single-test invocations because doing so would set
+        // game.allTestsDone = true and freeze the Update loop's test-mode
+        // dispatch.
+        private MonoGameTestHost _testHost;
+        private FadeTestSessionContext _testSession;
+        private bool _testHostInitialized;
+
+        // Reusable cancellation source for the active test. The page can
+        // (eventually) signal cancellation through a JSInvokable; for now
+        // the source is created per-run and left ungated.
+        private CancellationTokenSource _testCts;
+
         [JSInvokable]
         public string ListTests(string source)
         {
             try
             {
-                var commands = new CommandCollection(
-                    new FadeMonoGameCommands(),
-                    new StandardCommands());
-                if (!FadeSdk.TryCreateFromString(source, commands, out var ctx, out _))
+                var ctx = CompileForTests(source, out var compileError);
+                if (ctx == null)
+                {
+                    Console.Error.WriteLine("ListTests compile error: " + compileError);
                     return "[]";
+                }
 
                 var tests = new List<object>();
                 foreach (var t in ctx.Compiler.TestManifest)
@@ -265,53 +295,139 @@ loop
             }
         }
 
+        // Runs a single test (or all concrete tests when testName is
+        // empty) on the live Game1 VM via MonoGameTestHost. Async because
+        // host.RunTestAsync awaits the QueueTest TCS that Game1.Update
+        // resolves when the test VM finishes.
         [JSInvokable]
-        public string RunTests(string source, string testName)
+        public async Task<string> RunTests(string source, string testName)
         {
             try
             {
-                var commands = new CommandCollection(
-                    new FadeMonoGameCommands(),
-                    new StandardCommands());
-
-                if (!FadeSdk.TryCreateFromString(source, commands, out var ctx, out var errors))
+                var ctx = CompileForTests(source, out var compileError);
+                if (ctx == null)
                 {
                     return JsonSerializer.Serialize(new
                     {
                         passed = 0,
                         failed = 0,
-                        error = "Compile failed:\n" + errors.ToDisplay(),
+                        error = "Compile failed:\n" + compileError,
                         results = Array.Empty<object>(),
                     }, _testJsonOpts);
                 }
 
-                object payload;
+                if (_game == null)
+                {
+                    return JsonSerializer.Serialize(new
+                    {
+                        passed = 0,
+                        failed = 0,
+                        error = "Game not booted — Run a monogame program first.",
+                        results = Array.Empty<object>(),
+                    }, _testJsonOpts);
+                }
+
+                // Resolve which entries we want to execute. Empty
+                // testName → run every concrete (non-abstract) test in
+                // the manifest. Named → exactly that one.
+                var entries = new List<TestManifestEntry>();
                 if (string.IsNullOrWhiteSpace(testName))
                 {
-                    var run = ctx.RunAllTests();
-                    payload = new
+                    foreach (var t in ctx.Compiler.TestManifest)
                     {
-                        passed = run.passedCount,
-                        failed = run.failedCount,
-                        duration = run.duration.TotalMilliseconds,
-                        results = ResultsToObjects(run.tests),
-                    };
+                        if (!t.isAbstract) entries.Add(t);
+                    }
                 }
                 else
                 {
-                    var r = ctx.RunTest(testName);
-                    payload = new
+                    TestManifestEntry hit = null;
+                    foreach (var t in ctx.Compiler.TestManifest)
                     {
-                        passed = r.passed ? 1 : 0,
-                        failed = r.passed ? 0 : 1,
-                        duration = r.duration.TotalMilliseconds,
-                        results = ResultsToObjects(new List<FadeTestResult> { r }),
-                    };
+                        if (string.Equals(t.name, testName, StringComparison.OrdinalIgnoreCase))
+                        {
+                            hit = t;
+                            break;
+                        }
+                    }
+                    if (hit == null)
+                    {
+                        return JsonSerializer.Serialize(new
+                        {
+                            passed = 0,
+                            failed = 0,
+                            error = $"No test named '{testName}' found in the source.",
+                            results = Array.Empty<object>(),
+                        }, _testJsonOpts);
+                    }
+                    if (hit.isAbstract)
+                    {
+                        return JsonSerializer.Serialize(new
+                        {
+                            passed = 0,
+                            failed = 0,
+                            error = $"Test '{testName}' is abstract and cannot be run directly.",
+                            results = Array.Empty<object>(),
+                        }, _testJsonOpts);
+                    }
+                    entries.Add(hit);
                 }
+
+                // Enter test mode without debug. The page-side dbg.start
+                // path also re-enters test mode with debug for the
+                // Debug-Test button — see Index.Debug.cs DebugStartTest.
+                _game.SetTestMode(true, withDebug: false);
+                _paused = false;
+
+                // Keep LatestRuntime in sync with the test source so
+                // Game1.Update's assertion-failure source-map lookup uses
+                // the right FadeRuntimeContext (not a stale boot stub).
+                GameReloader.SetBuild(ctx);
+
+                await EnsureHostInitializedAsync(ctx).ConfigureAwait(false);
+
+                var startedAt = DateTime.UtcNow;
+                var results = new List<FadeTestResult>();
+                var passedCount = 0;
+                var failedCount = 0;
+                _testCts?.Dispose();
+                _testCts = new CancellationTokenSource();
+                var hostMethods = HostMethodTable.FromCommandCollection(ctx.CommandCollection);
+
+                foreach (var entry in entries)
+                {
+                    if (_testCts.IsCancellationRequested) break;
+                    var runCtx = new FadeTestRunContext(ctx, entry, hostMethods);
+                    FadeTestResult r;
+                    try
+                    {
+                        r = await _testHost.RunTestAsync(runCtx, _testCts.Token).ConfigureAwait(false);
+                    }
+                    catch (Exception ex)
+                    {
+                        r = new FadeTestResult
+                        {
+                            testName = entry.name,
+                            passed = false,
+                            failureMessage = "test host threw: " + ex.Message,
+                        };
+                    }
+                    results.Add(r);
+                    if (r.passed) passedCount++;
+                    else failedCount++;
+                }
+
+                var payload = new
+                {
+                    passed = passedCount,
+                    failed = failedCount,
+                    duration = (DateTime.UtcNow - startedAt).TotalMilliseconds,
+                    results = ResultsToObjects(results),
+                };
                 return JsonSerializer.Serialize(payload, _testJsonOpts);
             }
             catch (Exception ex)
             {
+                Console.Error.WriteLine("RunTests threw: " + ex);
                 return JsonSerializer.Serialize(new
                 {
                     passed = 0,
@@ -319,6 +435,43 @@ loop
                     error = "Runtime error: " + ex.GetType().Name + ": " + ex.Message,
                     results = Array.Empty<object>(),
                 }, _testJsonOpts);
+            }
+        }
+
+        // Shared between ListTests, RunTests, and DebugStartTest — every
+        // test-related JSInvokable compiles fresh against the FadeMonoGame
+        // command surface, then walks the produced FadeRuntimeContext
+        // (which implements ITestLaunchable) to find / iterate tests.
+        // Returns null + a formatted error message on compile failure.
+        internal FadeRuntimeContext CompileForTests(string source, out string error)
+        {
+            var commands = new CommandCollection(
+                new FadeMonoGameCommands(),
+                new StandardCommands());
+            if (!FadeSdk.TryCreateFromString(source, commands, out var ctx, out var errors))
+            {
+                error = errors.ToDisplay();
+                return null;
+            }
+            error = null;
+            return ctx;
+        }
+
+        // Lazy host bring-up. The host + session-context survive across
+        // every test invocation in this Index instance's lifetime; only
+        // the first call pays the InitializeAsync + BeforeAllTestsAsync
+        // cost. Re-entrancy-safe because each invocation awaits on the
+        // same _testHostInitialized flag before doing work.
+        internal async Task EnsureHostInitializedAsync(FadeRuntimeContext launchable)
+        {
+            _testHost ??= new MonoGameTestHost(_game);
+            _testSession ??= new FadeTestSessionContext(launchable, services: null);
+
+            if (!_testHostInitialized)
+            {
+                await _testHost.InitializeAsync(_testSession, CancellationToken.None).ConfigureAwait(false);
+                await _testHost.BeforeAllTestsAsync(_testSession, CancellationToken.None).ConfigureAwait(false);
+                _testHostInitialized = true;
             }
         }
 
