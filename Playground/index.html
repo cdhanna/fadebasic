@@ -997,10 +997,45 @@
             font-size: 0.82rem;
         }
         .test-item:hover { background: rgba(255,255,255,0.04); }
+        /* Five-state palette + animation:
+             idle    → muted grey, no animation (never-run / not in batch)
+             queued  → grey, pulsing  (in the batch, waiting its turn)
+             running → yellow, pulsing (live right now)
+             pass    → green, steady
+             fail    → red, steady
+             stopped → purple, steady (cancelled mid-batch)
+           Two `alternate` pulse animations at different cadences so
+           "queued" reads as slower/quieter than "running" — same opacity
+           range, just different durations. */
+        .test-status-icon.idle    { color: var(--fg-muted); }
         .test-status-icon.pass    { color: #4caf50; }
         .test-status-icon.fail    { color: #f14c4c; }
-        .test-status-icon.idle    { color: var(--fg-muted); }
-        .test-status-icon.running { color: #3794ff; }
+        .test-status-icon.stopped { color: #a371f7; }
+        .test-status-icon.queued {
+            color: var(--fg-muted);
+            animation: test-status-pulse 1.4s ease-in-out infinite alternate;
+        }
+        .test-status-icon.running {
+            color: #f0c419;
+            animation: test-status-pulse 0.8s ease-in-out infinite alternate;
+        }
+        @keyframes test-status-pulse {
+            from { opacity: 0.3; }
+            to   { opacity: 1; }
+        }
+
+        /* Export button busy state. The async fflate.zip below the
+           main thread does the compression work, but we still want a
+           visible cue that something's happening — pulsing opacity
+           on the disabled button plus a tinted accent. */
+        #export.is-exporting {
+            animation: export-pulse 1.2s ease-in-out infinite alternate;
+            --vscode-button-secondaryBackground: #2d5b8e;
+        }
+        @keyframes export-pulse {
+            from { opacity: 0.55; }
+            to   { opacity: 1; }
+        }
         .test-name {
             color: var(--fg);
             overflow: hidden;
@@ -1548,6 +1583,475 @@
             background: var(--bg-2);
         }
         #project-new-error[hidden] { display: none; }
+
+        /* ─── AI Chat panel ──────────────────────────────────────────────── */
+        #ai-chat-pane {
+            display: flex;
+            flex-direction: column;
+            height: 100%;
+            background: var(--bg);
+        }
+        .ai-toolbar {
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            padding: 0.35rem 0.7rem;
+            background: var(--bg-2);
+            border-bottom: 1px solid var(--border-2);
+            flex-shrink: 0;
+        }
+        .ai-toolbar-title {
+            font-size: 0.7rem;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+            color: var(--fg-muted);
+        }
+        .ai-chat-status {
+            font-size: 0.74rem;
+            color: var(--fg-muted);
+        }
+        .ai-chat-status.ai-status-ready   { color: #4caf50; }
+        .ai-chat-status.ai-status-loading { color: #cca700; }
+        .ai-chat-status.ai-status-error   { color: #f14c4c; }
+        .ai-stop-btn {
+            padding: 0.35rem 0.7rem;
+            font-size: 0.78rem;
+            background: rgba(241, 76, 76, 0.15);
+            border: 1px solid #f14c4c;
+            color: #f14c4c;
+            border-radius: 3px;
+            cursor: pointer;
+            flex-shrink: 0;
+            align-self: flex-end;
+        }
+        .ai-stop-btn:hover { background: rgba(241, 76, 76, 0.25); }
+        .ai-load-btn, .ai-clear-btn {
+            padding: 0.15rem 0.55rem;
+            font-size: 0.74rem;
+            background: transparent;
+            border: 1px solid var(--border-2);
+            color: var(--fg-muted);
+            border-radius: 3px;
+            cursor: pointer;
+        }
+        .ai-load-btn:hover, .ai-clear-btn:hover { color: var(--fg); border-color: var(--fg-muted); }
+        .ai-progress-row {
+            padding: 0.3rem 0.7rem;
+            background: var(--bg-2);
+            border-bottom: 1px solid var(--border-2);
+            flex-shrink: 0;
+        }
+        .ai-progress-row[hidden] { display: none; }
+        .ai-progress-text { font-size: 0.72rem; color: var(--fg-muted); margin-bottom: 4px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+        .ai-progress-bar { height: 4px; background: var(--bg-3); border-radius: 2px; overflow: hidden; }
+        .ai-progress-bar-fill { height: 100%; background: var(--accent); width: 0%; transition: width 200ms ease; border-radius: 2px; }
+        .ai-messages {
+            flex: 1;
+            overflow-y: auto;
+            padding: 0.75rem;
+            display: flex;
+            flex-direction: column;
+            gap: 0.5rem;
+            min-height: 0;
+        }
+        .ai-msg {
+            max-width: 90%;
+            flex-shrink: 0;
+            padding: 0.45rem 0.7rem;
+            border-radius: 8px;
+            font-size: 0.82rem;
+            line-height: 1.5;
+            white-space: pre-wrap;
+            word-break: break-word;
+        }
+        .ai-msg-user {
+            background: #094771;
+            color: #fff;
+            align-self: flex-end;
+            border-bottom-right-radius: 2px;
+        }
+        .ai-msg-assistant {
+            background: var(--bg-2);
+            color: var(--fg);
+            align-self: flex-start;
+            border-bottom-left-radius: 2px;
+        }
+        .ai-msg-error {
+            background: rgba(241, 76, 76, 0.12);
+            color: #f14c4c;
+            align-self: flex-start;
+            border: 1px solid rgba(241, 76, 76, 0.3);
+        }
+        /* Thinking indicator — three pulsing dots shown while waiting for
+           the first token. Removed from the DOM once streaming starts. */
+        .ai-thinking {
+            align-self: flex-start;
+            display: flex;
+            align-items: center;
+            gap: 4px;
+            padding: 0.45rem 0.7rem;
+            background: var(--bg-2);
+            border-radius: 8px;
+            border-bottom-left-radius: 2px;
+        }
+        .ai-thinking span {
+            width: 6px;
+            height: 6px;
+            border-radius: 50%;
+            background: var(--fg-muted);
+            animation: ai-pulse 1.2s ease-in-out infinite;
+        }
+        .ai-thinking span:nth-child(2) { animation-delay: 0.2s; }
+        .ai-thinking span:nth-child(3) { animation-delay: 0.4s; }
+        @keyframes ai-pulse {
+            0%, 80%, 100% { opacity: 0.2; transform: scale(0.85); }
+            40%            { opacity: 1;   transform: scale(1); }
+        }
+
+        /* ── Collapsible tool row ── */
+        .ai-tool-row {
+            align-self: stretch;
+            flex-shrink: 0;   /* don't compress when the message list gets long */
+            border: 1px solid var(--border-2);
+            border-radius: 5px;
+            overflow: hidden;
+            font-size: 0.76rem;
+        }
+        .ai-tool-header {
+            display: flex;
+            align-items: center;
+            gap: 0.4rem;
+            width: 100%;
+            padding: 0.3rem 0.55rem;
+            background: var(--bg-3);
+            border: none;
+            color: var(--fg-muted);
+            font: inherit;
+            font-size: 0.76rem;
+            font-family: ui-monospace, 'SF Mono', Menlo, monospace;
+            text-align: left;
+            cursor: default;
+        }
+        .ai-tool-header:not(:disabled) { cursor: pointer; }
+        .ai-tool-header:not(:disabled):hover { background: var(--hover-bg); color: var(--fg); }
+        .ai-tool-icon { flex-shrink: 0; }
+        .ai-tool-label { flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+        .ai-tool-badge {
+            flex-shrink: 0;
+            font-size: 0.68rem;
+            padding: 0.05rem 0.35rem;
+            border-radius: 3px;
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+        }
+        .ai-tool-badge-running {
+            color: #cca700;
+            background: rgba(204, 167, 0, 0.12);
+            animation: ai-badge-pulse 1s ease-in-out infinite alternate;
+        }
+        @keyframes ai-badge-pulse { from { opacity: 0.5; } to { opacity: 1; } }
+        .ai-tool-badge-done { color: #4caf50; background: rgba(76, 175, 80, 0.12); }
+        .ai-tool-badge-fail { color: #f14c4c; background: rgba(241, 76, 76, 0.12); }
+        .ai-tool-chevron { font-size: 0.6rem; color: var(--fg-muted); flex-shrink: 0; }
+        .ai-tool-detail { background: var(--bg); border-top: 1px solid var(--border-2); }
+        .ai-tool-json {
+            margin: 0;
+            padding: 0.45rem 0.7rem;
+            font-family: ui-monospace, 'SF Mono', Menlo, monospace;
+            font-size: 0.74rem;
+            line-height: 1.5;
+            overflow-x: auto;
+            max-height: 400px;
+            overflow-y: auto;
+        }
+        .ai-tool-json-fail { color: #f14c4c; }
+        /* JSON syntax highlighting */
+        .ai-tool-json .json-k    { color: #9CDCFE; }   /* key   */
+        .ai-tool-json .json-s    { color: #CE9178; }   /* string value */
+        .ai-tool-json .json-n    { color: #B5CEA8; }   /* number */
+        .ai-tool-json .json-b    { color: #569cd6; }   /* bool */
+        .ai-tool-json .json-null { color: var(--fg-muted); }
+
+        .ai-approval-hint {
+            align-self: flex-start;
+            font-size: 0.72rem;
+            color: #cca700;
+            padding: 0.15rem 0;
+        }
+        .ai-diff-wrapper {
+            align-self: stretch;
+            border: 1px solid var(--border-2);
+            border-radius: 6px;
+            overflow: hidden;
+            font-size: 0.78rem;
+        }
+        .ai-diff-wrapper.ai-diff-accepted { border-color: #4caf50; }
+        .ai-diff-wrapper.ai-diff-rejected { border-color: #f14c4c; opacity: 0.6; }
+        .ai-diff-header {
+            padding: 0.3rem 0.6rem;
+            background: var(--bg-2);
+            border-bottom: 1px solid var(--border-2);
+            font-size: 0.72rem;
+            color: var(--fg-muted);
+            font-family: ui-monospace, 'SF Mono', Menlo, monospace;
+        }
+        .ai-diff {
+            margin: 0;
+            padding: 0.4rem 0.6rem;
+            font-family: ui-monospace, 'SF Mono', Menlo, monospace;
+            font-size: 0.76rem;
+            line-height: 1.5;
+            background: var(--bg);
+            overflow-x: auto;
+            max-height: 300px;
+            overflow-y: auto;
+        }
+        .ai-diff-line { display: block; }
+        .ai-diff-add    { color: #4caf50; background: rgba(76, 175, 80, 0.08); }
+        .ai-diff-remove { color: #f14c4c; background: rgba(241, 76, 76, 0.08); text-decoration: line-through; opacity: 0.8; }
+        .ai-diff-same   { color: var(--fg-muted); }
+        .ai-diff-actions {
+            display: flex;
+            gap: 0.5rem;
+            padding: 0.4rem 0.6rem;
+            background: var(--bg-2);
+            border-top: 1px solid var(--border-2);
+        }
+        .ai-diff-apply {
+            padding: 0.2rem 0.7rem;
+            font-size: 0.78rem;
+            background: #0e639c;
+            color: white;
+            border: none;
+            border-radius: 3px;
+            cursor: pointer;
+        }
+        .ai-diff-apply:hover:not(:disabled) { background: #1177bb; }
+        .ai-diff-apply:disabled { opacity: 0.5; cursor: default; }
+        .ai-diff-reject {
+            padding: 0.2rem 0.7rem;
+            font-size: 0.78rem;
+            background: transparent;
+            color: var(--fg-muted);
+            border: 1px solid var(--border-2);
+            border-radius: 3px;
+            cursor: pointer;
+        }
+        .ai-diff-reject:hover:not(:disabled) { color: var(--fg); }
+        .ai-diff-reject:disabled { opacity: 0.5; cursor: default; }
+        .ai-input-row {
+            display: flex;
+            align-items: flex-end;
+            gap: 0.4rem;
+            padding: 0.5rem 0.6rem;
+            border-top: 1px solid var(--border-2);
+            background: var(--bg-2);
+            flex-shrink: 0;
+        }
+        .ai-input {
+            flex: 1;
+            background: var(--bg);
+            border: 1px solid var(--border-2);
+            color: var(--fg);
+            font: inherit;
+            font-size: 0.82rem;
+            padding: 0.35rem 0.5rem;
+            border-radius: 4px;
+            outline: none;
+            resize: none;
+            line-height: 1.45;
+            min-height: 32px;
+            max-height: 140px;
+            overflow-y: auto;
+        }
+        .ai-input:focus { border-color: #007fd4; }
+        .ai-input:disabled { opacity: 0.5; }
+        .ai-send-btn {
+            padding: 0.35rem 0.7rem;
+            font-size: 0.78rem;
+            flex-shrink: 0;
+            align-self: flex-end;
+        }
+
+        /* ─── AI History dropdown ────────────────────────────────────────── */
+        .ai-history-btn {
+            font-size: 0.78rem;
+            background: transparent;
+            border: 1px solid var(--border-2);
+            color: var(--fg-muted);
+            padding: 0.2rem 0.5rem;
+            border-radius: 3px;
+            cursor: pointer;
+            line-height: 1;
+        }
+        .ai-history-btn:hover { color: var(--fg); border-color: var(--fg-muted); }
+        .ai-history-wrap {
+            position: relative;
+        }
+        .ai-history-menu {
+            position: absolute;
+            top: calc(100% + 4px);
+            left: 0;
+            z-index: 200;
+            background: var(--bg-2);
+            border: 1px solid var(--border-2);
+            border-radius: 5px;
+            box-shadow: 0 4px 16px rgba(0,0,0,0.35);
+            min-width: 260px;
+            max-width: 340px;
+            flex-direction: column;
+            overflow: hidden;
+        }
+        .ai-history-menu:not([hidden]) { display: flex; }
+        .ai-history-menu-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 0.4rem 0.6rem;
+            border-bottom: 1px solid var(--border-2);
+            font-size: 0.75rem;
+            color: var(--fg-muted);
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+        }
+        .ai-history-new {
+            font-size: 0.72rem;
+            padding: 0.15rem 0.45rem;
+            background: transparent;
+            border: 1px solid var(--border-2);
+            color: var(--fg-muted);
+            border-radius: 3px;
+            cursor: pointer;
+        }
+        .ai-history-new:hover { color: var(--fg); border-color: var(--fg-muted); }
+        .ai-history-list {
+            overflow-y: auto;
+            max-height: 280px;
+        }
+        .ai-history-item {
+            display: flex;
+            align-items: stretch;
+            border-bottom: 1px solid var(--border-2);
+        }
+        .ai-history-item:last-child { border-bottom: none; }
+        .ai-history-item.active { background: rgba(0, 127, 212, 0.12); }
+        .ai-history-label {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            align-items: flex-start;
+            gap: 0.1rem;
+            padding: 0.4rem 0.6rem;
+            background: transparent;
+            border: none;
+            color: var(--fg);
+            cursor: pointer;
+            text-align: left;
+            min-width: 0;
+        }
+        .ai-history-label:hover { background: var(--bg-3); }
+        .ai-history-title {
+            font-size: 0.8rem;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            max-width: 220px;
+        }
+        .ai-history-time {
+            font-size: 0.68rem;
+            color: var(--fg-muted);
+        }
+        .ai-history-del {
+            padding: 0 0.5rem;
+            background: transparent;
+            border: none;
+            color: var(--fg-muted);
+            cursor: pointer;
+            font-size: 1rem;
+            flex-shrink: 0;
+        }
+        .ai-history-del:hover { color: #f14c4c; background: rgba(241,76,76,0.1); }
+        .ai-history-empty {
+            padding: 0.6rem;
+            font-size: 0.78rem;
+            color: var(--fg-muted);
+            text-align: center;
+        }
+
+        /* ─── AI Models panel ────────────────────────────────────────────── */
+        #ai-models-pane {
+            display: flex;
+            flex-direction: column;
+            height: 100%;
+            background: var(--bg);
+        }
+        .ai-models-toolbar {
+            padding: 0.35rem 0.7rem;
+            background: var(--bg-2);
+            border-bottom: 1px solid var(--border-2);
+            font-size: 0.7rem;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+            color: var(--fg-muted);
+            flex-shrink: 0;
+        }
+        .ai-models-list {
+            flex: 1;
+            overflow-y: auto;
+            padding: 0.4rem 0;
+        }
+        .ai-model-row {
+            display: flex;
+            align-items: center;
+            gap: 0.7rem;
+            padding: 0.5rem 0.9rem;
+            border-bottom: 1px solid var(--border-2);
+            flex-wrap: wrap;
+        }
+        .ai-model-row:hover { background: rgba(255,255,255,0.03); }
+        .ai-model-row.ai-model-active { background: rgba(9, 71, 113, 0.3); }
+        .ai-model-info { flex: 1; min-width: 0; }
+        .ai-model-name { font-size: 0.84rem; color: var(--fg); }
+        .ai-model-note { font-size: 0.72rem; color: var(--fg-muted); margin-top: 2px; }
+        .ai-model-right { display: flex; align-items: center; gap: 0.5rem; flex-shrink: 0; }
+        .ai-model-status { font-size: 0.72rem; white-space: nowrap; }
+        .ai-model-status-ready  { color: #4caf50; }
+        .ai-model-status-loading { color: #cca700; }
+        .ai-model-status-cached  { color: #3794ff; }
+        .ai-model-btn {
+            padding: 0.2rem 0.6rem;
+            font-size: 0.74rem;
+            background: transparent;
+            border: 1px solid var(--border-2);
+            color: var(--fg-muted);
+            border-radius: 3px;
+            cursor: pointer;
+            white-space: nowrap;
+        }
+        .ai-model-btn:hover:not(:disabled) { color: var(--fg); border-color: var(--fg-muted); }
+        .ai-model-btn:disabled { opacity: 0.45; cursor: default; }
+        .ai-model-del {
+            font-size: 0.9rem;
+            padding: 0.15rem 0.35rem;
+            background: transparent;
+            border: 1px solid transparent;
+            color: var(--fg-muted);
+            border-radius: 3px;
+            cursor: pointer;
+            line-height: 1;
+            margin-left: 0.2rem;
+        }
+        .ai-model-del:hover:not(:disabled) { color: #f14c4c; border-color: rgba(241,76,76,0.4); background: rgba(241,76,76,0.08); }
+        .ai-model-del:disabled { opacity: 0.4; cursor: default; }
+        .ai-model-bar {
+            width: 100%;
+            height: 3px;
+            background: var(--bg-3);
+            border-radius: 2px;
+            overflow: hidden;
+            flex-basis: 100%;
+            margin-top: 2px;
+        }
+        .ai-model-bar-fill { height: 100%; background: var(--accent); width: 0%; transition: width 200ms ease; }
     </style>
 </head>
 
@@ -1580,6 +2084,7 @@
             <vscode-button id="run" disabled icon="play">Run (⌘R)</vscode-button>
             <vscode-button id="stop" disabled icon="debug-stop" secondary="true">Stop</vscode-button>
             <vscode-button id="debug" disabled icon="debug-alt" secondary="true">Debug (⌘D)</vscode-button>
+            <vscode-button id="export" disabled icon="cloud-download" secondary="true">Export</vscode-button>
         </header>
 
         <!-- VSCode's floating debug toolbar. Plain <button>s + codicon
@@ -1724,11 +2229,22 @@
             </div>
         </div>
 
-        <!-- Game (canvas) panel for fade.json type='monogame' projects.
-             Contains an empty #mg-blazor-root div — WebRuntime.MonoGame's
-             Program.cs mounts the Blazor app to that selector on first boot.
-             The lazy-boot pipeline lives in src/monogame-host.ts. -->
+        <!-- Game panel. Hosts two sub-surfaces and shows one at a time
+             based on the active project type:
+               - #mg-blazor-root  : MonoGame canvas (type='monogame').
+               - #web-preview-frame : iframe loading /runtime/index.html
+                                      in ?preview=1 mode (type='web').
+             The iframe gives type='web' projects the exact same render
+             experience as a deployed export — `print` lands in its own
+             <div id="output">, `prompt$` shows window.prompt, etc. —
+             without the Playground having to simulate it. -->
         <div class="panel-cell" data-panel="game">
+            <div id="web-preview-host" style="display: none; position: relative; width: 100%; height: 100%; background: #111;">
+                <iframe id="web-preview-frame"
+                        title="Web preview"
+                        src="about:blank"
+                        style="border: 0; width: 100%; height: 100%;"></iframe>
+            </div>
             <div id="mg-blazor-root" style="position: relative; width: 100%; height: 100%; background: #000;">
                 <div id="mg-blazor-splash" style="
                     display: flex; flex-direction: column;
@@ -1737,7 +2253,7 @@
                     color: #888; font-size: 0.85rem; text-align: center; padding: 1rem;
                 ">
                     <div style="font-size: 1.1rem; color: #ccc;">Game runtime not started</div>
-                    <div>Hit Run on a project with <code>type: "monogame"</code> in fade.json to boot it.</div>
+                    <div>Hit Run to boot the runtime for this project.</div>
                 </div>
             </div>
         </div>
@@ -1827,6 +2343,45 @@
                         </div>
                     </article>
                 </div>
+            </div>
+        </div>
+        <!-- AI Chat panel -->
+        <div class="panel-cell" data-panel="ai-chat">
+            <div id="ai-chat-pane">
+                <div class="ai-toolbar">
+                    <div class="ai-history-wrap">
+                        <button class="ai-history-btn" title="Chat history">☰ History</button>
+                        <div class="ai-history-menu" hidden>
+                            <div class="ai-history-menu-header">
+                                <span>History</span>
+                                <button class="ai-history-new">+ New chat</button>
+                            </div>
+                            <div class="ai-history-list"></div>
+                        </div>
+                    </div>
+                    <span class="grow"></span>
+                    <span class="ai-chat-status">No model loaded</span>
+                    <button class="ai-load-btn">Load Model</button>
+                    <button class="ai-clear-btn" title="Clear conversation">Clear</button>
+                </div>
+                <div class="ai-progress-row" hidden>
+                    <div class="ai-progress-text"></div>
+                    <div class="ai-progress-bar"><div class="ai-progress-bar-fill"></div></div>
+                </div>
+                <div class="ai-messages"></div>
+                <div class="ai-input-row">
+                    <textarea class="ai-input" placeholder="Ask anything… (Shift+Enter for newline)" rows="1" disabled></textarea>
+                    <button class="ai-send-btn" disabled>Send</button>
+                    <button class="ai-stop-btn" hidden title="Stop generation">■ Stop</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- AI Models panel -->
+        <div class="panel-cell" data-panel="ai-models">
+            <div id="ai-models-pane">
+                <div class="ai-models-toolbar">Models</div>
+                <div class="ai-models-list"></div>
             </div>
         </div>
     </div>

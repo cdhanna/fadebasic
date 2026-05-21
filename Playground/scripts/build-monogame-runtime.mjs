@@ -15,9 +15,9 @@ import { dirname, resolve } from 'node:path';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const playgroundDir = resolve(__dirname, '..');
-const runtimeProject = resolve(playgroundDir, '..', 'WebRuntime.MonoGame', 'WebRuntime.MonoGame.csproj');
+const runtimeProject = resolve(playgroundDir, '..', '..', 'Fade.MonoGame', 'Fade.MonoGame', 'WebRuntime.MonoGame', 'WebRuntime.MonoGame.csproj');
 const publishOut = resolve(
-    playgroundDir, '..', 'WebRuntime.MonoGame',
+    playgroundDir, '..', '..', 'Fade.MonoGame', 'Fade.MonoGame', 'WebRuntime.MonoGame',
     'bin', 'Release', 'net8.0', 'publish', 'wwwroot',
 );
 const targetDir = resolve(playgroundDir, 'public', 'monogame-runtime');

@@ -77,6 +77,7 @@ import {
 import { patchEffectMgfxVersionForKni, patchSoundEffectForKni } from './xnb/xnb-previews';
 import { mountHelpPanel } from './help';
 import { monoGameHost } from './monogame-host';
+import { mountAiChat, mountAiModels } from './ai-chat';
 import type { CommandDocEntry as HelpCommandDocEntry } from './help';
 import {
     FADE_JSON_NAME,
@@ -87,6 +88,7 @@ import {
     offsetsToLineCol,
     type FadeProject,
     type FadeConfigError,
+    type CommandDllEntry,
 } from './fade-config';
 (self as any).MonacoEnvironment = {
     getWorker: () => new EditorWorker(),
@@ -111,6 +113,7 @@ const statusEl = document.getElementById('status')!;
 const runBtn = document.getElementById('run') as HTMLElement & { disabled: boolean };
 const stopBtn = document.getElementById('stop') as HTMLElement & { disabled: boolean };
 const debugBtn = document.getElementById('debug') as HTMLElement & { disabled: boolean };
+const exportBtn = document.getElementById('export') as HTMLElement & { disabled: boolean };
 const viewMenuBtn = document.getElementById('view-menu-btn') as HTMLElement;
 const viewMenu = document.getElementById('view-menu') as HTMLElement;
 const viewMenuPanels = document.getElementById('view-menu-panels') as HTMLElement;
@@ -703,54 +706,60 @@ class FadeRunner {
     public vmWorker: Worker;
     /** Back-compat alias — old code referenced runner.worker for raw access. */
     public get worker(): Worker { return this.lspWorker; }
+    // The current VM-side message target. Defaults to vmWorker so things
+    // work before any iframe is attached. attachVmIframe() switches this
+    // to the iframe's contentWindow so debug / tests / run all flow
+    // through the visible Game tab. The Playground only ever uses one
+    // VM execution surface at a time — there's no "fallback" routing.
+    private vmTarget: Worker | Window;
+    private vmIframe: HTMLIFrameElement | null = null;
     private opts: RunnerOpts;
     private nextId = 0;
     private pending = new Map<number, (result: any) => void>();
     private onDiagnostics?: (uri: string, diagnostics: Diagnostic[]) => void;
-    // Shared-buffer protocol for synchronous prompt$ from worker → main thread.
-    // promptSync[0] = sync slot (Atomics.wait), promptSync[1] = response length.
-    private promptSab: SharedArrayBuffer | null = null;
-    private promptSync: Int32Array | null = null;
-    private promptBytes: Uint8Array | null = null;
-    // Second SAB used to interrupt the vm-worker's `wait ms` early. The C#
-    // call (StandardCommands.Wait) routes through JS's Atomics.wait on
-    // this buffer; the page calls Atomics.notify on pause/terminate.
-    private waitInterruptSab: SharedArrayBuffer | null = null;
-    private waitInterruptView: Int32Array | null = null;
+    // Page-side handler registry for the cooperative pump's host-message
+    // protocol. Library commands call HostBridge.PostMessage(channel, payload)
+    // in C#; the runtime forwards as { type: 'host-message', channel, payload }.
+    // We dispatch by channel name to a registered handler that returns
+    // { resultType, value }, post that back as 'host-reply', and the runtime's
+    // generic dispatcher does the placeholder swap. Plugin authors register
+    // their own channels at runtime via registerHostHandler.
+    private hostHandlers: Record<string, (payload: string) =>
+        Promise<{ resultType: string; value?: any }> | { resultType: string; value?: any }> = {};
     onPromptRequest?: (msg: string) => Promise<string | null> | string | null;
     onDebugEvent?: (event: DebugEvent) => void;
+    // Per-test progress: fires once per finalized test during a
+    // runTests call, mid-run. Result shape matches a single entry
+    // in TestRunResult.results — the same applyResult logic can
+    // consume it directly. Streaming lets the tests panel flip
+    // each row from "running" to pass/fail as tests complete,
+    // instead of waiting for the terminal result.
+    onTestProgress?: (result: TestResult) => void;
     ready: Promise<void>;
 
     constructor(opts: RunnerOpts) {
         this.opts = opts;
         this.lspWorker = new Worker('/runtime/worker.js', { type: 'module' });
         this.vmWorker = new Worker('/runtime/worker.js', { type: 'module' });
+        this.vmTarget = this.vmWorker;
         // First message each worker receives. The role flips behavior at
         // dispatch time (LSP ops are rejected on the vm worker and
         // vice-versa, surfacing as a `worker-misroute` event).
         this.lspWorker.postMessage({ type: 'configure', role: 'lsp' });
         this.vmWorker.postMessage({ type: 'configure', role: 'vm' });
 
-        // Shared buffer for synchronous prompt$. Only the vm worker needs
-        // it — prompt$ fires from user code, which only runs there.
-        if (typeof SharedArrayBuffer !== 'undefined') {
+        // prompt$ default handler: window.prompt, bridged through the
+        // cooperative pump's host-message protocol. Pages can override
+        // by setting runner.onPromptRequest, or register additional
+        // channels via runner.registerHostHandler(channel, fn).
+        this.hostHandlers['fade-web/prompt'] = async (payload) => {
+            let answer = '';
             try {
-                this.promptSab = new SharedArrayBuffer(4096);
-                this.promptSync = new Int32Array(this.promptSab, 0, 2);
-                this.promptBytes = new Uint8Array(this.promptSab, 8);
-                this.vmWorker.postMessage({ type: 'prompt-sab', buffer: this.promptSab });
-                // Second SAB: interrupt slot for `wait ms`. Single Int32;
-                // page Atomics.notifies it to wake an in-flight wait early.
-                this.waitInterruptSab = new SharedArrayBuffer(4);
-                this.waitInterruptView = new Int32Array(this.waitInterruptSab);
-                this.vmWorker.postMessage({
-                    type: 'wait-interrupt-sab',
-                    buffer: this.waitInterruptSab,
-                });
-            } catch (e) {
-                console.warn('[fade] SharedArrayBuffer unavailable — prompt$ + wait-interrupt disabled:', e);
-            }
-        }
+                const cb = this.onPromptRequest;
+                answer = (cb ? await cb(payload) : window.prompt(payload)) ?? '';
+            } catch { answer = ''; }
+            return { resultType: 'string', value: answer };
+        };
 
         this.ready = new Promise<void>((resolve, reject) => {
             // Resolve `ready` only after BOTH workers report ready. Each
@@ -773,6 +782,55 @@ class FadeRunner {
             this.lspWorker.onerror = handleErr('lsp');
             this.vmWorker.onerror = handleErr('vm');
         });
+    }
+
+    // Post to the current VM target. When the VM lives in a worker
+    // (vmWorker, pre-iframe), this is just worker.postMessage. When the
+    // VM lives in an iframe (attachVmIframe has been called), this goes
+    // to the iframe's window — the iframe's index.html relays it to its
+    // own worker. Either way, replies come back via the same dispatch
+    // pipe (handleWorkerMessage) so callers don't care.
+    private postVm(msg: any, transfer: Transferable[] = []): void {
+        if (this.vmTarget instanceof Worker) {
+            // Worker.postMessage doesn't accept a 'targetOrigin' arg.
+            this.vmTarget.postMessage(msg, transfer);
+        } else {
+            // Window.postMessage(msg, targetOrigin, transfer).
+            this.vmTarget.postMessage(msg, '*', transfer);
+        }
+    }
+
+    // Switch VM-side traffic to flow through the given iframe instead of
+    // the vmWorker. The iframe must already be loaded and have posted
+    // 'preview-ready'; the caller bootstraps it (with command DLLs) and
+    // waits for 'preview-armed' before relying on it for run/debug/tests.
+    // After this point the vmWorker still exists but receives no traffic;
+    // we keep it alive to avoid a tear-down race during project type
+    // switches.
+    attachVmIframe(iframe: HTMLIFrameElement): void {
+        this.vmIframe = iframe;
+        if (iframe.contentWindow) this.vmTarget = iframe.contentWindow;
+        // Listen for messages from the iframe's window so the dispatcher
+        // sees them like worker messages. We filter to messages whose
+        // source is exactly the iframe's contentWindow to avoid mixing
+        // up postMessages from other windows on the page.
+        window.addEventListener('message', (e) => {
+            if (!this.vmIframe) return;
+            if (e.source !== this.vmIframe.contentWindow) return;
+            const msg = e.data;
+            if (!msg || typeof msg !== 'object') return;
+            // 'preview-ready' / 'preview-armed' are iframe lifecycle
+            // signals consumed by the bootstrap code, not VM events.
+            if (msg.type === 'preview-ready' || msg.type === 'preview-armed') return;
+            this.handleWorkerMessage(msg, () => { /* iframe errors are surfaced separately */ });
+        });
+    }
+
+    // Switch VM-side traffic back to the worker (used when leaving a
+    // web project for a non-iframe-driven mode, e.g. monogame).
+    detachVmIframe(): void {
+        this.vmIframe = null;
+        this.vmTarget = this.vmWorker;
     }
 
     // Dispatches a single message from either worker. The `ready` event
@@ -805,7 +863,9 @@ class FadeRunner {
             this.resolvePending(msg.id, msg.edits); return;
         }
         if (msg.type === 'lsp-rename-result')         { this.resolvePending(msg.id, msg.edit); return; }
-        if (msg.type === 'set-project-type-result')   { this.resolvePending(msg.id, msg.projectType); return; }
+        if (msg.type === 'set-project-type-result')            { this.resolvePending(msg.id, msg.projectType); return; }
+        if (msg.type === 'register-command-assembly-result')   { this.resolvePending(msg.id, msg.result); return; }
+        if (msg.type === 'clear-command-assemblies-result')    { this.resolvePending(msg.id, undefined); return; }
         if (msg.type === 'list-tests-result')         { this.resolvePending(msg.id, msg.tests); return; }
         if (msg.type === 'list-command-docs-result')  { this.resolvePending(msg.id, msg.docs); return; }
         if (msg.type === 'get-version-info-result')   { this.resolvePending(msg.id, msg.info); return; }
@@ -832,7 +892,14 @@ class FadeRunner {
             if (this.onDebugEvent) this.onDebugEvent(msg.event);
             return;
         }
-        if (msg.type === 'prompt-request') { this.handlePromptRequest(msg.msg); return; }
+        if (msg.type === 'host-message') { this.handleHostMessage(msg); return; }
+        if (msg.type === 'test-progress') { this.onTestProgress?.(msg.result); return; }
+        if (msg.type === 'get-debug-test-result-result') { this.resolvePending(msg.id, msg.result); return; }
+        if (msg.type === 'run-tick-result') { this.resolvePending(msg.id, msg.result); return; }
+        if (msg.type === 'compile-to-bytecode-result') {
+            this.resolvePending(msg.id, { status: msg.status, bytecode: msg.bytecode });
+            return;
+        }
         if (msg.type === 'lsp-diagnostics') {
             if (this.onDiagnostics) {
                 const parsed: Diagnostic[] = JSON.parse(msg.diagnostics);
@@ -856,29 +923,44 @@ class FadeRunner {
         if (r) r(value);
     }
 
-    // Wake an in-flight `wait ms` in the vm worker. `kind` tells the C#
-    // side why we're waking it:
-    //   1 = pause request — WaitImpl enqueues REQUEST_PAUSE so the VM
-    //       stops on the next instruction step.
-    //   2 = terminate request — WaitImpl flips the session's requestedExit
-    //       so StartDebugging unwinds cleanly (no exception path).
-    //   3 = wake-only — used for breakpoint updates and other page→VM
-    //       state changes. WaitImpl returns without doing anything else;
-    //       the wake just lets DebugTick yield sooner so the worker's
-    //       JS event loop can drain the queued message (the breakpoint
-    //       update itself) and have the next tick see the new state.
-    interruptWait(kind: 1 | 2 | 3): void {
-        if (!this.waitInterruptView) return;
-        Atomics.store(this.waitInterruptView, 0, kind);
-        Atomics.notify(this.waitInterruptView, 0);
-    }
+    // No-op since the SAB-based interrupt was removed. Previously this
+    // wrote into a SharedArrayBuffer the vm-worker's waitMsInterruptible
+    // was Atomics.wait'ing on, so pause/terminate/breakpoint changes
+    // could wake a running `wait ms` faster than the regular postMessage
+    // round-trip would. In the cooperative-pump model `wait ms` is just
+    // a setTimeout on the pump and never blocks the worker thread, so
+    // the regular debug-pause/debug-terminate postMessages land between
+    // ticks without needing a side-channel wake.
+    //
+    // Kept as a no-op rather than deleted because debug-flow callers
+    // still invoke it for clarity. Remove the calls (and this method)
+    // once we're sure no debug regression depends on the side-channel.
+    interruptWait(_kind: 1 | 2 | 3): void { /* no-op — see comment */ }
 
+    // Runs Fade source through the cooperative pump (prompt$ + wait ms
+    // both work). The worker emits exactly one 'run-tick-result' as the
+    // terminal event for this run. The resolved value is the JSON
+    // envelope: { ok, error?, compileError? }.
+    //
+    // Note: this no longer uses the old synchronous CompileAndRun path
+    // (which is gone). Callers should JSON.parse the resolved string;
+    // there's no `printed` field — print output streams live via the
+    // worker's per-line `print` messages (opts.onPrint).
     run(source: string): Promise<string> {
         const id = ++this.nextId;
         return new Promise<string>((resolve) => {
             this.pending.set(id, resolve);
-            this.vmWorker.postMessage({ type: 'run', id, source });
+            this.postVm({ type: 'run-start-source', id, source });
         });
+    }
+
+    // Terminate an in-flight run. Fire-and-forget: the pump posts its
+    // own terminal `run-tick-result` to whatever id the originating
+    // run() call registered, so the run() promise resolves with
+    // `{ ok: false, error: 'stopped' }`. Calling this when no run is
+    // active is a no-op.
+    stopRun(): void {
+        this.postVm({ type: 'stop-run' });
     }
 
     setDocument(uri: string, text: string) {
@@ -893,12 +975,54 @@ class FadeRunner {
     // directly, so the vm-worker call is a no-op for monogame but
     // harmless and keeps the two workers in sync).
     async setProjectType(projectType: string): Promise<void> {
-        const post = (w: Worker) => new Promise<void>((resolve) => {
+        // Two separate sends: one to the LSP worker, one to the VM target
+        // (worker today, iframe after attachVmIframe). They share an
+        // ID slot pattern because both pendings are independent.
+        const postLsp = new Promise<void>((resolve) => {
             const id = ++this.nextId;
             this.pending.set(id, () => resolve());
-            w.postMessage({ type: 'set-project-type', id, projectType });
+            this.lspWorker.postMessage({ type: 'set-project-type', id, projectType });
         });
-        await Promise.all([post(this.lspWorker), post(this.vmWorker)]);
+        const postVmTarget = new Promise<void>((resolve) => {
+            const id = ++this.nextId;
+            this.pending.set(id, () => resolve());
+            this.postVm({ type: 'set-project-type', id, projectType });
+        });
+        await Promise.all([postLsp, postVmTarget]);
+    }
+
+    // Load a command DLL from bytes into both the LSP runtime and the
+    // VM target (worker today, iframe after attachVmIframe). dllBytes
+    // is the raw assembly content fetched from /runtime/fade-libs/<x>.dll
+    // (or from OPFS for user-uploaded plugins).
+    async registerCommandAssembly(dllBytes: ArrayBuffer, className: string): Promise<{ ok: boolean; error?: string }> {
+        const postLsp = new Promise<string>((resolve) => {
+            const id = ++this.nextId;
+            this.pending.set(id, (result: string) => resolve(result));
+            this.lspWorker.postMessage({ type: 'register-command-assembly', id, dllBytes, className });
+        });
+        const postVmTarget = new Promise<string>((resolve) => {
+            const id = ++this.nextId;
+            this.pending.set(id, (result: string) => resolve(result));
+            this.postVm({ type: 'register-command-assembly', id, dllBytes, className });
+        });
+        const [, vmResult] = await Promise.all([postLsp, postVmTarget]);
+        try { return JSON.parse(vmResult); } catch { return { ok: false, error: 'parse failed' }; }
+    }
+
+    // Drop all dynamically-loaded command sources from both runtimes.
+    async clearCommandAssemblies(): Promise<void> {
+        const postLsp = new Promise<void>((resolve) => {
+            const id = ++this.nextId;
+            this.pending.set(id, () => resolve());
+            this.lspWorker.postMessage({ type: 'clear-command-assemblies', id });
+        });
+        const postVmTarget = new Promise<void>((resolve) => {
+            const id = ++this.nextId;
+            this.pending.set(id, () => resolve());
+            this.postVm({ type: 'clear-command-assemblies', id });
+        });
+        await Promise.all([postLsp, postVmTarget]);
     }
 
     async getTokens(uri: string): Promise<number[]> {
@@ -1101,7 +1225,7 @@ class FadeRunner {
                 try { resolve(JSON.parse(json)); }
                 catch { resolve({ passed: 0, failed: 0, duration: 0, results: [], printed: '', error: 'parse failed' }); }
             });
-            this.vmWorker.postMessage({ type: 'run-tests', id, source, testName: testName || '' });
+            this.postVm({ type: 'run-tests', id, source, testName: testName || '' });
         });
     }
 
@@ -1113,7 +1237,7 @@ class FadeRunner {
                 try { resolve(JSON.parse(json)); }
                 catch { resolve({ ok: false, error: 'parse failed', statementLines: [] }); }
             });
-            this.vmWorker.postMessage({ type: 'debug-start', id, source });
+            this.postVm({ type: 'debug-start', id, source });
         });
     }
     async debugStartTest(source: string, testName: string): Promise<DebugStartResult> {
@@ -1123,7 +1247,7 @@ class FadeRunner {
                 try { resolve(JSON.parse(json)); }
                 catch { resolve({ ok: false, error: 'parse failed', statementLines: [] }); }
             });
-            this.vmWorker.postMessage({ type: 'debug-start-test', id, source, testName });
+            this.postVm({ type: 'debug-start-test', id, source, testName });
         });
     }
     debugTerminate(): Promise<boolean> {
@@ -1144,7 +1268,7 @@ class FadeRunner {
         const id = ++this.nextId;
         return new Promise<boolean>((resolve) => {
             this.pending.set(id, () => resolve(true));
-            this.vmWorker.postMessage({ type: 'debug-step', id, kind });
+            this.postVm({ type: 'debug-step', id, kind });
         });
     }
     debugSetBreakpoints(breakpoints: BreakpointRequest[]): Promise<boolean> {
@@ -1156,12 +1280,29 @@ class FadeRunner {
         this.interruptWait(3);
         return new Promise<boolean>((resolve) => {
             this.pending.set(id, () => resolve(true));
-            this.vmWorker.postMessage({
+            this.postVm({
                 type: 'debug-set-breakpoints', id,
                 linesJson: JSON.stringify(breakpoints),
             });
         });
     }
+    // Snapshot the in-flight debug-test session's pass/fail state. Returns
+    // null when the session isn't a test debug (or when there's no live
+    // session at all). The Playground calls this when a debug-test
+    // session emits 'complete' so it can flip the test row from
+    // 'running' → 'pass'/'fail' before the session is torn down.
+    debugGetTestResult(): Promise<TestResult | null> {
+        const id = ++this.nextId;
+        return new Promise<TestResult | null>((resolve) => {
+            this.pending.set(id, (json: string) => {
+                if (!json || json === 'null') { resolve(null); return; }
+                try { resolve(JSON.parse(json) as TestResult); }
+                catch { resolve(null); }
+            });
+            this.postVm({ type: 'get-debug-test-result', id });
+        });
+    }
+
     debugStackFrames(): Promise<DebugStackFrame[]> {
         const id = ++this.nextId;
         return new Promise<DebugStackFrame[]>((resolve) => {
@@ -1171,7 +1312,7 @@ class FadeRunner {
                     resolve(Array.isArray(parsed) ? parsed : []);
                 } catch { resolve([]); }
             });
-            this.vmWorker.postMessage({ type: 'debug-stack-frames', id });
+            this.postVm({ type: 'debug-stack-frames', id });
         });
     }
     debugScopes(frameId: number): Promise<DebugScopesResult> {
@@ -1180,7 +1321,7 @@ class FadeRunner {
             this.pending.set(id, (json: string) => {
                 try { resolve(JSON.parse(json)); } catch { resolve({ scopes: [] }); }
             });
-            this.vmWorker.postMessage({ type: 'debug-scopes', id, frameId });
+            this.postVm({ type: 'debug-scopes', id, frameId });
         });
     }
     debugExpandVariable(variableId: number): Promise<DebugScopesResult> {
@@ -1189,7 +1330,7 @@ class FadeRunner {
             this.pending.set(id, (json: string) => {
                 try { resolve(JSON.parse(json)); } catch { resolve({ scopes: [] }); }
             });
-            this.vmWorker.postMessage({ type: 'debug-variable-expansion', id, variableId });
+            this.postVm({ type: 'debug-variable-expansion', id, variableId });
         });
     }
     debugEval(frameId: number, expression: string): Promise<DebugEvalResult | null> {
@@ -1205,7 +1346,7 @@ class FadeRunner {
         const id = ++this.nextId;
         return new Promise<boolean>((resolve) => {
             this.pending.set(id, () => resolve(true));
-            this.vmWorker.postMessage({ type, id });
+            this.postVm({ type, id });
         });
     }
     private debugTextCall(type: string, payload: object): Promise<DebugEvalResult | null> {
@@ -1214,30 +1355,57 @@ class FadeRunner {
             this.pending.set(id, (json: string) => {
                 try { resolve(JSON.parse(json)); } catch { resolve(null); }
             });
-            this.vmWorker.postMessage({ type, id, ...payload });
+            this.postVm({ type, id, ...payload });
         });
     }
 
-    // Called when the worker requests a synchronous prompt. Delegates to the
-    // host UI via onPromptRequest (set by bootstrap), then writes the user's
-    // response into the SharedArrayBuffer + notifies the worker to wake up.
-    private async handlePromptRequest(msg: string): Promise<void> {
-        let answer: string | null = '';
-        try {
-            const cb = this.onPromptRequest;
-            if (cb) answer = (await cb(msg)) ?? '';
-            else answer = window.prompt(msg) ?? '';
-        } catch {
-            answer = '';
+    // Called when the worker emits a host-message (HostBridge.PostMessage
+    // on the C# side). Dispatches by channel name, awaits the handler,
+    // and posts the typed reply back to the worker. Plugins extend the
+    // handler set via registerHostHandler.
+    private async handleHostMessage(msg: { channel: string; payload: string }): Promise<void> {
+        const handler = this.hostHandlers[msg.channel];
+        if (!handler) {
+            console.warn('[fade] no host handler for channel:', msg.channel);
+            this.postVm({ type: 'host-reply', resultType: 'string', value: '' });
+            return;
         }
-        if (!this.promptSync || !this.promptBytes) return;
-        const bytes = new TextEncoder().encode(answer ?? '');
-        const max = this.promptBytes.length;
-        const len = Math.min(bytes.length, max);
-        this.promptBytes.set(bytes.subarray(0, len), 0);
-        Atomics.store(this.promptSync, 1, len);
-        Atomics.store(this.promptSync, 0, 1);
-        Atomics.notify(this.promptSync, 0, 1);
+        try {
+            const reply = await handler(msg.payload);
+            this.postVm({ type: 'host-reply', ...reply });
+        } catch (e) {
+            console.error('[fade] host handler for', msg.channel, 'threw:', e);
+            this.postVm({ type: 'host-reply', resultType: 'string', value: '' });
+        }
+    }
+
+    // Register (or replace) a page-side handler for a HostBridge channel.
+    // Library authors document which channel their cooperative commands
+    // use; consumers plug in handlers here. The handler returns (or
+    // resolves to) { resultType, value }; see worker.js's host-reply
+    // dispatcher for the supported resultType strings.
+    registerHostHandler(
+        channel: string,
+        fn: (payload: string) =>
+            Promise<{ resultType: string; value?: any }> | { resultType: string; value?: any },
+    ): void {
+        this.hostHandlers[channel] = fn;
+    }
+
+    // Compile Fade source to a raw bytecode blob. The Playground uses
+    // this for the export download and to feed the preview iframe. The
+    // returned ArrayBuffer is transferable; status carries the compile
+    // diagnostics envelope on failure.
+    async compileToBytecode(source: string): Promise<{ ok: boolean; compileError?: string; bytecode?: ArrayBuffer }> {
+        const id = ++this.nextId;
+        const p = new Promise<{ status: string; bytecode: ArrayBuffer | null }>((resolve) => {
+            this.pending.set(id, resolve);
+            this.postVm({ type: 'compile-to-bytecode', id, source });
+        });
+        const r = await p;
+        let parsed: any = {}; try { parsed = JSON.parse(r.status); } catch { /* */ }
+        if (!parsed.ok) return { ok: false, compileError: parsed.compileError ?? parsed.error };
+        return { ok: true, bytecode: r.bytecode ?? undefined };
     }
 
     setDiagnosticsHandler(fn: (uri: string, diagnostics: Diagnostic[]) => void) {
@@ -1281,7 +1449,7 @@ interface TestEntry {
     sourceChar: number;
 }
 // One entry per uniquely-named command, shape matches what
-// `FadeBridge.ListCommandDocs()` emits in [WebRuntime/FadeBridge.cs].
+// `FadeBridge.ListCommandDocs()` emits in [FadeBasic.Export.Web/FadeBridge.cs].
 // The markdown field is the same text the hover provider renders; the
 // Help tab reuses it verbatim so both surfaces stay in sync.
 interface CommandDocEntry {
@@ -1322,7 +1490,7 @@ interface DebugStartResult {
     statementLines: number[];
 }
 interface BreakpointRequest {
-    // Matches WebRuntime's BreakpointRequestDto (camelCase JSON via
+    // Matches FadeBasic.Export.Web's BreakpointRequestDto (camelCase JSON via
     // JsonNamingPolicy.CamelCase). Use 0-based line numbers — the same
     // coordinate space the lexer's tokens use.
     line: number;
@@ -1440,7 +1608,7 @@ async function bootstrap() {
         console.warn('[fade] could not pin default formatter:', e);
     }
 
-    // Semantic-token type legend — must match WebRuntime/FadeLsp.cs's
+    // Semantic-token type legend — must match FadeBasic.Export.Web/FadeLsp.cs's
     // TokenTypeLegend order (the encoded tokens use indexes into this list).
     const tokenTypes = [
         'comment', 'keyword', 'function', 'method', 'macro',
@@ -2055,7 +2223,11 @@ async function bootstrap() {
     // failure frames as click-to-jump lines.
 
     type TestUiEntry = TestEntry & {
-        status: 'idle' | 'running' | 'pass' | 'fail';
+        // Five-state indicator: idle (never run / will not be run),
+        // queued (will run in this batch, waiting its turn), running
+        // (live now), pass / fail (terminal), stopped (cancelled
+        // mid-batch before a result was collected).
+        status: 'idle' | 'queued' | 'running' | 'pass' | 'fail' | 'stopped';
         duration?: number;
         failure?: string | null;
         failureFrames?: FailureFrame[];
@@ -2113,6 +2285,7 @@ async function bootstrap() {
     // refreshFadeProject runs on every fade.json edit, but most of those
     // edits don't change the type.
     let lastWorkerProjectType: string | null = null;
+    let lastCommandDllsKey: string | null = null;
 
     // Set after the Help panel is mounted (further down in bootstrap). The
     // project-type-change branch below uses this to re-fetch the command
@@ -2191,6 +2364,46 @@ async function bootstrap() {
                 refreshHelpEntriesFromWorker?.();
             } catch (e) {
                 console.warn('[fade] setProjectType failed', e);
+            }
+        }
+
+        // Sync command DLLs with both workers. Re-run whenever the project
+        // type OR commandDlls list changes. Type-defaults (e.g. FadeBasic.Lib.Web
+        // for 'web' projects) are injected automatically here — same intent as
+        // the auto-injection in FadeBasic.Export.Web.targets for csproj consumers.
+        const wantedDllsKey = JSON.stringify([wantedType, currentProject?.commandDlls ?? []]);
+        if (wantedDllsKey !== lastCommandDllsKey) {
+            lastCommandDllsKey = wantedDllsKey;
+            try {
+                await runner.clearCommandAssemblies();
+                const typeDefaults: CommandDllEntry[] = wantedType === 'web'
+                    ? [{ assembly: 'FadeBasic.Lib.Web', class: 'FadeBasic.Lib.Web.WebCommands' }]
+                    : [];
+                const allEntries = [...typeDefaults, ...(currentProject?.commandDlls ?? [])];
+                for (const entry of allEntries) {
+                    try {
+                        const resp = await fetch(`/runtime/fade-libs/${entry.assembly}.dll`);
+                        if (!resp.ok) {
+                            console.warn(`[fade] DLL not found: /runtime/fade-libs/${entry.assembly}.dll (${resp.status})`);
+                            continue;
+                        }
+                        const bytes = await resp.arrayBuffer();
+                        const result = await runner.registerCommandAssembly(bytes, entry.class);
+                        if (!result.ok) console.warn(`[fade] registerCommandAssembly failed: ${result.error}`);
+                    } catch (e) {
+                        console.warn(`[fade] failed to load ${entry.assembly}`, e);
+                    }
+                }
+                // Re-push documents so LSP picks up the new command surface.
+                for (const model of monaco.editor.getModels()) {
+                    if (model.getLanguageId() === 'fade') {
+                        runner.setDocument(model.uri.toString(), model.getValue());
+                    }
+                }
+                renderProblems();
+                refreshHelpEntriesFromWorker?.();
+            } catch (e) {
+                console.warn('[fade] commandDlls sync failed', e);
             }
         }
 
@@ -2672,7 +2885,12 @@ async function bootstrap() {
         switch (s) {
             case 'pass':    return 'pass';
             case 'fail':    return 'error';
-            case 'running': return 'loading';
+            case 'stopped': return 'debug-stop';
+            // The pulsing for `queued` and `running` comes from CSS;
+            // the glyph itself is a solid dot so the pulse reads as
+            // opacity-on-color rather than as a moving shape.
+            case 'queued':  return 'circle-filled';
+            case 'running': return 'circle-filled';
             default:        return 'circle-outline';
         }
     }
@@ -2713,8 +2931,10 @@ async function bootstrap() {
     outputClearBtn?.addEventListener('click', clearOutput);
 
     function setTestsBusy(busy: boolean) {
+        testsBusy = busy;
         testsRunAllBtn.disabled = busy;
         testsRefreshBtn.disabled = busy;
+        refreshStopButton();
     }
 
     // Adapt the canvas-side test-run envelope to the worker-side shape
@@ -2775,6 +2995,13 @@ async function bootstrap() {
             // the user reported before the host-driven test path landed.
             if (currentProject?.type === 'monogame') {
                 await syncAssetsToRuntime();
+            } else {
+                // Surface the test run in the Game tab — same iframe the
+                // user sees prints/prompts in during a Run. Ensures debug
+                // controls behave identically across run/test/debug.
+                showGameSurface('web');
+                revealPanel('game');
+                await ensureWebPreviewArmed();
             }
             const r: TestRunResult = currentProject?.type === 'monogame'
                 ? mgToTestRunResult(await monoGameHost.runTests(source, name))
@@ -2793,14 +3020,24 @@ async function bootstrap() {
     async function runAllTests() {
         const source = await getProjectSource();
         if (!source) return;
+        // Mark every runnable test as queued (grey pulse). As the
+        // cooperative pump advances, each test flips to 'running'
+        // (yellow pulse) via test-progress's neighbor signal, then
+        // 'pass'/'fail' as it completes.
         for (const t of testEntries) {
             if (!t.isAbstract) {
-                t.status = 'running';
+                t.status = 'queued';
                 t.failure = null;
                 t.failureFrames = undefined;
                 t.duration = undefined;
             }
         }
+        // The first queued test is about to execute — flip it to
+        // 'running' now so the user immediately sees the yellow pulse
+        // on the row that's live. Subsequent transitions ride on the
+        // test-progress event in runner.onTestProgress below.
+        const firstRunnable = testEntries.find((t) => !t.isAbstract);
+        if (firstRunnable) firstRunnable.status = 'running';
         renderTests();
         setTestsBusy(true);
         testsStatusEl.textContent = 'Running…';
@@ -2810,6 +3047,10 @@ async function bootstrap() {
         try {
             if (currentProject?.type === 'monogame') {
                 await syncAssetsToRuntime();
+            } else {
+                showGameSurface('web');
+                revealPanel('game');
+                await ensureWebPreviewArmed();
             }
             const r: TestRunResult = currentProject?.type === 'monogame'
                 ? mgToTestRunResult(await monoGameHost.runTests(source))
@@ -2821,6 +3062,29 @@ async function bootstrap() {
     }
 
     function applyResult(r: TestRunResult) {
+        if (r.error === 'Stopped') {
+            // User cancelled mid-batch. Any test that already finalized
+            // (in r.results) gets its real pass/fail below; tests that
+            // were queued or in-flight when Stop fired flip to 'stopped'
+            // (purple steady) so the UI shows what didn't get to run.
+            for (const res of r.results) {
+                const e = testEntries.find((t) => t.name === res.name);
+                if (!e) continue;
+                e.status = res.passed ? 'pass' : 'fail';
+                e.duration = res.duration;
+                e.failure = res.passed ? null : (res.failureMessage || res.failureReason || 'Failed');
+                e.failureFrames = res.passed ? undefined : (res.failureFrames || []);
+            }
+            for (const t of testEntries) {
+                if (t.status === 'queued' || t.status === 'running') {
+                    t.status = 'stopped';
+                }
+            }
+            testsStatusEl.textContent = 'Stopped';
+            appendTestLog('Test run stopped.', 'dim');
+            renderTests();
+            return;
+        }
         if (r.error) {
             // r.error is typically a compile-failure dump. Those same
             // errors already streamed through LSP → Problems with proper
@@ -2828,7 +3092,9 @@ async function bootstrap() {
             // short pointer instead and reveal Problems.
             appendTestLog('Test compile failed. See Problems panel.', 'fail');
             revealPanel('problems');
-            for (const t of testEntries) if (t.status === 'running') t.status = 'idle';
+            for (const t of testEntries) {
+                if (t.status === 'running' || t.status === 'queued') t.status = 'idle';
+            }
             // Keep the status bar wording short so the Tests panel stays
             // readable even with a long backend message.
             testsStatusEl.textContent = 'Compile failed';
@@ -2905,6 +3171,41 @@ async function bootstrap() {
     // Surface synchronous prompt$ via window.prompt for now. A nicer modal
     // can replace this later.
     runner.onPromptRequest = (msg) => window.prompt(msg, '');
+
+    // Per-test streaming: flip each testEntry row from "running" to
+    // pass/fail as soon as the test finalizes (mid-run), instead of
+    // waiting for the terminal envelope at the end of the batch.
+    // applyResult (called with the terminal envelope) handles the
+    // same fields plus the headline + appendTestLog spam, so this
+    // listener is a strict subset — just enough to update the row.
+    //
+    // Also advances the queued→running transition for the NEXT non-
+    // abstract queued test. The cooperative pump has already started
+    // executing it (AdvanceTest set _runVm before the progress event
+    // for the prior test fired); we just mirror that state in the UI.
+    runner.onTestProgress = (result) => {
+        const i = testEntries.findIndex((t) => t.name === result.name);
+        if (i < 0) return;
+        const e = testEntries[i];
+        e.status = result.passed ? 'pass' : 'fail';
+        e.duration = result.duration;
+        e.failure = result.passed
+            ? null
+            : (result.failureMessage || result.failureReason || 'Failed');
+        e.failureFrames = result.passed ? undefined : (result.failureFrames || []);
+        // Promote the next queued runnable to 'running'. Walking
+        // forward from the just-finalized index is correct because
+        // the worker runs tests in manifest order (same order
+        // testEntries is built from).
+        for (let j = i + 1; j < testEntries.length; j++) {
+            const n = testEntries[j];
+            if (!n.isAbstract && n.status === 'queued') {
+                n.status = 'running';
+                break;
+            }
+        }
+        renderTests();
+    };
 
     statusEl.textContent = 'Loading workspace…';
     const workspace = new OpfsWorkspace();
@@ -3030,6 +3331,8 @@ async function bootstrap() {
         // Dynamic — created on demand when a binary file is opened
         // from the workspace tree (XNB, PNG, WAV, …).
         'binary-preview',
+        'ai-chat',
+        'ai-models',
     ]);
 
     function healLayout(dock: DockviewApi) {
@@ -3286,6 +3589,11 @@ async function bootstrap() {
     };
     refreshHelpEntriesFromWorker();
 
+    // Mount AI panels (chat + model manager). Both reference the same
+    // module-level engine state; chat needs workspace access for file tools.
+    mountAiChat(document.getElementById('ai-chat-pane')!.parentElement!, workspace);
+    mountAiModels(document.getElementById('ai-models-pane')!.parentElement!);
+
     // Populate the Diagnostics panel version rows from the worker runtime.
     void runner.getVersionInfo().then((info) => {
         if (!info) return;
@@ -3340,6 +3648,8 @@ async function bootstrap() {
         { id: 'game',          label: 'Game' },
         { id: 'help',          label: 'Help' },
         { id: 'diagnostics',   label: 'Diagnostics' },
+        { id: 'ai-chat',       label: 'AI Chat' },
+        { id: 'ai-models',     label: 'AI Models' },
     ];
     const SAVED_LAYOUTS_KEY = 'fade.dockview.savedLayouts';
 
@@ -3362,7 +3672,20 @@ async function bootstrap() {
     // so they don't get injected into every restored layout.
     function openPanelById(id: string) {
         const RENDER_ALWAYS = 'always' as const;
-        if (id === 'diagnostics') {
+        if (id === 'ai-chat' || id === 'ai-models') {
+            const ref = dockApi.getPanel('game')?.id
+                     ?? dockApi.getPanel('editor')?.id;
+            try {
+                dockApi.addPanel({
+                    id,
+                    component: id,
+                    title: id === 'ai-chat' ? 'AI Chat' : 'AI Models',
+                    position: ref ? { referencePanel: ref, direction: 'within' } : undefined,
+                    renderer: 'always' as const,
+                });
+                dockApi.getPanel(id)?.api?.setActive();
+            } catch (e) { console.warn(`[fade] failed to open ${id} panel`, e); }
+        } else if (id === 'diagnostics') {
             const ref = dockApi.getPanel('output')?.id
                      ?? dockApi.getPanel('problems')?.id
                      ?? dockApi.getPanel('editor')?.id;
@@ -3761,6 +4084,7 @@ async function bootstrap() {
     statusEl.textContent = 'Ready.';
     runBtn.disabled = false;
     debugBtn.disabled = false;
+    exportBtn.disabled = false;
 
     // Walk the active project's OPFS folder for `.xnb` files and push their
     // bytes into the MonoGame runtime's BrowserContentManager. Called before
@@ -3793,6 +4117,109 @@ async function bootstrap() {
         }
     }
 
+    // Build the list of command-DLL entries for the active project.
+    // Mirrors the logic at the LSP-sync site above: web projects auto-
+    // include Lib.Web; everything in currentProject.commandDlls layers
+    // on top. Used by the preview iframe to pre-load the same surface
+    // the vm-worker has registered, so the bytecode's CALL_HOST indices
+    // resolve identically.
+    const collectCommandDllEntries = (): CommandDllEntry[] => {
+        const type = currentProject?.type ?? 'web';
+        const defaults: CommandDllEntry[] = type === 'web'
+            ? [{ assembly: 'FadeBasic.Lib.Web', class: 'FadeBasic.Lib.Web.WebCommands' }]
+            : [];
+        return [...defaults, ...(currentProject?.commandDlls ?? [])];
+    };
+
+    // Swap the Game panel sub-surface. The panel hosts both an iframe
+    // (web preview) and a Blazor canvas (monogame); only one is visible
+    // at a time. Splash element inside #mg-blazor-root is shown when
+    // monogame surface is active and the canvas hasn't booted.
+    const showGameSurface = (which: 'web' | 'monogame' | 'splash'): void => {
+        const webHost = document.getElementById('web-preview-host');
+        const mgRoot = document.getElementById('mg-blazor-root');
+        if (!webHost || !mgRoot) return;
+        if (which === 'web') {
+            webHost.style.display = 'block';
+            mgRoot.style.display = 'none';
+        } else {
+            webHost.style.display = 'none';
+            mgRoot.style.display = 'block';
+        }
+    };
+
+    // Boot the preview iframe once per session for web projects, send
+    // it the initial command-DLL set, and attach it as the Runner's
+    // vm target. Subsequent run / debug / tests all flow through the
+    // iframe (which forwards to its own .NET runtime) so the user sees
+    // print output, prompts, debug stop events, and test results all
+    // happening in the Game panel — same surface as a deployed export.
+    //
+    // The Playground's existing fade.json sync (registerCommandAssembly
+    // /clearCommandAssemblies on commandDlls change) routes through
+    // postVm automatically once attached, so future DLL changes
+    // reach the iframe with no extra wiring.
+    let webPreviewArmed: Promise<void> | null = null;
+    const ensureWebPreviewArmed = (): Promise<void> => {
+        if (webPreviewArmed) return webPreviewArmed;
+        webPreviewArmed = (async () => {
+            const frame = document.getElementById('web-preview-frame') as HTMLIFrameElement | null;
+            if (!frame) throw new Error('web-preview-frame not in DOM');
+
+            // Phase 1: wait for the iframe's runtime to report ready.
+            const readyPromise = new Promise<void>((resolve) => {
+                const onReady = (e: MessageEvent) => {
+                    if (e.source !== frame.contentWindow) return;
+                    if (e.data?.type !== 'preview-ready') return;
+                    window.removeEventListener('message', onReady);
+                    resolve();
+                };
+                window.addEventListener('message', onReady);
+            });
+            frame.src = '/runtime/index.html?preview=1';
+            await readyPromise;
+
+            // Phase 2: bootstrap with the project's command DLLs. The
+            // iframe registers each one, then signals 'preview-armed'.
+            // We use the project's current DLL set; future changes flow
+            // through the regular registerCommandAssembly sync path.
+            const entries = collectCommandDllEntries();
+            const commandDlls: { assembly: string; class: string; bytes: ArrayBuffer }[] = [];
+            for (const e of entries) {
+                try {
+                    const resp = await fetch(`/runtime/fade-libs/${e.assembly}.dll`);
+                    if (resp.ok) {
+                        commandDlls.push({
+                            assembly: e.assembly,
+                            class: e.class,
+                            bytes: await resp.arrayBuffer(),
+                        });
+                    }
+                } catch { /* warn quietly — sync path retries */ }
+            }
+            const armedPromise = new Promise<void>((resolve) => {
+                const onArmed = (e: MessageEvent) => {
+                    if (e.source !== frame.contentWindow) return;
+                    if (e.data?.type !== 'preview-armed') return;
+                    window.removeEventListener('message', onArmed);
+                    resolve();
+                };
+                window.addEventListener('message', onArmed);
+            });
+            frame.contentWindow!.postMessage(
+                { type: 'bootstrap', commandDlls },
+                '*',
+                commandDlls.map((c) => c.bytes),
+            );
+            await armedPromise;
+
+            // Phase 3: attach as the VM target so future debug / tests /
+            // run / compile-to-bytecode messages flow through the iframe.
+            runner.attachVmIframe(frame);
+        })();
+        return webPreviewArmed;
+    };
+
     const runOnce = async () => {
         const source = await getProjectSource();
         if (!source) {
@@ -3808,6 +4235,7 @@ async function bootstrap() {
         // call boots ~8 MB of WASM lazily; subsequent calls hot-reload via
         // Game1.LoadProgram. Reveal the Game panel so the canvas is visible.
         if (currentProject?.type === 'monogame') {
+            showGameSurface('monogame');
             try {
                 revealPanel('game');
                 appendOutputLine('Booting MonoGame runtime…', 'dim');
@@ -3815,8 +4243,10 @@ async function bootstrap() {
                 const ok = await monoGameHost.loadProgram(source);
                 if (ok) {
                     appendOutputLine('Running on canvas.', 'info');
-                    // Game is alive — let the user kill it via Stop.
-                    stopBtn.disabled = false;
+                    // Game is alive until stopAll() is called; runActive
+                    // stays true so Stop remains enabled.
+                    runActive = true;
+                    refreshStopButton();
                 } else {
                     appendOutputLine('Compile failed. See Problems panel.', 'error');
                     revealPanel('problems');
@@ -3829,44 +4259,175 @@ async function bootstrap() {
             return;
         }
 
+        // ─── 'web' branch ─────────────────────────────────────────────
+        // Route through the preview iframe so the Playground's run
+        // experience matches what an exported bundle looks like — and
+        // so debug / tests / run all share the same visible surface.
+        // After ensureWebPreviewArmed the Runner's VM target IS the
+        // iframe; runner.run / runner.runTests / runner.debugStart all
+        // flow through it. Output, prompts, and host-messages render
+        // inside the iframe (the user sees them in the Game panel).
         try {
+            showGameSurface('web');
+            revealPanel('game');
+            await ensureWebPreviewArmed();
+            // Enable Stop while the run is in flight — the cooperative
+            // pump might be waiting on a prompt or sleeping in a wait ms;
+            // the user needs a way out either way.
+            runActive = true;
+            refreshStopButton();
             const result = await runner.run(source);
-            // CompileAndRun returns a JSON envelope { compileError, runtimeError, printed }.
-            // Tolerate the legacy plain-string form too — useful if an older
-            // worker is still in cache mid-deploy.
-            let env: { compileError?: string | null; runtimeError?: string | null; printed?: string } | null = null;
+            let env: { ok?: boolean; error?: string | null; compileError?: string | null } | null = null;
             try { env = JSON.parse(result); } catch { env = null; }
-            if (env && (typeof env.compileError !== 'undefined' || typeof env.runtimeError !== 'undefined')) {
-                // `env.printed` would duplicate what already streamed via the
-                // worker's per-line `print` messages (onPrint → appendOutputLine).
-                // We intentionally ignore it here and only render errors + the
-                // empty-state hint.
-                //
-                // `env.compileError` would also duplicate what the LSP already
-                // surfaced in the Problems panel (lex/parse/symbol errors all
-                // flow through both paths). Replace the verbose text dump with
-                // a short hint and reveal Problems so the user sees the rich
-                // entries with line/col pins.
-                if (env.compileError) {
-                    appendOutputLine('Compile failed. See Problems panel.', 'error');
-                    revealPanel('problems');
-                }
-                if (env.runtimeError) appendOutputLine(env.runtimeError, 'error');
-                if (!env.compileError && !env.runtimeError && !env.printed) {
-                    appendOutputLine('(no output)', 'dim');
-                }
-            } else {
-                appendOutputLine(result);
+            if (env?.compileError) {
+                appendOutputLine('Compile failed. See Problems panel.', 'error');
+                revealPanel('problems');
+            } else if (env?.error === 'stopped') {
+                appendOutputLine('Stopped.', 'dim');
+            } else if (env?.error) {
+                appendOutputLine(env.error, 'error');
             }
         } catch (e: any) {
             appendOutputLine(e?.message ?? String(e), 'error');
         } finally {
             runBtn.disabled = false;
+            runActive = false;
+            refreshStopButton();
         }
     };
 
     runBtn.addEventListener('click', runOnce);
     editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyR, runOnce);
+
+    // Export: build a static zip containing the runtime + the user's
+    // compiled bytecode + the project's command DLLs + a synthesized
+    // fade-manifest.json. Drop it on any static host (itch.io, GitHub
+    // Pages, Netlify, …) and it runs identically to the preview iframe.
+    //
+    // Inputs:
+    //   - runner.compileToBytecode(source)        → game/program.fbytecode
+    //   - collectCommandDllEntries() → fetch each → game/<assembly>.dll
+    //   - /runtime/runtime-manifest.json          → list of static files
+    //   - synthesized fade-manifest.json          → tells index.html
+    //                                                to take the bytecode
+    //                                                branch instead of
+    //                                                the ILaunchable one
+    const exportOnce = async (): Promise<void> => {
+        const source = await getProjectSource();
+        if (!source) { appendOutputLine('No file open.', 'dim'); return; }
+        // For monogame, the export pipeline is different; not implemented
+        // here. Surface the limitation rather than producing a broken zip.
+        if (currentProject?.type === 'monogame') {
+            appendOutputLine('Export for monogame projects is not implemented yet.', 'error');
+            return;
+        }
+        exportBtn.disabled = true;
+        exportBtn.classList.add('is-exporting');
+        appendOutputLine('Building export…', 'dim');
+        try {
+            const compile = await runner.compileToBytecode(source);
+            if (!compile.ok || !compile.bytecode) {
+                appendOutputLine('Export aborted — compile failed.', 'error');
+                if (compile.compileError) revealPanel('problems');
+                return;
+            }
+
+            // Manifest first; everything else can race against each other.
+            const manifest = await fetch('/runtime/runtime-manifest.json')
+                .then((r) => r.json() as Promise<{ files: string[] }>);
+
+            // Parallel I/O: kick off every fetch at once instead of an
+            // awaited for-loop. Browsers handle hundreds of concurrent
+            // same-origin requests fine, and most of these hit Vite's
+            // dev-server cache anyway. Cuts wall time noticeably for
+            // the 500+ runtime assets, and removes the long sequence
+            // of micro-tasks that was contributing to the perceived
+            // click hitch.
+            const cmdEntries = collectCommandDllEntries();
+            const dllFetches = cmdEntries.map(async (e) => {
+                try {
+                    const buf = await fetch(`/runtime/fade-libs/${e.assembly}.dll`)
+                        .then((r) => r.arrayBuffer());
+                    return [e.assembly, new Uint8Array(buf)] as const;
+                } catch (err: any) {
+                    appendOutputLine(`[warn] ${e.assembly} DLL fetch failed: ${err?.message ?? err}`, 'dim');
+                    return null;
+                }
+            });
+            const runtimeFiles = manifest.files.filter((rel) => rel !== 'runtime-manifest.json');
+            const assetFetches = runtimeFiles.map(async (rel) => {
+                try {
+                    const buf = await fetch(`/runtime/${rel}`).then((r) => r.arrayBuffer());
+                    return [rel, new Uint8Array(buf)] as const;
+                } catch (err: any) {
+                    appendOutputLine(`[warn] runtime asset missing: ${rel}`, 'dim');
+                    return null;
+                }
+            });
+
+            const [dllResults, assetResults] = await Promise.all([
+                Promise.all(dllFetches),
+                Promise.all(assetFetches),
+            ]);
+
+            const { zip, strToU8 } = await import('fflate');
+            const files: Record<string, Uint8Array> = {};
+            for (const r of assetResults) if (r) files[r[0]] = r[1];
+
+            // game/ contents: bytecode + each command DLL.
+            files['game/program.fbytecode'] = new Uint8Array(compile.bytecode);
+            for (const r of dllResults) {
+                if (r) files[`game/${r[0]}.dll`] = r[1];
+            }
+
+            // Synthesized fade-manifest.json — bytecode flavor (see
+            // FadeBasic.Export.Web/wwwroot/index.html for the loader
+            // contract). entryAssembly is unused for this flavor but
+            // we set it to a placeholder so downstream tooling that
+            // checks for the field doesn't choke.
+            const fadeManifest = {
+                fadeBasic: 'playground-export',
+                exportFormat: '1',
+                bytecode: 'program.fbytecode',
+                entryAssembly: 'program.fbytecode',
+                commandDlls: cmdEntries.map((e) => ({ assembly: e.assembly, class: e.class })),
+            };
+            files['fade-manifest.json'] = strToU8(JSON.stringify(fadeManifest, null, 2));
+
+            // fflate.zip (async, callback API) delegates each file's
+            // deflate to its own pool of internal Web Workers. The
+            // main thread stays responsive — the button can pulse,
+            // the user can keep typing, the iframe runtime can keep
+            // running. zipSync did all that work synchronously on
+            // the UI thread which was the source of the hitch.
+            const zipBytes = await new Promise<Uint8Array>((resolve, reject) => {
+                zip(files, { level: 6 }, (err, data) => {
+                    if (err) reject(err); else resolve(data);
+                });
+            });
+
+            // Copy into a regular ArrayBuffer so the Blob constructor's
+            // type-checker is happy — zip hands us a Uint8Array backed
+            // by a possibly-shared buffer in some environments.
+            const blob = new Blob([zipBytes.slice().buffer], { type: 'application/zip' });
+            const url = URL.createObjectURL(blob);
+            const name = (currentProject?.name ?? 'fade-export') + '.zip';
+            const a = document.createElement('a');
+            a.href = url; a.download = name;
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            // Revoke after a tick so the click has fully dispatched.
+            setTimeout(() => URL.revokeObjectURL(url), 1000);
+            appendOutputLine(`Exported: ${name} (${(zipBytes.length / 1024).toFixed(0)} KB)`, 'info');
+        } catch (e: any) {
+            appendOutputLine('Export failed: ' + (e?.message ?? String(e)), 'error');
+        } finally {
+            exportBtn.disabled = false;
+            exportBtn.classList.remove('is-exporting');
+        }
+    };
+    exportBtn.addEventListener('click', exportOnce);
 
     // Header Stop button. Delegates to stopAll() so debug sessions get
     // a clean terminate + the canvas pauses uniformly. For 'web'
@@ -4009,6 +4570,22 @@ async function bootstrap() {
     const breakpointsByUri = new Map<string, Set<number>>();
     let debugSessionActive = false;
     let debugPaused = false;
+    // When the active debug session targets a specific test (started via
+    // dbg.startTest), remember the name so the test panel can update
+    // that row's status when the session ends. Null for plain Debug
+    // sessions where no test row is involved. Set in debugSingleTest;
+    // cleared in stopAll, the 'complete' handler, and the explosion
+    // handler — anywhere the session ends.
+    let currentDebugTestName: string | null = null;
+    // Two more activity flags so the header Stop button reflects ANY
+    // in-flight VM work — not just debug. runActive is set by runOnce
+    // (web/monogame); testsBusy by setTestsBusy. refreshStopButton
+    // collapses all three into the single stopBtn.disabled state.
+    let runActive = false;
+    let testsBusy = false;
+    function refreshStopButton() {
+        stopBtn.disabled = !(runActive || testsBusy || debugSessionActive);
+    }
     let activeFrameId: number | null = null;
     // Decoration IDs the editor uses to draw breakpoint glyphs + the
     // "current line" highlight when paused.
@@ -4027,10 +4604,11 @@ async function bootstrap() {
         debugReplInput.disabled = !paused;
         debugBtn.disabled = hasSession;
         runBtn.disabled = hasSession;
-        // Header Stop mirrors the floating debug toolbar's Stop while a
-        // session is active; runOnce also flips this on after a plain
-        // (non-debug) monogame Run. Both buttons delegate to stopAll().
-        if (hasSession) stopBtn.disabled = false;
+        // Header Stop mirrors the floating debug toolbar's Stop while
+        // a session is active. refreshStopButton folds debug, run, and
+        // test activity together so the three sources don't stomp on
+        // each other (each used to flip stopBtn.disabled directly).
+        refreshStopButton();
         // The whole control bar is hidden until a session starts (mirrors
         // VSCode's floating debug toolbar — it doesn't exist when nothing
         // is debugging).
@@ -4571,6 +5149,25 @@ async function bootstrap() {
                 break;
             case 'REV_REQUEST_EXITED':
             case 'complete':
+                // For a debug-test session, snapshot the test's result
+                // BEFORE we let stopAll-style teardown run. The C# side
+                // builds the result from the still-live _debugSession.
+                // Once we await terminate (later), the session is gone.
+                if (currentDebugTestName) {
+                    const finishedName = currentDebugTestName;
+                    currentDebugTestName = null;
+                    const result = await runner.debugGetTestResult();
+                    const e = testEntries.find((t) => t.name === finishedName);
+                    if (e && result) {
+                        e.status = result.passed ? 'pass' : 'fail';
+                        e.duration = result.duration;
+                        e.failure = result.passed
+                            ? null
+                            : (result.failureMessage || result.failureReason || 'Failed');
+                        e.failureFrames = result.passed ? undefined : (result.failureFrames || []);
+                        renderTests();
+                    }
+                }
                 debugSessionActive = false;
                 debugPaused = false;
                 setDebugStatus('program exited', 'idle');
@@ -4595,6 +5192,23 @@ async function bootstrap() {
                     setDebugStatus('runtime error', 'error');
                     appendReplLine(expMsg || 'runtime error', 'err');
                     revealPanel('debug-console');
+                }
+                // Debug-test session exploded: flag the test row.
+                // Terminate-unwind → stopped (purple); a real runtime
+                // error → fail (red) with the explosion message.
+                if (currentDebugTestName) {
+                    const finishedName = currentDebugTestName;
+                    currentDebugTestName = null;
+                    const e = testEntries.find((t) => t.name === finishedName);
+                    if (e) {
+                        if (isTerminateUnwind) {
+                            e.status = 'stopped';
+                        } else {
+                            e.status = 'fail';
+                            e.failure = expMsg || 'runtime error';
+                        }
+                        renderTests();
+                    }
                 }
                 setCurrentLine(null);
                 clearDebugInspectionPanels();
@@ -4653,26 +5267,44 @@ async function bootstrap() {
     // so call sites consume them identically. Parses JSON strings
     // returned by monoGameHost so callers see the same shape as
     // runner's pre-parsed responses.
+    // Ensures the preview iframe is the active VM target before web
+    // debug starts. Wrapped here (not added to every dbg.* method)
+    // because once the iframe is attached, ongoing debug ops just flow
+    // through it — only the entry-point start calls need to wait.
+    const ensureWebVmReadyForDebug = async (): Promise<void> => {
+        if (currentProject?.type !== 'monogame') {
+            showGameSurface('web');
+            revealPanel('game');
+            await ensureWebPreviewArmed();
+        }
+    };
+
     const dbg = {
-        start: (source: string): Promise<any> =>
-            currentProject?.type === 'monogame'
+        start: async (source: string): Promise<any> => {
+            if (currentProject?.type === 'monogame') {
                 // Push assets first; the canvas runtime needs the dict
                 // populated *before* the user program's `texture`/`sfx`
                 // commands run inside Game1.LoadProgram (the very next call).
-                ? syncAssetsToRuntime()
-                    .then(() => monoGameHost.debugStart(source))
-                    .then((s) => JSON.parse(s))
-                : runner.debugStart(source),
-        startTest: (source: string, testName: string): Promise<any> =>
-            currentProject?.type === 'monogame'
+                await syncAssetsToRuntime();
+                const s = await monoGameHost.debugStart(source);
+                return JSON.parse(s);
+            }
+            await ensureWebVmReadyForDebug();
+            return runner.debugStart(source);
+        },
+        startTest: async (source: string, testName: string): Promise<any> => {
+            if (currentProject?.type === 'monogame') {
                 // Test debug on the canvas needs Game1 not actively
                 // running the user program — sync assets, then ask the
                 // canvas runtime to swap in a fresh test-VM. See
                 // Index.Debug.cs's DebugStartTest.
-                ? syncAssetsToRuntime()
-                    .then(() => monoGameHost.debugStartTest(source, testName))
-                    .then((s) => JSON.parse(s))
-                : runner.debugStartTest(source, testName),
+                await syncAssetsToRuntime();
+                const s = await monoGameHost.debugStartTest(source, testName);
+                return JSON.parse(s);
+            }
+            await ensureWebVmReadyForDebug();
+            return runner.debugStartTest(source, testName);
+        },
         continue: (): Promise<any> =>
             currentProject?.type === 'monogame'
                 ? monoGameHost.debugContinue()
@@ -4766,6 +5398,18 @@ async function bootstrap() {
             return;
         }
         appendReplLine(`▶ debug test "${name}"`, 'in');
+        // Flip the test row to 'running' immediately and remember the
+        // name so the 'complete' / 'explode' / stopAll paths can finalize
+        // the row when the session ends.
+        const idx = testEntries.findIndex((t) => t.name === name);
+        if (idx >= 0) {
+            testEntries[idx].status = 'running';
+            testEntries[idx].failure = null;
+            testEntries[idx].failureFrames = undefined;
+            testEntries[idx].duration = undefined;
+            renderTests();
+        }
+        currentDebugTestName = name;
         await beginDebugSession(() => dbg.startTest(source, name));
     }
 
@@ -4870,6 +5514,19 @@ async function bootstrap() {
     // buttons (header + floating debug toolbar) call this.
     async function stopAll() {
         if (debugSessionActive) {
+            // If a debug-test session is in flight, flag the test row
+            // as 'stopped' BEFORE we tear down (the explosion handler
+            // will also catch this if the unwind comes through that
+            // path; whichever fires first wins — both lead to the
+            // same row state).
+            if (currentDebugTestName) {
+                const e = testEntries.find((t) => t.name === currentDebugTestName);
+                if (e && (e.status === 'running' || e.status === 'queued')) {
+                    e.status = 'stopped';
+                    renderTests();
+                }
+                currentDebugTestName = null;
+            }
             await dbg.terminate();
             debugSessionActive = false;
             debugPaused = false;
@@ -4878,13 +5535,24 @@ async function bootstrap() {
             clearDebugInspectionPanels();
             setDebugEmptyStates(true);
         }
-        // Pause the canvas regardless of debug state — even after debug
-        // terminate, the VM is left running, so this halts ticks too.
         if (currentProject?.type === 'monogame') {
+            // Pause the canvas regardless of debug state — even after debug
+            // terminate, the VM is left running, so this halts ticks too.
             try { await monoGameHost.stop(); } catch { /* best effort */ }
+        } else {
+            // Web projects: tell the cooperative pump in the iframe to
+            // tear down whatever's running. No-op if nothing's in flight.
+            // The originating runner.run / runTests / debugStart promise
+            // will resolve with { ok:false, error:'stopped' } so its
+            // caller can react and tear its own UI down.
+            try { runner.stopRun(); } catch { /* best effort */ }
         }
-        stopBtn.disabled = true;
-        setDebugButtons();
+        // Clear every activity flag — stopAll is the explicit "nothing
+        // is running" signal, regardless of which source had been
+        // keeping Stop enabled.
+        runActive = false;
+        testsBusy = false;
+        setDebugButtons(); // also calls refreshStopButton
     }
     debugStopBtn.addEventListener('click', stopAll);
 

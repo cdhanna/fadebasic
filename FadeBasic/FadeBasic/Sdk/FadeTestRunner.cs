@@ -24,11 +24,18 @@ namespace FadeBasic.Sdk
         // source-located stack frames built from the VM's methodStack snapshot
         // at the moment of failure. Call this overload from any caller that
         // has the program's DebugData (e.g., ILaunchable.DebugData).
+        //
+        // `onVmCreated` (optional) fires once with the freshly-constructed VM
+        // before Execute3 begins. Hosts that need to observe (or cancel) the
+        // running VM — e.g. the web runtime's Stop button — register here.
+        // Returning is enough; no synchronization required, the callback runs
+        // on the same thread that drives Execute3.
         public static FadeTestResult RunTest(
             byte[] bytecode,
             HostMethodTable hostMethods,
             TestManifestEntry entry,
-            DebugData debugData)
+            DebugData debugData,
+            System.Action<VirtualMachine> onVmCreated = null)
         {
             if (entry.isAbstract)
             {
@@ -48,6 +55,7 @@ namespace FadeBasic.Sdk
                 // via `runto`) records a TestFailure instead of throwing.
                 isTestExecution = true
             };
+            onVmCreated?.Invoke(vm);
             try
             {
                 vm.Execute3(0); // infinite budget!
@@ -110,6 +118,73 @@ namespace FadeBasic.Sdk
                 testName = entry.name,
                 passed = true,
                 duration = sw.Elapsed
+            };
+        }
+
+        // Build a FadeTestResult from a VM that's already finished
+        // running (or been interrupted) — same result shapes RunTest
+        // returns, but for hosts that drive Execute3 themselves and
+        // want to reuse the result-extraction logic.
+        //
+        // `runtimeException`: pass if Execute3 threw (test crashed).
+        // Otherwise pass null; the VM's assertionFailure / completion
+        // is inspected to decide pass vs. assert-failed.
+        public static FadeTestResult BuildResultFromVm(
+            VirtualMachine vm,
+            TestManifestEntry entry,
+            System.TimeSpan elapsed,
+            DebugData debugData,
+            System.Exception runtimeException = null)
+        {
+            if (runtimeException is VirtualRuntimeException rex)
+            {
+                return new FadeTestResult
+                {
+                    testName = entry.name,
+                    passed = false,
+                    failureMessage = "VM threw: " + rex.Message,
+                    failureInstructionIndex = rex.Error.insIndex,
+                    failureFrames = BuildFrames(rex.Error.insIndex, rex.Error.callStack, debugData),
+                    duration = elapsed,
+                };
+            }
+            if (runtimeException != null)
+            {
+                return new FadeTestResult
+                {
+                    testName = entry.name,
+                    passed = false,
+                    failureMessage = "VM threw: " + runtimeException.Message,
+                    duration = elapsed,
+                };
+            }
+            if (vm.assertionFailure != null)
+            {
+                var reason = vm.assertionFailure.reason;
+                var hasReason = !string.IsNullOrEmpty(reason);
+                var msg = hasReason
+                    ? $"assert failed: {vm.assertionFailure.sourceText} — {reason}"
+                    : $"assert failed: {vm.assertionFailure.sourceText}";
+                return new FadeTestResult
+                {
+                    testName = entry.name,
+                    passed = false,
+                    failureMessage = msg,
+                    failureSourceText = vm.assertionFailure.sourceText,
+                    failureReason = reason,
+                    failureInstructionIndex = vm.assertionFailure.instructionIndex,
+                    failureFrames = BuildFrames(
+                        vm.assertionFailure.instructionIndex,
+                        vm.assertionFailure.callStack,
+                        debugData),
+                    duration = elapsed,
+                };
+            }
+            return new FadeTestResult
+            {
+                testName = entry.name,
+                passed = true,
+                duration = elapsed,
             };
         }
 

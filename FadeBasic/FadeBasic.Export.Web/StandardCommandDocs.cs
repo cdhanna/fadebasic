@@ -18,7 +18,7 @@ using FadeBasic.ApplicationSupport.Project;
 using FadeBasic.Lib.Standard;
 using FadeBasic.LSP.Core;
 
-namespace WebRuntime;
+namespace FadeBasic.Export.Web;
 
 internal static class StandardCommandDocs
 {
@@ -37,11 +37,9 @@ internal static class StandardCommandDocs
     public static ICommandDocsProvider BuildWeb() =>
         BuildFromMetadata(StandardCommandsMetaData.COMMANDS_JSON);
 
-    /// <summary>Docs for the 'monogame' command surface — FadeMonoGameCommands + StandardCommands.</summary>
+    /// <summary>Docs for the 'monogame' command surface — placeholder until dynamic command registration is wired up.</summary>
     public static ICommandDocsProvider BuildMonoGame() =>
-        BuildFromMetadata(
-            global::Fade.MonoGame.Lib.FadeMonoGameCommandsMetaData.COMMANDS_JSON,
-            StandardCommandsMetaData.COMMANDS_JSON);
+        BuildFromMetadata(StandardCommandsMetaData.COMMANDS_JSON);
 
     private static ICommandDocsProvider BuildFromMetadata(params string[] commandsJsonBlobs)
     {

@@ -18,13 +18,27 @@
         },
         "type": {
             "type": "string",
-            "description": "Project flavor. Only 'web' is supported today.",
-            "enum": ["web"]
+            "description": "Project flavor. 'web' runs in the WebRuntime worker (console-style commands). 'monogame' runs in the WebRuntime.MonoGame canvas runtime (KNI-backed graphics).",
+            "enum": ["web", "monogame"]
         },
         "commandDlls": {
             "type": "array",
-            "description": "Names of .NET command assemblies the project wants loaded. Currently accepted but not enforced; the WebRuntime cannot dynamically load DLLs.",
-            "items": { "type": "string" },
+            "description": "Command assemblies to load into the runtime. Each entry names an assembly and the specific class within it to instantiate. Mirrors the <FadeCommand Include='...' FullName='...' /> MSBuild item.",
+            "items": {
+                "type": "object",
+                "required": ["assembly", "class"],
+                "additionalProperties": false,
+                "properties": {
+                    "assembly": {
+                        "type": "string",
+                        "description": "Assembly name (no .dll extension), e.g. 'FadeBasic.Lib.Web'."
+                    },
+                    "class": {
+                        "type": "string",
+                        "description": "Fully-qualified class name within the assembly, e.g. 'FadeBasic.Lib.Web.WebCommands'."
+                    }
+                }
+            },
             "default": []
         },
         "sources": {

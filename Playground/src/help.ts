@@ -1,6 +1,6 @@
 // Help-tab renderer. Builds a grouped TOC + filterable command list +
 // markdown reader from the data emitted by `FadeBridge.ListCommandDocs`
-// (see WebRuntime/FadeBridge.cs). The markdown is the same text the LSP
+// (see FadeBasic.Export.Web/FadeBridge.cs). The markdown is the same text the LSP
 // hover provider renders — both surfaces stay in sync because they
 // share `HoverHandler.BuildCommandMarkdown`.
 

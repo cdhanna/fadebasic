@@ -33,6 +33,10 @@ namespace FadeBasic.Launch
 
         public static DebugData UnpackDebugData(string base64Json)
         {
+            // Release builds skip debug-data emission, so the generated
+            // launcher hands us an empty string. Return an empty DebugData
+            // rather than letting the JSON parser index into "".
+            if (string.IsNullOrEmpty(base64Json)) return new DebugData();
             var bytes = Convert.FromBase64String(base64Json);
             var json = Encoding.UTF8.GetString(bytes);
             return JsonableExtensions.FromJson<DebugData>(json);

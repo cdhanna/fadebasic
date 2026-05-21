@@ -10,11 +10,16 @@ export const FADE_JSON_NAME = 'fade.json';
 
 export type FadeProjectType = 'web' | 'monogame';
 
+export interface CommandDllEntry {
+    assembly: string;
+    class: string;
+}
+
 export interface FadeProject {
     name: string;
     author?: string;
     type: FadeProjectType;
-    commandDlls?: string[];
+    commandDlls?: CommandDllEntry[];
     sources: string[];
 }
 
@@ -84,13 +89,21 @@ export function validateFadeProject(raw: unknown): FadeConfigParseResult {
         err('type', `Property "type" must be one of: ${[...ALLOWED_TYPES].map((t) => `"${t}"`).join(', ')}.`);
     }
 
-    // commandDlls (optional array of strings)
+    // commandDlls (optional array of { assembly, class } objects)
     if (root.commandDlls !== undefined) {
         if (!Array.isArray(root.commandDlls)) {
-            err('commandDlls', 'Property "commandDlls" must be an array of strings.');
+            err('commandDlls', 'Property "commandDlls" must be an array of { assembly, class } objects.');
         } else {
             (root.commandDlls as unknown[]).forEach((v, i) => {
-                if (typeof v !== 'string') err(`commandDlls[${i}]`, 'Each entry must be a string.');
+                if (v === null || typeof v !== 'object' || Array.isArray(v)) {
+                    err(`commandDlls[${i}]`, 'Each entry must be an object with "assembly" and "class" string properties.');
+                    return;
+                }
+                const entry = v as Record<string, unknown>;
+                if (typeof entry.assembly !== 'string' || entry.assembly.length === 0)
+                    err(`commandDlls[${i}]`, 'Entry "assembly" must be a non-empty string (assembly name without .dll).');
+                if (typeof entry.class !== 'string' || entry.class.length === 0)
+                    err(`commandDlls[${i}]`, 'Entry "class" must be a non-empty string (fully-qualified class name).');
             });
         }
     }
@@ -122,7 +135,7 @@ export function validateFadeProject(raw: unknown): FadeConfigParseResult {
             author: typeof root.author === 'string' ? root.author : undefined,
             type: root.type as FadeProjectType,
             commandDlls: Array.isArray(root.commandDlls)
-                ? (root.commandDlls as string[])
+                ? (root.commandDlls as CommandDllEntry[])
                 : [],
             sources: root.sources as string[],
         },

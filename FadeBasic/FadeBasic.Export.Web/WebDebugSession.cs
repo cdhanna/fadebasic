@@ -3,7 +3,7 @@
 // inbound / outbound message queues directly so the worker can drive
 // the session by method call.
 //
-// Lifecycle in WebRuntime:
+// Lifecycle in FadeBasic.Export.Web:
 //   1. Bridge compiles source → VirtualMachine + Compiler.DebugData.
 //   2. Bridge constructs WebDebugSession(vm, dbg, …) — no StartServer().
 //   3. Worker tick loop calls `session.StartDebugging(ops=200)` in batches
@@ -21,7 +21,7 @@ using FadeBasic;
 using FadeBasic.Launch;
 using FadeBasic.Virtual;
 
-namespace WebRuntime;
+namespace FadeBasic.Export.Web;
 
 internal sealed class WebDebugSession : DebugSession
 {
