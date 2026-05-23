@@ -388,6 +388,18 @@ function writeUint32LE(b: Uint8Array, off: number, value: number): void {
     b[off + 3] = (value >>> 24) & 0xFF;
 }
 
+// Route an XNB through the appropriate KNI patcher based on its kind.
+// Replaces the chained patchEffectMgfxVersionForKni(patchSoundEffectForKni(raw)) pattern.
+export function patchXnbForKni(bytes: Uint8Array): Uint8Array {
+    let cls: ReturnType<typeof classifyXnb>;
+    try { cls = classifyXnb(bytes); } catch { return bytes; }
+    switch (cls.kind) {
+        case 'effect':      return patchEffectMgfxVersionForKni(bytes);
+        case 'sound-effect': return patchSoundEffectForKni(bytes);
+        default:             return bytes;
+    }
+}
+
 export function patchSoundEffectForKni(bytes: Uint8Array): Uint8Array {
     let cls;
     try { cls = classifyXnb(bytes); } catch { return bytes; }

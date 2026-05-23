@@ -1,7 +1,7 @@
 // End-to-end Playground × WebRuntime.MonoGame integration check.
 //
-// Setup: vite preview (or dev) running on $URL, with monogame-runtime
-// already published into Playground/public/monogame-runtime/.
+// Setup: vite preview (or dev) running on $URL, with the monogame
+// template already published into Playground/public/runtime/monogame/.
 //
 // Test flow:
 //   1. Open Playground page.
@@ -21,17 +21,25 @@ import { fileURLToPath } from 'node:url';
 const __dirname = dirname(fileURLToPath(import.meta.url));
 process.env.PLAYWRIGHT_BROWSERS_PATH ??= resolve(__dirname, '..', 'node_modules', 'playwright', '.local-browsers');
 
-const URL = process.env.URL || 'http://localhost:5312/';
+const URL = process.env.URL || 'http://localhost:5311/';
 const BOOT_BUDGET_MS = 60_000; // generous: ~8 MB WASM download + warmup
+// Iframe selector & path — phase 3 moved the MonoGame canvas inside an
+// iframe (id #mg-preview-frame, src /runtime/monogame/index.html?preview=1)
+// hosted in the Game panel. #theCanvas now lives in that iframe's document.
+const MG_FRAME_SELECTOR = '#mg-preview-frame';
 
 const browser = await chromium.launch({ headless: true });
 const page = await browser.newPage({ viewport: { width: 1280, height: 800 } });
 
 const errors = [];
 page.on('console', msg => {
-    if (msg.type() === 'error') {
-        const t = msg.text();
-        if (t.length < 1000) console.log('[console.error]', t.slice(0, 300));
+    const t = msg.text();
+    if (msg.type() === 'error' && t.length < 1000) {
+        console.log('[console.error]', t.slice(0, 300));
+    } else if (/\[fade\]|registerCommandAssembly|loadAssembly|preload/.test(t)) {
+        // Surface fade-prefixed messages regardless of level so the probe
+        // sees DLL load failures, etc.
+        console.log(`[console.${msg.type()}]`, t.slice(0, 400));
     }
 });
 page.on('pageerror', e => { errors.push(e); console.log('[pageerror]', e.message.slice(0, 300)); });
@@ -70,7 +78,18 @@ const written = await page.evaluate(async () => {
 
         const src = await dir.getFileHandle('main.fbasic', { create: true });
         const srcW = await src.createWritable();
-        await srcW.write('do\n  sync\nloop\n');
+        // Use a real Fade.MonoGame.Lib command — `set background color` —
+        // so we can verify the LSP has loaded FadeMonoGameCommands. If the
+        // LSP doesn't know the command, the parser fails with [0107]
+        // "ambiguous between declaration or assignment" or similar.
+        // Paint a recognizable color so the pixel probe below has
+        // something to detect — pure black would be the default backbuffer
+        // clear and wouldn't distinguish "Game1 is rendering" from
+        // "canvas exists but never drew."
+        // `set background color` takes a packed-int colorCode; `rgb` builds
+        // one. Both are monogame-only — if either is missing, the parse
+        // breaks with a clear error.
+        await srcW.write('set background color rgb(0, 0, 200)\ndo\n  sync\nloop\n');
         await srcW.close();
 
         // Remember the active project — the bootstrap reads this at load.
@@ -103,20 +122,46 @@ const runBtn = await page.$('#run');
 if (!runBtn) throw new Error('#run button not in DOM');
 await runBtn.click();
 
-// Wait for the canvas to appear and render.
+// Wait for the iframe to appear (monoGameHost.bootInternal lazily
+// creates it on first ensureBooted → first Run click), then drill into
+// it to find #theCanvas.
+let mgFrame;
 try {
-    await page.waitForSelector('#theCanvas', { timeout: BOOT_BUDGET_MS });
+    await page.waitForSelector(MG_FRAME_SELECTOR, { timeout: 10_000 });
+    const frameElHandle = await page.$(MG_FRAME_SELECTOR);
+    mgFrame = await frameElHandle.contentFrame();
+    if (!mgFrame) throw new Error('contentFrame() returned null');
+    await mgFrame.waitForSelector('#theCanvas', { timeout: BOOT_BUDGET_MS });
 } catch (e) {
-    console.log('canvas never appeared. recent console errors:');
+    console.log(`MonoGame iframe + canvas never appeared (${e?.message ?? e}).`);
+    if (mgFrame) {
+        const bodyHTML = await mgFrame.evaluate(() => document.body.outerHTML.slice(0, 1200));
+        console.log('--- iframe body (first 1.2k) ---');
+        console.log(bodyHTML);
+        const mgInner = await mgFrame.evaluate(() => {
+            const root = document.getElementById('mg-blazor-root');
+            return {
+                rootChildren: root ? root.children.length : -1,
+                rootInner: root ? root.innerHTML.slice(0, 800) : 'no root',
+                hasCanvas: !!document.getElementById('theCanvas'),
+                hasNotFound: document.body.textContent?.includes("Sorry, there's nothing") ?? false,
+                docReadyState: document.readyState,
+                url: location.href,
+            };
+        });
+        console.log('--- iframe inner state ---');
+        console.log(JSON.stringify(mgInner, null, 2));
+    }
+    console.log('Recent errors:');
     for (const er of errors.slice(-10)) console.log(' ', er.message.slice(0, 400));
     await browser.close();
     process.exit(1);
 }
-console.log('→ canvas appeared, waiting for render…');
+console.log('→ canvas appeared inside iframe, waiting for render…');
 await page.waitForTimeout(3000);
 
-// Pixel-spread probe (preserveDrawingBuffer:false safe — uses element screenshot).
-const canvasHandle = await page.$('#theCanvas');
+// Pixel-spread probe — screenshot the canvas from inside the iframe.
+const canvasHandle = await mgFrame.$('#theCanvas');
 const pngBytes = await canvasHandle.screenshot({ type: 'png' });
 const result = await page.evaluate(async (b64) => {
     const bin = atob(b64);

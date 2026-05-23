@@ -4,24 +4,31 @@ export default defineConfig({
     server: {
         port: 5311,
         strictPort: true,
-        // Cross-origin isolation — required to enable SharedArrayBuffer, which
-        // the worker uses to implement synchronous prompt$ (Atomics.wait blocks
-        // the worker thread until the main thread writes the response).
-        headers: {
-            'Cross-Origin-Opener-Policy': 'same-origin',
-            'Cross-Origin-Embedder-Policy': 'require-corp',
-        },
-    },
-    preview: {
-        headers: {
-            'Cross-Origin-Opener-Policy': 'same-origin',
-            'Cross-Origin-Embedder-Policy': 'require-corp',
-        },
     },
     worker: {
         format: 'es',
     },
     plugins: [
+        // The sandboxed MonoGame preview iframe has a null/opaque origin.
+        // Blazor's dotnet.js fetches with credentials: 'include', so the
+        // browser rejects 'Access-Control-Allow-Origin: *' for those requests.
+        // Echoing the request's Origin header back (including the literal
+        // string "null" for sandboxed iframes) satisfies the browser's
+        // credentialed-request CORS check without opening up to any real
+        // external origin. Safe for a dev server only.
+        {
+            name: 'cors-echo-origin',
+            configureServer(server) {
+                server.middlewares.use((_req, res, next) => {
+                    const origin = (_req as any).headers['origin'];
+                    if (origin !== undefined) {
+                        res.setHeader('Access-Control-Allow-Origin', origin);
+                        res.setHeader('Access-Control-Allow-Credentials', 'true');
+                    }
+                    next();
+                });
+            },
+        },
         // codingame's CSS registration system expects CSS imports to provide
         // their content as a default export string (it constructs CSSStyleSheets
         // via document.adoptedStyleSheets). Vite's default CSS handling injects

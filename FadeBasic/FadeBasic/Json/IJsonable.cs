@@ -31,6 +31,7 @@ namespace FadeBasic.Json
         void IncludeField(string name, ref string fieldValue);
         void IncludeField(string name, ref byte[] fieldValue);
         void IncludeField(string name, ref int[] fieldValue);
+        void IncludeField(string name, ref double fieldValue);
         void IncludeField(string name, ref DebugMessageType fieldValue);
         void IncludeField(string name, ref Dictionary<string, int> fieldValue);
         void IncludeField<T>(string name, ref T fieldValue) where T : IJsonable, new();
@@ -450,6 +451,12 @@ namespace FadeBasic.Json
             }
         }
 
+        public void IncludeField(string name, ref double fieldValue)
+        {
+            if (_data.ints.TryGetValue(name, out var intVal))
+                fieldValue = intVal;
+        }
+
         public void IncludeField(string name, ref DebugMessageType fieldValue)
         {
             if (_data.ints.TryGetValue(name, out var fieldInt))
@@ -566,6 +573,17 @@ namespace FadeBasic.Json
         public void IncludeField(string name, ref int fieldValue) => IncludePrim(name, ref fieldValue);
         public void IncludeField(string name, ref byte fieldValue) => IncludePrim(name, ref fieldValue);
         public void IncludeField(string name, ref ulong fieldValue) => IncludePrim(name, ref fieldValue);
+
+        public void IncludeField(string name, ref double fieldValue)
+        {
+            if (fieldCount > 0) _sb.Append(JsonConstants.COMMA);
+            _sb.Append(JsonConstants.QUOTE);
+            _sb.Append(name);
+            _sb.Append(JsonConstants.QUOTE);
+            _sb.Append(JsonConstants.COLON);
+            _sb.Append(fieldValue.ToString(System.Globalization.CultureInfo.InvariantCulture));
+            fieldCount++;
+        }
 
         public void IncludeField(string name, ref bool fieldValue)
         {

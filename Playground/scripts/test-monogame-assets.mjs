@@ -7,8 +7,8 @@
 // landed in the console (which is the symptom of TextureSystem.GetSourceRect
 // dereferencing a null watchedTexture — the bug this whole change fixes).
 //
-// Requires a vite server with monogame-runtime already published. Match
-// test-monogame-integration.mjs's setup.
+// Requires a vite server with the monogame template already published into
+// public/runtime/monogame/. Match test-monogame-integration.mjs's setup.
 
 import { chromium } from 'playwright';
 import { dirname, resolve } from 'node:path';

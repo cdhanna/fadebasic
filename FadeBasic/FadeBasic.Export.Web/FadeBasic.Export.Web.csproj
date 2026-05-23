@@ -8,15 +8,15 @@
     <AssemblyName>FadeBasic.Export.Web</AssemblyName>
     <RootNamespace>FadeBasic.Export.Web</RootNamespace>
 
-    <!-- We dynamically load the consumer's game DLL + FadeBasic.Lib.Web at
-         runtime via Assembly.Load(byte[]). The IL trimmer can't see those
-         references statically, so any type used only by dynamic code (e.g.
-         System.Span<T> used by JSImport-generated marshalling for string
-         returns) gets stripped, and JIT later fails with TypeLoadException.
-         Disabling trim is the safest default — we can re-enable with
-         explicit TrimmerRootAssembly entries once the surface stabilizes. -->
-    <PublishTrimmed>false</PublishTrimmed>
-    <!-- <TrimMode>copy</TrimMode> -->
+    <!-- Dynamic Assembly.Load of game DLLs + Lib.Web means the trimmer can't
+         see all used types statically. TrimMode=copy trims unreferenced
+         assemblies but keeps full IL in referenced ones, which is safe for
+         our dynamic-load pattern and still removes unused BCL assemblies. -->
+    <PublishTrimmed>true</PublishTrimmed>
+    <TrimMode>copy</TrimMode>
+    <!-- Removes all ICU globalization data files (~2.5 MB). The LSP worker
+         doesn't need locale-sensitive ops. -->
+    <InvariantGlobalization>true</InvariantGlobalization>
   </PropertyGroup>
 
   <!-- NuGet package: FadeBasic.Export.Web

@@ -159,86 +159,52 @@ public static partial class FadeBridge
     // the next tick. See worker.js for the pump driver, WebCommands.cs
     // for the prompt$/wait ms command implementations.
 
-    private static VirtualMachine? _runVm;
-    private static string? _runError;
-    // The single owner of suspend/resume state for this runtime. Library
-    // commands only see HostBridge — they don't reach into these fields
-    // directly. Plugins (other libraries / pages) extend behavior by
-    // adding new HostBridge.PostMessage channels, not by adding new
-    // fields here.
-    private static bool _waitingForHostReply;
-    private static int _pendingWaitMs;
-    // Set by StopRun to terminate the cooperative pump regardless of
-    // what state the VM is in (mid-batch, waiting on a host reply,
-    // sleeping between wait-ms timeouts). RunTick observes it on the
-    // next call and emits a synthetic complete=true result with an
-    // error of "stopped" so callers can distinguish from a normal end.
-    private static bool _runStopRequested;
+    // All cooperative-pump state + methods live in FadeBasic.Sdk.CooperativePump.
+    // FadeBridge delegates its JSExports to CooperativePump and
+    // keeps only the things that are genuinely Export.Web-specific:
+    // assembly loading (LoadAndRegister), workspace + LSP state, the
+    // debug session, and the JS-interop wiring (JSImport / JSExport).
 
-    // ─── Cooperative test-runner state ───────────────────────────────
-    // When _testRunActive is true, RunTick treats _runVm as "the
-    // current test's VM" instead of a single run-to-end VM. As each
-    // test's VM completes, RunTick finalizes that test's result and
-    // advances _runVm to the next test in _testQueue. When the queue
-    // is empty, RunTick emits complete=true with the aggregated
-    // testFinal envelope. wait ms / prompt$ / stop all reuse the
-    // existing Run-pump infrastructure unchanged — tests are just a
-    // sequence of cooperative runs sharing the same pump.
-    private static bool _testRunActive;
-    private static FadeRuntimeContext? _testCtx;
-    private static List<TestManifestEntry>? _testQueue;
-    private static int _testIndex;
-    private static List<FadeBasic.Sdk.FadeTestResult>? _testResults;
-    private static System.Diagnostics.Stopwatch? _testRunSw;
-    private static System.Diagnostics.Stopwatch? _currentTestSw;
-    private static Exception? _currentTestException;
-
-    // Routes C# → JS for HostBridge.PostMessage. Worker.js binds the
+    // Routes C# → JS for HostBridge.PostMessage. runtime.js binds the
     // 'fade-runtime' module to a fan-out that posts `host-message` to
     // the page; the page dispatches by `channel` and replies with a
     // typed `host-reply` that flows back into DepositResultString etc.
     [JSImport("postHostMessage", "fade-runtime")]
     internal static partial void PostHostMessage(string channel, string payload);
 
-    // Static wire-up: install our cooperative-scheduling primitives.
-    // Library commands call these via HostBridge; we own the VM and
-    // the suspend/resume bookkeeping. Each runtime host does the same
-    // dance — MonoGame swaps WaitImpl in its own startup, a native CLI
-    // would do similar but with synchronous semantics. Runs once on
-    // first touch of FadeBridge (which is at worker boot, when the
-    // worker resolves the assembly's JS exports).
+    // Static wire-up: hook the cooperative pump into this host. Runs
+    // once on first touch of FadeBridge (at runtime boot, when JS
+    // resolves the assembly's exports).
     //
-    // Adding a new cooperative command in a future library does NOT
-    // require any changes here — the library invokes PostMessage with
-    // its own channel name and SuspendVm to pause; the page-side
-    // handler registers in hostHandlers. The runtime is channel-agnostic.
+    // The pump itself lives in FadeBasic.Sdk.CooperativePump —
+    // we just wire its delegate slots so it can fetch our active
+    // command set, our WaitImpl override redirects to its cooperative
+    // path, and HostBridge.PostMessage / SuspendVm route through it.
+    // MonoGame will do an identical wire-up in its own startup.
     static FadeBridge()
     {
+        CooperativePump.CommandsAccessor = () => _workspace.Commands;
+
         StandardCommands.WaitImpl = ms =>
         {
-            // Two cooperative paths plus a defensive fallback:
-            //
-            //  - Cooperative pump (Run flow OR test flow): _runVm is
-            //    non-null. Both share the same pump infrastructure —
-            //    tests just point _runVm at one test's VM at a time,
-            //    advancing between tests inside RunTick. Record the
-            //    wait, suspend, let the JS pump schedule the next tick
-            //    after `ms`. Worker thread stays responsive.
-            //
-            //  - Debug session: _debugSession is non-null. Mirror of
-            //    the above for DebugTick / pumpDebugTick.
-            //
-            //  - Fallback: a Fade program ran outside any host driver
-            //    we know about (shouldn't happen in normal use). Block
-            //    via Thread.Sleep so behavior matches a desktop host.
-            if (_runVm != null)
+            // Three paths, picked by which driver is in flight:
+            //  - Cooperative pump (Run / tests): RunVm non-null → set
+            //    pending wait + suspend; JS pump schedules next tick.
+            //  - Debug session: _debugSession non-null → same, but on
+            //    the debug session's VM; pumpDebugTick handles the
+            //    setTimeout cadence.
+            //  - Fallback: Thread.Sleep. Should not happen in normal use.
+            if (CooperativePump.RunVm != null)
             {
-                _pendingWaitMs = ms;
-                _runVm.Suspend();
+                CooperativePump.OnCooperativeWait(ms);
             }
             else if (_debugSession != null)
             {
-                _pendingWaitMs = ms;
+                // DebugTick reads _pendingWaitMs out of CooperativePump
+                // — sharing the field keeps the JS pump on one source
+                // of truth. Suspend the session's VM directly here
+                // since CooperativePump only knows about RunVm.
+                CooperativePump.OnCooperativeWait(ms);
                 _debugSession._vm?.Suspend();
             }
             else
@@ -248,17 +214,14 @@ public static partial class FadeBridge
         };
         HostBridge.PostMessage = (channel, payload) =>
             PostHostMessage(channel, payload);
-        HostBridge.SuspendVm = () =>
-        {
-            _waitingForHostReply = true;
-            _runVm?.Suspend();
-        };
+        HostBridge.SuspendVm = () => CooperativePump.OnHostReplyWait();
     }
 
-    // Begin a run. Resolves the ILaunchable from the entry assembly and
-    // builds the VM, but does NOT execute. The worker then drives the VM
-    // forward via RunTick until it reports complete=true. Mirrors the
-    // setup half of the old synchronous LoadAndRun.
+    // Begin a run from an entry assembly's bytes. Host-specific because
+    // it loads the consumer's DLL into our AssemblyLoadContext via
+    // LoadAndRegister; once we've got the ILaunchable, we hand the VM
+    // to the cooperative pump and the rest of the flow is identical to
+    // RunStartFromSource / RunStartFromBytecode.
     [JSExport]
     public static string RunStart(byte[] entryDllBytes)
     {
@@ -274,15 +237,11 @@ public static partial class FadeBridge
             if (launchableType == null)
                 throw new Exception("No ILaunchable implementation found in entry assembly");
             var instance = (ILaunchable)Activator.CreateInstance(launchableType);
-            _runVm = new VirtualMachine(instance.Bytecode)
+            var vm = new VirtualMachine(instance.Bytecode)
             {
                 hostMethods = HostMethodTable.FromCommandCollection(instance.CommandCollection),
             };
-            _runError = null;
-            _waitingForHostReply = false;
-            _pendingWaitMs = 0;
-            _runStopRequested = false;
-            _testRunActive = false;
+            CooperativePump.RunStartWithVm(vm);
             return JsonSerializer.Serialize(new { ok = true }, _jsonOpts);
         }
         catch (Exception ex)
@@ -291,358 +250,64 @@ public static partial class FadeBridge
         }
     }
 
-    // Begin a run from raw Fade source. The Playground and any other
-    // host that compiles-on-the-fly uses this instead of the DLL-based
-    // RunStart. Commands come from _workspace.Commands (which already
-    // includes the StandardCommands + every RegisterCommandAssembly).
-    // Returns { ok, compileError? }; compile failures surface here
-    // rather than at the first tick.
+    // Compile-from-source / bytecode entry points and the compile-only
+    // helpers all delegate to CooperativePump. The JSExport wrappers are
+    // the only host-specific bit — they expose the pump's static methods
+    // through Mono WASM's [JSExport] surface. WebRuntime.MonoGame will
+    // expose the same pump via [JSInvokable] wrappers (different surface,
+    // same shared logic).
     [JSExport]
-    public static string RunStartFromSource(string source)
-    {
-        try
-        {
-            var commands = _workspace.Commands;
-            if (!FadeSdk.TryCreateFromString(source, commands, out var ctx, out var errors))
-            {
-                return JsonSerializer.Serialize(new
-                {
-                    ok = false,
-                    compileError = errors.ToDisplay(),
-                }, _jsonOpts);
-            }
-            _runVm = ctx.Machine;
-            _runError = null;
-            _waitingForHostReply = false;
-            _pendingWaitMs = 0;
-            _runStopRequested = false;
-            _testRunActive = false;
-            return JsonSerializer.Serialize(new { ok = true }, _jsonOpts);
-        }
-        catch (Exception ex)
-        {
-            return JsonSerializer.Serialize(new { ok = false, error = DescribeException(ex) }, _jsonOpts);
-        }
-    }
+    public static string RunStartFromSource(string source) =>
+        CooperativePump.RunStartFromSource(source);
 
-    // Compile Fade source to a raw bytecode blob. Used by the export
-    // download path and by the Playground's preview iframe — both want
-    // the compiled program as bytes they can hand to RunStartFromBytecode
-    // (in another process / iframe / future runtime). Returns the
-    // bytecode directly; callers should check for empty (compile fail)
-    // via the companion CompileToBytecodeStatus method.
-    //
-    // We compile against the host's current _workspace.Commands so the
-    // bytecode's host-method indices match what a re-loaded runtime
-    // will resolve them against (assuming it loads the same DLLs).
     [JSExport]
-    public static byte[] CompileToBytecode(string source)
-    {
-        try
-        {
-            var commands = _workspace.Commands;
-            if (!FadeSdk.TryCreateFromString(source, commands, out var ctx, out _))
-                return Array.Empty<byte>();
-            return ctx.Machine.program;
-        }
-        catch
-        {
-            return Array.Empty<byte>();
-        }
-    }
+    public static byte[] CompileToBytecode(string source) =>
+        CooperativePump.CompileToBytecode(source);
 
-    // Companion to CompileToBytecode — returns compile diagnostics as
-    // JSON so callers can surface errors when CompileToBytecode returns
-    // an empty buffer. Split into two calls because JSExport doesn't
-    // give us a clean way to return both bytes AND a status struct.
     [JSExport]
-    public static string CompileToBytecodeStatus(string source)
-    {
-        try
-        {
-            var commands = _workspace.Commands;
-            if (!FadeSdk.TryCreateFromString(source, commands, out var ctx, out var errors))
-            {
-                return JsonSerializer.Serialize(new
-                {
-                    ok = false,
-                    compileError = errors.ToDisplay(),
-                }, _jsonOpts);
-            }
-            return JsonSerializer.Serialize(new { ok = true, byteCount = ctx.Machine.program.Length }, _jsonOpts);
-        }
-        catch (Exception ex)
-        {
-            return JsonSerializer.Serialize(new { ok = false, error = DescribeException(ex) }, _jsonOpts);
-        }
-    }
+    public static string CompileToBytecodeStatus(string source) =>
+        CooperativePump.CompileToBytecodeStatus(source);
 
-    // Boot the cooperative pump from pre-compiled bytecode (the output
-    // of CompileToBytecode, possibly produced by a different runtime
-    // instance / process / build step). Commands resolve against the
-    // current workspace — callers must have already RegisterCommandAssembly'd
-    // every DLL the bytecode references, otherwise CALL_HOST opcodes
-    // will hit a null method during the first tick.
     [JSExport]
-    public static string RunStartFromBytecode(byte[] bytecode)
-    {
-        try
-        {
-            if (bytecode == null || bytecode.Length == 0)
-                throw new Exception("RunStartFromBytecode: empty bytecode");
-            var commands = _workspace.Commands;
-            _runVm = new VirtualMachine(bytecode)
-            {
-                hostMethods = HostMethodTable.FromCommandCollection(commands),
-            };
-            _runError = null;
-            _waitingForHostReply = false;
-            _pendingWaitMs = 0;
-            _runStopRequested = false;
-            _testRunActive = false;
-            return JsonSerializer.Serialize(new { ok = true }, _jsonOpts);
-        }
-        catch (Exception ex)
-        {
-            return JsonSerializer.Serialize(new { ok = false, error = DescribeException(ex) }, _jsonOpts);
-        }
-    }
+    public static string RunStartFromBytecode(byte[] bytecode) =>
+        CooperativePump.RunStartFromBytecode(bytecode);
 
-    // Run one cooperative batch of the program. `budget` caps the number
-    // of opcodes dispatched (0 = unlimited; not recommended — see below).
-    // Returns the run status so the JS pump can choose how to schedule
-    // the next tick:
-    //   complete=true              → run is finished; stop pumping
-    //   waitingForHostReply=true   → halt pump entirely; resume only after
-    //                                a host-reply deposits a value
-    //   waitMs > 0                 → setTimeout(tick, waitMs) before next
-    //   suspended=true otherwise   → setTimeout(tick, 0)  (yield + continue)
-    //   none of the above          → setTimeout(tick, 0)  (also yield)
-    // Budget 0 would defeat the whole point of the pump model (no yield
-    // between opcodes), so the worker passes a finite number — high enough
-    // that VM overhead per batch is small, low enough to keep heartbeats
-    // alive.
+    // RunTick + StopRun + all Deposit* methods are pump-internal —
+    // identical across hosts. Delegate to CooperativePump.
+
     [JSExport]
-    public static string RunTick(int budget)
-    {
-        // Queue exhausted in test mode (AdvanceTest set _runVm = null
-        // because we ran the last test on the previous tick). Emit the
-        // aggregated testFinal envelope.
-        if (_runVm == null && _testRunActive)
-            return BuildTestRunCompleteJson(stopped: false);
+    public static string RunTick(int budget) => CooperativePump.RunTick(budget);
 
-        if (_runVm == null)
-            return JsonSerializer.Serialize(new { complete = true }, _jsonOpts);
-
-        if (_runError != null && !_testRunActive)
-            return JsonSerializer.Serialize(new { complete = true, error = _runError }, _jsonOpts);
-
-        // Honor a pending stop request before doing any more work. The
-        // pump treats this terminal result the same as a normal complete
-        // and stops scheduling new ticks. Tear down the VM reference too
-        // so a stale Suspend doesn't leak across runs.
-        if (_runStopRequested)
-        {
-            _runStopRequested = false;
-            _runVm = null;
-            if (_testRunActive)
-                return BuildTestRunCompleteJson(stopped: true);
-            return JsonSerializer.Serialize(new
-            {
-                complete = true,
-                error = "stopped",
-            }, _jsonOpts);
-        }
-
-        // Per-tick reset for the wake-up hint. The host-reply flag is NOT
-        // reset here — it persists across the suspend until DepositResultXxx
-        // clears it (since the whole point is that the VM stays paused
-        // across multiple JS event-loop ticks while we wait for the page).
-        _pendingWaitMs = 0;
-        Exception? testException = null;
-        try
-        {
-            _runVm.Execute3(budget);
-        }
-        catch (Exception ex)
-        {
-            if (_testRunActive)
-            {
-                // Test runs don't bail on a single test's exception — the
-                // test fails, we move on. The exception goes into the
-                // current test's result via BuildResultFromVm below.
-                testException = ex;
-            }
-            else
-            {
-                _runError = DescribeException(ex);
-            }
-        }
-
-        // Test-mode transition: if the current test's VM is finished
-        // (either ran past the program end or threw), finalize that
-        // test's result and start the next one. Don't surface complete
-        // to the pump yet — keep ticking until the queue is exhausted.
-        if (_testRunActive)
-        {
-            var vmFinished = _runVm.instructionIndex >= _runVm.program.Length
-                || testException != null;
-            if (vmFinished && _testQueue != null && _testCtx != null
-                && _testIndex >= 0 && _testIndex < _testQueue.Count)
-            {
-                _currentTestSw?.Stop();
-                var entry = _testQueue[_testIndex];
-                var result = FadeBasic.Sdk.FadeTestExecutor.BuildResultFromVm(
-                    _runVm,
-                    entry,
-                    _currentTestSw?.Elapsed ?? System.TimeSpan.Zero,
-                    _testCtx.Compiler.DebugData,
-                    testException);
-                _testResults?.Add(result);
-                var progress = TestResultToObject(result);
-
-                if (!AdvanceTest())
-                {
-                    // Last test in the queue — emit testProgress for
-                    // this final test alongside the terminal envelope,
-                    // so the Playground's per-test stream is uniform
-                    // (no special-case for "the run that just ended").
-                    return BuildTestRunCompleteJson(stopped: false, lastProgress: progress);
-                }
-
-                // Started next test. Tell the pump to schedule another
-                // tick immediately (waitMs=0, not complete, not suspended)
-                // and surface this test's result so the UI flips its
-                // row from "running" to pass/fail before the next test
-                // visibly starts. `testStarting` names the test that
-                // just became active — the iframe uses it to clear its
-                // output area so each test's prints start on a clean
-                // slate.
-                var nextName = _testQueue![_testIndex].name;
-                return JsonSerializer.Serialize(new
-                {
-                    complete = false,
-                    suspended = false,
-                    waitMs = 0,
-                    waitingForHostReply = false,
-                    testProgress = progress,
-                    testStarting = new { name = nextName },
-                }, _jsonOpts);
-            }
-            // Test's VM is still mid-flight — suspended on a wait or
-            // host-reply, or just used up its budget. Surface like a
-            // normal Run tick so the pump schedules appropriately.
-        }
-
-        var complete = _runError != null
-            || _runVm.instructionIndex >= _runVm.program.Length;
-
-        return JsonSerializer.Serialize(new
-        {
-            complete,
-            suspended = !complete && _runVm.isSuspendRequested,
-            waitMs = _pendingWaitMs,
-            waitingForHostReply = _waitingForHostReply,
-            error = _runError,
-        }, _jsonOpts);
-    }
-
-    // Terminate an in-flight run. Sets a flag the next RunTick honors,
-    // clears the prompt-wait so the pump can resume even from a halted
-    // state, and asks the VM to break out of the current Execute3 batch.
-    // Safe to call when no run is active — it's a no-op then.
-    //
-    // The pump driver (worker.js) is expected to follow this by either
-    // calling RunTick once (to flush the synthetic stopped result) or
-    // by simply letting an in-flight setTimeout fire — the next tick
-    // observes the stop flag and exits.
     [JSExport]
-    public static string StopRun()
-    {
-        _runStopRequested = true;
-        _waitingForHostReply = false;
-        _pendingWaitMs = 0;
-        // _runVm is also the test pump's current VM, so a single
-        // Suspend handles both cases. The next RunTick sees the stop
-        // flag, finalizes (with stopped error), and emits the terminal
-        // event.
-        _runVm?.Suspend();
-        return "true";
-    }
-
-    // ─── Deposit-result entry points ──────────────────────────────────
-    // The worker calls into one of these in response to a `host-reply`
-    // message from the page. The library command earlier pushed a
-    // type-shaped placeholder onto the operand stack (source-generated
-    // executors push the default-value bytes + the type code based on
-    // the command's C# return type) and suspended the VM via
-    // HostBridge.SuspendVm. The matching Deposit* call swaps that
-    // placeholder for the real value; the next RunTick resumes and
-    // the consuming opcode pops the real value.
-    //
-    // The set of supported result types matches the FadeBasic VM's
-    // primitive type table (see Virtual/OpCodes.cs:TypeCodes). String
-    // is heap-allocated; scalars overwrite the placeholder bytes in
-    // place. Void is a no-op stack-wise (the command pushed nothing).
-
-    // Helper: gate every Deposit* on "we're actually paused waiting".
-    // Returns true if the deposit should proceed; flips the flag off
-    // either way so the pump can resume on the next tick.
-    private static bool BeginDeposit()
-    {
-        if (_runVm == null || !_waitingForHostReply) return false;
-        return true;
-    }
-
-    private static string EndDeposit(bool ok)
-    {
-        _waitingForHostReply = false;
-        return ok ? "true" : "false";
-    }
+    public static string StopRun() => CooperativePump.StopRun();
 
     [JSExport]
     public static string DepositResultString(string value) =>
-        EndDeposit(BeginDeposit() && HostStackOps.SwapTopString(_runVm, value));
-
-    // ─── Scalar deposits ──────────────────────────────────────────────
-    // JS Number is double-precision, so each of these accepts whatever
-    // JS-native type maps cleanly to its C# parameter; the worker.js
-    // dispatcher coerces JS values into the right shape before calling.
-    // BitConverter.GetBytes handles endianness consistently with what
-    // the source-generated executors push.
+        CooperativePump.DepositResultString(value);
 
     [JSExport]
     public static string DepositResultInt(int value) =>
-        EndDeposit(BeginDeposit() && HostStackOps.SwapTopPrimitive(_runVm,
-            TypeCodes.INT, BitConverter.GetBytes(value)));
+        CooperativePump.DepositResultInt(value);
 
     [JSExport]
     public static string DepositResultReal(float value) =>
-        EndDeposit(BeginDeposit() && HostStackOps.SwapTopPrimitive(_runVm,
-            TypeCodes.REAL, BitConverter.GetBytes(value)));
+        CooperativePump.DepositResultReal(value);
 
     [JSExport]
     public static string DepositResultBool(bool value) =>
-        EndDeposit(BeginDeposit() && HostStackOps.SwapTopPrimitive(_runVm,
-            TypeCodes.BOOL, BitConverter.GetBytes(value)));
+        CooperativePump.DepositResultBool(value);
 
     [JSExport]
     public static string DepositResultByte(byte value) =>
-        EndDeposit(BeginDeposit() && HostStackOps.SwapTopPrimitive(_runVm,
-            TypeCodes.BYTE, new[] { value }));
+        CooperativePump.DepositResultByte(value);
 
-    // ushort isn't a clean JS-interop type, and the page-side number is
-    // already a double anyway; the worker mask/coerces and we narrow
-    // here. Same shape for dword below.
     [JSExport]
     public static string DepositResultWord(int value) =>
-        EndDeposit(BeginDeposit() && HostStackOps.SwapTopPrimitive(_runVm,
-            TypeCodes.WORD, BitConverter.GetBytes((ushort)value)));
+        CooperativePump.DepositResultWord(value);
 
     [JSExport]
     public static string DepositResultDword(int value) =>
-        EndDeposit(BeginDeposit() && HostStackOps.SwapTopPrimitive(_runVm,
-            TypeCodes.DWORD, BitConverter.GetBytes((uint)value)));
+        CooperativePump.DepositResultDword(value);
 
     // int64. The JSMarshalAs annotation tells the JS generator to use
     // BigInt on the JS side — without it the generator refuses to
@@ -652,20 +317,15 @@ public static partial class FadeBridge
     [JSExport]
     public static string DepositResultDint(
         [JSMarshalAs<JSType.BigInt>] long value) =>
-        EndDeposit(BeginDeposit() && HostStackOps.SwapTopPrimitive(_runVm,
-            TypeCodes.DINT, BitConverter.GetBytes(value)));
+        CooperativePump.DepositResultDint(value);
 
     [JSExport]
     public static string DepositResultDfloat(double value) =>
-        EndDeposit(BeginDeposit() && HostStackOps.SwapTopPrimitive(_runVm,
-            TypeCodes.DFLOAT, BitConverter.GetBytes(value)));
+        CooperativePump.DepositResultDfloat(value);
 
-    // Void-returning command: the executor pushed nothing, so there's
-    // no placeholder to swap. Just clear the wait flag so the pump can
-    // resume on the next tick.
     [JSExport]
     public static string DepositResultVoid() =>
-        EndDeposit(BeginDeposit());
+        CooperativePump.DepositResultVoid();
 
     // Unwrap TargetInvocationException / TypeInitializationException so the
     // page sees the real cause instead of "Arg_TargetInvocationException".
@@ -994,188 +654,12 @@ public static partial class FadeBridge
         }
     }
 
-    // Compile + run either all tests (testName empty / null) or a single
-    // named test. Returns JSON with { passed, failed, duration, results[],
-    // printed, error? }. `printed` is the captured stdout from any
-    // `print` statements run during testing.
-    // Begin a cooperative test run. Compiles `source`, builds the
-    // queue of tests to run (`testName` empty/null = all non-abstract
-    // tests; otherwise just the named one), and starts the first
-    // test's VM by setting _runVm. The JS-side pump (worker.js) then
-    // drives RunTick repeatedly, exactly the same way it does for a
-    // regular Run — RunTick observes _testRunActive and handles the
-    // per-test transitions internally. Final result envelope shows
-    // up via RunTick's complete=true return, carrying the testFinal
-    // payload aggregated across all tests.
+    // Begin a cooperative test run — delegates to CooperativePump.
+    // The JS pump drives RunTick repeatedly and CooperativePump.RunTick
+    // handles the per-test transitions internally.
     [JSExport]
-    public static string RunTestsStart(string source, string testName)
-    {
-        _runStopRequested = false;
-        _testRunActive = false;
-        _testQueue = null;
-        _testResults = null;
-        _runError = null;
-
-        var commands = _workspace.Commands;
-        if (!FadeSdk.TryCreateFromString(source, commands, out var ctx, out var errors))
-        {
-            return JsonSerializer.Serialize(new
-            {
-                ok = false,
-                compileError = errors.ToDisplay(),
-            }, _jsonOpts);
-        }
-
-        var selectAll = string.IsNullOrWhiteSpace(testName);
-        var queue = new List<TestManifestEntry>();
-        foreach (var t in ctx.Compiler.TestManifest)
-        {
-            if (t.isAbstract) continue;
-            if (!selectAll && !string.Equals(t.name, testName, System.StringComparison.OrdinalIgnoreCase)) continue;
-            queue.Add(t);
-            if (!selectAll) break;
-        }
-
-        _testCtx = ctx;
-        _testQueue = queue;
-        _testResults = new List<FadeBasic.Sdk.FadeTestResult>();
-        _testIndex = -1;
-        _testRunSw = System.Diagnostics.Stopwatch.StartNew();
-        _testRunActive = true;
-
-        // Boot the first test's VM. If the queue is empty (no matching
-        // tests), AdvanceTest returns false and _runVm stays null;
-        // the next RunTick reports complete with an empty testFinal.
-        AdvanceTest();
-        return JsonSerializer.Serialize(new { ok = true }, _jsonOpts);
-    }
-
-    // Advance to the next test in the queue. Returns true if a new
-    // test was started (so the pump should keep ticking), false if
-    // the queue is exhausted. On failure to start (queue empty),
-    // _runVm is set to null so the next RunTick observes the
-    // not-running state and emits the testFinal envelope.
-    private static bool AdvanceTest()
-    {
-        if (_testQueue == null || _testCtx == null) { _runVm = null; return false; }
-        _testIndex++;
-        if (_testIndex >= _testQueue.Count) { _runVm = null; return false; }
-        var entry = _testQueue[_testIndex];
-        var vm = new VirtualMachine(_testCtx.Machine.program, entry.entryPointAddress)
-        {
-            hostMethods = _testCtx.Compiler.methodTable,
-            isTestExecution = true,
-        };
-        _runVm = vm;
-        _runError = null;
-        _waitingForHostReply = false;
-        _pendingWaitMs = 0;
-        _currentTestSw = System.Diagnostics.Stopwatch.StartNew();
-        _currentTestException = null;
-        return true;
-    }
-
-    // Build the terminal envelope a test run emits via RunTick when
-    // either the queue is exhausted or StopRun was honored. `stopped`
-    // tags the surface error so callers can distinguish "ran to end"
-    // from "user cancelled" — partial results in either case.
-    //
-    // `lastProgress` carries the per-test event for the test that
-    // finalized in THIS same tick (when called from the
-    // "AdvanceTest returned false" path). The Playground's progress
-    // listener gets the last test the same way it gets every other —
-    // no special-case for "the run that just ended."
-    private static string BuildTestRunCompleteJson(bool stopped, object? lastProgress = null)
-    {
-        _testRunActive = false;
-        _testRunSw?.Stop();
-        var results = _testResults ?? new List<FadeBasic.Sdk.FadeTestResult>();
-        var passed = 0; var failed = 0;
-        foreach (var r in results) { if (r.passed) passed++; else failed++; }
-        var duration = _testRunSw?.Elapsed.TotalMilliseconds ?? 0;
-        var payload = new
-        {
-            complete = true,
-            testProgress = lastProgress,
-            testFinal = new
-            {
-                passed,
-                failed,
-                duration,
-                results = ResultsToObjects(results),
-            },
-            error = stopped ? "Stopped" : (string?)null,
-        };
-        return JsonSerializer.Serialize(payload, _jsonOpts);
-    }
-
-    // Shape a single test result for JSON wire transport. Extracted from
-    // ResultsToObjects so the test-progress stream (one event per
-    // finalized test) can reuse the same payload shape the terminal
-    // testFinal envelope uses — the Playground's tests panel handles
-    // both with one code path.
-    private static object TestResultToObject(FadeBasic.Sdk.FadeTestResult r)
-    {
-        var frames = new List<object>();
-        if (r.failureFrames != null)
-        {
-            foreach (var f in r.failureFrames)
-            {
-                frames.Add(new
-                {
-                    functionName = f.functionName,
-                    lineNumber = f.lineNumber,
-                    charNumber = f.charNumber,
-                    instructionIndex = f.instructionIndex,
-                });
-            }
-        }
-        return new
-        {
-            name = r.testName,
-            passed = r.passed,
-            duration = r.duration.TotalMilliseconds,
-            failureMessage = r.failureMessage,
-            failureReason = r.failureReason,
-            failureSourceText = r.failureSourceText,
-            failureInstructionIndex = r.failureInstructionIndex,
-            failureFrames = frames,
-        };
-    }
-
-    private static List<object> ResultsToObjects(List<FadeBasic.Sdk.FadeTestResult> results)
-    {
-        var list = new List<object>(results.Count);
-        foreach (var r in results)
-        {
-            var frames = new List<object>();
-            if (r.failureFrames != null)
-            {
-                foreach (var f in r.failureFrames)
-                {
-                    frames.Add(new
-                    {
-                        functionName = f.functionName,
-                        lineNumber = f.lineNumber,
-                        charNumber = f.charNumber,
-                        instructionIndex = f.instructionIndex,
-                    });
-                }
-            }
-            list.Add(new
-            {
-                name = r.testName,
-                passed = r.passed,
-                duration = r.duration.TotalMilliseconds,
-                failureMessage = r.failureMessage,
-                failureReason = r.failureReason,
-                failureSourceText = r.failureSourceText,
-                failureInstructionIndex = r.failureInstructionIndex,
-                failureFrames = frames,
-            });
-        }
-        return list;
-    }
+    public static string RunTestsStart(string source, string testName) =>
+        CooperativePump.RunTestsStart(source, testName);
 
     // ─── Debug session (DAP) ────────────────────────────────────────────
     // One active session at a time. The worker calls DebugStart() to
@@ -1339,11 +823,12 @@ public static partial class FadeBridge
             return JsonSerializer.Serialize(new { running = false, complete = true, messages = Array.Empty<object>() }, _jsonOpts);
 
         // Per-tick reset for the cooperative-wait hint. WaitImpl writes
-        // this when `wait ms` fires inside the debug session; the pump
-        // (worker.js pumpDebugTick) reads it from the response and uses
-        // it as the next setTimeout delay. Without the reset, a stale
-        // value from a previous tick would re-trigger the wait.
-        _pendingWaitMs = 0;
+        // this when `wait ms` fires inside the debug session; pumpDebugTick
+        // reads it from the response and uses it as the next setTimeout
+        // delay. Without the reset, a stale value from a previous tick
+        // would re-trigger the wait. The state lives in CooperativePump
+        // so RunTick and DebugTick share the same source of truth.
+        CooperativePump.PendingWaitMs = 0;
         try { _debugSession.StartDebugging(ops); }
         catch (Exception ex) { /* never fail the worker — surface as a message */
             _debugSession.Enqueue(new DebugMessage { id = NextDebugId(), type = DebugMessageType.NOOP });
@@ -1392,7 +877,7 @@ public static partial class FadeBridge
             // the JS pump should setTimeout for that duration before
             // the next tick. Zero means "no wait pending" — pump uses
             // its normal small interval.
-            waitMs = _pendingWaitMs,
+            waitMs = CooperativePump.PendingWaitMs,
             printed,
         }, _jsonOpts);
     }
@@ -1490,7 +975,7 @@ public static partial class FadeBridge
             elapsed,
             _debugContext?.Compiler.DebugData,
             runtimeException: null);
-        return JsonSerializer.Serialize(TestResultToObject(result), _jsonOpts);
+        return CooperativePump.SerializeTestResult(result);
     }
 
     [JSExport]

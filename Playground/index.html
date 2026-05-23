@@ -809,6 +809,53 @@
             flex-direction: column;
             min-height: 100%;
         }
+        /* ─── Game panel toolbar ─────────────────────────────────────── */
+        #mg-blazor-root { display: flex; flex-direction: column; }
+        #mg-game-toolbar {
+            display: flex;
+            align-items: center;
+            gap: 0.4rem;
+            padding: 0 0.5rem;
+            height: 26px;
+            flex: 0 0 26px;
+            background: rgba(18, 18, 18, 0.92);
+            border-bottom: 1px solid rgba(255,255,255,0.06);
+            font-size: 0.73rem;
+            color: var(--fg-muted);
+            user-select: none;
+        }
+        .mg-tb-grow { flex: 1; }
+        .mg-status-dot {
+            width: 7px; height: 7px;
+            border-radius: 50%;
+            flex-shrink: 0;
+            background: #444;
+            transition: background 0.2s, box-shadow 0.2s;
+        }
+        .mg-status-dot[data-state="booting"] { background: #c8a030; box-shadow: 0 0 5px rgba(200,160,48,.5); }
+        .mg-status-dot[data-state="running"] { background: #4caf50; box-shadow: 0 0 5px rgba(76,175,80,.5); }
+        .mg-status-dot[data-state="paused"]  { background: #e0913a; box-shadow: 0 0 5px rgba(224,145,58,.5); }
+        .mg-tb-btn {
+            background: transparent;
+            border: none;
+            color: var(--fg-muted);
+            cursor: pointer;
+            padding: 0 4px;
+            height: 100%;
+            display: inline-flex;
+            align-items: center;
+            font-size: 0.88rem;
+            border-radius: 3px;
+            transition: color 0.1s, background 0.1s;
+        }
+        .mg-tb-btn:hover { color: var(--fg); background: rgba(255,255,255,0.07); }
+        .mg-tb-btn.is-active { color: #e0913a; }
+        #mg-game-content { flex: 1; position: relative; overflow: hidden; min-height: 0; }
+        /* The iframe is appended dynamically — force it to fill the content
+           area via absolute positioning so percentage height works regardless
+           of how the browser computes flex-item heights. */
+        #mg-game-content > iframe { position: absolute; inset: 0; width: 100%; height: 100%; border: 0; }
+
         .output-toolbar {
             display: flex;
             align-items: center;
@@ -2052,6 +2099,134 @@
             margin-top: 2px;
         }
         .ai-model-bar-fill { height: 100%; background: var(--accent); width: 0%; transition: width 200ms ease; }
+
+        /* ─── Playground boot splash ────────────────────────────────────────
+           Shown from page-load until main.ts calls window.__pgSplash.hide()
+           once the LSP worker + Monaco are ready. Same ghost-in-house
+           animation as the MonoGame runtime boot screen — keyframe names
+           don't conflict because the MG splash lives in a separate iframe.  */
+        #pg-splash {
+            display: flex;
+            position: fixed;
+            inset: 0;
+            z-index: 9999;
+            background: rgba(14, 14, 14, 0.94);
+            color: #b5b5b5;
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            gap: 1.2rem;
+            transition: opacity 280ms ease-out;
+        }
+        #pg-splash.is-hidden { opacity: 0; pointer-events: none; }
+        #pg-splash .splash-scene {
+            position: relative; width: 240px; height: 150px; margin: 0 auto;
+        }
+        #pg-splash .splash-house {
+            position: absolute; left: 50%; bottom: 0;
+            transform: translateX(-50%); width: 90px; height: 100px;
+            filter: drop-shadow(0 6px 14px rgba(0,0,0,0.45));
+            animation: splash-house-jump 5.4s ease-in-out infinite; z-index: 1;
+        }
+        #pg-splash .splash-roof {
+            position: absolute; top: 0; left: 50%;
+            transform-origin: 50% 100%; transform: translateX(-50%);
+            width: 90px; height: 40px; background: #4a4a4a;
+            clip-path: polygon(50% 0, 0 100%, 100% 100%);
+            animation: splash-roof-pop 5.4s ease-in-out infinite;
+        }
+        #pg-splash .splash-body {
+            position: absolute; bottom: 0; left: 50%;
+            transform: translateX(-50%); width: 76px; height: 60px;
+            background: #6b6b6b;
+        }
+        #pg-splash .splash-window {
+            position: absolute; bottom: 32px; left: 50%; margin-left: -23px;
+            width: 12px; height: 12px; background: #1a1a1a;
+            animation: splash-window-light 5.4s ease-in-out infinite;
+        }
+        #pg-splash .splash-door {
+            position: absolute; bottom: 0; left: 50%; margin-left: -8px;
+            width: 16px; height: 26px; background: #2a2a2a;
+        }
+        #pg-splash .splash-ghost {
+            position: absolute; bottom: 22px; left: 50%; margin-left: -19px;
+            width: 38px; height: 48px; background: #b0b0b0;
+            clip-path: path('M 0 22 C 0 0, 38 0, 38 22 L 38 38 C 38 48, 32 48, 25 38 C 25 48, 19 48, 12 38 C 12 48, 6 48, 0 38 Z');
+            filter: drop-shadow(0 3px 6px rgba(0,0,0,0.3));
+            animation: splash-ghost-path 5.4s linear infinite; z-index: 0;
+        }
+        #pg-splash .splash-excite {
+            position: absolute; top: 54px; left: 50%;
+            width: 22px; height: 2px; background: #888; border-radius: 1px;
+            transform-origin: 0 50%; transform: rotate(var(--a)) translateX(40px);
+            opacity: 0; animation: splash-excite-pulse 5.4s ease-out infinite;
+        }
+        #pg-splash .splash-z {
+            position: absolute; color: #888;
+            font-weight: 600; font-style: italic; opacity: 0; pointer-events: none;
+        }
+        #pg-splash .splash-z1 { bottom: 100px; left: calc(50% - 22px); font-size: 14px; animation: splash-z1 5.4s ease-out infinite; }
+        #pg-splash .splash-z2 { bottom: 100px; left: calc(50% - 4px);  font-size: 17px; animation: splash-z2 5.4s ease-out infinite; }
+        #pg-splash .splash-z3 { bottom: 100px; left: calc(50% + 14px); font-size: 20px; animation: splash-z3 5.4s ease-out infinite; }
+        #pg-splash .splash-status {
+            font-size: 0.88rem; color: #555; letter-spacing: 0.04em;
+            min-height: 1.4rem; text-align: center;
+        }
+        #pg-splash .splash-status.is-error { color: #d8a0a0; }
+
+        @keyframes splash-ghost-path {
+            0%   { transform: translate(-100px, 0); opacity: 0; }
+            10%  { transform: translate(-100px, 0); opacity: 1; }
+            18%  { transform: translate(-32px, 0);  opacity: 1; }
+            22%  { transform: translate(-20px, 0);  opacity: 0; }
+            40%  { transform: translate(20px, 0);   opacity: 0; }
+            42%  { transform: translate(28px, 0);    opacity: 0.95; }
+            46%  { transform: translate(54px, -3px); opacity: 0.8; }
+            50%  { transform: translate(82px, 2px);  opacity: 0.55; }
+            54%  { transform: translate(108px, -1px); opacity: 0.25; }
+            57%  { transform: translate(128px, 0);   opacity: 0; }
+            100% { transform: translate(-100px, 0); opacity: 0; }
+        }
+        @keyframes splash-house-jump {
+            0%, 33%, 100% { transform: translateX(-50%) translateY(0); }
+            39%   { transform: translateX(-50%) translateY(-12px); }
+            47%   { transform: translateX(-50%) translateY(0); }
+        }
+        @keyframes splash-roof-pop {
+            0%, 33%, 100% { transform: translateX(-50%) translateY(0) rotate(0deg); }
+            37%   { transform: translateX(-50%) translateY(-18px) rotate(-6deg); }
+            44%   { transform: translateX(-50%) translateY(-8px) rotate(8deg); }
+            49%   { transform: translateX(-50%) translateY(0) rotate(0deg); }
+        }
+        @keyframes splash-window-light {
+            0%, 35%   { background: #1a1a1a; box-shadow: none; }
+            39%, 60%  { background: #d8d4b8;
+                        box-shadow: 0 0 12px rgba(216,212,184,0.55), 0 0 22px rgba(216,212,184,0.25); }
+            70%, 100% { background: #1a1a1a; box-shadow: none; }
+        }
+        @keyframes splash-excite-pulse {
+            0%, 35% { opacity: 0; } 38% { opacity: 0.7; } 55% { opacity: 0; } 100% { opacity: 0; }
+        }
+        @keyframes splash-z1 {
+            0%, 60% { opacity: 0; transform: translateY(0); }
+            64%  { opacity: 0.85; transform: translateY(-2px); }
+            76%  { opacity: 0.6;  transform: translateY(-14px); }
+            86%, 100% { opacity: 0; transform: translateY(-24px); }
+        }
+        @keyframes splash-z2 {
+            0%, 68% { opacity: 0; transform: translateY(0); }
+            72%  { opacity: 0.85; transform: translateY(-2px); }
+            84%  { opacity: 0.6;  transform: translateY(-18px); }
+            92%, 100% { opacity: 0; transform: translateY(-26px); }
+        }
+        @keyframes splash-z3 {
+            0%, 76% { opacity: 0; transform: translateY(0); }
+            80%  { opacity: 0.85; transform: translateY(-2px); }
+            92%  { opacity: 0.6;  transform: translateY(-20px); }
+            100% { opacity: 0;    transform: translateY(-28px); }
+        }
     </style>
 </head>
 
@@ -2231,8 +2406,13 @@
 
         <!-- Game panel. Hosts two sub-surfaces and shows one at a time
              based on the active project type:
-               - #mg-blazor-root  : MonoGame canvas (type='monogame').
-               - #web-preview-frame : iframe loading /runtime/index.html
+               - #mg-blazor-root  : container for the monogame iframe
+                                    (lazily created by monogame-host.ts;
+                                    loads /runtime/monogame/index.html?preview=1).
+                                    Name kept for backward compat with
+                                    inline-mount era; could be renamed
+                                    #mg-preview-host once the dust settles.
+               - #web-preview-frame : iframe loading /runtime/web/index.html
                                       in ?preview=1 mode (type='web').
              The iframe gives type='web' projects the exact same render
              experience as a deployed export — `print` lands in its own
@@ -2245,15 +2425,20 @@
                         src="about:blank"
                         style="border: 0; width: 100%; height: 100%;"></iframe>
             </div>
-            <div id="mg-blazor-root" style="position: relative; width: 100%; height: 100%; background: #000;">
-                <div id="mg-blazor-splash" style="
-                    display: flex; flex-direction: column;
-                    align-items: center; justify-content: center;
-                    height: 100%; gap: 0.5rem;
-                    color: #888; font-size: 0.85rem; text-align: center; padding: 1rem;
-                ">
-                    <div style="font-size: 1.1rem; color: #ccc;">Game runtime not started</div>
-                    <div>Hit Run to boot the runtime for this project.</div>
+            <div id="mg-blazor-root" style="width: 100%; height: 100%; background: #000;">
+                <div id="mg-game-toolbar">
+                    <span class="mg-status-dot" id="mg-status-dot"></span>
+                    <span id="mg-game-status">Not started</span>
+                    <span class="mg-tb-grow"></span>
+                    <button id="mg-mute-btn" class="mg-tb-btn" title="Mute / Unmute">
+                        <span class="codicon codicon-unmute" id="mg-mute-icon"></span>
+                    </button>
+                    <button id="mg-fullscreen-btn" class="mg-tb-btn" title="Toggle fullscreen">
+                        <span class="codicon codicon-screen-full" id="mg-fullscreen-icon"></span>
+                    </button>
+                </div>
+                <div id="mg-game-content">
+                    <div id="mg-blazor-splash"></div>
                 </div>
             </div>
         </div>
@@ -2289,11 +2474,6 @@
                         <span class="hb-dot" id="diag-dot-lsp" data-state="off" title="LSP worker"></span>
                         <span class="diag-label">LSP / Compiler</span>
                         <span class="diag-value" id="diag-lsp-detail">—</span>
-                    </div>
-                    <div class="diag-row">
-                        <span class="hb-dot" id="diag-dot-vm" data-state="off" title="VM worker"></span>
-                        <span class="diag-label">VM</span>
-                        <span class="diag-value" id="diag-vm-detail">—</span>
                     </div>
                 </div>
                 <div class="diag-section">
@@ -2405,6 +2585,47 @@
             <div id="project-new-error" hidden></div>
         </div>
     </div>
+
+    <!-- Boot splash — rendered before any JS loads so the very first
+         paint is the animation rather than a blank or half-assembled UI.
+         main.ts calls window.__pgSplash.setStatus() at each init phase
+         and .hide() when the editor is fully ready. -->
+    <div id="pg-splash" aria-live="polite">
+        <div class="splash-scene" aria-hidden="true">
+            <span class="splash-z splash-z1">z</span>
+            <span class="splash-z splash-z2">z</span>
+            <span class="splash-z splash-z3">z</span>
+            <span class="splash-excite" style="--a: 210deg"></span>
+            <span class="splash-excite" style="--a: 270deg"></span>
+            <span class="splash-excite" style="--a: 330deg"></span>
+            <div class="splash-house">
+                <div class="splash-roof"></div>
+                <div class="splash-body"></div>
+                <div class="splash-window"></div>
+                <div class="splash-door"></div>
+            </div>
+            <div class="splash-ghost"></div>
+        </div>
+        <div class="splash-status" id="pg-splash-status">Loading Fade Playground…</div>
+    </div>
+    <script>
+        window.__pgSplash = (function () {
+            var el = document.getElementById('pg-splash');
+            var st = document.getElementById('pg-splash-status');
+            var hidden = false;
+            return {
+                setStatus: function (text, isError) {
+                    if (st) { st.textContent = text; st.classList.toggle('is-error', !!isError); }
+                },
+                hide: function () {
+                    if (!el || hidden) return;
+                    hidden = true;
+                    el.classList.add('is-hidden');
+                    setTimeout(function () { if (el) el.style.display = 'none'; }, 300);
+                },
+            };
+        })();
+    </script>
 
     <script type="module" src="/src/main.ts"></script>
 </body>

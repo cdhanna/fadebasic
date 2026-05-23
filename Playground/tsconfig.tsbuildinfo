@@ -1,1 +1,1 @@
-{"root":["./src/fade-config.ts","./src/help.ts","./src/languages.ts","./src/main.ts","./src/markdown-preview.ts","./src/monogame-host.ts"],"version":"5.9.3"}
+{"root":["./src/ai-chat.ts","./src/ai-worker.ts","./src/binary-preview.ts","./src/fade-config.ts","./src/help.ts","./src/languages.ts","./src/main.ts","./src/markdown-preview.ts","./src/monogame-host.ts","./src/xnb/xnb-previews.ts","./src/xnb/xnb-reader.ts"],"version":"5.9.3"}

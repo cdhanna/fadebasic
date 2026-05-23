@@ -17,6 +17,13 @@
     <main><div id="output"></div></main>
 
     <script type="module">
+        // Export.Web runs the VM on the main thread of this iframe. The
+        // host-agnostic runtime module exposes init / dispatch / onMessage;
+        // we wire those to the parent-window postMessage relay (for
+        // preview mode) or to the local UI directly (for a regular
+        // static-host export).
+        import { init, dispatch, onMessage } from './runtime.js';
+
         const statusEl = document.getElementById('status');
         const outputEl = document.getElementById('output');
 
@@ -29,17 +36,12 @@
         const fail = (msg) => { statusEl.textContent = msg; statusEl.classList.add('err'); };
 
         try {
-            // The game launcher uses a single VM-role worker — no LSP, no
-            // debugger. Same worker.js the Playground uses; configure it as
-            // 'vm' so VM_OPS like run-start / resolve-prompt are accepted.
-            const worker = new Worker('worker.js', { type: 'module' });
-            worker.postMessage({ type: 'configure', role: 'vm' });
-
             // Plugin extension point. Every library command that calls
             // HostBridge.PostMessage(channel, payload) routes through here.
             // The handler returns (or resolves to) { resultType, value };
-            // the worker dispatches that to the matching Deposit* JSExport
-            // which swaps the placeholder on the VM's operand stack.
+            // the runtime dispatches that to the matching Deposit*
+            // JSExport which swaps the placeholder on the VM's operand
+            // stack.
             //
             // resultType strings match the FadeBasic VM primitive types:
             //   'string'  → string (heap pointer)
@@ -60,10 +62,10 @@
             //   2. The plugin's consumer adds an entry to this map in
             //      their own index.html (or a script the page loads).
             //   3. Done. No changes to FadeBasic, FadeBasic.Export.Web,
-            //      worker.js, or this index.html's framework needed.
+            //      runtime.js, or this index.html's framework needed.
             //
             // Exposed on window so plugin scripts loaded after this one
-            // can extend the map before the worker has anything to send.
+            // can extend the map before the runtime has anything to send.
             const hostHandlers = {
                 'fade-web/prompt': (payload) => ({
                     resultType: 'string',
@@ -76,52 +78,55 @@
             const handleHostMessage = async (m) => {
                 const handler = hostHandlers[m.channel];
                 if (!handler) {
-                    // Reply with an empty string so the VM doesn't hang
-                    // forever. The plugin author probably forgot to
-                    // register the handler in this page; surface that
-                    // loudly in the console.
                     console.warn('[fade] no host handler for channel:', m.channel);
-                    worker.postMessage({ type: 'host-reply', resultType: 'string', value: '' });
+                    dispatch({ type: 'host-reply', resultType: 'string', value: '' });
                     return;
                 }
                 try {
                     const reply = await handler(m.payload);
-                    worker.postMessage({ type: 'host-reply', ...reply });
+                    dispatch({ type: 'host-reply', ...reply });
                 } catch (e) {
                     console.error('[fade] host handler for', m.channel, 'threw:', e);
-                    worker.postMessage({ type: 'host-reply', resultType: 'string', value: '' });
+                    dispatch({ type: 'host-reply', resultType: 'string', value: '' });
                 }
             };
 
+            // Pending-promise map for local id-correlated calls (used in
+            // the regular-export bootstrap below for load-assembly /
+            // register-command-assembly / run-start round-trips).
             const pending = new Map();
             let nextId = 0;
             const call = (msg) => new Promise((resolve) => {
                 const id = ++nextId;
                 pending.set(id, resolve);
-                worker.postMessage({ ...msg, id });
+                dispatch({ ...msg, id });
             });
 
-            await new Promise((resolve, reject) => {
-                worker.addEventListener('message', (e) => {
-                    const m = e.data;
+            // Iframe-local consumers of runtime events. The runtime emits
+            // events via onMessage callbacks; we route each event type to
+            // the right place (UI element, pending-promise resolver,
+            // parent-window forward in preview mode, etc.).
+            const onReady = new Promise((resolve, reject) => {
+                onMessage((m) => {
+                    if (!m) return;
                     if (m.type === 'ready') { resolve(); return; }
                     if (m.type === 'boot-error') { reject(new Error(m.message)); return; }
                     if (m.type === 'print') { append(m.line); return; }
                     if (m.type === 'alert') { window.alert(m.msg); return; }
                     if (m.type === 'host-message') { handleHostMessage(m); return; }
                     if (m.type === 'test-starting') {
-                        // New test took over the VM. Clear the output
-                        // area so each test's prints start fresh, and
-                        // surface the active test's name in the status
-                        // line. The Playground gets a separate
-                        // test-progress event per finalized test and
-                        // doesn't need this signal.
+                        // New test took over the VM. Clear the output area
+                        // so each test's prints start fresh, and surface
+                        // the active test's name in the status line.
                         outputEl.innerHTML = '';
                         statusEl.textContent = 'Running ' + (m.testName ?? '…');
                         return;
                     }
-                    if (m.type === 'log') { console.log('[worker]', m.message); return; }
+                    if (m.type === 'log') { console.log('[runtime]', m.message); return; }
                     if (m.type === 'heartbeat') return;
+                    // id-carrying results consumed locally OR forwarded to
+                    // the parent (preview mode). Both paths add a second
+                    // listener below.
                     if (m.id != null && pending.has(m.id)) {
                         const cb = pending.get(m.id);
                         pending.delete(m.id);
@@ -130,32 +135,25 @@
                 });
             });
 
-            // Preview mode: the Playground (or any host driving this page
-            // from a parent window) sets ?preview=1 and posts a `bootstrap`
-            // message instead of relying on fade-manifest.json + game/*.dll.
-            // The bootstrap payload carries the compiled bytecode and a list
-            // of command-DLL fetch entries the iframe should load before
-            // running. We tell the parent we're ready, then await its post.
+            // Start booting the .NET runtime. Events that fire during
+            // boot are already wired into onMessage above.
+            init();
+            await onReady;
+
+            // Preview mode: parent window owns the source-of-truth.
+            // Boot order:
+            //   1. Parent posts `bootstrap` with command DLLs only.
+            //      Iframe registers each one; iframe is now "armed."
+            //   2. Parent posts run / debug / tests / compile commands
+            //      via the same postMessage channel. Iframe dispatches
+            //      each to the local runtime. Runtime events that aren't
+            //      consumed by the iframe-local listener above are
+            //      forwarded to the parent so the Playground's UI can
+            //      react.
             const isPreview = new URLSearchParams(location.search).has('preview');
-            const isRegularExport = !isPreview;
 
-            // Shared run helper: tell the worker to start the pump and
-            // surface the terminal result. Used by both the regular-export
-            // path (entry DLL via run-start) and the preview path
-            // (bytecode via run-start-bytecode).
-            const runOnce = async (kickoff) => {
-                statusEl.textContent = 'Running…';
-                const result = await call(kickoff);
-                let parsed; try { parsed = JSON.parse(result.result); } catch { parsed = {}; }
-                if (parsed.ok) statusEl.textContent = 'Done.';
-                else {
-                    statusEl.textContent = parsed.compileError ? 'Compile error' : 'Runtime error';
-                    if (parsed.compileError) append(parsed.compileError, 'err');
-                    if (parsed.error) append(parsed.error, 'err');
-                }
-            };
-
-            if (isRegularExport) {
+            if (!isPreview) {
+                // ── Regular static-host export path ────────────────────
                 statusEl.textContent = 'Loading game…';
 
                 const manifest = await fetch('fade-manifest.json').then(r => r.json());
@@ -179,11 +177,20 @@
                     }
                 }
 
-                // exports compiled directly to bytecode (Playground-style
-                // exports) ship a `bytecode` filename + `commandDlls` list
-                // instead of an entryAssembly. Detect either shape so both
-                // export flavors run from the same index.html.
+                const runOnce = async (kickoff) => {
+                    statusEl.textContent = 'Running…';
+                    const result = await call(kickoff);
+                    let parsed; try { parsed = JSON.parse(result.result); } catch { parsed = {}; }
+                    if (parsed.ok) statusEl.textContent = 'Done.';
+                    else {
+                        statusEl.textContent = parsed.compileError ? 'Compile error' : 'Runtime error';
+                        if (parsed.compileError) append(parsed.compileError, 'err');
+                        if (parsed.error) append(parsed.error, 'err');
+                    }
+                };
+
                 if (manifest.bytecode) {
+                    // Playground-style export — game/program.fbytecode + commandDlls.
                     const cmds = Array.isArray(manifest.commandDlls) ? manifest.commandDlls : [];
                     for (const c of cmds) {
                         try {
@@ -203,27 +210,14 @@
                     await runOnce({ type: 'run-start', dllBytes: entryBytes });
                 }
             } else {
-                // Preview mode: parent window owns the source-of-truth.
-                // Boot order:
-                //   1. Parent posts `bootstrap` with command DLLs only.
-                //      Iframe registers each one; iframe is now "armed."
-                //   2. Parent posts run / debug / tests / compile commands
-                //      via the same postMessage channel. Iframe relays
-                //      each to its worker. Worker replies are relayed
-                //      back to the parent. Internal events (print, alert,
-                //      host-message) stay in the iframe so the user sees
-                //      output and dialogs in this window — the parent
-                //      gets them too via the rebroadcast below so the
-                //      Output panel can mirror them.
+                // ── Preview mode (Playground iframe) ──────────────────
                 statusEl.textContent = 'Waiting for bootstrap…';
 
                 let armed = false;
-                // True while the iframe is making its own register-command-
-                // assembly calls during bootstrap. The worker→parent relay
-                // suppresses id-carrying messages during this window so the
-                // iframe's internal handshake doesn't race into the parent's
-                // pending-promise map (the two windows have independent id
-                // counters that overlap from 1).
+                // True while bootstrap's own register-command-assembly
+                // round-trips are in flight. The runtime→parent relay
+                // suppresses id-carrying replies during this window so
+                // the iframe's pending Map doesn't race the parent's.
                 let bootstrapping = false;
                 const onBootstrap = async (data) => {
                     bootstrapping = true;
@@ -247,40 +241,38 @@
                     catch { /* parent may be cross-origin */ }
                 };
 
-                // Worker → parent relay. Events the iframe consumes
-                // internally for its render surface (print, alert,
-                // host-message → window.prompt, etc.) STAY in the iframe
-                // so the user sees them where the game is. Everything
-                // else — id-correlated results (run-tick-result,
-                // debug-*-result, run-tests-result, compile-to-bytecode-
-                // result), streaming events (debug-event), boot-error
-                // diagnostics — is forwarded to the parent so the
-                // Playground's UI can react.
+                // Runtime → parent relay. Events consumed internally
+                // for the iframe's render surface (print, alert,
+                // host-message → window.prompt) stay in the iframe so
+                // the user sees them where the game is. Everything
+                // else — id-correlated results, streaming events
+                // (debug-event, test-progress), boot-error diagnostics
+                // — is forwarded to the parent so the Playground's UI
+                // can react.
                 const internalOnly = new Set([
                     'ready', 'boot-error',
                     'print', 'alert', 'host-message',
                     'log', 'heartbeat',
                     // test-starting is a UI hint just for the iframe
-                    // (clear output between tests). The Playground
-                    // consumes per-test state via test-progress; sending
-                    // test-starting along would be noise.
+                    // (clear output between tests). Playground gets
+                    // per-test state via test-progress instead.
                     'test-starting',
                 ]);
-                worker.addEventListener('message', (e) => {
-                    const m = e.data;
+                onMessage((m) => {
                     if (!m || internalOnly.has(m.type)) return;
-                    // Suppress id-carrying replies during bootstrap — they
-                    // resolve the iframe's own `call()` pending entries
-                    // and would spuriously match the parent's pending map
-                    // (independent id counters that overlap from 1).
+                    // Suppress id-carrying replies during bootstrap —
+                    // they resolve the iframe's own `call()` pending
+                    // entries and would spuriously match the parent's
+                    // pending map (independent id counters that overlap
+                    // from 1).
                     if (bootstrapping && m.id != null) return;
                     try { window.parent.postMessage(m, '*'); } catch { }
                 });
 
-                // Parent → worker / parent → iframe relay. Bootstrap is
-                // handled here; everything else is forwarded to the
-                // worker as-is. Run-start messages reset the visible
-                // output so the user sees a clean slate per run.
+                // Parent → runtime relay. Bootstrap is handled here;
+                // everything else is dispatched directly to the runtime.
+                // Run-start messages reset the visible output so the
+                // user sees a clean slate per run.
                 const resetOnEntry = new Set([
                     'run-start-source', 'run-start-bytecode', 'run-start',
                     'debug-start', 'debug-start-test', 'run-tests',
@@ -291,9 +283,6 @@
                     if (!m) return;
                     if (m.type === 'bootstrap') { onBootstrap(m); return; }
                     if (!armed) {
-                        // Surface a clear error rather than silently dropping —
-                        // a parent message before bootstrap is a programming
-                        // bug worth catching.
                         console.warn('[preview] message before bootstrap:', m.type);
                         return;
                     }
@@ -301,7 +290,7 @@
                         outputEl.innerHTML = '';
                         statusEl.textContent = 'Running…';
                     }
-                    worker.postMessage(m);
+                    dispatch(m);
                 });
 
                 // Tell the parent we're ready for the bootstrap message.
