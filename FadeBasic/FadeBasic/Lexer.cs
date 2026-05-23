@@ -170,6 +170,18 @@ namespace FadeBasic
     {
         private static Lexem LexemString = new Lexem(LexemType.LiteralString, new Regex("^\""), LexemFlags.MacroConcatable);
         private static Lexem LexemConstant = new Lexem(LexemType.Constant);
+        private static readonly List<Lexem> _sortedLexems;
+        static Lexer()
+        {
+            _sortedLexems = Lexems
+                .Select(l => l.regex == null
+                    ? l
+                    : new Lexem(l.priority, l.type,
+                        new Regex(l.regex.ToString(), l.regex.Options | RegexOptions.IgnoreCase),
+                        l.flags))
+                .OrderBy(l => l.priority)
+                .ToList();
+        }
         // private static Lexem LexemConstantBegin = new Lexem(LexemType.Constant);
         // private static Lexem LexemConstant = new Lexem(LexemType.Constant);
         public static List<Lexem> Lexems = new List<Lexem>
@@ -387,23 +399,13 @@ namespace FadeBasic
 
             var constantTable =  new Dictionary<string, string>(comparer: StringComparer.InvariantCultureIgnoreCase);
 
-            var lexems = Lexems.ToList();
-            lexems.Sort((a, b) =>
-            {
-                var prioCompare = a.priority.CompareTo(b.priority);
-                return prioCompare;
-                // if (prioCompare == 0)
-                // {
-                //     
-                // }
-            });
+            var lexems = _sortedLexems;
 
             var lines = input.Split(new string[]{"\n"}, StringSplitOptions.None);
 
             var eolLexem = new Lexem(LexemType.EndStatement, null);
 
             Token remBlockToken = null;
-            var remBlockSb = new StringBuilder();
             var requestEoS = false;
             var requestEoSCharNumber = 0;
             for (var lineNumber = 0; lineNumber < lines.Length; lineNumber++)
@@ -442,7 +444,6 @@ namespace FadeBasic
                 {
                     var foundMatch = false;
                     var sub = line.Substring(charNumber);
-                    var subStr = sub.ToLowerInvariant();
 
                     var isStillMacro = charNumber+charNumberMacroOffset < macroUntilCharNumber;
                     var flags = TokenFlags.None;
@@ -450,9 +451,9 @@ namespace FadeBasic
                     {
                         flags |= TokenFlags.IsConstant;
                     }
-                    
-                    
-                    if (remBlockToken == null && subStr.StartsWith("remstart"))
+
+
+                    if (remBlockToken == null && sub.StartsWith("remstart", StringComparison.OrdinalIgnoreCase))
                     {
                         // we are remmin'
                         remBlockToken = new Token
@@ -462,8 +463,8 @@ namespace FadeBasic
                             lineNumber = lineNumber,
                         };
                         continue;
-                    } 
-                    if (remBlockToken != null && subStr.StartsWith("remend"))
+                    }
+                    if (remBlockToken != null && sub.StartsWith("remend", StringComparison.OrdinalIgnoreCase))
                     {
                         // we are done remmin' for now.
                         remBlockToken.raw = line.Substring(remBlockToken.charNumber,
@@ -485,10 +486,10 @@ namespace FadeBasic
                     }
 
                     Token bestToken = null;
-                    MatchCollection bestMatches = null;
+                    Match bestMatch = null;
 
                     var hadRemCandidate = false;
-                    var isStringParse = subStr.Length > 0 && subStr[0] == '"';
+                    var isStringParse = sub.Length > 0 && sub[0] == '"';
 
                     if (isStringParse)
                     {
@@ -572,34 +573,28 @@ namespace FadeBasic
                     for (var lexemId = 0; lexemId < lexems.Count && !isStringParse; lexemId++)
                     {
                         var lexem = lexems[lexemId];
-                        var matches = lexem.regex.Matches(subStr);
+                        var m = lexem.regex.Match(sub);
 
-                        if (matches.Count == 1)
+                        if (m.Success)
                         {
                             foundMatch = true;
-                            
+
                             var token = new Token
                             {
-                                caseInsensitiveRaw = matches[0].Value,
-                                raw = sub.Substring(matches[0].Index, matches[0].Length),
+                                caseInsensitiveRaw = m.Value.ToLowerInvariant(),
+                                raw = m.Value,
                                 lexem = lexem,
                                 lineNumber = lineNumber,
                                 charNumber = charNumber + charNumberMacroOffset,
                                 flags = flags
 
                             };
-                           
+
                             if (bestToken == null || token.Length > bestToken.Length)
                             {
                                 bestToken = token;
-                                bestMatches = matches;
+                                bestMatch = m;
                             }
-
-                            // break;
-                        }
-                        else if (matches.Count > 1)
-                        {
-                            throw new Exception("Token exception! Too many matches!");
                         }
                     }
 
@@ -625,10 +620,9 @@ namespace FadeBasic
                                 break;
                             case LexemType.Constant:
                                 // replace all instances of string...
-                                var toRemoveMatch = bestMatches[0].Groups[1];
-                                // var toRemove = bestMatches[0].Groups[1].Value;
+                                var toRemoveMatch = bestMatch.Groups[1];
                                 var toRemove = bestToken.raw.Substring(toRemoveMatch.Index, toRemoveMatch.Length);
-                                var toAdd = bestMatches[0].Groups[2].Value;
+                                var toAdd = bestMatch.Groups[2].Value;
 
                                 macroTokens.Add(bestToken);
                                 all.Add(bestToken);
