@@ -19,6 +19,7 @@ namespace FadeBasic.Ast
     public interface ICanHaveErrors
     {
         List<ParseError> Errors { get; }
+        bool HasErrors { get; }
     }
 
     public enum UnaryOperationType

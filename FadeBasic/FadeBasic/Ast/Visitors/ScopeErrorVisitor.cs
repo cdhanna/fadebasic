@@ -1323,7 +1323,9 @@ namespace FadeBasic.Ast.Visitors
         // legality without committing those errors to the user's expression.
         sealed class ProbeNode : IAstNode
         {
-            public List<ParseError> Errors { get; } = new List<ParseError>();
+            private readonly List<ParseError> _errors = new List<ParseError>();
+            public List<ParseError> Errors => _errors;
+            public bool HasErrors => _errors.Count > 0;
             public Token StartToken => null;
             public Token EndToken => null;
             public TypeInfo ParsedType => TypeInfo.Unset;

@@ -163,7 +163,13 @@ namespace FadeBasic.Ast
         public Token StartToken => startToken;
         public Token EndToken => endToken;
 
-        public List<ParseError> Errors { get; set; } = new List<ParseError>();
+        private List<ParseError> _errors;
+        public List<ParseError> Errors
+        {
+            get => _errors ??= new List<ParseError>();
+            set => _errors = value;
+        }
+        public bool HasErrors => _errors != null && _errors.Count > 0;
         public Symbol DeclaredFromSymbol { get; set; }
         
         public TypeInfo ParsedType { get; set; } = TypeInfo.Unset;
@@ -287,7 +293,7 @@ namespace FadeBasic.Ast
             
             visitable.Visit(child =>
             {
-                if (child.Errors != null && child.Errors.Count > 0)
+                if (child.HasErrors)
                     errors.AddRange(child.Errors);
             });
             return errors;
