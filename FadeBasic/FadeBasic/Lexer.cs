@@ -171,6 +171,10 @@ namespace FadeBasic
         private static Lexem LexemString = new Lexem(LexemType.LiteralString, new Regex("^\""), LexemFlags.MacroConcatable);
         private static Lexem LexemConstant = new Lexem(LexemType.Constant);
         private static readonly List<Lexem> _sortedLexems;
+        private static readonly Dictionary<LexemType, Lexem> _lexemForType;
+        private static readonly Dictionary<string, LexemType> _keywords;
+        private static readonly Regex _rxConstant;
+
         static Lexer()
         {
             _sortedLexems = Lexems
@@ -181,6 +185,96 @@ namespace FadeBasic
                         l.flags))
                 .OrderBy(l => l.priority)
                 .ToList();
+
+            _lexemForType = new Dictionary<LexemType, Lexem>();
+            foreach (var l in Lexems)
+            {
+                if (!_lexemForType.ContainsKey(l.type))
+                    _lexemForType[l.type] = l;
+            }
+            foreach (LexemType lt in Enum.GetValues(typeof(LexemType)))
+            {
+                if (!_lexemForType.ContainsKey(lt))
+                    _lexemForType[lt] = new Lexem(lt);
+            }
+
+            _rxConstant = _sortedLexems.Find(l => l.type == LexemType.Constant).regex;
+
+            _keywords = new Dictionary<string, LexemType>(StringComparer.OrdinalIgnoreCase)
+            {
+                ["for"]          = LexemType.KeywordFor,
+                ["to"]           = LexemType.KeywordTo,
+                ["step"]         = LexemType.KeywordStep,
+                ["next"]         = LexemType.KeywordNext,
+                ["endfunction"]  = LexemType.KeywordEndFunction,
+                ["function"]     = LexemType.KeywordFunction,
+                ["exitfunction"] = LexemType.KeywordExitFunction,
+                ["do"]           = LexemType.KeywordDo,
+                ["loop"]         = LexemType.KeywordLoop,
+                ["select"]       = LexemType.KeywordSelect,
+                ["endselect"]    = LexemType.KeywordEndSelect,
+                ["case"]         = LexemType.KeywordCase,
+                ["endcase"]      = LexemType.KeywordEndCase,
+                ["default"]      = LexemType.KeywordCaseDefault,
+                ["repeat"]       = LexemType.KeywordRepeat,
+                ["until"]        = LexemType.KeywordUntil,
+                ["local"]        = LexemType.KeywordScope,
+                ["global"]       = LexemType.KeywordScope,
+                ["if"]           = LexemType.KeywordIf,
+                ["endif"]        = LexemType.KeywordEndIf,
+                ["else"]         = LexemType.KeywordElse,
+                ["then"]         = LexemType.KeywordThen,
+                ["end"]          = LexemType.KeywordEnd,
+                ["exit"]         = LexemType.KeywordExit,
+                ["skip"]         = LexemType.KeywordSkip,
+                ["enddefer"]     = LexemType.KeywordEndDefer,
+                ["defer"]        = LexemType.KeywordDefer,
+                ["endtest"]      = LexemType.KeywordEndTest,
+                ["test"]         = LexemType.KeywordTest,
+                ["abstract"]     = LexemType.KeywordAbstract,
+                ["from"]         = LexemType.KeywordFrom,
+                ["endrunto"]     = LexemType.KeywordEndRunto,
+                ["runto"]        = LexemType.KeywordRunto,
+                ["assert"]       = LexemType.KeywordAssert,
+                ["endmock"]      = LexemType.KeywordEndMock,
+                ["mocks"]        = LexemType.KeywordMocks,
+                ["mock"]         = LexemType.KeywordMock,
+                ["exitmock"]     = LexemType.KeywordExitMock,
+                ["forbid"]       = LexemType.KeywordForbid,
+                ["clear"]        = LexemType.KeywordClear,
+                ["goto"]         = LexemType.KeywordGoto,
+                ["gosub"]        = LexemType.KeywordGoSub,
+                ["return"]       = LexemType.KeywordReturn,
+                ["dim"]          = LexemType.KeywordDeclareArray,
+                ["redim"]        = LexemType.KeywordReDimArray,
+                ["remstart"]     = LexemType.KeywordRemStart,
+                ["remend"]       = LexemType.KeywordRemEnd,
+                ["rem"]          = LexemType.KeywordRem,
+                ["type"]         = LexemType.KeywordType,
+                ["endtype"]      = LexemType.KeywordEndType,
+                ["while"]        = LexemType.KeywordWhile,
+                ["endwhile"]     = LexemType.KeywordEndWhile,
+                ["as"]           = LexemType.KeywordAs,
+                ["boolean"]      = LexemType.KeywordTypeBoolean,
+                ["bool"]         = LexemType.KeywordTypeBoolean,
+                ["byte"]         = LexemType.KeywordTypeByte,
+                ["integer"]      = LexemType.KeywordTypeInteger,
+                ["int"]          = LexemType.KeywordTypeInteger,
+                ["word"]         = LexemType.KeywordTypeWord,
+                ["ushort"]       = LexemType.KeywordTypeWord,
+                ["dword"]        = LexemType.KeywordTypeDWord,
+                ["uint"]         = LexemType.KeywordTypeDWord,
+                ["long"]         = LexemType.KeywordTypeDoubleInteger,
+                ["float"]        = LexemType.KeywordTypeFloat,
+                ["double"]       = LexemType.KeywordTypeDoubleFloat,
+                ["string"]       = LexemType.KeywordTypeString,
+                ["not"]          = LexemType.KeywordNot,
+                ["and"]          = LexemType.KeywordAnd,
+                ["or"]           = LexemType.KeywordOr,
+                ["xor"]          = LexemType.KeywordXor,
+                ["mod"]          = LexemType.OpMod,
+                ["len"]          = LexemType.KeywordLen,
+            };
         }
         // private static Lexem LexemConstantBegin = new Lexem(LexemType.Constant);
         // private static Lexem LexemConstant = new Lexem(LexemType.Constant);
@@ -344,6 +438,228 @@ namespace FadeBasic
             return res.tokens;
         }
 
+        private static bool IsWordChar(char c) => char.IsLetterOrDigit(c) || c == '_';
+        private static bool IsHexDigit(char c) => (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F');
+
+        private static bool LineIsKeyword(string src, int absStart, int lineEnd, string kw)
+        {
+            int end = absStart + kw.Length;
+            if (end > lineEnd) return false;
+            if (string.Compare(src, absStart, kw, 0, kw.Length, StringComparison.OrdinalIgnoreCase) != 0) return false;
+            return end >= lineEnd || !IsWordChar(src[end]);
+        }
+
+        private static bool CharPositionStartsWith(string src, int absStart, int lineEnd, string keyword) =>
+            absStart + keyword.Length <= lineEnd &&
+            string.Compare(src, absStart, keyword, 0, keyword.Length, StringComparison.OrdinalIgnoreCase) == 0;
+
+        private static bool TryMatchManual(
+            string src, int absStart, int lineEnd,
+            out Lexem lexemOut, out int lengthOut, out Match matchOut)
+        {
+            matchOut = null;
+            lexemOut = null;
+            lengthOut = 0;
+
+            if (absStart >= lineEnd) return false;
+            char c = src[absStart];
+            int start = absStart;
+
+            switch (c)
+            {
+                case ':': lexemOut = _lexemForType[LexemType.EndStatement];         lengthOut = 1; return true;
+                case ',': lexemOut = _lexemForType[LexemType.ArgSplitter];          lengthOut = 1; return true;
+                case '(': lexemOut = _lexemForType[LexemType.ParenOpen];            lengthOut = 1; return true;
+                case ')': lexemOut = _lexemForType[LexemType.ParenClose];           lengthOut = 1; return true;
+                case '{': lexemOut = _lexemForType[LexemType.BracketOpen];          lengthOut = 1; return true;
+                case '}': lexemOut = _lexemForType[LexemType.BracketClose];         lengthOut = 1; return true;
+                case '+': lexemOut = _lexemForType[LexemType.OpPlus];               lengthOut = 1; return true;
+                case '-': lexemOut = _lexemForType[LexemType.OpMinus];              lengthOut = 1; return true;
+                case '*': lexemOut = _lexemForType[LexemType.OpMultiply];           lengthOut = 1; return true;
+                case '/': lexemOut = _lexemForType[LexemType.OpDivide];             lengthOut = 1; return true;
+                case '^': lexemOut = _lexemForType[LexemType.OpPower];              lengthOut = 1; return true;
+                case '=': lexemOut = _lexemForType[LexemType.OpEqual];              lengthOut = 1; return true;
+                case '[': lexemOut = _lexemForType[LexemType.ConstantBracketOpen];  lengthOut = 1; return true;
+                case ']': lexemOut = _lexemForType[LexemType.ConstantBracketClose]; lengthOut = 1; return true;
+
+                case '`':
+                    lexemOut = _lexemForType[LexemType.KeywordRem];
+                    lengthOut = lineEnd - start;
+                    return true;
+
+                case '&':
+                    if (start + 1 < lineEnd && src[start + 1] == '&')
+                    { lexemOut = _lexemForType[LexemType.OpBitwiseAnd]; lengthOut = 2; return true; }
+                    return false;
+                case '|':
+                    if (start + 1 < lineEnd && src[start + 1] == '|')
+                    { lexemOut = _lexemForType[LexemType.OpBitwiseOr]; lengthOut = 2; return true; }
+                    return false;
+                case '~':
+                    if (start + 1 < lineEnd && src[start + 1] == '~')
+                    { lexemOut = _lexemForType[LexemType.OpBitwiseXor]; lengthOut = 2; return true; }
+                    return false;
+
+                case '>':
+                {
+                    char next = start + 1 < lineEnd ? src[start + 1] : '\0';
+                    if (next == '=') { lexemOut = _lexemForType[LexemType.OpGte];               lengthOut = 2; return true; }
+                    if (next == '>') { lexemOut = _lexemForType[LexemType.OpBitwiseRightShift]; lengthOut = 2; return true; }
+                    lexemOut = _lexemForType[LexemType.OpGt]; lengthOut = 1; return true;
+                }
+                case '<':
+                {
+                    char next = start + 1 < lineEnd ? src[start + 1] : '\0';
+                    if (next == '=') { lexemOut = _lexemForType[LexemType.OpLte];              lengthOut = 2; return true; }
+                    if (next == '<') { lexemOut = _lexemForType[LexemType.OpBitwiseLeftShift]; lengthOut = 2; return true; }
+                    if (next == '>') { lexemOut = _lexemForType[LexemType.OpNotEqual];         lengthOut = 2; return true; }
+                    lexemOut = _lexemForType[LexemType.OpLt]; lengthOut = 1; return true;
+                }
+
+                case '.':
+                {
+                    char next = start + 1 < lineEnd ? src[start + 1] : '\0';
+                    if (next == '.') { lexemOut = _lexemForType[LexemType.OpBitwiseNot]; lengthOut = 2; return true; }
+                    if (next >= '0' && next <= '9')
+                    {
+                        int end = start + 2;
+                        while (end < lineEnd && char.IsDigit(src[end])) end++;
+                        lexemOut = _lexemForType[LexemType.LiteralReal];
+                        lengthOut = end - start;
+                        return true;
+                    }
+                    lexemOut = _lexemForType[LexemType.FieldSplitter]; lengthOut = 1; return true;
+                }
+
+                case '%':
+                {
+                    int end = start + 1;
+                    while (end < lineEnd && (src[end] == '0' || src[end] == '1')) end++;
+                    if (end > start + 1) { lexemOut = _lexemForType[LexemType.LiteralBinary]; lengthOut = end - start; return true; }
+                    return false;
+                }
+
+                case '#':
+                {
+                    if (LineIsKeyword(src, start + 1, lineEnd, "endtokenize")) { lexemOut = _lexemForType[LexemType.ConstantEndTokenize]; lengthOut = 12; return true; }
+                    if (LineIsKeyword(src, start + 1, lineEnd, "endmacro"))    { lexemOut = _lexemForType[LexemType.ConstantEnd];         lengthOut = 9;  return true; }
+                    if (LineIsKeyword(src, start + 1, lineEnd, "tokenize"))    { lexemOut = _lexemForType[LexemType.ConstantTokenize];    lengthOut = 9;  return true; }
+                    if (LineIsKeyword(src, start + 1, lineEnd, "macro"))       { lexemOut = _lexemForType[LexemType.ConstantBegin];       lengthOut = 6;  return true; }
+                    var constSub = src.Substring(start, lineEnd - start);
+                    var constMatch = _rxConstant.Match(constSub);
+                    if (constMatch.Success)
+                    {
+                        matchOut = constMatch;
+                        lexemOut = _lexemForType[LexemType.Constant];
+                        lengthOut = constMatch.Length;
+                        return true;
+                    }
+                    // Bare '#' — VariableReal with empty identifier prefix (matches original regex behaviour)
+                    lexemOut = _lexemForType[LexemType.VariableReal]; lengthOut = 1; return true;
+                }
+
+                case ' ':
+                case '\t':
+                case '\r':
+                case '\n':
+                {
+                    int end = start + 1;
+                    while (end < lineEnd && (src[end] == ' ' || src[end] == '\t' || src[end] == '\r' || src[end] == '\n')) end++;
+                    lexemOut = _lexemForType[LexemType.WhiteSpace];
+                    lengthOut = end - start;
+                    return true;
+                }
+
+                default:
+                {
+                    if (c == '$')
+                    { lexemOut = _lexemForType[LexemType.VariableString]; lengthOut = 1; return true; }
+
+                    if (c >= '0' && c <= '9')
+                    {
+                        char next = start + 1 < lineEnd ? src[start + 1] : '\0';
+                        if (c == '0' && (next == 'x' || next == 'X'))
+                        {
+                            int end = start + 2;
+                            while (end < lineEnd && IsHexDigit(src[end])) end++;
+                            if (end > start + 2) { lexemOut = _lexemForType[LexemType.LiteralHex]; lengthOut = end - start; return true; }
+                            return false;
+                        }
+                        if (c == '0' && (next == 'c' || next == 'C'))
+                        {
+                            int end = start + 2;
+                            while (end < lineEnd && src[end] >= '0' && src[end] <= '7') end++;
+                            if (end > start + 2) { lexemOut = _lexemForType[LexemType.LiteralOctal]; lengthOut = end - start; return true; }
+                            return false;
+                        }
+                        int iEnd = start + 1;
+                        while (iEnd < lineEnd && char.IsDigit(src[iEnd])) iEnd++;
+                        if (iEnd < lineEnd && src[iEnd] == '.')
+                        {
+                            int rEnd = iEnd + 1;
+                            while (rEnd < lineEnd && char.IsDigit(src[rEnd])) rEnd++;
+                            lexemOut = _lexemForType[LexemType.LiteralReal]; lengthOut = rEnd - start; return true;
+                        }
+                        if (iEnd < lineEnd && src[iEnd] == '$')
+                        { lexemOut = _lexemForType[LexemType.VariableString]; lengthOut = iEnd - start + 1; return true; }
+                        if (iEnd < lineEnd && src[iEnd] == '#')
+                        { lexemOut = _lexemForType[LexemType.VariableReal]; lengthOut = iEnd - start + 1; return true; }
+                        lexemOut = _lexemForType[LexemType.LiteralInt]; lengthOut = iEnd - start; return true;
+                    }
+
+                    if (char.IsLetter(c) || c == '_')
+                    {
+                        int idEnd = start + 1;
+                        while (idEnd < lineEnd && IsWordChar(src[idEnd])) idEnd++;
+
+                        if (idEnd < lineEnd && src[idEnd] == '$')
+                        { lexemOut = _lexemForType[LexemType.VariableString]; lengthOut = idEnd - start + 1; return true; }
+                        if (idEnd < lineEnd && src[idEnd] == '#')
+                        { lexemOut = _lexemForType[LexemType.VariableReal]; lengthOut = idEnd - start + 1; return true; }
+
+                        var ident = src.Substring(start, idEnd - start);
+                        if (!_keywords.TryGetValue(ident, out var kwType))
+                        {
+                            int identLen = idEnd - start;
+                            if (identLen == 3 && string.Compare(src, start, "max", 0, 3, StringComparison.OrdinalIgnoreCase) == 0)
+                            {
+                                int p = idEnd;
+                                while (p < lineEnd && (src[p] == ' ' || src[p] == '\t')) p++;
+                                if (p > idEnd && LineIsKeyword(src, p, lineEnd, "cycles"))
+                                { lexemOut = _lexemForType[LexemType.KeywordMaxCycles]; lengthOut = p + 6 - start; return true; }
+                            }
+                            else if (identLen == 4 && string.Compare(src, start, "call", 0, 4, StringComparison.OrdinalIgnoreCase) == 0)
+                            {
+                                int p = idEnd;
+                                while (p < lineEnd && (src[p] == ' ' || src[p] == '\t')) p++;
+                                if (p > idEnd && LineIsKeyword(src, p, lineEnd, "count"))
+                                { lexemOut = _lexemForType[LexemType.KeywordCallCount]; lengthOut = p + 5 - start; return true; }
+                            }
+                            lexemOut = _lexemForType[LexemType.VariableGeneral]; lengthOut = idEnd - start; return true;
+                        }
+
+                        if (kwType == LexemType.KeywordRem)
+                        { lexemOut = _lexemForType[LexemType.KeywordRem]; lengthOut = lineEnd - start; return true; }
+
+                        if (kwType == LexemType.KeywordTypeDoubleFloat)
+                        {
+                            if (idEnd < lineEnd && src[idEnd] == ' ')
+                            {
+                                if (LineIsKeyword(src, idEnd + 1, lineEnd, "float"))
+                                { lexemOut = _lexemForType[LexemType.KeywordTypeDoubleFloat]; lengthOut = idEnd + 6 - start; return true; }
+                                if (LineIsKeyword(src, idEnd + 1, lineEnd, "integer"))
+                                { lexemOut = _lexemForType[LexemType.KeywordTypeDoubleInteger]; lengthOut = idEnd + 8 - start; return true; }
+                            }
+                        }
+
+                        lexemOut = _lexemForType[kwType]; lengthOut = idEnd - start; return true;
+                    }
+
+                    return false;
+                }
+            }
+        }
+
         public LexerResults TokenizeWithErrors(string input, CommandCollection commands=default)
         {
             var tokens = new List<Token>();
@@ -361,9 +677,8 @@ namespace FadeBasic
                 all.Add(t);
             }
 
-            void FlushEos(ref bool requestEoS, int requestEoSCharNumber, string[] lines, int lineNumber, Lexem eolLexem, TokenFlags flags)
+            void FlushEos(ref bool requestEoS, int requestEoSCharNumber, int[] lineEndsArr, int[] lineStartsArr, int lineNumber, Lexem eolLexem, TokenFlags flags)
             {
-                
                 if (requestEoS)
                 {
                     requestEoS = false;
@@ -371,21 +686,19 @@ namespace FadeBasic
                     var previousToken = all.LastOrDefault();
                     var cn = previousToken == null
                         ? requestEoSCharNumber
-                        : lines[previousToken.lineNumber].Length + 1; // synthetic index. 
+                        : lineEndsArr[previousToken.lineNumber] - lineStartsArr[previousToken.lineNumber] + 1; // synthetic index
                     var ln = previousToken == null
                         ? lineNumber
                         : previousToken.lineNumber;
                     AddToken(new Token
                     {
-                        charNumber = cn ,
+                        charNumber = cn,
                         lexem = eolLexem,
                         lineNumber = ln,
                         caseInsensitiveRaw = "\n",
                         flags = flags
-
                     });
                 }
-
             }
 
             void AddComment(Token t)
@@ -397,22 +710,42 @@ namespace FadeBasic
 
             var errors = new List<ParseError>();
 
-            var constantTable =  new Dictionary<string, string>(comparer: StringComparer.InvariantCultureIgnoreCase);
+            var constantTable = new Dictionary<string, string>(comparer: StringComparer.InvariantCultureIgnoreCase);
 
-            var lexems = _sortedLexems;
-
-            var lines = input.Split(new string[]{"\n"}, StringSplitOptions.None);
+            // Build line boundary index without allocating per-line strings.
+            int lineCount = 1;
+            for (int ci = 0; ci < input.Length; ci++) if (input[ci] == '\n') lineCount++;
+            var lineStarts = new int[lineCount];
+            var lineEnds   = new int[lineCount];
+            {
+                int li = 0;
+                lineStarts[0] = 0;
+                for (int ci = 0; ci < input.Length; ci++)
+                {
+                    if (input[ci] == '\n')
+                    {
+                        lineEnds[li] = ci;   // end of this line (exclusive, points at \n)
+                        lineStarts[++li] = ci + 1;
+                    }
+                }
+                lineEnds[lineCount - 1] = input.Length;
+            }
 
             var eolLexem = new Lexem(LexemType.EndStatement, null);
 
             Token remBlockToken = null;
             var requestEoS = false;
             var requestEoSCharNumber = 0;
-            for (var lineNumber = 0; lineNumber < lines.Length; lineNumber++)
+            for (var lineNumber = 0; lineNumber < lineCount; lineNumber++)
             {
-                
-                var line = lines[lineNumber];
-                if (string.IsNullOrEmpty(line))
+                // src/lineStart allow the mutation path (constant substitution) to swap in a
+                // local string without touching the original input or the line-index arrays.
+                string src = input;
+                int lineStart = lineStarts[lineNumber];
+                int lineLen   = lineEnds[lineNumber] - lineStart;
+                int lineEnd   = lineStart + lineLen;   // absolute end of line content in src
+
+                if (lineLen == 0)
                 {
                     if (remBlockToken != null)
                     {
@@ -434,26 +767,23 @@ namespace FadeBasic
                         charNumber = 0,
                         lineNumber = lineNumber,
                         lexem = new Lexem(LexemType.KeywordRem, null),
-
                     };
                 }
 
                 var charNumberMacroOffset = 0;
                 var macroUntilCharNumber = -1;
-                for (var charNumber = 0; charNumber < line.Length; charNumber = charNumber)
+                for (var charNumber = 0; charNumber < lineLen; charNumber = charNumber)
                 {
                     var foundMatch = false;
-                    var sub = line.Substring(charNumber);
 
-                    var isStillMacro = charNumber+charNumberMacroOffset < macroUntilCharNumber;
+                    var isStillMacro = charNumber + charNumberMacroOffset < macroUntilCharNumber;
                     var flags = TokenFlags.None;
                     if (isStillMacro)
                     {
                         flags |= TokenFlags.IsConstant;
                     }
 
-
-                    if (remBlockToken == null && sub.StartsWith("remstart", StringComparison.OrdinalIgnoreCase))
+                    if (remBlockToken == null && CharPositionStartsWith(src, lineStart + charNumber, lineEnd, "remstart"))
                     {
                         // we are remmin'
                         remBlockToken = new Token
@@ -464,20 +794,20 @@ namespace FadeBasic
                         };
                         continue;
                     }
-                    if (remBlockToken != null && sub.StartsWith("remend", StringComparison.OrdinalIgnoreCase))
+                    if (remBlockToken != null && CharPositionStartsWith(src, lineStart + charNumber, lineEnd, "remend"))
                     {
                         // we are done remmin' for now.
-                        remBlockToken.raw = line.Substring(remBlockToken.charNumber,
+                        remBlockToken.raw = src.Substring(lineStart + remBlockToken.charNumber,
                             (charNumber - remBlockToken.charNumber) + "remend".Length);
                         remBlockToken.caseInsensitiveRaw = remBlockToken.raw.ToLowerInvariant();
-                       
-                        
+
+
                         AddComment(remBlockToken);
                         remBlockToken = null;
                         charNumber += "remend".Length;
                         continue;
 
-                    } 
+                    }
                     if (remBlockToken != null)
                     {
                         // we are still remmin'
@@ -488,8 +818,7 @@ namespace FadeBasic
                     Token bestToken = null;
                     Match bestMatch = null;
 
-                    var hadRemCandidate = false;
-                    var isStringParse = sub.Length > 0 && sub[0] == '"';
+                    var isStringParse = charNumber < lineLen && src[lineStart + charNumber] == '"';
 
                     if (isStringParse)
                     {
@@ -506,31 +835,28 @@ namespace FadeBasic
                         strBuffer.Append('"');
 
                         for (strIndex = charNumber + 1;
-                             strIndex < line.Length; 
-                             strIndex++) 
+                             strIndex < lineLen;
+                             strIndex++)
                         {
-                            var strChar = line[strIndex];
+                            var strChar = src[lineStart + strIndex];
                             switch (strChar)
                             {
                                 case '"':
-                                    // exit the loop, the string's bounds are found.
                                     strIndex++;
                                     strBuffer.Append('"');
                                     matchedEnd = true;
                                     break;
                                 case '\\':
-                                    // there must be a second character 
-                                    if (strIndex == line.Length - 1)
+                                    if (strIndex == lineLen - 1)
                                     {
                                         // this is the last character in the line, but it cannot be.
                                         //throw new InvalidOperationException(); // TODO: replace with lexer error
                                     }
 
-                                    // move forwards
                                     strIndex++;
                                     charOffset++;
 
-                                    strBuffer.Append(line[strIndex]);
+                                    strBuffer.Append(src[lineStart + strIndex]);
 
                                     break;
                                 default:
@@ -543,7 +869,7 @@ namespace FadeBasic
 
                         if (!matchedEnd)
                         {
-                            var text = line.Substring(charNumber);
+                            var text = src.Substring(lineStart + charNumber, lineLen - charNumber);
                             errors.Add(new ParseError(new Token
                             {
                                 raw = text,
@@ -551,10 +877,9 @@ namespace FadeBasic
                                 lineNumber = lineNumber,
                                 charNumber = charNumber,
                             }, ErrorCodes.LexerStringNeedsEnd, text));
-
                         }
 
-                        var insensitiveRaw = line.Substring(charNumber, strIndex - charNumber);
+                        var insensitiveRaw = src.Substring(lineStart + charNumber, strIndex - charNumber);
                         var stringLiteralSubStr = strBuffer.ToString();
                         bestToken = new Token
                         {
@@ -564,38 +889,25 @@ namespace FadeBasic
                             lineNumber = lineNumber,
                             charNumber = charNumber + charNumberMacroOffset,
                             flags = flags
-
                         };
                         foundMatch = true;
                         charNumber += charOffset;
                     }
-                    
-                    for (var lexemId = 0; lexemId < lexems.Count && !isStringParse; lexemId++)
+
+                    if (!isStringParse && TryMatchManual(src, lineStart + charNumber, lineEnd, out var bestLexem, out var bestLength, out var manualMatch))
                     {
-                        var lexem = lexems[lexemId];
-                        var m = lexem.regex.Match(sub);
-
-                        if (m.Success)
+                        bestMatch = manualMatch;
+                        foundMatch = true;
+                        var rawStr = src.Substring(lineStart + charNumber, bestLength);
+                        bestToken = new Token
                         {
-                            foundMatch = true;
-
-                            var token = new Token
-                            {
-                                caseInsensitiveRaw = m.Value.ToLowerInvariant(),
-                                raw = m.Value,
-                                lexem = lexem,
-                                lineNumber = lineNumber,
-                                charNumber = charNumber + charNumberMacroOffset,
-                                flags = flags
-
-                            };
-
-                            if (bestToken == null || token.Length > bestToken.Length)
-                            {
-                                bestToken = token;
-                                bestMatch = m;
-                            }
-                        }
+                            caseInsensitiveRaw = rawStr.ToLowerInvariant(),
+                            raw = rawStr,
+                            lexem = bestLexem,
+                            lineNumber = lineNumber,
+                            charNumber = charNumber + charNumberMacroOffset,
+                            flags = flags
+                        };
                     }
 
                     if (bestToken != null)
@@ -603,7 +915,7 @@ namespace FadeBasic
                         switch (bestToken.type)
                         {
                             case LexemType.KeywordRem:
-                                FlushEos(ref requestEoS, requestEoSCharNumber, lines, lineNumber, eolLexem, flags);
+                                FlushEos(ref requestEoS, requestEoSCharNumber, lineEnds, lineStarts, lineNumber, eolLexem, flags);
                                 AddComment(bestToken);
                                 break;
                             case LexemType.WhiteSpace:
@@ -634,12 +946,16 @@ namespace FadeBasic
                                 break;
                             case LexemType.VariableGeneral
                                 when constantTable.TryGetValue(bestToken.caseInsensitiveRaw, out var replacement):
-                                var prefix = line.Substring(0, charNumber);
-                                var suffix = line.Substring(charNumber + bestToken.Length);
+                                var prefix = src.Substring(lineStart, charNumber);
+                                var suffix = src.Substring(lineStart + charNumber + bestToken.Length, lineLen - charNumber - bestToken.Length);
 
                                 var replacementLine = prefix + replacement + suffix;
-                                charNumberMacroOffset += line.Length - replacementLine.Length;
-                                line = replacementLine;
+                                charNumberMacroOffset += lineLen - replacementLine.Length;
+                                // Switch src to the mutated line string; reset lineStart to 0 within it.
+                                src = replacementLine;
+                                lineStart = 0;
+                                lineLen = replacementLine.Length;
+                                lineEnd = lineLen;
                                 macroUntilCharNumber = charNumber + bestToken.Length;
 
                                 bestToken.lexem = new Lexem(LexemType.Constant);
@@ -649,7 +965,7 @@ namespace FadeBasic
                                 break;
                             default:
 
-                                FlushEos(ref requestEoS, requestEoSCharNumber, lines, lineNumber, eolLexem, flags);
+                                FlushEos(ref requestEoS, requestEoSCharNumber, lineEnds, lineStarts, lineNumber, eolLexem, flags);
                                 // if (requestEoS)
                                 // {
                                 //     requestEoS = false;
@@ -683,56 +999,53 @@ namespace FadeBasic
 
                     if (!foundMatch)
                     {
+                        var errText = src.Substring(lineStart + charNumber, lineLen - charNumber);
                         errors.Add(new ParseError(new Token
                         {
-                            raw = sub,
-                            caseInsensitiveRaw = sub.ToLowerInvariant(),
+                            raw = errText,
+                            caseInsensitiveRaw = errText.ToLowerInvariant(),
                             lineNumber = lineNumber,
                             charNumber = charNumber,
-                        }, ErrorCodes.LexerUnmatchedText, sub));
-                       
-                        charNumber += sub.Length;
-                        // throw new Exception($"Token exception! No match for {subStr} at {lineNumber}:{charNumber}");
+                        }, ErrorCodes.LexerUnmatchedText, errText));
+
+                        charNumber = lineLen;
                     }
                 }
-
 
                 if (remBlockToken != null)
                 {
                     // commit
-                    remBlockToken.raw = line.Substring(remBlockToken.charNumber);
+                    remBlockToken.raw = src.Substring(lineStart + remBlockToken.charNumber, lineLen - remBlockToken.charNumber);
                     remBlockToken.caseInsensitiveRaw = remBlockToken.raw.ToLowerInvariant();
                     AddComment(remBlockToken);
                 }
-                
-                var previousTokenWasNotEoS = tokens.Count > 0 
-                    ? tokens[tokens.Count - 1].type != LexemType.EndStatement 
+
+                var previousTokenWasNotEoS = tokens.Count > 0
+                    ? tokens[tokens.Count - 1].type != LexemType.EndStatement
                     : false;
-                var previousTokenWasNotArgSplitter = tokens.Count > 0 
-                    ? tokens[tokens.Count - 1].type != LexemType.ArgSplitter 
+                var previousTokenWasNotArgSplitter = tokens.Count > 0
+                    ? tokens[tokens.Count - 1].type != LexemType.ArgSplitter
                     : true;
-                var previousTokenWasNotTokenize = tokens.Count > 0 
-                    ? tokens[tokens.Count - 1].type != LexemType.ConstantTokenize 
+                var previousTokenWasNotTokenize = tokens.Count > 0
+                    ? tokens[tokens.Count - 1].type != LexemType.ConstantTokenize
                     : true;
-                
-                // if the next token is an arg splitter, than we don't want an EoS either...
+
                 if (previousTokenWasNotEoS && previousTokenWasNotArgSplitter && previousTokenWasNotTokenize)
                 {
                     requestEoS = true;
-                    requestEoSCharNumber = line.Length;
+                    requestEoSCharNumber = lineLen;
                 }
-                
             }
-            
+
             if (requestEoS)
             {
                 requestEoS = false;
                 var previousToken = all.LastOrDefault();
                 var cn = previousToken == null
                     ? requestEoSCharNumber
-                    : lines[previousToken.lineNumber].Length + 1; // synthetic index. 
+                    : lineEnds[previousToken.lineNumber] - lineStarts[previousToken.lineNumber] + 1; // synthetic index
                 var ln = previousToken == null
-                    ? lines.Length - 1
+                    ? lineCount - 1
                     : previousToken.lineNumber;
                 AddToken(new Token
                 {
@@ -755,10 +1068,10 @@ namespace FadeBasic
                 constantTable = constantTable
             };
 
-            // add the runtime commands in. 
-            HandleCommandNames(lines, results, runtimeCommandTree);
+            // add the runtime commands in.
+            HandleCommandNames(input, lineStarts, results, runtimeCommandTree);
 
-            HandleMacros2(lines, results, commands);
+            HandleMacros2(results, commands);
             
             return results;
         }
@@ -783,13 +1096,13 @@ namespace FadeBasic
         }
 
 
-        void HandleCommandNames(string[] lines, LexerResults results, CommandNameTree tree)
+        void HandleCommandNames(string input, int[] lineStarts, LexerResults results, CommandNameTree tree)
         {
-            HandleCommandNames(lines, results.tokens, tree);
-            HandleCommandNames(lines, results.combinedTokens, tree);
-            HandleCommandNames(lines, results.allTokens, tree);
+            HandleCommandNames(input, lineStarts, results.tokens, tree);
+            HandleCommandNames(input, lineStarts, results.combinedTokens, tree);
+            HandleCommandNames(input, lineStarts, results.allTokens, tree);
         }
-        void HandleCommandNames(string[] lines, List<Token> tokens, CommandNameTree tree)
+        void HandleCommandNames(string input, int[] lineStarts, List<Token> tokens, CommandNameTree tree)
         {
             /*
              * The goal is to find token spans that match the command names,
@@ -828,7 +1141,7 @@ namespace FadeBasic
 
                     var firstChar = first.charNumber;
                     var lastChar = last.EndCharNumber;
-                    var raw = lines[first.lineNumber].Substring(firstChar, lastChar - firstChar);
+                    var raw = input.Substring(lineStarts[first.lineNumber] + firstChar, lastChar - firstChar);
                     
                    // var raw = string.Join(" ", subset.Select(x => x.raw));
                     tokens[i] = new Token
@@ -855,7 +1168,7 @@ namespace FadeBasic
             }
         }
         
-        void HandleMacros2(string[] lines, LexerResults current, CommandCollection commands)
+        void HandleMacros2(LexerResults current, CommandCollection commands)
         {
             var stream = new TokenStream(current.tokens);
             // var macroCommandNames = commands.Commands.Where(c => c.usage.HasFlag(FadeBasicCommandUsage.Macro)).Select(c => c.name).ToList();
