@@ -175,10 +175,9 @@ namespace FadeBasic.Ast
             return $"xcall {command.name}{argString}";
         }
 
-        public override IEnumerable<IAstVisitable> IterateChildNodes()
+        protected override void VisitChildren(Action<IAstVisitable> onVisit, Action<IAstVisitable> onExit)
         {
-            foreach (var arg in args) yield return arg;
-
+            foreach (var arg in args) arg?.Visit(onVisit, onExit);
         }
     }
 
@@ -198,9 +197,9 @@ namespace FadeBasic.Ast
             return $"{OperationUtil.ToString(operationType)} {rhs}";
         }
 
-        public override IEnumerable<IAstVisitable> IterateChildNodes()
+        protected override void VisitChildren(Action<IAstVisitable> onVisit, Action<IAstVisitable> onExit)
         {
-            yield return rhs;
+            rhs?.Visit(onVisit, onExit);
         }
 
     }
@@ -227,10 +226,10 @@ namespace FadeBasic.Ast
             return $"{OperationUtil.ToString(operationType)} {lhs},{rhs}";
         }
 
-        public override IEnumerable<IAstVisitable> IterateChildNodes()
+        protected override void VisitChildren(Action<IAstVisitable> onVisit, Action<IAstVisitable> onExit)
         {
-            yield return lhs;
-            yield return rhs;
+            lhs?.Visit(onVisit, onExit);
+            rhs?.Visit(onVisit, onExit);
         }
 
     }
@@ -251,9 +250,9 @@ namespace FadeBasic.Ast
             return $"derefExpr {expression}";
         }
 
-        public override IEnumerable<IAstVisitable> IterateChildNodes()
+        protected override void VisitChildren(Action<IAstVisitable> onVisit, Action<IAstVisitable> onExit)
         {
-            yield return expression;
+            expression?.Visit(onVisit, onExit);
         }
     }
     
@@ -273,9 +272,9 @@ namespace FadeBasic.Ast
             return $"addr {variableNode}";
         }
 
-        public override IEnumerable<IAstVisitable> IterateChildNodes()
+        protected override void VisitChildren(Action<IAstVisitable> onVisit, Action<IAstVisitable> onExit)
         {
-            yield return variableNode;
+            variableNode?.Visit(onVisit, onExit);
         }
     }
 
@@ -286,10 +285,7 @@ namespace FadeBasic.Ast
             return "default";
         }
 
-        public override IEnumerable<IAstVisitable> IterateChildNodes()
-        {
-            yield break;
-        }
+        protected override void VisitChildren(Action<IAstVisitable> onVisit, Action<IAstVisitable> onExit) { }
     }
 
     public class LiteralIntExpression : AstNode, ILiteralNode
@@ -337,10 +333,7 @@ namespace FadeBasic.Ast
             return value.ToString();
         }
 
-        public override IEnumerable<IAstVisitable> IterateChildNodes()
-        {
-            yield break;
-        }
+        protected override void VisitChildren(Action<IAstVisitable> onVisit, Action<IAstVisitable> onExit) { }
 
     }
 
@@ -362,10 +355,7 @@ namespace FadeBasic.Ast
             return startToken.caseInsensitiveRaw;
         }
 
-        public override IEnumerable<IAstVisitable> IterateChildNodes()
-        {
-            yield break;
-        }
+        protected override void VisitChildren(Action<IAstVisitable> onVisit, Action<IAstVisitable> onExit) { }
     }
 
     public class LiteralStringExpression : AstNode, ILiteralNode
@@ -387,10 +377,7 @@ namespace FadeBasic.Ast
             return startToken.raw;
         }
 
-        public override IEnumerable<IAstVisitable> IterateChildNodes()
-        {
-            yield break;
-        }
+        protected override void VisitChildren(Action<IAstVisitable> onVisit, Action<IAstVisitable> onExit) { }
     }
 
     /// <summary>
@@ -414,9 +401,9 @@ namespace FadeBasic.Ast
             return $"len {inner}";
         }
 
-        public override IEnumerable<IAstVisitable> IterateChildNodes()
+        protected override void VisitChildren(Action<IAstVisitable> onVisit, Action<IAstVisitable> onExit)
         {
-            if (inner != null) yield return inner;
+            inner?.Visit(onVisit, onExit);
         }
     }
 
@@ -445,10 +432,7 @@ namespace FadeBasic.Ast
             return $"call count {commandName}";
         }
 
-        public override IEnumerable<IAstVisitable> IterateChildNodes()
-        {
-            yield break;
-        }
+        protected override void VisitChildren(Action<IAstVisitable> onVisit, Action<IAstVisitable> onExit) { }
     }
 
 }

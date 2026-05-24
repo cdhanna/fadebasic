@@ -28,10 +28,10 @@ namespace FadeBasic.Ast
             return $"arg {variable} as {type}";
         }
 
-        public override IEnumerable<IAstVisitable> IterateChildNodes()
+        protected override void VisitChildren(Action<IAstVisitable> onVisit, Action<IAstVisitable> onExit)
         {
-            yield return variable;
-            yield return type;
+            variable?.Visit(onVisit, onExit);
+            type?.Visit(onVisit, onExit);
         }
     }
 
@@ -51,12 +51,9 @@ namespace FadeBasic.Ast
             return $"retfunc {returnExpression}";
         }
 
-        public override IEnumerable<IAstVisitable> IterateChildNodes()
+        protected override void VisitChildren(Action<IAstVisitable> onVisit, Action<IAstVisitable> onExit)
         {
-            if (returnExpression != null)
-            {
-                yield return returnExpression;
-            }
+            returnExpression?.Visit(onVisit, onExit);
         }
     }
     
@@ -82,11 +79,10 @@ namespace FadeBasic.Ast
             return $"func {name} ({string.Join(",", parameters.Select(x => x.ToString()))}),({string.Join(",", statements.Select(x => x.ToString()))})";
         }
 
-        public override IEnumerable<IAstVisitable> IterateChildNodes()
+        protected override void VisitChildren(Action<IAstVisitable> onVisit, Action<IAstVisitable> onExit)
         {
-            foreach (var parameter in parameters) yield return parameter;
-            foreach (var statement in statements) yield return statement;
-
+            foreach (var parameter in parameters) parameter?.Visit(onVisit, onExit);
+            foreach (var statement in statements) statement?.Visit(onVisit, onExit);
         }
 
         public string Trivia { get; set; }

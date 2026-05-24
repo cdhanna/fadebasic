@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Generic;
 
 namespace FadeBasic.Ast
@@ -23,10 +24,7 @@ namespace FadeBasic.Ast
             return $"label {label}";
         }
 
-        public override IEnumerable<IAstVisitable> IterateChildNodes()
-        {
-            yield break;
-        }
+        protected override void VisitChildren(Action<IAstVisitable> onVisit, Action<IAstVisitable> onExit) { }
 
         public string Trivia { get; set; }
     }

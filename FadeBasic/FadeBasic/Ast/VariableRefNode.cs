@@ -24,9 +24,9 @@ namespace FadeBasic.Ast
             return $"deref {ptrExpression}";
         }
 
-        public override IEnumerable<IAstVisitable> IterateChildNodes()
+        protected override void VisitChildren(Action<IAstVisitable> onVisit, Action<IAstVisitable> onExit)
         {
-            yield return ptrExpression;
+            ptrExpression?.Visit(onVisit, onExit);
         }
     }
     
@@ -41,10 +41,10 @@ namespace FadeBasic.Ast
             return $"{left}.{right}";
         }
 
-        public override IEnumerable<IAstVisitable> IterateChildNodes()
+        protected override void VisitChildren(Action<IAstVisitable> onVisit, Action<IAstVisitable> onExit)
         {
-            yield return left;
-            yield return right;
+            left?.Visit(onVisit, onExit);
+            right?.Visit(onVisit, onExit);
         }
     }
     
@@ -62,10 +62,9 @@ namespace FadeBasic.Ast
             return $"ref {variableName}[{string.Join(",", rankExpressions.Select(x => x.ToString()))}]";
         }
 
-        public override IEnumerable<IAstVisitable> IterateChildNodes()
+        protected override void VisitChildren(Action<IAstVisitable> onVisit, Action<IAstVisitable> onExit)
         {
-            foreach (var rankExpr in rankExpressions) yield return rankExpr;
-
+            foreach (var rankExpr in rankExpressions) rankExpr?.Visit(onVisit, onExit);
         }
 
     }
@@ -107,10 +106,7 @@ namespace FadeBasic.Ast
             return $"ref {variableName}";
         }
 
-        public override IEnumerable<IAstVisitable> IterateChildNodes()
-        {
-            yield break; // no children.
-        }
+        protected override void VisitChildren(Action<IAstVisitable> onVisit, Action<IAstVisitable> onExit) { }
 
     }
 }

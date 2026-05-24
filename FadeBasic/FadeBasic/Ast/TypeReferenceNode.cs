@@ -26,9 +26,9 @@ namespace FadeBasic.Ast
         }
 
         public VariableType variableType => VariableType.Struct;
-        public override IEnumerable<IAstVisitable> IterateChildNodes()
+        protected override void VisitChildren(Action<IAstVisitable> onVisit, Action<IAstVisitable> onExit)
         {
-            yield return variableNode;
+            variableNode?.Visit(onVisit, onExit);
         }
 
         public string Trivia { get; set; }
@@ -79,9 +79,6 @@ namespace FadeBasic.Ast
             return variableType.ToString().ToLowerInvariant();
         }
 
-        public override IEnumerable<IAstVisitable> IterateChildNodes()
-        {
-            yield break;
-        }
+        protected override void VisitChildren(Action<IAstVisitable> onVisit, Action<IAstVisitable> onExit) { }
     }
 }

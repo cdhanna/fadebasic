@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Generic;
 using System.Linq;
 
@@ -27,9 +28,12 @@ namespace FadeBasic.Ast
             return $"{prefix} {name}{fromClause} {testProgram.ToString()}";
         }
 
-        public override IEnumerable<IAstVisitable> IterateChildNodes()
+        protected override void VisitChildren(Action<IAstVisitable> onVisit, Action<IAstVisitable> onExit)
         {
-            foreach (var child in testProgram.IterateChildNodes()) yield return child;
+            foreach (var s in testProgram.statements) s?.Visit(onVisit, onExit);
+            foreach (var f in testProgram.functions) f?.Visit(onVisit, onExit);
+            foreach (var t in testProgram.typeDefinitions) t?.Visit(onVisit, onExit);
+            foreach (var t in testProgram.tests) t?.Visit(onVisit, onExit);
         }
 
         public string Trivia { get; set; }

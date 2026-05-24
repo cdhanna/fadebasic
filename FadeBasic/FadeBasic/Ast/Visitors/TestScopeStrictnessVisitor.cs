@@ -657,10 +657,10 @@ namespace FadeBasic.Ast.Visitors
                             break;
 
                         default:
-                            foreach (var child in node.IterateChildNodes())
-                            {
-                                Walk(child);
-                            }
+                        {
+                            int d = 0;
+                            node.Visit(child => { if (d == 1) Walk(child); d++; }, _ => d--);
+                        }
                             break;
                     }
                 }
