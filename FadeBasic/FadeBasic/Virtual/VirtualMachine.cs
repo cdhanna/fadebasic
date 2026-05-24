@@ -918,12 +918,13 @@ namespace FadeBasic.Virtual
                             
                             break;
                         case OpCodes.READ:
-                            
+                        {
                             VmUtil.ReadAsVmPtr(ref stack, out var readPtr);
                             VmUtil.ReadAsInt(ref stack, out var readLength);
-                            heap.Read(readPtr, readLength, out aBytes);
-                            stack.PushSpan(aBytes, readLength);
+                            heap.ReadSpan(readPtr, readLength, out var readSpan);
+                            stack.PushSpan(readSpan, readLength);
                             break;
+                        }
                         // case OpCodes.LENGTH:
                         //     VmUtil.ReadAsInt(ref stack, out var readLengthPtr);
                         //     heap.GetAllocationSize(readLengthPtr, out var readAllocLength);
@@ -1123,15 +1124,13 @@ namespace FadeBasic.Virtual
                             var spreadCount = spreadElemSize > 0 ? spreadBytes / spreadElemSize : 0;
                             if (spreadCount > 0)
                             {
-                                heap.Read(spreadPtr, spreadBytes, out var spreadData);
+                                heap.ReadSpan(spreadPtr, spreadBytes, out var spreadSpan);
                                 // Push elements LIFO so the receiver reads
                                 // them back in declaration order — same as
                                 // an inline `Foo(1,2,3)` call would produce.
                                 for (var ei = spreadCount - 1; ei >= 0; ei--)
                                 {
-                                    var elemBytes = new byte[spreadElemSize];
-                                    System.Array.Copy(spreadData, ei * spreadElemSize, elemBytes, 0, spreadElemSize);
-                                    VmUtil.PushSpan(ref stack, new ReadOnlySpan<byte>(elemBytes), spreadElemTc);
+                                    VmUtil.PushSpan(ref stack, spreadSpan.Slice(ei * spreadElemSize, spreadElemSize), spreadElemTc);
                                 }
                             }
                             VmUtil.PushSpan(ref stack,

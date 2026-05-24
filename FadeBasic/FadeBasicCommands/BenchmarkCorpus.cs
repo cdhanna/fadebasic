@@ -16,7 +16,7 @@ flag = result > 100
         public const string Medium = @"
 dim scores(10)
 total = 0
-for i = 1 to 10
+for i = 0 to 9
     scores(i) = i * i
     total = total + scores(i)
 next i

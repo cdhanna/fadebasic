@@ -427,6 +427,15 @@ namespace FadeBasic.Virtual
         private Dictionary<string, int> _commandToPtr = new Dictionary<string, int>();
         private Stack<List<int>> _exitInstructionIndexes = new Stack<List<int>>();
         private Stack<List<int>> _skipInstructionIndexes = new Stack<List<int>>();
+        private readonly Stack<List<int>> _jumpIndexPool = new Stack<List<int>>();
+
+        private List<int> RentJumpList()
+        {
+            if (_jumpIndexPool.Count > 0) { var l = _jumpIndexPool.Pop(); l.Clear(); return l; }
+            return new List<int>();
+        }
+
+        private void ReturnJumpList(List<int> list) => _jumpIndexPool.Push(list);
 
         private List<LabelReplacement> _labelReplacements = new List<LabelReplacement>();
         // Keyed by region-prefixed label name. Region is empty for main
@@ -522,11 +531,7 @@ namespace FadeBasic.Virtual
 
             // push a temporary value that will be replaced later.
             //  this value represents the ins-ptr where the interned-data lives.
-            var value = BitConverter.GetBytes(0);
-            for (var i = 0 ; i < value.Length; i ++)
-            {
-                _buffer.Add(value[i]);
-            }
+            AppendInt32(_buffer, 0);
 
             // Pre-pass: collect every label name referenced by a `runto` anywhere in
             // the test corpus. These labels get a RUNTO_YIELD opcode emitted right
@@ -583,11 +588,7 @@ namespace FadeBasic.Virtual
 
             { // handle interned data
                 { // replace the jump ptr at index=0 to tell us where the data lives.
-                    var internLocationBytes = BitConverter.GetBytes(_buffer.Count);
-                    for (var i = 0; i < internLocationBytes.Length; i++)
-                    {
-                        _buffer[0 + i] = internLocationBytes[i];
-                    }
+                    PatchInt32(_buffer, 0, _buffer.Count);
                 }
 
                 PushInternedData();
@@ -757,12 +758,7 @@ namespace FadeBasic.Virtual
                     throw new Exception("Compiler: unknown label location " + replacement.Label);
                 }
 
-                var locationBytes = BitConverter.GetBytes(location);
-                for (var i = 0; i < locationBytes.Length; i++)
-                {
-                    // offset by 2, because of the opcode, and the type code
-                    _buffer[replacement.InstructionIndex + 2 + i] = locationBytes[i];
-                }
+                PatchInt32(_buffer, replacement.InstructionIndex + 2, location);
             }
 
             // replace all runto target placeholders. The runto target address is
@@ -781,11 +777,7 @@ namespace FadeBasic.Virtual
                 }
 
                 var postYieldAddr = location + 2; // skip the NOOP and the RUNTO_YIELD
-                var locationBytes = BitConverter.GetBytes(postYieldAddr);
-                for (var i = 0; i < locationBytes.Length; i++)
-                {
-                    _buffer[replacement.InstructionIndex + 2 + i] = locationBytes[i];
-                }
+                PatchInt32(_buffer, replacement.InstructionIndex + 2, postYieldAddr);
             }
 
             // replace all function instrunctions
@@ -796,11 +788,7 @@ namespace FadeBasic.Virtual
                     throw new Exception("Compiler: unknown function location " + replacement.FunctionName);
                 }
 
-                var locationBytes = BitConverter.GetBytes(location);
-                for (var i = 0; i < locationBytes.Length; i++)
-                {
-                    _buffer[replacement.InstructionIndex + 2 + i] = locationBytes[i];
-                }
+                PatchInt32(_buffer, replacement.InstructionIndex + 2, location);
             }
         }
 
@@ -1093,11 +1081,7 @@ namespace FadeBasic.Virtual
             _buffer.Add(OpCodes.DISCARD_TYPED);
             
             // fix the end value
-            var exitAddrBytes = BitConverter.GetBytes(loopEndAddress);
-            for (var i = 0; i < exitAddrBytes.Length; i++)
-            {
-                _buffer[replaceExitIndex + 2 + i] = exitAddrBytes[i];
-            }
+            PatchInt32(_buffer, replaceExitIndex + 2, loopEndAddress);
         }
         void CompilePopScope()
         {
@@ -1140,18 +1124,9 @@ namespace FadeBasic.Virtual
             // this location is the place the defer should jump execution to. 
             var exitAddr = _buffer.Count;
             _buffer.Add(OpCodes.NOOP);
-            var exitAddrBytes = BitConverter.GetBytes(exitAddr);
-            for (var i = 0; i < exitAddrBytes.Length; i++)
-            {
-                _buffer[exitAddrIndex + 2 + i] = exitAddrBytes[i];
-            }
-            
+            PatchInt32(_buffer, exitAddrIndex + 2, exitAddr);
             // fix up the defer add
-            var deferAddrBytes = BitConverter.GetBytes(deferAddrValue);
-            for (var i = 0; i < deferAddrBytes.Length; i++)
-            {
-                _buffer[deferAddrIndex + 2 + i] = deferAddrBytes[i];
-            }
+            PatchInt32(_buffer, deferAddrIndex + 2, deferAddrValue);
         }
 
         void Compile(MacroTokenizeStatement tokenizeStatement)
@@ -1252,14 +1227,8 @@ namespace FadeBasic.Virtual
 
             // this is the end of the tokenization substitutions block, so execution can safely jump here. 
             var exitAddr = _buffer.Count;
-            var exitAddrBytes = BitConverter.GetBytes(exitAddr);
             foreach (var exitIns in replacementIndexes)
-            {
-                for (var i = 0; i < exitAddrBytes.Length; i++)
-                {
-                    _buffer[exitIns + 2 + i] = exitAddrBytes[i];
-                }
-            }
+                PatchInt32(_buffer, exitIns + 2, exitAddr);
         }
 
         void CompileAsInvocation(ArrayIndexReference expr)
@@ -1488,34 +1457,15 @@ namespace FadeBasic.Virtual
             // now do all the address replacements....
             for (var i = 0; i < switchStatement.cases.Count; i++)
             {
-                var indexes = pairInsIndexes[i];
                 var caseAddr = caseAddrValues[i];
-                var caseAddrBytes = BitConverter.GetBytes(caseAddr);
-                foreach (var index in indexes)
-                {
-                    for (var j = 0; j < caseAddrBytes.Length; j++)
-                    {
-                        _buffer[index + 2 + j] = caseAddrBytes[j];
-                    }
-                }
-            }
-            
-            // replace the default address at the start of the function
-            var defaultAddrBytes = BitConverter.GetBytes(defaultAddr);
-            for (var i = 0; i < defaultAddrBytes.Length; i++)
-            {
-                _buffer[defaultInsIndex + 2 + i] = defaultAddrBytes[i];
+                foreach (var index in pairInsIndexes[i])
+                    PatchInt32(_buffer, index + 2, caseAddr);
             }
 
-            // replace all the individual case statement's references to the jump exit
-            var exitAddrBytes = BitConverter.GetBytes(exitAddr);
+            PatchInt32(_buffer, defaultInsIndex + 2, defaultAddr);
+
             foreach (var exitIns in exitInsIndexes)
-            {
-                for (var i = 0; i < exitAddrBytes.Length; i++)
-                {
-                    _buffer[exitIns + 2 + i] = exitAddrBytes[i];
-                }
-            }
+                PatchInt32(_buffer, exitIns + 2, exitAddr);
         }
         
         private void Compile(ForStatement forStatement)
@@ -1586,51 +1536,35 @@ namespace FadeBasic.Virtual
             
             // keep track of the first index of the success
             var successJumpValue = _buffer.Count;
-            _exitInstructionIndexes.Push(new List<int>());
-            _skipInstructionIndexes.Push(new List<int>());
+            _exitInstructionIndexes.Push(RentJumpList());
+            _skipInstructionIndexes.Push(RentJumpList());
             foreach (var successStatement in forStatement.statements)
             {
                 Compile(successStatement);
             }
             var exitStatementIndexes = _exitInstructionIndexes.Pop();
             var skipStatementIndexes = _skipInstructionIndexes.Pop();
-            
-            // This is the location where Step updates and evaluation happens 
+
+            // This is the location where Step updates and evaluation happens
             // (important as skip should jump here, not to the very start)
             var stepLoopValue = _buffer.Count;
-            
+
             // now to update the value of x, we need to add the stepExpr to it.
             Compile(stepAssignment); // NOTE: there could be a bug here, because we are looping on a deterministic math operation, but simulating the interpolated variable
-            
+
             // jump back to the start
             AddPushInt(_buffer, forLoopValue);
             _buffer.Add(OpCodes.JUMP);
-            
+
             var endJumpValue = _buffer.Count;
-            
-            // now go back and fill in the success ptr
-            var successJumpBytes = BitConverter.GetBytes(successJumpValue);
-            var endJumpBytes = BitConverter.GetBytes(endJumpValue);
-            var stepLoopBytes = BitConverter.GetBytes(stepLoopValue);
-            
-            for (var i = 0; i < successJumpBytes.Length; i++)
-            {
-                // offset by 2, because of the opcode, and the type code
-                _buffer[successJumpIndex + 2 + i] = successJumpBytes[i];
-                _buffer[exitJumpIndex + 2 + i] = endJumpBytes[i];
-                _buffer[lteExitJumpIndex + 2 + i] = endJumpBytes[i];
-                
-                foreach (var index in exitStatementIndexes)
-                {
-                    _buffer[index + 2 + i] = endJumpBytes[i];
-                }
-                
-                // Update skip instructions to jump to the increment/evaluation part
-                foreach (var index in skipStatementIndexes)
-                {
-                    _buffer[index + 2 + i] = stepLoopBytes[i];
-                }
-            }
+
+            PatchInt32(_buffer, successJumpIndex + 2, successJumpValue);
+            PatchInt32(_buffer, exitJumpIndex + 2, endJumpValue);
+            PatchInt32(_buffer, lteExitJumpIndex + 2, endJumpValue);
+            foreach (var index in exitStatementIndexes) PatchInt32(_buffer, index + 2, endJumpValue);
+            foreach (var index in skipStatementIndexes) PatchInt32(_buffer, index + 2, stepLoopValue);
+            ReturnJumpList(exitStatementIndexes);
+            ReturnJumpList(skipStatementIndexes);
         }
          
         
@@ -1641,8 +1575,8 @@ namespace FadeBasic.Virtual
             
             // keep track of the first index of the success
             var successJumpValue = _buffer.Count;
-            _exitInstructionIndexes.Push(new List<int>());
-            _skipInstructionIndexes.Push(new List<int>());
+            _exitInstructionIndexes.Push(RentJumpList());
+            _skipInstructionIndexes.Push(RentJumpList());
             foreach (var successStatement in doLoopStatement.statements)
             {
                 Compile(successStatement);
@@ -1656,26 +1590,11 @@ namespace FadeBasic.Virtual
 
             var endJumpValue = _buffer.Count;
             _buffer.Add(OpCodes.NOOP);
-            
-            // now go back and fill in the success ptr
-            var successJumpBytes = BitConverter.GetBytes(successJumpValue);
-            var endJumpBytes = BitConverter.GetBytes(endJumpValue);
-            var whileLoopBytes = BitConverter.GetBytes(whileLoopValue);
-            
-            for (var i = 0; i < successJumpBytes.Length; i++)
-            {
-                // offset by 2, because of the opcode, and the type code
-                foreach (var index in exitStatementIndexes)
-                {
-                    _buffer[index + 2 + i] = endJumpBytes[i];
-                }
-                
-                // Update skip instructions to jump back to the beginning of the loop
-                foreach (var index in skipStatementIndexes)
-                {
-                    _buffer[index + 2 + i] = whileLoopBytes[i];
-                }
-            }
+
+            foreach (var index in exitStatementIndexes) PatchInt32(_buffer, index + 2, endJumpValue);
+            foreach (var index in skipStatementIndexes) PatchInt32(_buffer, index + 2, whileLoopValue);
+            ReturnJumpList(exitStatementIndexes);
+            ReturnJumpList(skipStatementIndexes);
         }
         
         
@@ -1684,57 +1603,33 @@ namespace FadeBasic.Virtual
             // first, keep track of the start of the while loop
             var startValue = _buffer.Count;
             
-            _exitInstructionIndexes.Push(new List<int>());
-            _skipInstructionIndexes.Push(new List<int>());
-            
+            _exitInstructionIndexes.Push(RentJumpList());
+            _skipInstructionIndexes.Push(RentJumpList());
+
             foreach (var successStatement in repeatStatement.statements)
             {
                 Compile(successStatement);
             }
             var exitStatementIndexes = _exitInstructionIndexes.Pop();
             var skipStatementIndexes = _skipInstructionIndexes.Pop();
-            
+
             // keep track of where the skip should go
             var skipJumpValue = _buffer.Count;
-            
-            // compile the condition expression
+
             Compile(repeatStatement.condition);
-            // cast the expression to an int
             _buffer.Add(OpCodes.CAST);
             _buffer.Add(TypeCodes.INT);
-            
-            // the semantics of the word, "until", mean we flip the condition value
             _buffer.Add(OpCodes.NOT);
-            
-            // then, insert the starting address
             AddPushInt(_buffer, startValue);
-            
-            // then, maybe jump to the start?
             _buffer.Add(OpCodes.JUMP_GT_ZERO);
-            
-            // if we didn't jump, then we are done!
-           
+
             var endJumpValue = _buffer.Count;
             _buffer.Add(OpCodes.NOOP);
-            
-            // now go back and fill in the jump addresses
-            var endJumpBytes = BitConverter.GetBytes(endJumpValue);
-            var skipValueBytes = BitConverter.GetBytes(skipJumpValue);
-            
-            for (var i = 0; i < endJumpBytes.Length; i++)
-            {
-                // offset by 2, because of the opcode, and the type code
-                foreach (var index in exitStatementIndexes)
-                {
-                    _buffer[index + 2 + i] = endJumpBytes[i];
-                }
-                
-                // Update skip instructions to jump back to the beginning of the loop
-                foreach (var index in skipStatementIndexes)
-                {
-                    _buffer[index + 2 + i] = skipValueBytes[i];
-                }
-            }
+
+            foreach (var index in exitStatementIndexes) PatchInt32(_buffer, index + 2, endJumpValue);
+            foreach (var index in skipStatementIndexes) PatchInt32(_buffer, index + 2, skipJumpValue);
+            ReturnJumpList(exitStatementIndexes);
+            ReturnJumpList(skipStatementIndexes);
         }
         
         
@@ -1779,44 +1674,28 @@ namespace FadeBasic.Virtual
             
             // keep track of the first index of the success
             var successJumpValue = _buffer.Count;
-            _exitInstructionIndexes.Push(new List<int>());
-            _skipInstructionIndexes.Push(new List<int>());
+            _exitInstructionIndexes.Push(RentJumpList());
+            _skipInstructionIndexes.Push(RentJumpList());
             foreach (var successStatement in whileStatement.statements)
             {
                 Compile(successStatement);
             }
             var exitStatementIndexes = _exitInstructionIndexes.Pop();
             var skipStatementIndexes = _skipInstructionIndexes.Pop();
-            
+
             // at the end of the successful statements, we need to jump back to the start
             AddPushInt(_buffer, whileLoopValue);
             _buffer.Add(OpCodes.JUMP);
 
             var endJumpValue = _buffer.Count;
             _buffer.Add(OpCodes.NOOP);
-            
-            // now go back and fill in the success ptr
-            var successJumpBytes = BitConverter.GetBytes(successJumpValue);
-            var endJumpBytes = BitConverter.GetBytes(endJumpValue);
-            var whileLoopBytes = BitConverter.GetBytes(whileLoopValue);
-            
-            for (var i = 0; i < successJumpBytes.Length; i++)
-            {
-                // offset by 2, because of the opcode, and the type code
-                _buffer[successJumpIndex + 2 + i] = successJumpBytes[i];
-                _buffer[exitJumpIndex + 2 + i] = endJumpBytes[i];
-                
-                foreach (var index in exitStatementIndexes)
-                {
-                    _buffer[index + 2 + i] = endJumpBytes[i];
-                }
-                
-                // Update skip instructions to jump back to the beginning of the loop
-                foreach (var index in skipStatementIndexes)
-                {
-                    _buffer[index + 2 + i] = whileLoopBytes[i];
-                }
-            }
+
+            PatchInt32(_buffer, successJumpIndex + 2, successJumpValue);
+            PatchInt32(_buffer, exitJumpIndex + 2, endJumpValue);
+            foreach (var index in exitStatementIndexes) PatchInt32(_buffer, index + 2, endJumpValue);
+            foreach (var index in skipStatementIndexes) PatchInt32(_buffer, index + 2, whileLoopValue);
+            ReturnJumpList(exitStatementIndexes);
+            ReturnJumpList(skipStatementIndexes);
         }
         
         private void Compile(IfStatement ifStatement)
@@ -1887,18 +1766,9 @@ namespace FadeBasic.Virtual
             var endJumpValue = _buffer.Count;
             // _buffer.Add(OpCodes.NOOP);
             
-            // now go back and fill in the success ptr
-            var successJumpBytes = BitConverter.GetBytes(successJumpValue);
-            var elseJumpBytes = BitConverter.GetBytes(elseJumpValue);
-            var endJumpBytes = BitConverter.GetBytes(endJumpValue);
-            for (var i = 0; i < successJumpBytes.Length; i++)
-            {
-                // offset by 2, because of the opcode, and the type code
-                //(successJumpBytes.Length -1) - i
-                _buffer[successJumpIndex + 2 + i] = successJumpBytes[i];
-                _buffer[elseJumpIndex + 2 + i] = elseJumpBytes[i];
-                _buffer[endJumpIndex + 2 + i] = endJumpBytes[i];
-            }
+            PatchInt32(_buffer, successJumpIndex + 2, successJumpValue);
+            PatchInt32(_buffer, elseJumpIndex + 2, elseJumpValue);
+            PatchInt32(_buffer, endJumpIndex + 2, endJumpValue);
         }
         
         private void Compile(LabelDeclarationNode labelStatement)
@@ -1991,11 +1861,7 @@ namespace FadeBasic.Virtual
             // Patch the skip address to point at the byte right after the failure
             // branch. AddPushInt emits 2 prefix bytes (opcode + type) before the
             // 4-byte int payload, so the int value lives at skipAddrIndex+2.
-            var skipAddrBytes = BitConverter.GetBytes(_buffer.Count);
-            for (var i = 0; i < skipAddrBytes.Length; i++)
-            {
-                _buffer[skipAddrIndex + 2 + i] = skipAddrBytes[i];
-            }
+            PatchInt32(_buffer, skipAddrIndex + 2, _buffer.Count);
         }
 
         /// <summary>
@@ -2068,11 +1934,7 @@ namespace FadeBasic.Virtual
         // placeholder (which lays out [opcode, typecode, b0, b1, b2, b3]).
         private void PatchAddress(int placeholderIndex, int value)
         {
-            var bytes = BitConverter.GetBytes(value);
-            for (var i = 0; i < bytes.Length; i++)
-            {
-                _buffer[placeholderIndex + 2 + i] = bytes[i];
-            }
+            PatchInt32(_buffer, placeholderIndex + 2, value);
         }
 
         // Emit CALL_COUNT with an inline 4-byte command id, pushing that
@@ -2080,11 +1942,7 @@ namespace FadeBasic.Virtual
         private void EmitCallCountInline(int commandId)
         {
             _buffer.Add(OpCodes.CALL_COUNT);
-            var bytes = BitConverter.GetBytes(commandId);
-            for (var i = 0; i < bytes.Length; i++)
-            {
-                _buffer.Add(bytes[i]);
-            }
+            AppendInt32(_buffer, commandId);
         }
 
         private void Compile(ReturnStatement _)
@@ -2631,8 +2489,7 @@ namespace FadeBasic.Virtual
             // Push the host method id and dispatch to the real command.
             _buffer.Add(OpCodes.PUSH);
             _buffer.Add(TypeCodes.INT);
-            var idBytes = BitConverter.GetBytes(commandId);
-            for (var i = 0; i < idBytes.Length; i++) _buffer.Add(idBytes[i]);
+            AppendInt32(_buffer, commandId);
             _buffer.Add(OpCodes.CALL_HOST_REAL);
 
             // Refresh ref bindings that this call wrote through, so later
@@ -3014,12 +2871,7 @@ namespace FadeBasic.Virtual
             
             _buffer.Add(OpCodes.PUSH);
             _buffer.Add(TypeCodes.INT);
-            var bytes = BitConverter.GetBytes(commandAddress);
-            for (var i = 0 ; i < bytes.Length; i ++)
-            // for (var i = bytes.Length -1; i >= 0; i--)
-            {
-                _buffer.Add(bytes[i]);
-            }
+            AppendInt32(_buffer, commandAddress);
 
             _buffer.Add(OpCodes.CALL_HOST);
 
@@ -3874,12 +3726,7 @@ namespace FadeBasic.Virtual
                 case LiteralRealExpression literalReal:
                     _buffer.Add(OpCodes.PUSH);
                     _buffer.Add(TypeCodes.REAL);
-                    var realValue = BitConverter.GetBytes(literalReal.value);
-                    // for (var i = realValue.Length - 1; i >= 0; i--)
-                    for (var i = 0 ; i < realValue.Length; i ++)
-                    {
-                        _buffer.Add(realValue[i]);
-                    }
+                    AppendFloat(_buffer, literalReal.value);
                     break;
                 case LiteralIntExpression literalInt:
                     // push the literal value
@@ -4224,12 +4071,7 @@ namespace FadeBasic.Virtual
                     {
                         // ignore the type code for the jump...
                         _buffer.Add(OpCodes.NOOP); 
-                        var successJumpBytes = BitConverter.GetBytes(endJumpValue);
-                        for (var i = 0; i < successJumpBytes.Length; i++)
-                        {
-                            // offset by 2, because of the opcode, and the type code
-                            _buffer[jumpIndex + 2 + i] = successJumpBytes[i];
-                        }
+                        PatchInt32(_buffer, jumpIndex + 2, endJumpValue);
                     }
                     
                     break;
@@ -4293,53 +4135,67 @@ namespace FadeBasic.Virtual
         {
             buffer.Add(OpCodes.PUSH);
             buffer.Add(TypeCodes.INT);
-            var value = BitConverter.GetBytes(x);
-            for (var i = 0; i < value.Length; i++)
-            // for (var i = value.Length - 1; i >= 0; i--)
-            {
-                buffer.Add(value[i]);
-            }
+            AppendInt32(buffer, x);
         }
 
-        
         private static void AddPushZeros(List<byte> buffer, byte typeCode, int howManyBytesOfZero)
         {
             buffer.Add(OpCodes.PUSH_ZEROS);
-            buffer.Add(typeCode);    
-            var value = BitConverter.GetBytes(howManyBytesOfZero);
-            for (var i = 0; i < value.Length; i++)
-            {
-                buffer.Add(value[i]);
-            }
+            buffer.Add(typeCode);
+            AppendInt32(buffer, howManyBytesOfZero);
         }
-        
+
         private static void AddPushULongNoTypeCode(List<byte> buffer, ulong x)
         {
-            var value = BitConverter.GetBytes(x);
-            for (var i = 0 ; i < value.Length; i ++)
-            {
-                buffer.Add(value[i]);
-            }
+            AppendUInt64(buffer, x);
         }
-        
+
         private static void AddPushUInt(List<byte> buffer, uint x, bool includeTypeCode=true)
         {
-            if (includeTypeCode)
-            {
-                buffer.Add(OpCodes.PUSH);
-            }
-            else
-            {
-                buffer.Add(OpCodes.PUSH_TYPELESS);
-            }
+            buffer.Add(includeTypeCode ? OpCodes.PUSH : OpCodes.PUSH_TYPELESS);
             buffer.Add(TypeCodes.INT);
+            AppendInt32(buffer, (int)x);
+        }
 
-            var value = BitConverter.GetBytes(x);
-            // for (var i = value.Length - 1; i >= 0; i--)
-            for (var i = 0 ; i < value.Length; i ++)
-            {
-                buffer.Add(value[i]);
-            }
+        private static void AppendInt32(List<byte> buffer, int value)
+        {
+            buffer.Add((byte)(value));
+            buffer.Add((byte)(value >> 8));
+            buffer.Add((byte)(value >> 16));
+            buffer.Add((byte)(value >> 24));
+        }
+
+        private static void AppendUInt64(List<byte> buffer, ulong value)
+        {
+            buffer.Add((byte)(value));
+            buffer.Add((byte)(value >> 8));
+            buffer.Add((byte)(value >> 16));
+            buffer.Add((byte)(value >> 24));
+            buffer.Add((byte)(value >> 32));
+            buffer.Add((byte)(value >> 40));
+            buffer.Add((byte)(value >> 48));
+            buffer.Add((byte)(value >> 56));
+        }
+
+        [System.Runtime.InteropServices.StructLayout(System.Runtime.InteropServices.LayoutKind.Explicit)]
+        private struct FloatIntUnion
+        {
+            [System.Runtime.InteropServices.FieldOffset(0)] public float Float;
+            [System.Runtime.InteropServices.FieldOffset(0)] public int Int;
+        }
+
+        private static void AppendFloat(List<byte> buffer, float value)
+        {
+            var u = new FloatIntUnion { Float = value };
+            AppendInt32(buffer, u.Int);
+        }
+
+        private static void PatchInt32(List<byte> buffer, int index, int value)
+        {
+            buffer[index]     = (byte)(value);
+            buffer[index + 1] = (byte)(value >> 8);
+            buffer[index + 2] = (byte)(value >> 16);
+            buffer[index + 3] = (byte)(value >> 24);
         }
     }
 }
