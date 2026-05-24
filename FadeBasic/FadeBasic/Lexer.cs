@@ -175,6 +175,8 @@ namespace FadeBasic
         private static readonly Dictionary<string, LexemType> _keywords;
         private static readonly Regex _rxConstant;
 
+        private readonly StringBuilder _strBuffer = new StringBuilder();
+
         static Lexer()
         {
             _sortedLexems = Lexems
@@ -831,8 +833,8 @@ namespace FadeBasic
                         var matchedEnd = false;
                         int strIndex = 0;
                         var charOffset = 0;
-                        var strBuffer = new StringBuilder();
-                        strBuffer.Append('"');
+                        _strBuffer.Clear();
+                        _strBuffer.Append('"');
 
                         for (strIndex = charNumber + 1;
                              strIndex < lineLen;
@@ -843,7 +845,7 @@ namespace FadeBasic
                             {
                                 case '"':
                                     strIndex++;
-                                    strBuffer.Append('"');
+                                    _strBuffer.Append('"');
                                     matchedEnd = true;
                                     break;
                                 case '\\':
@@ -856,11 +858,11 @@ namespace FadeBasic
                                     strIndex++;
                                     charOffset++;
 
-                                    strBuffer.Append(src[lineStart + strIndex]);
+                                    _strBuffer.Append(src[lineStart + strIndex]);
 
                                     break;
                                 default:
-                                    strBuffer.Append(strChar);
+                                    _strBuffer.Append(strChar);
                                     break;
                             }
 
@@ -880,7 +882,7 @@ namespace FadeBasic
                         }
 
                         var insensitiveRaw = src.Substring(lineStart + charNumber, strIndex - charNumber);
-                        var stringLiteralSubStr = strBuffer.ToString();
+                        var stringLiteralSubStr = _strBuffer.ToString();
                         bestToken = new Token
                         {
                             caseInsensitiveRaw = insensitiveRaw.ToLowerInvariant(),
