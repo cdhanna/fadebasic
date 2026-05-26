@@ -44,16 +44,14 @@ namespace FadeBasic.Json
     {
         public static T FromJson<T>(string json) where T : IJsonable, new()
         {
-            var data = JsonData.Parse(json);
-            return FromJson<T>(data);
+            int start = 0;
+            while (start < json.Length && (json[start] == ' ' || json[start] == '\t' || json[start] == '\r' || json[start] == '\n'))
+                start++;
+            var instance = new T();
+            var op = new StreamingJsonReadOp(json, start);
+            op.Process(instance);
+            return instance;
         }
-        
-        // public static T FromJson2<T>(string json) where T : IJsonable, new()
-        // {
-        //     // var data = JsonData.Parse(json);
-        //     var data = Jsonable2.Parse(json);
-        //     return FromJson<T>(data);
-        // }
 
         public static T FromJson<T>(JsonData json) where T : IJsonable, new()
         {
@@ -543,6 +541,23 @@ namespace FadeBasic.Json
             _sb = sb;
         }
 
+        private void AppendEscaped(string value)
+        {
+            // Fast path: scan for first char that needs escaping
+            var segStart = 0;
+            for (var i = 0; i < value.Length; i++)
+            {
+                var c = value[i];
+                if (c == '"' || c == '\\')
+                {
+                    if (i > segStart) _sb.Append(value, segStart, i - segStart);
+                    _sb.Append(c == '"' ? "\\\"" : "\\\\");
+                    segStart = i + 1;
+                }
+            }
+            if (segStart < value.Length) _sb.Append(value, segStart, value.Length - segStart);
+        }
+
         void IncludePrim<T>(string name, ref T prim) where T : struct
         {
             if (fieldCount > 0)
@@ -611,28 +626,7 @@ namespace FadeBasic.Json
             else
             {
                 _sb.Append(JsonConstants.QUOTE);
-                
-                // need to escape the string content...
-                for (var i = 0; i < fieldValue.Length; i++)
-                {
-                    var c = fieldValue[i];
-                    switch (c)
-                    {
-                        case '\"':
-                            _sb.Append("\\\"");
-                            break;
-                        case '\\':
-                            // if (i + 1 < fieldValue.Length)
-                            // {
-                            //     // if (fieldValue)
-                            // }
-                            _sb.Append("\\\\");
-                            break;
-                        default:
-                            _sb.Append(c);
-                            break;
-                    }
-                }
+                AppendEscaped(fieldValue);
                 _sb.Append(JsonConstants.QUOTE);
             }
             
@@ -850,7 +844,7 @@ namespace FadeBasic.Json
                 _sb.Append(kvp.Key);
                 _sb.Append(JsonConstants.QUOTE);
                 _sb.Append(JsonConstants.COLON);
-                
+
                 var subOp = new JsonWriteOp(_sb);
                 var val = kvp.Value;
                 subOp.Process(val);
@@ -859,6 +853,359 @@ namespace FadeBasic.Json
             _sb.Append(JsonConstants.CLOSE_BRACKET);
             fieldCount++;
 
+        }
+    }
+
+    public class StreamingJsonReadOp : IJsonOperation
+    {
+        private readonly string _json;
+        // Flat field index: [nameStart, nameLen, valuePos] per field (stride 3)
+        private int[] _fields;
+        private int _fieldCount;
+        internal int ObjEnd;
+
+        private const int FieldStride = 3;
+        private const int InitialCapacity = 8; // covers most IJsonable types
+
+        public StreamingJsonReadOp(string json, int objStart)
+        {
+            _json = json;
+            _fields = new int[InitialCapacity * FieldStride];
+            BuildIndex(objStart);
+        }
+
+        private void BuildIndex(int i)
+        {
+            i++; // skip '{'
+            SkipWs(ref i);
+            while (i < _json.Length && _json[i] != '}')
+            {
+                // Record field name span without allocating a string
+                i++; // skip opening '"'
+                var nameStart = i;
+                while (i < _json.Length && _json[i] != '"')
+                {
+                    if (_json[i] == '\\') i++; // skip escaped char
+                    i++;
+                }
+                var nameLen = i - nameStart;
+                i++; // skip closing '"'
+                SkipWs(ref i);
+                i++; // skip ':'
+                SkipWs(ref i);
+
+                if (_fieldCount * FieldStride >= _fields.Length)
+                {
+                    var grown = new int[_fields.Length * 2];
+                    Array.Copy(_fields, grown, _fields.Length);
+                    _fields = grown;
+                }
+                var slot = _fieldCount * FieldStride;
+                _fields[slot]     = nameStart;
+                _fields[slot + 1] = nameLen;
+                _fields[slot + 2] = i; // value position
+                _fieldCount++;
+
+                SkipValue(ref i);
+                SkipWs(ref i);
+                if (i < _json.Length && _json[i] == ',') { i++; SkipWs(ref i); }
+            }
+            ObjEnd = i + 1; // past '}'
+        }
+
+        private int FindField(string name)
+        {
+            var len = name.Length;
+            for (var f = 0; f < _fieldCount; f++)
+            {
+                var slot = f * FieldStride;
+                if (_fields[slot + 1] != len) continue;
+                var start = _fields[slot];
+                var match = true;
+                for (var j = 0; j < len; j++)
+                    if (_json[start + j] != name[j]) { match = false; break; }
+                if (match) return _fields[slot + 2];
+            }
+            return -1;
+        }
+
+        public void Process(IJsonable jsonable)
+        {
+            jsonable.ProcessJson(this);
+            if (jsonable is IJsonableSerializationCallbacks cb)
+                cb.OnAfterDeserialized();
+        }
+
+        private void SkipWs(ref int i)
+        {
+            while (i < _json.Length && (_json[i] == ' ' || _json[i] == '\t' || _json[i] == '\r' || _json[i] == '\n'))
+                i++;
+        }
+
+        private void SkipString(ref int i)
+        {
+            i++; // skip '"'
+            while (i < _json.Length)
+            {
+                var c = _json[i++];
+                if (c == '\\') i++;
+                else if (c == '"') return;
+            }
+        }
+
+        private void SkipBraced(ref int i)
+        {
+            var open = _json[i];
+            var close = open == '{' ? '}' : ']';
+            var depth = 1;
+            i++;
+            while (i < _json.Length && depth > 0)
+            {
+                var c = _json[i++];
+                if (c == '"') { i--; SkipString(ref i); }
+                else if (c == open) depth++;
+                else if (c == close) depth--;
+            }
+        }
+
+        private void SkipValue(ref int i)
+        {
+            if (i >= _json.Length) return;
+            var c = _json[i];
+            if (c == '"') SkipString(ref i);
+            else if (c == '{' || c == '[') SkipBraced(ref i);
+            else if (c == 'n') i += 4; // null
+            else if (c == 't') i += 4; // true
+            else if (c == 'f') i += 5; // false
+            else // number
+            {
+                while (i < _json.Length && (_json[i] == '-' || _json[i] == '+' || char.IsDigit(_json[i]) || _json[i] == '.' || _json[i] == 'e' || _json[i] == 'E'))
+                    i++;
+            }
+        }
+
+        private string ReadStringValue(ref int i)
+        {
+            i++; // skip '"'
+            var start = i;
+            var hasEscape = false;
+            while (i < _json.Length)
+            {
+                var c = _json[i++];
+                if (c == '\\') { hasEscape = true; i++; }
+                else if (c == '"') break;
+            }
+            var contentEnd = i - 1;
+            if (!hasEscape)
+                return _json.Substring(start, contentEnd - start);
+            var sb = new StringBuilder(contentEnd - start);
+            for (var j = start; j < contentEnd; j++)
+            {
+                var c = _json[j];
+                if (c == '\\' && j + 1 < contentEnd)
+                {
+                    j++;
+                    switch (_json[j])
+                    {
+                        case '"': sb.Append('"'); break;
+                        case '\\': sb.Append('\\'); break;
+                        default: sb.Append(_json[j]); break;
+                    }
+                }
+                else sb.Append(c);
+            }
+            return sb.ToString();
+        }
+
+        private bool IsNull(int i) => i < _json.Length && _json[i] == 'n';
+
+        private int ParseIntAt(int i)
+        {
+            var end = i;
+            if (end < _json.Length && _json[end] == '-') end++;
+            while (end < _json.Length && char.IsDigit(_json[end])) end++;
+            int.TryParse(_json.Substring(i, end - i), out var value);
+            return value;
+        }
+
+        private double ParseDoubleAt(int i)
+        {
+            var end = i;
+            if (end < _json.Length && (_json[end] == '-' || _json[end] == '+')) end++;
+            while (end < _json.Length && (char.IsDigit(_json[end]) || _json[end] == '.' || _json[end] == 'e' || _json[end] == 'E' || _json[end] == '+' || _json[end] == '-'))
+                end++;
+            double.TryParse(_json.Substring(i, end - i), System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var value);
+            return value;
+        }
+
+        public void IncludeField(string name, ref int fieldValue)
+        {
+            if (FindField(name) is var i && i >= 0 && !IsNull(i))
+                fieldValue = ParseIntAt(i);
+        }
+
+        public void IncludeField(string name, ref byte fieldValue)
+        {
+            if (FindField(name) is var i && i >= 0 && !IsNull(i))
+                fieldValue = (byte)ParseIntAt(i);
+        }
+
+        public void IncludeField(string name, ref bool fieldValue)
+        {
+            if (FindField(name) is var i && i >= 0 && !IsNull(i))
+                fieldValue = ParseIntAt(i) != 0;
+        }
+
+        public void IncludeField(string name, ref string fieldValue)
+        {
+            var i = FindField(name); if (i < 0) return;
+            if (IsNull(i)) { fieldValue = null; return; }
+            fieldValue = ReadStringValue(ref i);
+        }
+
+        public void IncludeField(string name, ref byte[] fieldValue)
+        {
+            var i = FindField(name); if (i < 0) return;
+            if (IsNull(i)) { fieldValue = Array.Empty<byte>(); return; }
+            i++; // skip '['
+            SkipWs(ref i);
+            if (i < _json.Length && _json[i] == ']') { fieldValue = Array.Empty<byte>(); return; }
+            var list = new List<byte>();
+            while (i < _json.Length && _json[i] != ']')
+            {
+                SkipWs(ref i);
+                list.Add((byte)ParseIntAt(i));
+                SkipValue(ref i);
+                SkipWs(ref i);
+                if (i < _json.Length && _json[i] == ',') { i++; SkipWs(ref i); }
+            }
+            fieldValue = list.ToArray();
+        }
+
+        public void IncludeField(string name, ref int[] fieldValue)
+        {
+            var i = FindField(name); if (i < 0) return;
+            if (IsNull(i)) { fieldValue = Array.Empty<int>(); return; }
+            i++; // skip '['
+            SkipWs(ref i);
+            if (i < _json.Length && _json[i] == ']') { fieldValue = Array.Empty<int>(); return; }
+            var list = new List<int>();
+            while (i < _json.Length && _json[i] != ']')
+            {
+                SkipWs(ref i);
+                list.Add(ParseIntAt(i));
+                SkipValue(ref i);
+                SkipWs(ref i);
+                if (i < _json.Length && _json[i] == ',') { i++; SkipWs(ref i); }
+            }
+            fieldValue = list.ToArray();
+        }
+
+        public void IncludeField(string name, ref double fieldValue)
+        {
+            if (FindField(name) is var i && i >= 0 && !IsNull(i))
+                fieldValue = ParseDoubleAt(i);
+        }
+
+        public void IncludeField(string name, ref DebugMessageType fieldValue)
+        {
+            if (FindField(name) is var i && i >= 0 && !IsNull(i))
+                fieldValue = (DebugMessageType)ParseIntAt(i);
+        }
+
+        public void IncludeField(string name, ref Dictionary<string, int> fieldValue)
+        {
+            var i = FindField(name); if (i < 0) return;
+            if (IsNull(i)) return;
+            fieldValue = new Dictionary<string, int>();
+            i++; // skip '{'
+            SkipWs(ref i);
+            while (i < _json.Length && _json[i] != '}')
+            {
+                var key = ReadStringValue(ref i);
+                SkipWs(ref i);
+                i++; // skip ':'
+                SkipWs(ref i);
+                fieldValue[key] = ParseIntAt(i);
+                SkipValue(ref i);
+                SkipWs(ref i);
+                if (i < _json.Length && _json[i] == ',') { i++; SkipWs(ref i); }
+            }
+        }
+
+        public void IncludeField<T>(string name, ref T fieldValue) where T : IJsonable, new()
+        {
+            var i = FindField(name); if (i < 0) return;
+            if (IsNull(i)) return;
+            var subOp = new StreamingJsonReadOp(_json, i);
+            fieldValue = new T();
+            subOp.Process(fieldValue);
+        }
+
+        public void IncludeField<T>(string name, ref List<T> fieldValue) where T : IJsonable, new()
+        {
+            var i = FindField(name); if (i < 0) return;
+            if (IsNull(i)) return;
+            i++; // skip '['
+            SkipWs(ref i);
+            fieldValue = new List<T>();
+            while (i < _json.Length && _json[i] != ']')
+            {
+                var subOp = new StreamingJsonReadOp(_json, i);
+                var item = new T();
+                subOp.Process(item);
+                i = subOp.ObjEnd;
+                fieldValue.Add(item);
+                SkipWs(ref i);
+                if (i < _json.Length && _json[i] == ',') { i++; SkipWs(ref i); }
+            }
+        }
+
+        public void IncludeField<T>(string name, ref Dictionary<int, T> fieldValue) where T : IJsonable, new()
+        {
+            var i = FindField(name); if (i < 0) return;
+            if (IsNull(i)) return;
+            fieldValue = new Dictionary<int, T>();
+            i++; // skip '{'
+            SkipWs(ref i);
+            while (i < _json.Length && _json[i] != '}')
+            {
+                var key = ReadStringValue(ref i);
+                SkipWs(ref i);
+                i++; // skip ':'
+                SkipWs(ref i);
+                int.TryParse(key, out var intKey);
+                var subOp = new StreamingJsonReadOp(_json, i);
+                var item = new T();
+                subOp.Process(item);
+                i = subOp.ObjEnd;
+                fieldValue[intKey] = item;
+                SkipWs(ref i);
+                if (i < _json.Length && _json[i] == ',') { i++; SkipWs(ref i); }
+            }
+        }
+
+        public void IncludeField<T>(string name, ref Dictionary<string, T> fieldValue) where T : IJsonable, new()
+        {
+            var i = FindField(name); if (i < 0) return;
+            if (IsNull(i)) return;
+            fieldValue = new Dictionary<string, T>();
+            i++; // skip '{'
+            SkipWs(ref i);
+            while (i < _json.Length && _json[i] != '}')
+            {
+                var key = ReadStringValue(ref i);
+                SkipWs(ref i);
+                i++; // skip ':'
+                SkipWs(ref i);
+                var subOp = new StreamingJsonReadOp(_json, i);
+                var item = new T();
+                subOp.Process(item);
+                i = subOp.ObjEnd;
+                fieldValue[key] = item;
+                SkipWs(ref i);
+                if (i < _json.Length && _json[i] == ',') { i++; SkipWs(ref i); }
+            }
         }
     }
 }
