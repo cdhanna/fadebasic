@@ -126,7 +126,7 @@ namespace FadeBasic
                 var clone = new List<Token>();
                 foreach (var t in tokens)
                 {
-                    if (t.lexem.type == LexemType.EndStatement) continue;
+                    if (t.type == LexemType.EndStatement) continue;
                     clone.Add(t);
                 }
 

@@ -757,7 +757,9 @@ namespace FadeBasic
                             charNumber = 0,
                             caseInsensitiveRaw = Environment.NewLine,
                             raw = Environment.NewLine,
-                            lexem = remBlockToken.lexem
+                            type = remBlockToken.type,
+                            lexemFlags = remBlockToken.lexemFlags
+                            // lexem = remBlockToken.lexem
                         });
                     }
                 }
@@ -1679,8 +1681,8 @@ namespace FadeBasic
                 }
                 var neighborToken = current.tokens[index];
                 var isNextToCompilerToken = neighborToken.flags.HasFlag(TokenFlags.IsCompileTime);
-                var bothConcatable = neighborToken.lexem.flags.HasFlag(LexemFlags.MacroConcatable) &&
-                                       t.lexem.flags.HasFlag(LexemFlags.MacroConcatable);
+                var bothConcatable = neighborToken.lexemFlags.HasFlag(LexemFlags.MacroConcatable) &&
+                                       t.lexemFlags.HasFlag(LexemFlags.MacroConcatable);
 
                 if (bothConcatable)
                 {
@@ -1994,13 +1996,24 @@ namespace FadeBasic
         public int charNumber;
         public string raw;
         public string caseInsensitiveRaw;
+        public LexemType type = LexemType.EOF;
+        public LexemFlags lexemFlags;
+        public TokenFlags flags = TokenFlags.None;
         
         public int Length => caseInsensitiveRaw?.Length ?? 0;
         public int EndCharNumber => charNumber + Length;
-        public LexemType type => lexem?.type ?? LexemType.EOF;
+  
         public string Location => $"{lineNumber}:{charNumber}";
-        public TokenFlags flags = TokenFlags.None;
-        public Lexem lexem;
+
+
+        public Lexem lexem
+        {
+            set
+            {
+                type = value.type;
+                lexemFlags = value.flags;
+            }
+        }
 
         public static long GetTokenDistance(Token a, Token b)
         {

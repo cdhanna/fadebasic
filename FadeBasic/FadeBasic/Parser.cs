@@ -28,7 +28,7 @@ namespace FadeBasic
         public Token End { get; }
 
         public ParserException(string message, Token start, Token end = null)
-            : base($"Parse Exception: {message} at {start.Location}-{end?.Location}({start.lexem.type})")
+            : base($"Parse Exception: {message} at {start.Location}-{end?.Location}({start.type})")
         {
             Message = message;
             Start = start;
@@ -1113,7 +1113,7 @@ namespace FadeBasic
                         typeReference.Errors.Insert(0, error);
                     }
                     var declStatement = new DeclarationStatement(scopeToken, new VariableRefNode(next), typeReference);
-                    if (_stream.Peek.lexem.type == LexemType.OpEqual)
+                    if (_stream.Peek.type == LexemType.OpEqual)
                     {
                         if (initializer != null)
                         {
@@ -1788,7 +1788,7 @@ namespace FadeBasic
                                 };
 
                                 var maybeEqual = _stream.Peek;
-                                if (maybeEqual.lexem.type == LexemType.OpEqual)
+                                if (maybeEqual.type == LexemType.OpEqual)
                                 {
                                     // ah, there is an assignment happening here too!
                                     _stream.Advance(); // discard the equal sign.
@@ -3130,7 +3130,7 @@ namespace FadeBasic
 
         private MacroTokenizeStatement ParseTokenization(Token token)
         {
-            var isShortcut = token.lexem.type == LexemType.VariableReal;
+            var isShortcut = token.type == LexemType.VariableReal;
             
             var searching = true;
             var errors = new List<ParseError>();
