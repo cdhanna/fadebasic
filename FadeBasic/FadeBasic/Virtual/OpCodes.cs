@@ -127,7 +127,7 @@ namespace FadeBasic.Virtual
         }
         public bool IsString() => typeCode == TypeCodes.STRING;
         public bool IsStruct() => typeCode == TypeCodes.STRUCT;
-        public void ProcessJson(IJsonOperation op)
+        public void ProcessJson<T>(ref T op) where T : IJsonOperation
         {
             op.IncludeField(nameof(typeCode), ref typeCode);
             op.IncludeField(nameof(typeId), ref typeId);

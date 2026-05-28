@@ -84,7 +84,7 @@ namespace FadeBasic.Virtual
             });
         }
 
-        public void ProcessJson(IJsonOperation op)
+        public void ProcessJson<T>(ref T op) where T : IJsonOperation
         {
             // op.IncludeField(nameof(points), ref points);
             op.IncludeField(nameof(insToVariable), ref insToVariable);
@@ -105,7 +105,7 @@ namespace FadeBasic.Virtual
         /// </summary>
         public int isComputed;
         
-        public void ProcessJson(IJsonOperation op)
+        public void ProcessJson<T>(ref T op) where T : IJsonOperation
         {
             op.IncludeField(nameof(insIndex), ref insIndex);
             op.IncludeField(nameof(token), ref token);
@@ -124,7 +124,7 @@ namespace FadeBasic.Virtual
         public DebugToken startToken;
         public DebugToken stopToken;
         
-        public void ProcessJson(IJsonOperation op)
+        public void ProcessJson<T>(ref T op) where T : IJsonOperation
         {
             op.IncludeField(nameof(startToken), ref startToken);
             op.IncludeField(nameof(stopToken), ref stopToken);
@@ -139,7 +139,7 @@ namespace FadeBasic.Virtual
         public List<DebugMap> innerMaps;
         public int depth;
         
-        public void ProcessJson(IJsonOperation op)
+        public void ProcessJson<T>(ref T op) where T : IJsonOperation
         {
             op.IncludeField(nameof(depth), ref depth);
             op.IncludeField(nameof(range), ref range);
@@ -159,7 +159,7 @@ namespace FadeBasic.Virtual
         // public byte registerAddress;
         // public bool isGlobal;
         
-        public void ProcessJson(IJsonOperation op)
+        public void ProcessJson<T>(ref T op) where T : IJsonOperation
         {
             op.IncludeField(nameof(insIndex), ref insIndex);
             op.IncludeField(nameof(name), ref name);

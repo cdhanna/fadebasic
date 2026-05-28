@@ -2046,7 +2046,7 @@ namespace FadeBasic
             return a.lineNumber == b.lineNumber && a.charNumber == b.charNumber;
         }
 
-        public void ProcessJson(IJsonOperation op)
+        public void ProcessJson<T>(ref T op) where T : IJsonOperation
         {
             op.IncludeField(nameof(lineNumber), ref lineNumber);
             op.IncludeField(nameof(charNumber), ref charNumber);

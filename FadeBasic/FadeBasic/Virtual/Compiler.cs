@@ -19,7 +19,7 @@ namespace FadeBasic.Virtual
         private string registerAddressSerializer;
         public bool isGlobal;
         
-        public void ProcessJson(IJsonOperation op)
+        public void ProcessJson<T>(ref T op) where T : IJsonOperation
         {
             op.IncludeField(nameof(byteSize), ref byteSize);
             op.IncludeField(nameof(typeCode), ref typeCode);
@@ -53,7 +53,7 @@ namespace FadeBasic.Virtual
         public bool isGlobal;
         public byte[] rankSizeRegisterAddresses; // an array where the index is the rank, and the value is the ptr to a register whose value holds the size of the rank
         public byte[] rankIndexScalerRegisterAddresses; // an array where the index is the rank, and the value is the ptr to a register whose value holds the multiplier factor for the rank's indexing
-        public void ProcessJson(IJsonOperation op)
+        public void ProcessJson<T>(ref T op) where T : IJsonOperation
         {
             op.IncludeField(nameof(byteSize), ref byteSize);
             op.IncludeField(nameof(typeCode), ref typeCode);
@@ -82,7 +82,7 @@ namespace FadeBasic.Virtual
         public int typeId;
         public int byteSize;
         public Dictionary<string, CompiledTypeMember> fields = new Dictionary<string, CompiledTypeMember>();
-        public void ProcessJson(IJsonOperation op)
+        public void ProcessJson<T>(ref T op) where T : IJsonOperation
         {
             op.IncludeField(nameof(typeName), ref typeName);
             op.IncludeField(nameof(typeId), ref typeId);
@@ -97,7 +97,7 @@ namespace FadeBasic.Virtual
         public byte TypeCode;
         public CompiledType Type;
         
-        public void ProcessJson(IJsonOperation op)
+        public void ProcessJson<T>(ref T op) where T : IJsonOperation
         {
             op.IncludeField(nameof(Offset), ref Offset);
             op.IncludeField(nameof(Length), ref Length);
@@ -135,7 +135,7 @@ namespace FadeBasic.Virtual
         public int sourceChar;
         public string sourceFilePath;
 
-        public void ProcessJson(IJsonOperation op)
+        public void ProcessJson<T>(ref T op) where T : IJsonOperation
         {
             op.IncludeField(nameof(name), ref name);
             op.IncludeField(nameof(entryPointAddress), ref entryPointAddress);
@@ -157,7 +157,7 @@ namespace FadeBasic.Virtual
     {
         public List<TestManifestEntry> entries = new List<TestManifestEntry>();
 
-        public void ProcessJson(IJsonOperation op)
+        public void ProcessJson<T>(ref T op) where T : IJsonOperation
         {
             op.IncludeField(nameof(entries), ref entries);
         }
@@ -281,7 +281,7 @@ namespace FadeBasic.Virtual
         public ulong maxRegisterSize;
         private string maxRegisterSizeSerializer;
         
-        public void ProcessJson(IJsonOperation op)
+        public void ProcessJson<T>(ref T op) where T : IJsonOperation
         {
             op.IncludeField(nameof(scopeIndex), ref scopeIndex);
             op.IncludeField(nameof(maxRegisterSizeSerializer), ref maxRegisterSizeSerializer);
@@ -306,7 +306,7 @@ namespace FadeBasic.Virtual
         // public Dictionary<int, InternedScopeMetadata> scopeMetaDatas = new Dictionary<int, InternedScopeMetadata>();
         public ulong maxRegisterAddress;
         private string maxRegisterAddressSerializer;
-        public void ProcessJson(IJsonOperation op)
+        public void ProcessJson<T>(ref T op) where T : IJsonOperation
         {
             op.IncludeField(nameof(types), ref types);
             op.IncludeField(nameof(functions), ref functions);
@@ -330,7 +330,7 @@ namespace FadeBasic.Virtual
         public string value;
         public int[] indexReferences;
         
-        public void ProcessJson(IJsonOperation op)
+        public void ProcessJson<T>(ref T op) where T : IJsonOperation
         {
             op.IncludeField(nameof(value), ref value);
             op.IncludeField(nameof(indexReferences), ref indexReferences);
@@ -345,7 +345,7 @@ namespace FadeBasic.Virtual
         public int typeCode;
         public int typeId;
         public List<InternedFunctionParameter> parameters = new List<InternedFunctionParameter>();
-        public void ProcessJson(IJsonOperation op)
+        public void ProcessJson<T>(ref T op) where T : IJsonOperation
         {
             op.IncludeField(nameof(name), ref name);
             op.IncludeField(nameof(insIndex), ref insIndex);
@@ -363,7 +363,7 @@ namespace FadeBasic.Virtual
         public int typeCode;
         public int typeId;
         
-        public void ProcessJson(IJsonOperation op)
+        public void ProcessJson<T>(ref T op) where T : IJsonOperation
         {
             op.IncludeField(nameof(name), ref name);
             op.IncludeField(nameof(index), ref index);
@@ -378,7 +378,7 @@ namespace FadeBasic.Virtual
         public int byteSize;
         public int typeId;
         public Dictionary<string, InternedField> fields = new Dictionary<string, InternedField>();
-        public void ProcessJson(IJsonOperation op)
+        public void ProcessJson<T>(ref T op) where T : IJsonOperation
         {
             op.IncludeField(nameof(name), ref name);
             op.IncludeField(nameof(typeId), ref typeId);
@@ -394,7 +394,7 @@ namespace FadeBasic.Virtual
         public string typeName;
         public int typeId;
         
-        public void ProcessJson(IJsonOperation op)
+        public void ProcessJson<T>(ref T op) where T : IJsonOperation
         {
             op.IncludeField(nameof(offset), ref offset);
             op.IncludeField(nameof(length), ref length);

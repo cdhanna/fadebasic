@@ -29,7 +29,7 @@ namespace FadeBasic.Launch
             public string processName;
             public int processId;
             public string processWindowTitle;
-            public void ProcessJson(IJsonOperation op)
+            public void ProcessJson<T>(ref T op) where T : IJsonOperation
             {
                 op.IncludeField(nameof(port), ref port);
                 op.IncludeField(nameof(processId), ref processId);
@@ -2283,7 +2283,7 @@ namespace FadeBasic.Launch
         public DebugMessageType type;
         
         
-        public virtual void ProcessJson(IJsonOperation op)
+        public virtual void ProcessJson<T>(ref T op) where T : IJsonOperation
         {
             op.IncludeField(nameof(id), ref id);
             op.IncludeField(nameof(type), ref type);
@@ -2295,9 +2295,9 @@ namespace FadeBasic.Launch
     public class ExplodedMessage : DebugMessage
     {
         public string message;
-        public override void ProcessJson(IJsonOperation op)
+        public override void ProcessJson<T>(ref T op)
         {
-            base.ProcessJson(op);
+            base.ProcessJson(ref op);
             op.IncludeField(nameof(message), ref message);
         }
     }
@@ -2307,9 +2307,9 @@ namespace FadeBasic.Launch
         public int frameIndex;
         public string expression;
 
-        public override void ProcessJson(IJsonOperation op)
+        public override void ProcessJson<T>(ref T op)
         {
-            base.ProcessJson(op);
+            base.ProcessJson(ref op);
             op.IncludeField(nameof(frameIndex), ref frameIndex);
             op.IncludeField(nameof(expression), ref expression);
         }
@@ -2320,9 +2320,9 @@ namespace FadeBasic.Launch
         public int variableId;
         public int frameId;
         public string rhs;
-        public override void ProcessJson(IJsonOperation op)
+        public override void ProcessJson<T>(ref T op)
         {
-            base.ProcessJson(op);
+            base.ProcessJson(ref op);
             op.IncludeField(nameof(variableId), ref variableId);
             op.IncludeField(nameof(frameId), ref frameId);
             op.IncludeField(nameof(rhs), ref rhs);
@@ -2332,9 +2332,9 @@ namespace FadeBasic.Launch
     public class EvalResponse : DebugMessage
     {
         public DebugEvalResult result;
-        public override void ProcessJson(IJsonOperation op)
+        public override void ProcessJson<T>(ref T op)
         {
-            base.ProcessJson(op);
+            base.ProcessJson(ref op);
             op.IncludeField(nameof(result), ref result);
         }
     }
@@ -2344,9 +2344,9 @@ namespace FadeBasic.Launch
         public string reason;
         public int status;
 
-        public override void ProcessJson(IJsonOperation op)
+        public override void ProcessJson<T>(ref T op)
         {
-            base.ProcessJson(op);
+            base.ProcessJson(ref op);
             op.IncludeField(nameof(reason), ref reason);
             op.IncludeField(nameof(status), ref status);
         }
@@ -2356,9 +2356,9 @@ namespace FadeBasic.Launch
     {
         public List<DebugScope> scopes = new List<DebugScope>();
 
-        public override void ProcessJson(IJsonOperation op)
+        public override void ProcessJson<T>(ref T op)
         {
-            base.ProcessJson(op);
+            base.ProcessJson(ref op);
             op.IncludeField(nameof(scopes), ref scopes);
         }
     }
@@ -2369,7 +2369,7 @@ namespace FadeBasic.Launch
         public string scopeName;
         public string evalName;
         public List<DebugVariable> variables = new List<DebugVariable>();
-        public void ProcessJson(IJsonOperation op)
+        public void ProcessJson<T>(ref T op) where T : IJsonOperation
         {
             op.IncludeField(nameof(id), ref id);
             op.IncludeField(nameof(scopeName), ref scopeName);
@@ -2392,7 +2392,7 @@ namespace FadeBasic.Launch
         // json ignored on purpose. 
         public DebugRuntimeVariable runtimeVariable;
         
-        public void ProcessJson(IJsonOperation op)
+        public void ProcessJson<T>(ref T op) where T : IJsonOperation
         {
             op.IncludeField(nameof(id), ref id);
             op.IncludeField(nameof(name), ref name);
@@ -2408,9 +2408,9 @@ namespace FadeBasic.Launch
     {
         public List<DebugStackFrame> frames;
 
-        public override void ProcessJson(IJsonOperation op)
+        public override void ProcessJson<T>(ref T op)
         {
-            base.ProcessJson(op);
+            base.ProcessJson(ref op);
             op.IncludeField(nameof(frames), ref frames);
         }
     }
@@ -2418,9 +2418,9 @@ namespace FadeBasic.Launch
     public class HelloResponseMessage : DebugMessage
     {
         public int processId;
-        public override void ProcessJson(IJsonOperation op)
+        public override void ProcessJson<T>(ref T op)
         {
-            base.ProcessJson(op);
+            base.ProcessJson(ref op);
             op.IncludeField(nameof(processId), ref processId);
         }
     }

@@ -491,7 +491,7 @@ namespace FadeBasic.Sdk
         public string compileError;
         public int byteCount;
 
-        public void ProcessJson(IJsonOperation op)
+        public void ProcessJson<T>(ref T op) where T : IJsonOperation
         {
             op.IncludeField("ok", ref ok);
             op.IncludeField("error", ref error);
@@ -511,7 +511,7 @@ namespace FadeBasic.Sdk
         public PumpTestStarting testStarting;
         public PumpTestFinal testFinal;
 
-        public void ProcessJson(IJsonOperation op)
+        public void ProcessJson<T>(ref T op) where T : IJsonOperation
         {
             op.IncludeField("complete", ref complete);
             op.IncludeField("suspended", ref suspended);
@@ -528,7 +528,7 @@ namespace FadeBasic.Sdk
     {
         public string name;
 
-        public void ProcessJson(IJsonOperation op)
+        public void ProcessJson<T>(ref T op) where T : IJsonOperation
         {
             op.IncludeField("name", ref name);
         }
@@ -545,7 +545,7 @@ namespace FadeBasic.Sdk
         public int failureInstructionIndex;
         public List<PumpTestFrame> failureFrames = new List<PumpTestFrame>();
 
-        public void ProcessJson(IJsonOperation op)
+        public void ProcessJson<T>(ref T op) where T : IJsonOperation
         {
             op.IncludeField("name", ref name);
             op.IncludeField("passed", ref passed);
@@ -565,7 +565,7 @@ namespace FadeBasic.Sdk
         public int charNumber;
         public int instructionIndex;
 
-        public void ProcessJson(IJsonOperation op)
+        public void ProcessJson<T>(ref T op) where T : IJsonOperation
         {
             op.IncludeField("functionName", ref functionName);
             op.IncludeField("lineNumber", ref lineNumber);
@@ -581,7 +581,7 @@ namespace FadeBasic.Sdk
         public double duration;
         public List<PumpTestResult> results = new List<PumpTestResult>();
 
-        public void ProcessJson(IJsonOperation op)
+        public void ProcessJson<T>(ref T op) where T : IJsonOperation
         {
             op.IncludeField("passed", ref passed);
             op.IncludeField("failed", ref failed);
