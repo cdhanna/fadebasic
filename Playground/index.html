@@ -85,6 +85,76 @@
             border-bottom: 1px solid var(--border-2);
             user-select: none;
         }
+        /* Sharing status pills — sit between the "Ready" label and the
+           right-hand action buttons. Each pill is a button: clicking
+           focuses the Collaboration tab. Hidden when there's nothing to
+           surface. */
+        .sharing-chips {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+        .sharing-chip {
+            appearance: none;
+            border: 1px solid transparent;
+            border-radius: 999px;
+            padding: 2px 9px;
+            font: inherit;
+            font-size: 11px;
+            line-height: 16px;
+            cursor: pointer;
+            user-select: none;
+            background: rgba(255, 255, 255, 0.06);
+            color: var(--fg);
+        }
+        .sharing-chip:hover { filter: brightness(1.18); }
+        .sharing-chip-unsaved     { background: rgba(255, 183, 77, 0.18);  color: #ffb74d; border-color: rgba(255,183,77,0.35); }
+        .sharing-chip-unpublished { background: rgba(184, 138, 255, 0.18); color: #b88aff; border-color: rgba(184,138,255,0.35); }
+        .sharing-chip-remote      { background: rgba(77, 166, 255, 0.18);  color: #4da6ff; border-color: rgba(77,166,255,0.35); }
+        .sharing-chip-conflict    { background: rgba(244, 67, 54, 0.22);   color: #f88;    border-color: rgba(244,67,54,0.4); }
+        /* Persistent git-status icon. Always visible in the header so
+           there's a clear answer to "am I connected?" even when the
+           transient chips above are all empty. Click → open the
+           Collaboration tab. */
+        .sharing-status-icon {
+            position: relative;
+            appearance: none;
+            background: transparent;
+            border: 1px solid transparent;
+            border-radius: 4px;
+            padding: 3px 6px;
+            cursor: pointer;
+            color: var(--fg);
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            line-height: 1;
+        }
+        .sharing-status-icon:hover {
+            background: rgba(255, 255, 255, 0.06);
+            border-color: var(--border-2);
+        }
+        .sharing-status-icon .codicon { font-size: 16px; }
+        .sharing-status-badge {
+            position: absolute;
+            bottom: 2px;
+            right: 2px;
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            /* Border matches header bg so the badge looks "popped out"
+               from the icon instead of butted up against it. */
+            border: 1.5px solid var(--bg-3);
+            box-sizing: content-box;
+        }
+        .sharing-status-badge-connected    { background: #4caf50; }    /* green — repo bound */
+        .sharing-status-badge-disconnected { background: #888;    }    /* grey — signed in, no repo */
+        .sharing-status-badge-signedout    { background: #555;    }    /* darker grey — not signed in yet */
+        .sharing-status-badge-loading      { background: #4da6ff; opacity: 0.7; animation: sharing-pulse 1.2s ease-in-out infinite; }
+        @keyframes sharing-pulse {
+            0%, 100% { opacity: 0.4; }
+            50% { opacity: 0.85; }
+        }
         header h1 { font-size: 0.85rem; font-weight: 500; margin: 0; }
         #status { color: var(--fg-muted); font-size: 0.78rem; }
         .project-name {
@@ -235,6 +305,29 @@
             cursor: pointer;
         }
         .view-saved-layout-row .layout-del-btn:hover { color: var(--fg); background: var(--bg-hover, rgba(255,255,255,0.06)); }
+        /* Save button shares the del-btn placement; same hit area, friendlier
+           glyph. Used by semantic-layout rows to overwrite the slot. */
+        .view-saved-layout-row .layout-save-btn {
+            padding: 4px 10px;
+            background: transparent;
+            border: none;
+            color: var(--fg-muted);
+            font-size: 0.7rem;
+            cursor: pointer;
+        }
+        .view-saved-layout-row .layout-save-btn:hover { color: var(--fg); background: var(--bg-hover, rgba(255,255,255,0.06)); }
+        /* Marker dot on the layout name button denoting a semantic (mode)
+           layout. Inherits accent color so it pops without needing its own
+           variable — matches the active-tab indicator vibe. */
+        .view-saved-layout-row .layout-name-btn .semantic-badge {
+            margin-left: auto;
+            color: var(--accent, #4fc3ff);
+            font-size: 0.55rem;
+            line-height: 1;
+        }
+        .view-saved-layout-row .layout-name-btn .semantic-badge.custom {
+            color: var(--vscode-debugIcon-startForeground, #89d185);
+        }
         /* ─────────────────────────────────────────────────────────────────── */
 
         button {
@@ -2236,7 +2329,15 @@
             <h1>Fade Playground</h1>
             <vscode-button id="open-projects" icon="folder-library" secondary="true" title="Switch / create project (⌘P)"></vscode-button>
             <span id="project-name" class="project-name" title="Active project (fade.json) — click to switch" hidden></span>
-            <span id="status">Loading…</span>
+            <button id="sharing-status-icon"
+                    class="sharing-status-icon"
+                    type="button"
+                    title="GitHub: loading…"
+                    aria-label="Open Collaboration panel">
+                <span class="codicon codicon-source-control"></span>
+                <span id="sharing-status-badge" class="sharing-status-badge sharing-status-badge-loading"></span>
+            </button>
+            <div id="sharing-chips" class="sharing-chips"></div>
             <span class="grow"></span>
             <!-- View menu -->
             <div class="view-menu-wrap" id="view-menu-wrap">
@@ -2244,6 +2345,9 @@
                 <div id="view-menu" class="view-menu" hidden>
                     <div class="view-menu-section">Panels</div>
                     <div id="view-menu-panels"></div>
+                    <div class="view-menu-sep"></div>
+                    <div class="view-menu-section">Modes</div>
+                    <div id="view-semantic-layouts"></div>
                     <div class="view-menu-sep"></div>
                     <div class="view-menu-section">Layouts</div>
                     <button class="view-menu-item" id="view-save-layout">
@@ -2299,6 +2403,18 @@
                 </div>
                 <ul id="file-list"></ul>
             </div>
+        </div>
+
+        <div class="panel-cell" data-panel="collaboration">
+            <div id="collaboration-host" style="flex: 1 1 auto; min-height: 0;"></div>
+        </div>
+
+        <div class="panel-cell" data-panel="logs">
+            <div id="logs-host" style="flex: 1 1 auto; min-height: 0;"></div>
+        </div>
+
+        <div class="panel-cell" data-panel="history">
+            <div id="history-host" style="flex: 1 1 auto; min-height: 0;"></div>
         </div>
 
         <div class="panel-cell" data-panel="editor">

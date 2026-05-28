@@ -80,6 +80,20 @@ import { monoGameHost } from './monogame-host';
 import { mountAiChat, mountAiModels } from './ai-chat';
 import type { CommandDocEntry as HelpCommandDocEntry } from './help';
 import {
+    mountCollaboration,
+    statusGlyph,
+    attachGutter,
+    mountConflictEditor,
+    mountHistoryPanel,
+    createDiffViewer,
+    type DiffViewerParams,
+    type FileStatus,
+    type CollaborationController,
+    type GutterHandle,
+} from './sharing';
+import { mountLogsPanel } from './logs-panel';
+import { getLogger } from './log-bus';
+import {
     FADE_JSON_NAME,
     defaultFadeProject,
     stringifyFadeProject,
@@ -107,7 +121,6 @@ const DEFAULT_SOURCE = [
 ].join('\n');
 
 // ─── DOM refs ───────────────────────────────────────────────────────────────
-const statusEl = document.getElementById('status')!;
 // runBtn is a <vscode-button> custom element; it accepts `disabled` as an
 // attribute just like a native button, but it isn't an HTMLButtonElement.
 const runBtn = document.getElementById('run') as HTMLElement & { disabled: boolean };
@@ -120,6 +133,7 @@ const viewMenuPanels = document.getElementById('view-menu-panels') as HTMLElemen
 const viewSaveLayoutBtn = document.getElementById('view-save-layout') as HTMLButtonElement;
 const viewResetLayoutBtn = document.getElementById('view-reset-layout') as HTMLButtonElement;
 const viewSavedLayouts = document.getElementById('view-saved-layouts') as HTMLElement;
+const viewSemanticLayouts = document.getElementById('view-semantic-layouts') as HTMLElement;
 const newFileBtn = document.getElementById('new-file') as HTMLButtonElement;
 const fileListEl = document.getElementById('file-list')!;
 const tabsEl = document.getElementById('tabs')!;
@@ -336,11 +350,63 @@ interface Tab {
     model: monaco.editor.ITextModel;
     dirty: boolean;
     saveTimer?: number;
+    /** Disposable for the sharing gutter decorator. Cleared when the tab is
+     *  closed; safely no-op if sharing wasn't ready when the tab opened. */
+    gutterHandle?: GutterHandle;
 }
 
 const tabs = new Map<string, Tab>();
 let activeName: string | null = null;
 let editor: monaco.editor.IStandaloneCodeEditor | null = null;
+
+/**
+ * Force every pending 600ms-debounced autosave to land *now*. Used by the
+ * commit flow to guarantee the working tree on disk reflects the editor
+ * before we snapshot it — otherwise an in-flight edit could be silently
+ * excluded from the commit. Takes `workspace` as a parameter to match the
+ * `renderFileList` / `openFile` pattern (workspace lives in bootstrap scope).
+ */
+/** True iff any open Monaco tab has unflushed edits. The sharing
+ *  panel's "Save" button enables on the first keystroke via this
+ *  signal — without it the button stays greyed out for ~600 ms while
+ *  the autosave debounce waits to write through to OPFS. */
+function anyTabDirty(): boolean {
+    for (const tab of tabs.values()) if (tab.dirty) return true;
+    return false;
+}
+
+async function flushPendingSaves(workspace: OpfsWorkspace): Promise<void> {
+    const promises: Promise<void>[] = [];
+    const flushedNames: string[] = [];
+    for (const tab of tabs.values()) {
+        if (!tab.dirty) continue;
+        if (tab.saveTimer != null) {
+            clearTimeout(tab.saveTimer);
+            tab.saveTimer = undefined;
+        }
+        const name = tab.name;
+        const value = tab.model.getValue();
+        flushedNames.push(name);
+        promises.push(
+            workspace.write(name, value).then(() => { tab.dirty = false; }),
+        );
+    }
+    if (promises.length) {
+        await Promise.all(promises);
+        // Mirror the debounced-autosave path: invalidate the sharing panel's
+        // hash cache for every file we just wrote. Without this the panel
+        // keeps the pre-edit blob sha and a Save right after typing reports
+        // the file as still "modified" against the just-captured snapshot.
+        for (const name of flushedNames) {
+            sharingController?.invalidateHashFor(name);
+        }
+        // All flushed tabs are now clean — drop the dirty-tabs signal so
+        // the Save button's enabled state lines up with what's actually
+        // on disk again.
+        if (!anyTabDirty()) sharingController?.setHasDirtyTabs(false);
+        renderTabs();
+    }
+}
 
 function languageFor(name: string): string {
     if (name.endsWith('.fbasic') || name.endsWith('.fb')) return 'fade';
@@ -371,15 +437,41 @@ async function openFile(workspace: OpfsWorkspace, name: string) {
         // Hook this model for LSP push + decoration (if available)
         (window as any).__fadeHookModel?.(model);
         tab = { name, model, dirty: false };
+        // Source-control gutter: paint per-line markers showing what changed
+        // vs. the last synced commit. Lives on the model (not the editor) so
+        // tab-switches don't lose the decorations. Disposes itself when the
+        // model is gone or via tab cleanup; safe to skip if sharing isn't set
+        // up yet (gets attached lazily on next open of the same file).
+        if (sharingController) {
+            const handle = attachGutter({
+                model,
+                getSavedText: () => sharingController!.getSavedText(name),
+                getPublishedText: () => sharingController!.getPublishedText(name),
+                onShouldRefresh: (cb) => sharingController!.onStatusChange(() => cb()),
+            });
+            tab.gutterHandle = handle;
+        }
         // Debounced auto-save: 600ms idle → write to OPFS
         model.onDidChangeContent(() => {
             tab!.dirty = true;
+            // Surface the unflushed-edit state to the sharing panel
+            // immediately so its Save button enables on the very first
+            // keystroke (rather than after the 600 ms autosave debounce
+            // + a refreshStatus round-trip).
+            sharingController?.setHasDirtyTabs(true);
             clearTimeout(tab!.saveTimer);
             tab!.saveTimer = window.setTimeout(async () => {
                 try {
                     await workspace.write(tab!.name, tab!.model.getValue());
                     tab!.dirty = false;
+                    if (!anyTabDirty()) sharingController?.setHasDirtyTabs(false);
                     renderTabs();
+                    // Lightweight per-file refresh — invalidates just this
+                    // path's cached hash. The other ~N-1 files in the
+                    // workspace stay cached, which is the difference
+                    // between hashing every file every 600 ms and hashing
+                    // only the file the user just typed in.
+                    void sharingController?.refreshStatusForFile(tab!.name);
                 } catch (e) {
                     console.error('[fade] save failed for', tab!.name, e);
                 }
@@ -526,6 +618,18 @@ interface ProjectOps {
 }
 let projectOps: ProjectOps | null = null;
 
+// Source-control wiring: the panel mounts at bootstrap (after dockview is up)
+// and publishes a status map (path → A/M/D) via onStatusChange. We mirror it
+// here so renderFileList can render badges without coupling back into the
+// panel module. Same idea for pendingPullPaths — paths whose remote-head
+// version differs from our last synced state, surfaced as a ↓ badge.
+let sharingController: CollaborationController | null = null;
+let sharingStatus: Map<string, FileStatus> = new Map();
+let sharingPendingPull: Set<string> = new Set();
+/** Files currently in conflict (text-with-markers or binary-conflict-copy
+ *  exists). Drives the red 'C' badge in the workspace file list. */
+let sharingConflicts: { text: Set<string>; binary: Set<string> } = { text: new Set(), binary: new Set() };
+
 async function renderFileList(workspace: OpfsWorkspace) {
     const names = await workspace.list();
     fileListEl.innerHTML = '';
@@ -569,6 +673,69 @@ async function renderFileList(workspace: OpfsWorkspace) {
                 badge.title = 'Not listed in fade.json:sources';
             }
             li.append(badge);
+        }
+        // Source-control status badge (A/M/D) when the workspace is bound to
+        // a repo. Empty / unchanged files get no badge to keep the file list
+        // visually quiet.
+        const scStatus = sharingStatus.get(name);
+        if (scStatus && scStatus !== 'unchanged') {
+            const scBadge = document.createElement('span');
+            scBadge.className = `sharing-status sharing-${scStatus}`;
+            scBadge.textContent = statusGlyph(scStatus);
+            scBadge.title = scStatus.charAt(0).toUpperCase() + scStatus.slice(1);
+            li.append(scBadge);
+        }
+        // "Remote has changes for this file" badge — surfaced when the
+        // poll loop has detected the upstream branch moved and the new
+        // tree differs from our last synced base for this path.
+        if (sharingPendingPull.has(name)) {
+            const pull = document.createElement('span');
+            pull.className = 'sharing-status sharing-pending-pull';
+            pull.textContent = '↓';
+            pull.title = 'Remote has changes for this file. Click Pull in the Source Control panel to fetch.';
+            li.append(pull);
+        }
+        // Conflict badge — distinct red 'C' for files mid-merge. Covers
+        // both text (markers in the file) and binary (a sibling
+        // `<name>.fade-conflict.<sha>` exists). Clicking the badge opens
+        // the merge editor for text conflicts; binary points at the
+        // Source Control panel's binary section.
+        const isTextConflict = sharingConflicts.text.has(name);
+        // For binary: the set holds the full conflict-copy filename. A
+        // base file has a binary conflict if ANY entry in the set starts
+        // with `<name>.fade-conflict.`. Bounded by the set size (typically
+        // 0–1 entries).
+        const conflictCopyPrefix = `${name}.fade-conflict.`;
+        let isBinaryConflict = false;
+        for (const cf of sharingConflicts.binary) {
+            if (cf.startsWith(conflictCopyPrefix)) { isBinaryConflict = true; break; }
+        }
+        if (isTextConflict || isBinaryConflict) {
+            const conf = document.createElement('span');
+            conf.className = 'sharing-status sharing-conflict';
+            conf.textContent = 'C';
+            conf.title = isTextConflict
+                ? 'Merge conflict in progress. Click to open the merge editor.'
+                : 'Binary conflict — a remote-version sibling file exists. Resolve via Source Control.';
+            if (isTextConflict) {
+                conf.style.cursor = 'pointer';
+                conf.addEventListener('click', (e) => {
+                    e.stopPropagation();
+                    sharingController?.openConflictEditor(name);
+                });
+            }
+            li.append(conf);
+        }
+        // Conflict-copy file itself (.fade-conflict.<sha> sibling) — show
+        // a special "(remote copy)" label so it's visually distinct from
+        // normal files in the list.
+        if (/\.fade-conflict\.[a-f0-9]+$/i.test(name)) {
+            li.classList.add('fade-conflict-sibling');
+            const tag = document.createElement('span');
+            tag.className = 'sharing-status sharing-conflict-sibling';
+            tag.textContent = 'remote';
+            tag.title = 'This is the REMOTE side of a binary conflict. The base file (without the .fade-conflict suffix) is your local version. Resolve via the Source Control panel.';
+            li.append(tag);
         }
         if (name === activeName) li.classList.add('active');
         li.onclick = () => {
@@ -1593,7 +1760,6 @@ interface CompletionItem {
 async function bootstrap() {
     const pgSplash = (window as any).__pgSplash as
         { setStatus(t: string, e?: boolean): void; hide(): void } | undefined;
-    statusEl.textContent = 'Initializing services…';
     pgSplash?.setStatus('Initializing editor…');
     await initServices({
         ...getModelServiceOverride(),
@@ -1652,7 +1818,6 @@ async function bootstrap() {
     });
     monaco.editor.setTheme('fade-dark');
 
-    statusEl.textContent = 'Booting Fade runtime worker…';
     pgSplash?.setStatus('Loading language server…');
 
     // Heartbeat indicator — displayed in the Diagnostics panel.
@@ -2519,6 +2684,9 @@ async function bootstrap() {
         // re-render so the source-order indicators update immediately.
         currentProjectRef = currentProject;
         renderFileList(workspace).catch(() => { /* ignore */ });
+        // Source-control panel needs to re-bind to the new project's sync
+        // index (different repo, different baseTree, different status).
+        sharingController?.setActiveProject(workspace.currentProject());
         // Title bar reflects the resolved project name.
         if (currentProject?.name) {
             const hasErrors = currentProjectErrors.some((e) => e.severity === 'error');
@@ -2625,11 +2793,14 @@ async function bootstrap() {
                 const newTab: Tab = { name: newName, model: newModel, dirty: false };
                 newTab.model.onDidChangeContent(() => {
                     newTab.dirty = true;
+                    sharingController?.setHasDirtyTabs(true);
                     clearTimeout(newTab.saveTimer);
                     newTab.saveTimer = window.setTimeout(async () => {
                         try {
                             await workspace.write(newTab.name, newTab.model.getValue());
                             newTab.dirty = false;
+                            if (!anyTabDirty()) sharingController?.setHasDirtyTabs(false);
+                            sharingController?.invalidateHashFor(newTab.name);
                             renderTabs();
                         } catch (e) {
                             console.error('[fade] save failed for', newTab.name, e);
@@ -3057,6 +3228,12 @@ async function bootstrap() {
         if (!source) return;
         const idx = testEntries.findIndex((t) => t.name === name);
         if (idx < 0) return;
+        // Test Mode semantic layout — focus Tests + Game. Skipped when a
+        // debug session is active (debugSingleTest already applied Debug
+        // Mode and we don't want to fight it).
+        if (!debugSessionActive) {
+            try { applySemanticLayout('test'); } catch (e) { console.warn('[fade] applySemanticLayout(test) failed', e); }
+        }
         testEntries[idx].status = 'running';
         testEntries[idx].failure = null;
         testEntries[idx].failureFrames = undefined;
@@ -3107,6 +3284,11 @@ async function bootstrap() {
     async function runAllTests() {
         const source = await getProjectSource();
         if (!source) return;
+        // Test Mode semantic layout — focus Tests + Game. Skipped when a
+        // debug session is active (Debug Mode takes precedence).
+        if (!debugSessionActive) {
+            try { applySemanticLayout('test'); } catch (e) { console.warn('[fade] applySemanticLayout(test) failed', e); }
+        }
         // Mark every runnable test as queued (grey pulse). As the
         // cooperative pump advances, each test flips to 'running'
         // (yellow pulse) via test-progress's neighbor signal, then
@@ -3299,7 +3481,6 @@ async function bootstrap() {
         renderTests();
     };
 
-    statusEl.textContent = 'Loading workspace…';
     pgSplash?.setStatus('Loading workspace…');
     const workspace = new OpfsWorkspace();
     await workspace.init();
@@ -3317,7 +3498,21 @@ async function bootstrap() {
     // Help moved into that group's tab strip. Old v3 layouts persisted
     // 240+ px for the bottom group; v4 starts users on the new 180 px
     // default so the Help tab doesn't feel oversized.
-    const LAYOUT_STORAGE_KEY = 'fade.dockview.layout.v4';
+    // v5 added: source-control, logs, history. Users on v4 don't have
+    // these panels in their saved layout; bumping the key forces a clean
+    // rebuild so the new tabs appear. healLayout also lists them as
+    // missing-defaults, but bumping is the simpler guarantee.
+    // v6 renamed 'source-control' panel id → 'collaboration'. Stored
+    // v5 layouts still reference the old id; bump again so they get a
+    // default rebuild instead of dockview discarding the renamed panel.
+    // v7 dropped Collaboration / Logs / History from the default tab strip
+    // (they now open into the editor tab group on demand), folded Debug
+    // into the Workspace tab group, and changed which tabs are focused on
+    // startup. Bump forces a clean rebuild for users on v6.
+    // v8 moved Tests from the bottom tab group into the Workspace tab
+    // group (so the left column tabs are Workspace / Debug / Tests).
+    // Bump again so existing v7 users get the rebuild.
+    const LAYOUT_STORAGE_KEY = 'fade.dockview.layout.v8';
 
     function setupDockview(): DockviewApi {
         const dockRoot = document.getElementById('dock-root')!;
@@ -3352,6 +3547,82 @@ async function bootstrap() {
                     return createBinaryPreview('', {
                         readBytes: (n) => workspace.readBytes(n),
                     });
+                }
+                if (name === 'diff-viewer') {
+                    // Read-only Monaco diff editor. Params arrive via
+                    // init({ params }) — caller is responsible for
+                    // fetching the before/after strings before opening
+                    // (see openDiffViewer below) since dockview's
+                    // createComponent only gets {id, name} synchronously.
+                    return createDiffViewer();
+                }
+                if (name === 'conflict-editor') {
+                    // id encodes the path: `conflict-editor:<path>`.
+                    const path = id.startsWith('conflict-editor:')
+                        ? id.slice('conflict-editor:'.length)
+                        : '';
+                    const element = document.createElement('div');
+                    element.style.height = '100%';
+                    element.style.width = '100%';
+                    let handle: { dispose(): void } | null = null;
+                    return {
+                        element,
+                        init() {
+                            if (!path) {
+                                element.textContent = 'conflict-editor missing path in panel id';
+                                return;
+                            }
+                            // Read the file fresh from OPFS so the conflict
+                            // editor has the on-disk content as its starting
+                            // point. The conflict editor creates its own
+                            // throwaway Monaco model — autosave only fires
+                            // for the regular tab's model, which we never
+                            // touch from here.
+                            (async () => {
+                                let initialContent = '';
+                                try {
+                                    initialContent = await workspace.read(path);
+                                } catch (e) {
+                                    element.textContent = `conflict-editor: cannot read ${path}: ${(e as Error).message}`;
+                                    return;
+                                }
+                                handle = mountConflictEditor({
+                                    container: element,
+                                    path,
+                                    initialContent,
+                                    languageId: languageFor(path),
+                                    onSave: async (resolvedPath, content) => {
+                                        try {
+                                            await workspace.write(resolvedPath, content);
+                                            // Update the regular tab's model
+                                            // (if open) so it reflects the
+                                            // resolved content immediately.
+                                            const uri = monaco.Uri.file(`/workspace/${resolvedPath}`);
+                                            const existingModel = monaco.editor.getModel(uri);
+                                            if (existingModel && existingModel.getValue() !== content) {
+                                                existingModel.setValue(content);
+                                            }
+                                            // Reflect change in the visible tab list.
+                                            const tab = tabs.get(resolvedPath);
+                                            if (tab) tab.dirty = false;
+                                            renderTabs();
+                                        } catch (e) {
+                                            console.error('[fade] conflict-editor save failed', e);
+                                        }
+                                        try { dock.getPanel(`conflict-editor:${resolvedPath}`)?.api.close(); } catch { /* ignore */ }
+                                        await sharingController?.refreshStatus();
+                                    },
+                                    onClose: () => {
+                                        try { dock.getPanel(`conflict-editor:${path}`)?.api.close(); } catch { /* ignore */ }
+                                    },
+                                });
+                            })();
+                        },
+                        dispose() {
+                            handle?.dispose();
+                            handle = null;
+                        },
+                    };
                 }
                 const cell = panelCells.querySelector<HTMLElement>(
                     `.panel-cell[data-panel="${name}"]`,
@@ -3426,6 +3697,12 @@ async function bootstrap() {
         'binary-preview',
         'ai-chat',
         'ai-models',
+        'collaboration',
+        'logs',
+        'history',
+        // Dynamic — one per conflict file; created when the collaboration
+        // panel's "Resolve in editor →" button opens a file.
+        'conflict-editor',
     ]);
 
     function healLayout(dock: DockviewApi) {
@@ -3484,7 +3761,7 @@ async function bootstrap() {
                 renderer: RENDER_ALWAYS, title: 'Workspace',
             });
             addMissing('debug', {
-                position: { referencePanel: dock.getPanel('workspace')?.id ?? 'editor', direction: 'below' },
+                position: { referencePanel: dock.getPanel('workspace')?.id ?? 'editor', direction: 'within' },
                 renderer: RENDER_ALWAYS, title: 'Debug',
             });
             addMissing('output', {
@@ -3497,7 +3774,7 @@ async function bootstrap() {
                 renderer: RENDER_ALWAYS, title: 'Problems',
             });
             addMissing('tests', {
-                position: { referencePanel: bottomRef, direction: 'within' },
+                position: { referencePanel: dock.getPanel('workspace')?.id ?? 'workspace', direction: 'within' },
                 renderer: RENDER_ALWAYS, title: 'Tests',
             });
             addMissing('debug-console', {
@@ -3517,6 +3794,12 @@ async function bootstrap() {
                 position: { referencePanel: helpRef, direction: 'within' },
                 renderer: RENDER_ALWAYS, title: 'Help',
             });
+            // Collaboration / Logs / History are no longer part of the
+            // default tab strip — they open into the editor tab group on
+            // demand via openPanelById. If a restored layout already
+            // contained them (e.g. the user opened them previously and
+            // dockview persisted the position), we leave them where they
+            // are. If absent, we deliberately do NOT re-add them here.
         } catch (e) {
             console.warn('[fade] healLayout failed — falling back to default', e);
             try { dock.clear(); } catch { /* dockview clear may not exist */ }
@@ -3560,20 +3843,31 @@ async function bootstrap() {
             initialWidth: 260,
             renderer: RENDER_ALWAYS,
         });
-        // Single consolidated Debug panel (Variables / Watch / Call Stack /
-        // Breakpoints sections inside).
+        // Workspace tab group: Workspace / Debug / Tests. Single left
+        // column with the file tree, the debugger, and the test list as
+        // tabs. Users flip between them with one click instead of losing
+        // vertical real estate to stacked sub-panes.
         dock.addPanel({
             id: 'debug',
             component: 'debug',
             title: 'Debug',
-            position: { referencePanel: workspacePanel.id, direction: 'below' },
+            position: { referencePanel: workspacePanel.id, direction: 'within' },
             renderer: RENDER_ALWAYS,
         });
-        // Bottom tab group: Output / Problems / Tests / Debug Console / Help.
+        dock.addPanel({
+            id: 'tests',
+            component: 'tests',
+            title: 'Tests',
+            position: { referencePanel: workspacePanel.id, direction: 'within' },
+            renderer: RENDER_ALWAYS,
+        });
+        // Bottom tab group: Output / Problems / Debug Console.
         // Default height kept modest — the editor + game canvas should
         // dominate the viewport, with the bottom panel showing a few lines
         // of output by default. Users can drag the splitter taller when
-        // they want to dig into Tests / Help / etc.
+        // they want to dig in. Note: Collaboration / Logs / History are
+        // NOT added here — they open into the editor tab group on demand
+        // via openPanelById.
         const outputPanel = dock.addPanel({
             id: 'output',
             component: 'output',
@@ -3586,13 +3880,6 @@ async function bootstrap() {
             id: 'problems',
             component: 'problems',
             title: 'Problems',
-            position: { referencePanel: outputPanel.id, direction: 'within' },
-            renderer: RENDER_ALWAYS,
-        });
-        dock.addPanel({
-            id: 'tests',
-            component: 'tests',
-            title: 'Tests',
             position: { referencePanel: outputPanel.id, direction: 'within' },
             renderer: RENDER_ALWAYS,
         });
@@ -3626,8 +3913,13 @@ async function bootstrap() {
             position: { referencePanel: gamePanel.id, direction: 'within' },
             renderer: RENDER_ALWAYS,
         });
-        const out = dock.getPanel('output');
-        if (out) out.api.setActive();
+        // Default-focused tabs in each group: Workspace, Editor, Help, Problems.
+        // setActive() on a panel activates it within its own group, so calling
+        // it on one panel per group gives the user the intended startup view.
+        try { dock.getPanel('workspace')?.api?.setActive(); } catch { /* ignore */ }
+        try { dock.getPanel('editor')?.api?.setActive(); } catch { /* ignore */ }
+        try { dock.getPanel('help')?.api?.setActive(); } catch { /* ignore */ }
+        try { dock.getPanel('problems')?.api?.setActive(); } catch { /* ignore */ }
 
         // `initialWidth/Height` on AddPanelOptions is honored as a hint but
         // dockview's grid balances new groups proportionally against
@@ -3651,11 +3943,254 @@ async function bootstrap() {
     // Build the dockable layout BEFORE monaco mounts so #editor is visible
     // in the DOM by the time create() runs (Monaco's automaticLayout
     // measures the container at construction).
-    statusEl.textContent = 'Mounting layout…';
     pgSplash?.setStatus('Mounting layout…');
     const dockApi = setupDockview();
     // Expose for tests + future "Reset layout" command.
     (window as any).__fadeDockview = dockApi;
+
+    // Logs panel: subscribes to the app-wide LogBus and renders a filterable
+    // terminal-style log feed. Mounted once at boot; survives panel
+    // tab-switches because the dockview component renderer is 'always'.
+    const logsHost = document.getElementById('logs-host');
+    if (logsHost) {
+        mountLogsPanel({ container: logsHost });
+        // Surface a couple of app-lifecycle events to the bus so the panel
+        // isn't empty on first open. Future: pipe LSP / monogame events too.
+        const bootLog = getLogger('app');
+        bootLog.info('Playground booted');
+    }
+
+    // Source Control panel: mounts into the offscreen #collaboration-host
+    // that dockview moves into the workspace tab group. Bound to the active
+    // project; flushPendingSaves is bound here so the panel doesn't need a
+    // direct reference to the editor's tabs map.
+    const scHost = document.getElementById('collaboration-host');
+    if (scHost) {
+        sharingController = mountCollaboration({
+            container: scHost,
+            workspace,
+            getActiveProject: () => workspace.currentProject(),
+            flushPendingSaves: () => flushPendingSaves(workspace),
+            onAfterPull: async (changedPaths) => {
+                // Reflect pulled bytes in any open Monaco editor whose file
+                // is among the changed set. Text files only; binary tabs
+                // don't have a model.
+                for (const path of changedPaths) {
+                    const tab = tabs.get(path);
+                    if (!tab) continue;
+                    try {
+                        const fresh = await workspace.read(path);
+                        if (tab.model.getValue() !== fresh) tab.model.setValue(fresh);
+                    } catch { /* binary or deleted — skip */ }
+                }
+                await renderFileList(workspace);
+            },
+            // Open the dedicated conflict-resolution editor in its own
+            // dockview tab. The editor reads the file from OPFS into a
+            // throwaway Monaco model — independent of any regular tab — so
+            // edits stay in-memory until the user clicks Save & close.
+            onOpenConflict: async (path) => {
+                const panelId = `conflict-editor:${path}`;
+                const existing = dockApi.getPanel(panelId);
+                if (existing) { existing.api.setActive(); return; }
+                dockApi.addPanel({
+                    id: panelId,
+                    component: 'conflict-editor',
+                    title: `⚠ ${path}`,
+                    position: { referencePanel: 'editor', direction: 'within' },
+                    renderer: 'always',
+                });
+            },
+            // Open a read-only Monaco diff for "Show diff" buttons in the
+            // Collaboration + History panels. Controller resolves
+            // before/after content; host just owns the dockview tab.
+            onOpenDiff: (args) => {
+                openDiffViewer({
+                    id: args.id,
+                    params: {
+                        title: args.title,
+                        path: args.path,
+                        languageId: args.languageId,
+                        beforeText: args.beforeText,
+                        afterText: args.afterText,
+                        beforeLabel: args.beforeLabel,
+                        afterLabel: args.afterLabel,
+                    },
+                });
+            },
+        });
+        sharingController.onStatusChange((map) => {
+            sharingStatus = map;
+            void renderFileList(workspace);
+            renderSharingChips();
+            renderSharingStatusIcon();
+        });
+        sharingController.onPendingPullChange((paths) => {
+            sharingPendingPull = paths;
+            void renderFileList(workspace);
+            renderSharingChips();
+            renderSharingStatusIcon();
+        });
+        sharingController.onConflictChange((state) => {
+            sharingConflicts = state;
+            void renderFileList(workspace);
+            renderSharingChips();
+            renderSharingStatusIcon();
+        });
+        sharingController.onSavesChange(() => {
+            renderSharingChips();
+            renderSharingStatusIcon();
+        });
+        // Header chips — paint once at mount, then re-render every time a
+        // sharing signal changes. Each chip is a button that focuses the
+        // Collaboration tab so the user can drill in.
+        renderSharingChips();
+        // Persistent status icon — wire the one-time click handler now,
+        // then keep its badge state in sync via the listeners above.
+        wireSharingStatusIcon();
+        renderSharingStatusIcon();
+
+        // History panel binds to the same controller. Mounting here (after
+        // sharing is up) guarantees the controller is non-null when the
+        // panel subscribes for history updates.
+        const historyHost = document.getElementById('history-host');
+        if (historyHost) {
+            mountHistoryPanel({
+                container: historyHost,
+                controller: sharingController,
+            });
+        }
+    }
+
+    /** Open (or re-focus) a read-only Monaco diff editor in its own
+     *  dockview tab. `id` identifies the panel uniquely — clicking
+     *  "Show diff" twice for the same context just re-activates the
+     *  existing tab. Caller is responsible for fetching before/after
+     *  text up front; this helper doesn't know about the controller. */
+    function openDiffViewer(args: {
+        id: string;
+        params: DiffViewerParams;
+    }) {
+        try {
+            const existing = dockApi.getPanel(args.id);
+            if (existing) {
+                existing.api.updateParameters(args.params);
+                existing.api.setActive();
+                return;
+            }
+            dockApi.addPanel({
+                id: args.id,
+                component: 'diff-viewer',
+                title: args.params.title,
+                position: { referencePanel: 'editor', direction: 'within' },
+                renderer: 'always',
+                params: args.params as unknown as Record<string, any>,
+            });
+        } catch (e) {
+            console.warn('[fade] openDiffViewer failed', e);
+        }
+    }
+
+    /** Paint the four sharing-status pills into the app header. Counts
+     *  come straight off the controller's getters so we don't have to
+     *  cache state at module scope. Clicking any pill focuses the
+     *  Collaboration tab — the panel itself has the detailed view. */
+    function renderSharingChips() {
+        const host = document.getElementById('sharing-chips');
+        if (!host || !sharingController) return;
+        host.replaceChildren();
+        // Chips only make sense in the context of a remote — they're
+        // about save/publish/pull state vs. that remote. When the user
+        // is disconnected (or the project never had a remote), there's
+        // nothing to surface. Local saves persist across disconnect but
+        // showing "↑ N unpublished" without a target is more confusing
+        // than helpful.
+        if (!sharingController.getRepoInfo()) return;
+        const statusMap = sharingController.getStatusMap();
+        let unsaved = 0;
+        for (const status of statusMap.values()) if (status !== 'unchanged') unsaved++;
+        const savesCount = sharingController.getPendingSaves().length;
+        const pullCount = sharingController.getPendingPullPaths().size;
+        const conflicts = sharingController.getConflictPaths();
+        const conflictCount = conflicts.text.size + conflicts.binary.size;
+        const addChip = (label: string, variant: string, title: string) => {
+            const b = document.createElement('button');
+            b.type = 'button';
+            b.className = `sharing-chip sharing-chip-${variant}`;
+            b.textContent = label;
+            b.title = title;
+            b.addEventListener('click', focusCollaborationPanel);
+            host.append(b);
+        };
+        if (unsaved > 0)        addChip(`● ${unsaved} unsaved`,              'unsaved',     'Working-tree changes not yet snapshotted. Click to open Collaboration.');
+        if (savesCount > 0)     addChip(`↑ ${savesCount} unpublished`,        'unpublished', 'Local saves not yet pushed to the remote. Click to open Collaboration.');
+        if (pullCount > 0)      addChip(`↓ ${pullCount} remote`,              'remote',      'Remote branch has changes you haven\'t pulled. Click to open Collaboration.');
+        if (conflictCount > 0)  addChip(`⚠ ${conflictCount} conflict${conflictCount === 1 ? '' : 's'}`, 'conflict', 'Unresolved merge conflicts. Click to open Collaboration.');
+    }
+
+    /** Shared "open the Collaboration panel" action used by both the
+     *  header chips and the persistent status icon. Re-adds the panel
+     *  to the dockview if the user previously closed it, so the click
+     *  is reliable regardless of layout history. */
+    function focusCollaborationPanel() {
+        try {
+            let panel = dockApi.getPanel('collaboration');
+            if (!panel) {
+                const workspaceRef = dockApi.getPanel('workspace')?.id
+                    ?? dockApi.getPanel('editor')?.id;
+                dockApi.addPanel({
+                    id: 'collaboration',
+                    component: 'collaboration',
+                    title: 'Collaboration',
+                    renderer: 'always',
+                    position: workspaceRef ? { referencePanel: workspaceRef, direction: 'within' } : undefined,
+                });
+                panel = dockApi.getPanel('collaboration');
+            }
+            panel?.api.setActive();
+        } catch (e) {
+            console.warn('[fade] failed to focus Collaboration panel', e);
+        }
+    }
+
+    /** Bind the header status icon's click handler once. The badge
+     *  state is repainted by `renderSharingStatusIcon` whenever the
+     *  controller emits a relevant change. */
+    function wireSharingStatusIcon() {
+        const btn = document.getElementById('sharing-status-icon');
+        if (!btn) return;
+        btn.addEventListener('click', focusCollaborationPanel);
+    }
+
+    /** Update the header status icon's badge to reflect the current
+     *  GitHub connection state. Three states:
+     *    - connected    → green dot (signed in + repo bound)
+     *    - disconnected → grey dot  (signed in, no repo)
+     *    - signedout    → darker grey (no token at all)
+     *  Loading state is the initial CSS class; it persists until the
+     *  controller is up and renderSharingStatusIcon runs at least
+     *  once.  */
+    function renderSharingStatusIcon() {
+        const btn = document.getElementById('sharing-status-icon');
+        const badge = document.getElementById('sharing-status-badge');
+        if (!btn || !badge) return;
+        const repo = sharingController?.getRepoInfo() ?? null;
+        // Heuristic for "signed in": the controller exposes signed-in
+        // identity via getStatusMap and getRepoInfo, but not a direct
+        // "is user signed in" flag. If there's a repo, they're
+        // definitely signed in. Otherwise we don't know with certainty
+        // from this surface — but a non-empty status map means the
+        // controller has done a refreshStatus, which requires a token.
+        // Good enough for the icon.
+        const signedIn = repo !== null || (sharingController?.getStatusMap().size ?? 0) > 0;
+        const variant = repo ? 'connected' : (signedIn ? 'disconnected' : 'signedout');
+        badge.className = `sharing-status-badge sharing-status-badge-${variant}`;
+        btn.title = repo
+            ? `GitHub: connected to ${repo.owner}/${repo.name} · ${repo.branch}. Click to open Collaboration.`
+            : signedIn
+                ? 'GitHub: signed in but no repo connected for this project. Click to open Collaboration.'
+                : 'GitHub: not signed in. Click to open Collaboration.';
+    }
 
     // Mount the Help panel's TOC + search + reader. Populated below
     // once the LSP worker is ready (no source needed — it reads from
@@ -3734,6 +4269,9 @@ async function bootstrap() {
     const VIEW_PANELS: Array<{ id: string; label: string }> = [
         { id: 'editor',        label: 'Editor' },
         { id: 'workspace',     label: 'Workspace' },
+        { id: 'collaboration', label: 'Collaboration' },
+        { id: 'logs',          label: 'Logs' },
+        { id: 'history',       label: 'History' },
         { id: 'debug',         label: 'Debug' },
         { id: 'output',        label: 'Output' },
         { id: 'problems',      label: 'Problems' },
@@ -3757,6 +4295,112 @@ async function bootstrap() {
 
     function saveSavedLayouts(layouts: Array<{ name: string; layout: object }>) {
         try { localStorage.setItem(SAVED_LAYOUTS_KEY, JSON.stringify(layouts)); } catch { /* ignore */ }
+    }
+
+    // ─── Semantic layouts ────────────────────────────────────────────────
+    // Named layouts associated with a mode (Debug, Test). Built-in defaults
+    // ensure the relevant panels exist and are focused. Users can override
+    // a slot by saving the current dock state to it via the View menu;
+    // overrides live in localStorage and persist across reloads.
+    type SemanticLayoutId = 'debug' | 'test';
+    interface SemanticLayoutDef {
+        id: SemanticLayoutId;
+        label: string;
+        icon: string;       // codicon class (e.g. 'codicon-debug-alt')
+        focus: string[];    // panel ids to activate in their groups
+    }
+    const SEMANTIC_LAYOUTS: SemanticLayoutDef[] = [
+        { id: 'debug', label: 'Debug Mode', icon: 'codicon-debug-alt',
+          focus: ['debug', 'game', 'debug-console'] },
+        { id: 'test',  label: 'Test Mode',  icon: 'codicon-beaker',
+          focus: ['tests', 'game'] },
+    ];
+    const SEMANTIC_LAYOUTS_KEY = 'fade.dockview.semanticLayouts';
+
+    function loadSemanticLayouts(): Partial<Record<SemanticLayoutId, object>> {
+        try {
+            const raw = localStorage.getItem(SEMANTIC_LAYOUTS_KEY);
+            if (raw) return JSON.parse(raw) as Partial<Record<SemanticLayoutId, object>>;
+        } catch { /* ignore */ }
+        return {};
+    }
+
+    function saveSemanticLayouts(layouts: Partial<Record<SemanticLayoutId, object>>) {
+        try { localStorage.setItem(SEMANTIC_LAYOUTS_KEY, JSON.stringify(layouts)); } catch { /* ignore */ }
+    }
+
+    // Focus the panels associated with a semantic layout. Re-adds missing
+    // panels via openPanelById so e.g. Debug Mode still works after the
+    // user closed the Debug tab.
+    function focusSemanticPanels(id: SemanticLayoutId) {
+        const def = SEMANTIC_LAYOUTS.find((s) => s.id === id);
+        if (!def) return;
+        for (const panelId of def.focus) {
+            let p = dockApi.getPanel(panelId);
+            if (!p) {
+                openPanelById(panelId);
+                p = dockApi.getPanel(panelId);
+            }
+            try { p?.api?.setActive(); } catch { /* ignore */ }
+        }
+    }
+
+    function applySemanticLayout(id: SemanticLayoutId) {
+        // Debug Mode auto-restore: stash the pre-apply layout so we can
+        // snap back when the session ends — unless the user has made
+        // structural view changes (opened tabs, redocked, etc) in the
+        // meantime. The post-apply fingerprint below is the comparator;
+        // if it differs at end-of-session, the user has touched things
+        // and we leave their layout alone.
+        if (id === 'debug') {
+            try { preDebugLayoutSnapshot = dockApi.toJSON() as object; }
+            catch { preDebugLayoutSnapshot = null; }
+        }
+        const stored = loadSemanticLayouts();
+        const saved = stored[id];
+        let applied = false;
+        if (saved) {
+            try {
+                dockApi.fromJSON(saved as any);
+                healLayout(dockApi);
+                focusSemanticPanels(id);
+                applied = true;
+            } catch (e) {
+                console.warn(`[fade] failed to restore semantic layout ${id} — falling back to focus-only`, e);
+            }
+        }
+        if (!applied) {
+            // No saved override → don't reshape the grid, just activate
+            // the relevant tabs in their groups.
+            focusSemanticPanels(id);
+        }
+        if (id === 'debug') {
+            try { postDebugLayoutFingerprint = JSON.stringify(dockApi.toJSON()); }
+            catch { postDebugLayoutFingerprint = null; }
+        }
+    }
+
+    // Debug-session view stash. Captured on entry to Debug Mode; consulted
+    // on exit. We restore the pre-debug layout only when the current dock
+    // fingerprint matches what we wrote on apply — that's our proxy for
+    // "the user didn't open tabs or redock during the session." If they
+    // did anything, the fingerprint diverges and we leave their layout
+    // alone so we don't undo their work.
+    let preDebugLayoutSnapshot: object | null = null;
+    let postDebugLayoutFingerprint: string | null = null;
+
+    function restorePreDebugLayoutIfUnchanged() {
+        const pre = preDebugLayoutSnapshot;
+        const post = postDebugLayoutFingerprint;
+        preDebugLayoutSnapshot = null;
+        postDebugLayoutFingerprint = null;
+        if (!pre || !post) return;
+        let currentJson: string;
+        try { currentJson = JSON.stringify(dockApi.toJSON()); }
+        catch { return; }
+        if (currentJson !== post) return; // user changed something — keep their layout
+        try { dockApi.fromJSON(pre as any); healLayout(dockApi); }
+        catch (e) { console.warn('[fade] failed to restore pre-debug layout', e); }
     }
 
     // Open a named panel that is currently absent from the dock.
@@ -3793,6 +4437,24 @@ async function bootstrap() {
                 });
                 dockApi.getPanel('diagnostics')?.api?.setActive();
             } catch (e) { console.warn('[fade] failed to open diagnostics panel', e); }
+        } else if (id === 'collaboration' || id === 'history' || id === 'logs') {
+            // These panels aren't part of the default tab strip — opening
+            // them via the View menu drops them into the editor tab group
+            // so they share screen space with code rather than crowding
+            // the bottom panel or splitting the workspace column.
+            const ref = dockApi.getPanel('editor')?.id;
+            const titleFor = (k: string) => k === 'collaboration' ? 'Collaboration'
+                : k === 'history' ? 'History' : 'Logs';
+            try {
+                dockApi.addPanel({
+                    id,
+                    component: id,
+                    title: titleFor(id),
+                    position: ref ? { referencePanel: ref, direction: 'within' } : undefined,
+                    renderer: RENDER_ALWAYS,
+                });
+                dockApi.getPanel(id)?.api?.setActive();
+            } catch (e) { console.warn(`[fade] failed to open ${id} panel`, e); }
         } else {
             // For standard panels, healLayout handles re-adding with the
             // right default position.
@@ -3819,6 +4481,60 @@ async function bootstrap() {
                 }
             });
             viewMenuPanels.appendChild(btn);
+        }
+
+        // ── Semantic (mode) layouts ───────────────────────────────────────
+        viewSemanticLayouts.innerHTML = '';
+        const semanticOverrides = loadSemanticLayouts();
+        for (const def of SEMANTIC_LAYOUTS) {
+            const isCustomized = semanticOverrides[def.id] != null;
+            const row = document.createElement('div');
+            row.className = 'view-saved-layout-row';
+
+            const nameBtn = document.createElement('button');
+            nameBtn.className = 'layout-name-btn';
+            const badgeTitle = isCustomized
+                ? 'Customized — built-in default overridden'
+                : 'Semantic layout (built-in default)';
+            nameBtn.title = `Apply ${def.label}`;
+            nameBtn.innerHTML =
+                `<span class="codicon ${def.icon}"></span>` +
+                `<span>${def.label}</span>` +
+                `<span class="semantic-badge${isCustomized ? ' custom' : ''}" title="${badgeTitle}">●</span>`;
+            nameBtn.addEventListener('click', () => {
+                closeViewMenu();
+                applySemanticLayout(def.id);
+            });
+
+            const saveBtn = document.createElement('button');
+            saveBtn.className = 'layout-save-btn';
+            saveBtn.title = `Save current layout as ${def.label}`;
+            saveBtn.innerHTML = '<span class="codicon codicon-save"></span>';
+            saveBtn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                const overrides = loadSemanticLayouts();
+                overrides[def.id] = dockApi.toJSON() as object;
+                saveSemanticLayouts(overrides);
+                renderViewMenu();
+            });
+
+            row.appendChild(nameBtn);
+            row.appendChild(saveBtn);
+            if (isCustomized) {
+                const resetBtn = document.createElement('button');
+                resetBtn.className = 'layout-del-btn';
+                resetBtn.title = `Restore built-in ${def.label}`;
+                resetBtn.textContent = '↺';
+                resetBtn.addEventListener('click', (e) => {
+                    e.stopPropagation();
+                    const overrides = loadSemanticLayouts();
+                    delete overrides[def.id];
+                    saveSemanticLayouts(overrides);
+                    renderViewMenu();
+                });
+                row.appendChild(resetBtn);
+            }
+            viewSemanticLayouts.appendChild(row);
         }
 
         // ── Saved layouts ─────────────────────────────────────────────────
@@ -4085,7 +4801,6 @@ async function bootstrap() {
     });
     projectNewInput.addEventListener('input', clearProjectError);
 
-    statusEl.textContent = 'Mounting editor…';
     pgSplash?.setStatus('Mounting editor…');
     editor = monaco.editor.create(editorContainer, {
         value: '',
@@ -4260,7 +4975,6 @@ async function bootstrap() {
         await renderFileList(workspace);
     }
 
-    statusEl.textContent = 'Ready.';
     pgSplash?.hide();
     monoGameHost.notifyPgSplashHidden();
     // Enable Run / Debug / Export through refreshRunButtons so a project
@@ -5539,6 +6253,7 @@ async function bootstrap() {
                 clearDebugInspectionPanels();
                 setDebugEmptyStates(true);
                 setDebugButtons();
+                restorePreDebugLayoutIfUnchanged();
                 break;
             case 'REV_REQUEST_EXPLODE': {
                 debugSessionActive = false;
@@ -5578,6 +6293,7 @@ async function bootstrap() {
                 clearDebugInspectionPanels();
                 setDebugEmptyStates(true);
                 setDebugButtons();
+                restorePreDebugLayoutIfUnchanged();
                 break;
             }
             case 'PROTO_ACK': {
@@ -5735,6 +6451,12 @@ async function bootstrap() {
     // per-test Debug share the same "prep UI → start → sync bps → continue"
     // sequence.
     async function beginDebugSession(starter: () => Promise<DebugStartResult>): Promise<boolean> {
+        // Debug Mode semantic layout: focus Debug, Game, and Debug Console
+        // (or apply the user's saved Debug Mode override). Called once per
+        // session start so a per-test debug also opts into Debug Mode —
+        // user requirement: "running a test in debug mode should opt to
+        // Debug Mode".
+        try { applySemanticLayout('debug'); } catch (e) { console.warn('[fade] applySemanticLayout(debug) failed', e); }
         clearOutput();
         debugReplOutput.textContent = '';
         setDebugStatus('starting', 'paused');
@@ -5749,6 +6471,10 @@ async function bootstrap() {
             appendReplLine(result.error ?? 'Failed to start', 'err');
             runActive = false;
             refreshRunButtons();
+            // Roll back the Debug Mode layout we applied above — there's
+            // no session to keep, and the user shouldn't be stuck looking
+            // at Debug Mode after a failed start.
+            restorePreDebugLayoutIfUnchanged();
             return false;
         }
         runActive = false;
@@ -5910,6 +6636,7 @@ async function bootstrap() {
             setCurrentLine(null);
             clearDebugInspectionPanels();
             setDebugEmptyStates(true);
+            restorePreDebugLayoutIfUnchanged();
         }
         if (currentProject?.type === 'monogame') {
             // Pause the canvas regardless of debug state — even after debug
@@ -6273,7 +7000,6 @@ if ((window as any).__fadeBootstrapStarted) {
     (window as any).__fadeBootstrapStarted = true;
     bootstrap().catch((e) => {
         console.error('bootstrap failed', e);
-        statusEl.textContent = 'Bootstrap failed: ' + (e?.message ?? e);
         (window as any).__pgSplash?.setStatus('Failed to start — see browser console.', true);
     });
 }
