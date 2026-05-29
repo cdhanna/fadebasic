@@ -50,7 +50,11 @@ export function createDiffViewer(initialParams?: DiffViewerParams): DiffViewerCo
     root.style.flexDirection = 'column';
     root.style.height = '100%';
     root.style.width = '100%';
-    root.style.background = 'var(--vscode-editor-background, #1e1e1e)';
+    // Was `--vscode-editor-background` w/ a #1e1e1e fallback. Those `--vscode-*`
+    // vars aren't set in our standalone Monaco build, so the fallback won
+    // every time and the diff panel rendered dark even on light themes.
+    // Bind to our own palette variables instead.
+    root.style.background = 'var(--bg)';
 
     // Header strip — labels + path. Kept small; the diff editor's own
     // gutters do most of the visual work.
@@ -59,9 +63,9 @@ export function createDiffViewer(initialParams?: DiffViewerParams): DiffViewerCo
     header.style.alignItems = 'center';
     header.style.gap = '12px';
     header.style.padding = '4px 10px';
-    header.style.borderBottom = '1px solid var(--vscode-panel-border, #333)';
+    header.style.borderBottom = '1px solid var(--border-2)';
     header.style.font = '12px/1.4 ui-sans-serif, system-ui, sans-serif';
-    header.style.color = 'var(--vscode-foreground, #ddd)';
+    header.style.color = 'var(--fg)';
     header.style.flexShrink = '0';
     const pathSpan = document.createElement('span');
     pathSpan.style.fontFamily = 'ui-monospace, monospace';
@@ -112,7 +116,9 @@ export function createDiffViewer(initialParams?: DiffViewerParams): DiffViewerCo
                 renderSideBySide: true,
                 renderOverviewRuler: true,
                 ignoreTrimWhitespace: false,
-                theme: 'vs-dark',
+                // No `theme:` here — Monaco's theme is global. monaco.editor.setTheme()
+                // already targets every editor; pinning vs-dark here would freeze the
+                // diff viewer to dark even if the user switches to light/DBP/etc.
                 fontSize: 12,
             });
             editor.setModel({ original: originalModel, modified: modifiedModel });

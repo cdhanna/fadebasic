@@ -489,6 +489,11 @@ function handle(msg) {
         try { json = FB.ListCommandDocs(); }
         catch (e) { log('list-command-docs failed: ' + (e?.message ?? e)); }
         emit({ type: 'list-command-docs-result', id: msg.id, docs: json });
+    } else if (msg.type === 'lsp-tokenize-snippet') {
+        let json = '[]';
+        try { json = FB.LspTokenizeSnippet(msg.source ?? ''); }
+        catch (e) { log('lsp-tokenize-snippet failed: ' + (e?.message ?? e)); }
+        emit({ type: 'lsp-tokenize-snippet-result', id: msg.id, tokens: json });
     } else if (msg.type === 'get-version-info') {
         let json = '{}';
         try { json = FB.GetVersionInfo(); }

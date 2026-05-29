@@ -12,7 +12,7 @@ public class JsonTests
     {
         public int n;
         public List<RecurseList> l = new List<RecurseList>();
-        public void ProcessJson(IJsonOperation op)
+        public void ProcessJson<T>(ref T op) where T : IJsonOperation
         {
             op.IncludeField(nameof(n), ref n);
             op.IncludeField(nameof(l), ref l);
@@ -22,7 +22,7 @@ public class JsonTests
     class ByteArray : IJsonable
     {
         public byte[] numbers;
-        public void ProcessJson(IJsonOperation op)
+        public void ProcessJson<T>(ref T op) where T : IJsonOperation
         {
             op.IncludeField(nameof(numbers), ref numbers);
         }
@@ -33,7 +33,7 @@ public class JsonTests
         public string reason;
         public int status;
 
-        public void ProcessJson(IJsonOperation op)
+        public void ProcessJson<T>(ref T op) where T : IJsonOperation
         {
             op.IncludeField(nameof(reason), ref reason);
             op.IncludeField(nameof(status), ref status);
@@ -44,7 +44,7 @@ public class JsonTests
     {
         public int x;
 
-        public void ProcessJson(IJsonOperation op)
+        public void ProcessJson<T>(ref T op) where T : IJsonOperation
         {
             op.IncludeField("x", ref x);
         }
@@ -53,7 +53,7 @@ public class JsonTests
     class DictTest : IJsonable
     {
         public Dictionary<int, Dud> duds = new Dictionary<int, Dud>();
-        public void ProcessJson(IJsonOperation op)
+        public void ProcessJson<T>(ref T op) where T : IJsonOperation
         {
             op.IncludeField("duds", ref duds);
         }
@@ -63,7 +63,7 @@ public class JsonTests
     {
         public Dictionary<string, int> duds = new Dictionary<string, int>();
 
-        public void ProcessJson(IJsonOperation op)
+        public void ProcessJson<T>(ref T op) where T : IJsonOperation
         {
             op.IncludeField(nameof(duds), ref duds);
         }
@@ -74,7 +74,7 @@ public class JsonTests
         public Dictionary<string, Dud> beeps = new Dictionary<string, Dud>();
         public Dictionary<string, Dud> boops = new Dictionary<string, Dud>();
 
-        public void ProcessJson(IJsonOperation op)
+        public void ProcessJson<T>(ref T op) where T : IJsonOperation
         {
             op.IncludeField(nameof(beeps), ref beeps);
             op.IncludeField(nameof(boops), ref boops);

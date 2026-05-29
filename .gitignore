@@ -46,3 +46,6 @@ msbuild.wrn
 # Plugin signing material (JetBrains Marketplace)
 *.pem
 *.crt
+
+# BenchmarkDotNet output
+**/BenchmarkDotNet.Artifacts/

@@ -32,6 +32,12 @@ public static partial class FadeBridge
     // declaration order and CreateWorkspace reads this list.
     private static readonly List<IMethodSource> _registeredSources = new();
 
+    // Source-generated metadata blobs (`<ClassName>MetaData.COMMANDS_JSON`)
+    // pulled out of each registered assembly. Feeds the workspace's docs
+    // provider so hover/help can render rich markdown for commands from
+    // dynamically-loaded libraries, not just StandardCommands.
+    private static readonly List<string> _registeredCommandJsonBlobs = new();
+
     // Dynamically-loaded assemblies keyed by simple name. WASM's default
     // AssemblyLoadContext doesn't fall back to "scan loaded assemblies by
     // simple name" when binding type references the way desktop CLR does —
@@ -72,8 +78,18 @@ public static partial class FadeBridge
     {
         var sources = new List<IMethodSource>(_registeredSources) { new StandardCommands() };
         var commands = new CommandCollection(sources.ToArray());
-        ICommandDocsProvider docs = StandardCommandDocs.BuildWeb();
-        _ = projectType; // reserved for future type-specific doc providers
+
+        // Docs follow whatever's registered: StandardCommands is always
+        // there, plus one COMMANDS_JSON blob per dynamically-loaded
+        // assembly (collected in RegisterCommandAssembly). projectType
+        // doesn't pick the docs anymore — the assemblies themselves do.
+        var blobs = new List<string>(_registeredCommandJsonBlobs.Count + 1)
+        {
+            StandardCommandsMetaData.COMMANDS_JSON,
+        };
+        blobs.AddRange(_registeredCommandJsonBlobs);
+        ICommandDocsProvider docs = StandardCommandDocs.Build(blobs.ToArray());
+        _ = projectType;
 
         var ws = new FadeWorkspace(commands);
         ws.Docs = docs;
@@ -109,12 +125,24 @@ public static partial class FadeBridge
             var instance = Activator.CreateInstance(type) as IMethodSource
                 ?? throw new Exception($"'{className}' does not implement IMethodSource");
             _registeredSources.Add(instance);
+
+            // The command source generator emits a sibling `<ClassName>MetaData`
+            // type with a `public const string COMMANDS_JSON` carrying the
+            // XML doc strings for every command. Pull it out so hover/help
+            // can render rich markdown — without this, registered libraries
+            // show just the signature shape.
+            var metaType = asm.GetType(className + "MetaData");
+            var jsonField = metaType?.GetField("COMMANDS_JSON",
+                BindingFlags.Public | BindingFlags.Static);
+            if (jsonField?.GetRawConstantValue() is string json && !string.IsNullOrEmpty(json))
+                _registeredCommandJsonBlobs.Add(json);
+
             _workspace = CreateWorkspace(_activeProjectType);
-            return JsonSerializer.Serialize(new { ok = true }, _jsonOpts);
+            return StatusOk();
         }
         catch (Exception ex)
         {
-            return JsonSerializer.Serialize(new { ok = false, error = DescribeException(ex) }, _jsonOpts);
+            return StatusErr(ex);
         }
     }
 
@@ -124,6 +152,7 @@ public static partial class FadeBridge
     public static string ClearCommandAssemblies()
     {
         _registeredSources.Clear();
+        _registeredCommandJsonBlobs.Clear();
         _workspace = CreateWorkspace(_activeProjectType);
         return "true";
     }
@@ -139,11 +168,11 @@ public static partial class FadeBridge
         try
         {
             LoadAndRegister(dllBytes);
-            return JsonSerializer.Serialize(new { ok = true }, _jsonOpts);
+            return StatusOk();
         }
         catch (Exception ex)
         {
-            return JsonSerializer.Serialize(new { ok = false, error = DescribeException(ex) }, _jsonOpts);
+            return StatusErr(ex);
         }
     }
 
@@ -242,11 +271,11 @@ public static partial class FadeBridge
                 hostMethods = HostMethodTable.FromCommandCollection(instance.CommandCollection),
             };
             CooperativePump.RunStartWithVm(vm);
-            return JsonSerializer.Serialize(new { ok = true }, _jsonOpts);
+            return StatusOk();
         }
         catch (Exception ex)
         {
-            return JsonSerializer.Serialize(new { ok = false, error = DescribeException(ex) }, _jsonOpts);
+            return StatusErr(ex);
         }
     }
 
@@ -361,6 +390,57 @@ public static partial class FadeBridge
         IncludeFields = true,
     };
 
+    // Hand-rolled JSON for the {ok, error?} status shape used by every
+    // assembly-loading JSExport. `JsonSerializer.Serialize(new { ok=true })`
+    // is anonymous-type-based; in this project's Release/trimmed publish,
+    // the trimmer strips parameter names from `<>f__AnonymousType*` even
+    // with TrimMode=copy, and System.Text.Json then throws "deserialization
+    // constructor ... contains parameters with null names". A literal JSON
+    // string sidesteps the metadata reflection entirely.
+    private static string StatusOk() => "{\"ok\":true}";
+    private static string StatusErr(Exception ex)
+    {
+        var sb = new StringBuilder("{\"ok\":false,\"error\":");
+        AppendJsonString(sb, DescribeException(ex));
+        sb.Append('}');
+        return sb.ToString();
+    }
+
+    // JSON-safe string emit: quotes the value and escapes the characters
+    // RFC 8259 requires (`"`, `\`, and U+0000–U+001F). FadeBasic.Json's
+    // built-in JsonWriteOp.AppendEscaped only handles `"` and `\`, which
+    // is fine for the short identifiers the rest of the project emits but
+    // produces invalid JSON when the value contains markdown newlines —
+    // exactly what ListCommandDocs hits when it serializes hover markdown.
+    private static void AppendJsonString(StringBuilder sb, string value)
+    {
+        sb.Append('"');
+        if (value != null)
+        {
+            for (var i = 0; i < value.Length; i++)
+            {
+                var c = value[i];
+                switch (c)
+                {
+                    case '"':  sb.Append("\\\""); break;
+                    case '\\': sb.Append("\\\\"); break;
+                    case '\b': sb.Append("\\b"); break;
+                    case '\f': sb.Append("\\f"); break;
+                    case '\n': sb.Append("\\n"); break;
+                    case '\r': sb.Append("\\r"); break;
+                    case '\t': sb.Append("\\t"); break;
+                    default:
+                        if (c < 0x20)
+                            sb.Append("\\u").Append(((int)c).ToString("x4"));
+                        else
+                            sb.Append(c);
+                        break;
+                }
+            }
+        }
+        sb.Append('"');
+    }
+
     // ─── Run ──────────────────────────────────────────────────────────────
     [JSInvokable]
     [JSExport]
@@ -429,6 +509,42 @@ public static partial class FadeBridge
     {
         var doc = _workspace.Get(uri);
         return JsonSerializer.Serialize(SemanticTokensHandler.Compute(doc), _jsonOpts);
+    }
+
+    // Tokenize a free-floating snippet of Fade source — no workspace doc,
+    // no diagnostics published — and return a flat list of `{line, col,
+    // length, type}` entries. The Help tab uses this to syntax-highlight
+    // ```fade``` code blocks in command/language docs by piggybacking on
+    // the same lexer + ClassifyToken pass the LSP semantic-tokens handler
+    // uses for the editor. The type field is the legend index from
+    // SemanticTokensHandler.Legend (0=comment, 1=keyword, …).
+    [JSExport]
+    public static string LspTokenizeSnippet(string source)
+    {
+        if (string.IsNullOrEmpty(source)) return "[]";
+        var commands = _workspace.Commands;
+        var lex = new FadeBasic.Lexer().TokenizeWithErrors(source, commands);
+        var doc = new FadeBasic.LSP.Core.FadeDocument
+        {
+            Uri = "fade://help-snippet",
+            Text = source,
+            LexResults = lex,
+            Commands = commands,
+        };
+        var sb = new StringBuilder("[");
+        var first = true;
+        foreach (var ct in SemanticTokensHandler.Classify(doc))
+        {
+            if (!first) sb.Append(',');
+            first = false;
+            sb.Append("{\"line\":").Append(ct.Token.lineNumber);
+            sb.Append(",\"col\":").Append(ct.Token.charNumber);
+            sb.Append(",\"length\":").Append(ct.Token.Length);
+            sb.Append(",\"type\":").Append(SemanticTokensHandler.LegendIndex(ct.Type));
+            sb.Append('}');
+        }
+        sb.Append(']');
+        return sb.ToString();
     }
 
     [JSExport]
@@ -555,16 +671,37 @@ public static partial class FadeBridge
         try
         {
             var commands = _workspace.Commands?.Commands;
-            if (commands == null)
+            if (commands == null) return "[]";
+
+            // Map command name → owning class label, derived from each
+            // IMethodSource's CommandGroupName (e.g.
+            // "Fade.MonoGame.Lib.FadeMonoGameCommands"). FIRST source wins
+            // on name collisions, matching the dedupe ordering applied to
+            // workspace.Commands below — otherwise a command's body and
+            // group label could come from different sources. We shorten
+            // FQNs to "<TypeName minus 'Commands' suffix>" so the TOC reads
+            // "Standard" / "FadeMonoGame" rather than the full namespace.
+            var nameToGroup = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+            var sources = _workspace.Commands?.Sources;
+            if (sources != null)
             {
-                return "[]";
+                foreach (var source in sources)
+                {
+                    var groupLabel = ShortenGroupName(source.CommandGroupName);
+                    foreach (var cmd in source.Commands)
+                    {
+                        if (string.IsNullOrEmpty(cmd.name)) continue;
+                        if (!nameToGroup.ContainsKey(cmd.name)) nameToGroup[cmd.name] = groupLabel;
+                    }
+                }
             }
+
             // Dedupe by command.name. Overloads (e.g. `rgb` with 3 vs 4
             // args) share a name; we surface one row per name and use the
             // first CommandInfo we find — BuildCommandMarkdown already
             // describes all parameter slots from that signature.
             var seen = new HashSet<string>();
-            var rows = new List<object>();
+            var rows = new List<(string name, string sig, string group, string markdown)>();
             foreach (var c in commands)
             {
                 if (string.IsNullOrEmpty(c.name)) continue;
@@ -579,33 +716,40 @@ public static partial class FadeBridge
                 {
                     markdown = $"### {c.name}\n\n_Failed to render docs: {ex.Message}_";
                 }
-                rows.Add(new
-                {
-                    name = c.name,
-                    signature = c.sig,
-                    // Best-effort: classify into a "group" based on the
-                    // command name's first word for the TOC. The native
-                    // command-doc generator keeps a category in metadata
-                    // we don't propagate here yet; this is a useful
-                    // approximation until that's wired through.
-                    group = GuessGroup(c.name),
-                    markdown,
-                });
+                // group: the IMethodSource the command came from, so the
+                // TOC reflects actual library origin. GuessGroup is the
+                // backstop for commands that somehow have no source map
+                // entry (shouldn't happen — every Command was iterated
+                // off some Source above — but defensive).
+                var group = nameToGroup.TryGetValue(c.name, out var g) ? g : GuessGroup(c.name);
+                rows.Add((c.name, c.sig, group, markdown));
             }
             // Stable alphabetical order so the TOC is deterministic.
-            rows.Sort((a, b) =>
-                string.Compare(
-                    (string)a.GetType().GetProperty("name").GetValue(a),
-                    (string)b.GetType().GetProperty("name").GetValue(b),
-                    StringComparison.OrdinalIgnoreCase));
-            return JsonSerializer.Serialize(rows, _jsonOpts);
+            rows.Sort((a, b) => string.Compare(a.name, b.name, StringComparison.OrdinalIgnoreCase));
+
+            // Hand-rolled output instead of `JsonSerializer.Serialize(new { ... })`:
+            // anonymous types are unreliable under the project's trimmed
+            // Release publish (see the note on StatusOk/StatusErr above).
+            var sb = new StringBuilder();
+            sb.Append('[');
+            for (var i = 0; i < rows.Count; i++)
+            {
+                if (i > 0) sb.Append(',');
+                sb.Append("{\"name\":");      AppendJsonString(sb, rows[i].name);
+                sb.Append(",\"signature\":"); AppendJsonString(sb, rows[i].sig);
+                sb.Append(",\"group\":");     AppendJsonString(sb, rows[i].group);
+                sb.Append(",\"markdown\":");  AppendJsonString(sb, rows[i].markdown);
+                sb.Append('}');
+            }
+            sb.Append(']');
+            return sb.ToString();
         }
         catch (Exception ex)
         {
-            return JsonSerializer.Serialize(new
-            {
-                error = "Failed to enumerate command docs: " + ex.Message,
-            }, _jsonOpts);
+            var sb = new StringBuilder("{\"error\":");
+            AppendJsonString(sb, "Failed to enumerate command docs: " + ex.Message);
+            sb.Append('}');
+            return sb.ToString();
         }
     }
 
@@ -620,6 +764,21 @@ public static partial class FadeBridge
         if (string.IsNullOrEmpty(name)) return "Core";
         var idx = name.IndexOf(' ');
         return idx > 0 ? name.Substring(0, idx) : "Core";
+    }
+
+    // Turn an IMethodSource.CommandGroupName (a fully-qualified type name like
+    // "Fade.MonoGame.Lib.FadeMonoGameCommands") into a human-friendly TOC
+    // section label ("FadeMonoGame"). Strips the namespace and the
+    // conventional "Commands" suffix on the type name.
+    private static string ShortenGroupName(string fqn)
+    {
+        if (string.IsNullOrEmpty(fqn)) return "Core";
+        var dot = fqn.LastIndexOf('.');
+        var typeName = dot >= 0 ? fqn.Substring(dot + 1) : fqn;
+        const string suffix = "Commands";
+        if (typeName.EndsWith(suffix, StringComparison.Ordinal) && typeName.Length > suffix.Length)
+            typeName = typeName.Substring(0, typeName.Length - suffix.Length);
+        return string.IsNullOrEmpty(typeName) ? "Core" : typeName;
     }
 
     // ─── Tests ────────────────────────────────────────────────────────────

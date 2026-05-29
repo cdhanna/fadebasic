@@ -232,13 +232,14 @@ function injectStylesOnce(): void {
     display: flex; flex-direction: column;
     height: 100%; box-sizing: border-box;
     overflow: hidden;
-    color: var(--vscode-foreground, #ddd);
+    color: var(--fg);
+    background: var(--bg-2);
     font: 12px/1.4 ui-sans-serif, system-ui, sans-serif;
 }
 .${CSS_PREFIX}-toolbar {
     display: flex; align-items: center; gap: 6px; flex-wrap: wrap;
     padding: 6px 8px;
-    border-bottom: 1px solid var(--vscode-panel-border, #333);
+    border-bottom: 1px solid var(--border-2);
     flex-shrink: 0;
 }
 .${CSS_PREFIX}-chips {
@@ -246,40 +247,43 @@ function injectStylesOnce(): void {
 }
 .${CSS_PREFIX}-empty { opacity: 0.5; font-style: italic; font-size: 11px; }
 .${CSS_PREFIX}-chip {
-    appearance: none; border: 1px solid var(--vscode-panel-border, #555);
+    appearance: none; border: 1px solid var(--border-2);
     background: transparent; color: inherit;
     padding: 1px 8px; border-radius: 999px;
     font: inherit; font-size: 11px; cursor: pointer;
     transition: filter 0.1s;
     opacity: 0.55;
 }
-.${CSS_PREFIX}-chip:hover { filter: brightness(1.2); }
+.${CSS_PREFIX}-chip:hover { background: var(--hover-bg); }
 .${CSS_PREFIX}-chip-active {
     opacity: 1;
-    background: rgba(255,255,255,0.08);
-    border-color: var(--vscode-focusBorder, #0e639c);
+    background: var(--hover-bg);
+    border-color: var(--accent);
 }
-.${CSS_PREFIX}-chip-debug.${CSS_PREFIX}-chip-active { color: #8cf; }
-.${CSS_PREFIX}-chip-info.${CSS_PREFIX}-chip-active  { color: #ddd; }
-.${CSS_PREFIX}-chip-warn.${CSS_PREFIX}-chip-active  { color: #fc6; }
-.${CSS_PREFIX}-chip-error.${CSS_PREFIX}-chip-active { color: #f88; }
+/* Level-coded text colors threaded through CSS vars so light themes can
+   substitute darker hues. Defaults are the pastel-on-dark originals. */
+.${CSS_PREFIX}-chip-debug.${CSS_PREFIX}-chip-active { color: var(--log-debug-fg, #8cf); }
+.${CSS_PREFIX}-chip-info.${CSS_PREFIX}-chip-active  { color: var(--log-info-fg,  #ddd); }
+.${CSS_PREFIX}-chip-warn.${CSS_PREFIX}-chip-active  { color: var(--log-warn-fg,  #fc6); }
+.${CSS_PREFIX}-chip-error.${CSS_PREFIX}-chip-active { color: var(--log-error-fg, #f88); }
 .${CSS_PREFIX}-sep {
     width: 1px; align-self: stretch;
-    background: var(--vscode-panel-border, #333);
+    background: var(--border-2);
     margin: 0 2px;
 }
 .${CSS_PREFIX}-btn {
-    appearance: none; border: 1px solid var(--vscode-panel-border, #555);
+    appearance: none; border: 1px solid var(--border-2);
     background: transparent; color: inherit;
     padding: 2px 10px; border-radius: 4px;
     font: inherit; font-size: 11px; cursor: pointer;
 }
-.${CSS_PREFIX}-btn:hover { filter: brightness(1.2); }
+.${CSS_PREFIX}-btn:hover { background: var(--hover-bg); }
 .${CSS_PREFIX}-list {
     flex: 1 1 auto; overflow-y: auto;
     padding: 4px 0;
     font-family: ui-monospace, monospace; font-size: 11px;
-    background: var(--vscode-editor-background, #0d0d0d);
+    background: var(--bg);
+    color: var(--fg);
 }
 .${CSS_PREFIX}-row {
     display: grid;
@@ -288,14 +292,14 @@ function injectStylesOnce(): void {
     padding: 1px 8px;
     white-space: pre-wrap; word-break: break-word;
 }
-.${CSS_PREFIX}-row:hover { background: rgba(255,255,255,0.03); }
+.${CSS_PREFIX}-row:hover { background: var(--hover-bg); }
 .${CSS_PREFIX}-time    { opacity: 0.55; }
 .${CSS_PREFIX}-channel { opacity: 0.75; }
 .${CSS_PREFIX}-level   { font-weight: 700; opacity: 0.85; }
-.${CSS_PREFIX}-level-debug { color: #8cf; }
-.${CSS_PREFIX}-level-info  { color: #ddd; }
-.${CSS_PREFIX}-level-warn  { color: #fc6; }
-.${CSS_PREFIX}-level-error { color: #f88; }
+.${CSS_PREFIX}-level-debug { color: var(--log-debug-fg, #8cf); }
+.${CSS_PREFIX}-level-info  { color: var(--log-info-fg,  #ddd); }
+.${CSS_PREFIX}-level-warn  { color: var(--log-warn-fg,  #fc6); }
+.${CSS_PREFIX}-level-error { color: var(--log-error-fg, #f88); }
 .${CSS_PREFIX}-row-error { background: rgba(255,80,80,0.06); }
 .${CSS_PREFIX}-row-warn  { background: rgba(255,200,90,0.05); }
 .${CSS_PREFIX}-msg { }

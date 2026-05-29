@@ -6,7 +6,9 @@
   "scripts": {
     "build:runtime": "node scripts/build-runtime.mjs",
     "build:monogame-runtime": "node scripts/build-monogame-runtime.mjs",
-    "predev": "node scripts/build-runtime.mjs",
+    "build:docs-index": "node --experimental-strip-types scripts/build-docs-index.mjs",
+    "sync:public-docs": "node scripts/sync-public-docs.mjs",
+    "predev": "node scripts/build-runtime.mjs && node scripts/sync-public-docs.mjs",
     "dev": "vite",
     "build": "tsc -b && vite build",
     "preview": "vite preview",
@@ -40,16 +42,19 @@
     "@codingame/monaco-vscode-views-service-override": "^32.0.2",
     "@codingame/monaco-vscode-workbench-service-override": "^32.0.2",
     "@codingame/monaco-vscode-working-copy-service-override": "^32.0.2",
+    "@huggingface/transformers": "^4.2.0",
     "@mlc-ai/web-llm": "^0.2.83",
     "@vscode-elements/elements": "^2.5.1",
     "dockview-core": "^6.3.0",
     "fflate": "^0.8.3",
     "marked": "^14.1.4",
     "monaco-editor": "npm:@codingame/monaco-vscode-editor-api@^32.0.2",
-    "vscode": "npm:@codingame/monaco-vscode-extension-api@^32.0.2"
+    "vscode": "npm:@codingame/monaco-vscode-extension-api@^32.0.2",
+    "zod": "^4.4.3"
   },
   "devDependencies": {
     "@types/node": "^22.10.2",
+    "jsdom": "^29.1.1",
     "playwright": "^1.49.1",
     "typescript": "^5.7.2",
     "vite": "^6.0.5",

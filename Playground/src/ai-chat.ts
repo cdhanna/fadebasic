@@ -1,13 +1,30 @@
-// AI Chat panel + Model Manager panel — powered by @mlc-ai/web-llm.
+// AI Chat panel + Model Manager panel.
 //
-// mountAiChat(el, workspace) — wires up the chat panel with agent loop.
-// mountAiModels(el)          — wires up the model downloader/selector.
+// mountAiChat(el, workspace) — wires up the chat panel with the new agent.
+// mountAiModels(el)          — wires up the provider/model selector.
 //
-// Both panels share module-level engine state so switching models from the
-// Models tab immediately affects the next message in Chat.
+// This file is now a thin UI layer over src/ai/ — the agent loop, tool
+// registry, RAG, and provider abstraction all live there. We keep this
+// file focused on DOM rendering and chat persistence.
 
-import { CreateWebWorkerMLCEngine, hasModelInCache } from '@mlc-ai/web-llm';
-import type { MLCEngineInterface, ChatCompletionTool, InitProgressReport } from '@mlc-ai/web-llm';
+import { Agent, type AgentEvent } from './ai/agent';
+import { getLogger } from './log-bus';
+import { createDefaultRegistry } from './ai/tools/default-registry';
+import { mountDiffApproval, type DiffApprovalHandle } from './ai/ui/diff-approval';
+import type { AgentPlan } from './ai/tool-protocol';
+import type { DiagnosticsProvider, EditorAdapter, ToolRegistry } from './ai/tools';
+import { createDefaultSlashRegistry } from './ai/slash-commands/default-registry';
+import { emptySlashState } from './ai/slash-commands/registry';
+import type { SlashResult, SlashStateSnapshot } from './ai/slash-commands/types';
+import { ensureAnthropicApiKey } from './ai/providers/anthropic';
+import {
+    PROVIDER_CATALOG,
+    createSelectedProvider,
+    getSelectedProviderId,
+    setSelectedProviderId,
+    type ChatProvider,
+    type Msg,
+} from './ai/providers';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -18,50 +35,33 @@ export interface WorkspaceAdapter {
     currentProject(): string;
 }
 
-type MsgRole = 'user' | 'assistant' | 'tool' | 'system';
-
-interface ChatMsg {
-    role: MsgRole;
-    content: string | null;
-    tool_calls?: ToolCall[];
-    tool_call_id?: string;
-    name?: string;
-}
-
-interface ToolCall {
-    id: string;
-    type: 'function';
-    function: { name: string; arguments: string };
+/** Optional integrations passed in by main.ts. The chat panel works
+ *  without any of these — the relevant tools / commands just degrade. */
+export interface ChatDependencies {
+    diagnostics?: DiagnosticsProvider;
+    editor?: EditorAdapter;
+    /** Called by /logs to bring the Logs panel forward + filter to a
+     *  channel pattern. Optional — when missing, /logs shows a hint. */
+    focusLogs?: (channelPattern: RegExp) => void;
+    /** Active project's `type` (e.g. 'web', 'monogame'). Forwarded to the
+     *  Agent + tool context so RAG retrieval can hide type-scoped chunks
+     *  (see docs-sources.mjs `projectTypes`). */
+    getProjectType?: () => string | undefined;
 }
 
 type EngineStatus = 'idle' | 'loading' | 'ready' | 'error';
 
-// ─── Curated model list ───────────────────────────────────────────────────────
+// ─── Module-level provider state ──────────────────────────────────────────────
 
-interface ModelMeta { id: string; label: string; sizeMb: number; note?: string; supportsTools?: boolean }
-
-const MODELS: ModelMeta[] = [
-    { id: 'Qwen2.5-7B-Instruct-q4f16_1-MLC',      label: 'Qwen 2.5 7B',       sizeMb: 4200, note: 'Recommended' },
-    { id: 'Hermes-3-Llama-3.1-8B-q4f16_1-MLC',    label: 'Hermes 3 8B',        sizeMb: 4900, note: 'Best tool use', supportsTools: true },
-    { id: 'Hermes-2-Pro-Llama-3-8B-q4f16_1-MLC',  label: 'Hermes 2 Pro 8B',    sizeMb: 4900, note: 'Tool use',      supportsTools: true },
-    { id: 'Llama-3.1-8B-Instruct-q4f16_1-MLC',    label: 'Llama 3.1 8B',       sizeMb: 4900 },
-    { id: 'Qwen2.5-3B-Instruct-q4f16_1-MLC',      label: 'Qwen 2.5 3B',        sizeMb: 2100, note: 'Faster' },
-    { id: 'Phi-3.5-mini-instruct-q4f16_1-MLC',    label: 'Phi 3.5 Mini 3.8B',  sizeMb: 2200, note: 'Fast' },
-];
-
-// ─── Module-level engine state ────────────────────────────────────────────────
-
-const AI_MODEL_KEY = 'fade.ai.selectedModel';
-
-let engine: MLCEngineInterface | null = null;
-(window as unknown as Record<string,unknown>)['ai]'] = engine
-let engineModelId: string | null = null;
+let provider: ChatProvider | null = null;
 let engineStatus: EngineStatus = 'idle';
+let engineError: string | null = null;
 const statusListeners = new Set<(s: EngineStatus, detail?: string) => void>();
 const progressListeners = new Set<(text: string, pct: number) => void>();
 
 function notifyStatus(s: EngineStatus, detail?: string) {
     engineStatus = s;
+    engineError = s === 'error' ? (detail ?? null) : null;
     for (const fn of statusListeners) fn(s, detail);
 }
 
@@ -69,83 +69,51 @@ function notifyProgress(text: string, pct: number) {
     for (const fn of progressListeners) fn(text, pct);
 }
 
-export function getSelectedModelId(): string {
-    return localStorage.getItem(AI_MODEL_KEY) ?? MODELS[0].id;
-}
-
-export function setSelectedModelId(id: string) {
-    localStorage.setItem(AI_MODEL_KEY, id);
-}
-
-export async function loadModel(modelId: string): Promise<void> {
-    if (engine && engineModelId === modelId && engineStatus === 'ready') return;
+export async function loadSelectedProvider(): Promise<void> {
+    if (provider && engineStatus === 'ready') return;
     if (engineStatus === 'loading') return;
 
-    engine = null;
-    engineModelId = null;
-    notifyStatus('loading', modelId);
-
+    notifyStatus('loading');
     try {
-        const worker = new Worker(new URL('./ai-worker.ts', import.meta.url), { type: 'module' });
-        engine = await CreateWebWorkerMLCEngine(worker, modelId, {
-            initProgressCallback: (report: InitProgressReport) => {
-                notifyProgress(report.text, report.progress);
-            },
-        });
-        engineModelId = modelId;
-        setSelectedModelId(modelId);
+        // If the user selected an Anthropic provider, make sure we have a
+        // key on hand before we even build the provider. Prompts the user
+        // if missing. Throws if they cancel.
+        const selectedId = getSelectedProviderId();
+        if (selectedId.startsWith('anthropic:')) {
+            const key = ensureAnthropicApiKey();
+            if (!key) {
+                throw new Error('Anthropic API key required. Cancelled by user.');
+            }
+        }
+        provider = createSelectedProvider();
+        provider.onProgress(({ text, pct }) => notifyProgress(text, pct));
+        await provider.ensureReady();
         notifyStatus('ready');
     } catch (err) {
+        provider = null;
         notifyStatus('error', (err as Error).message ?? String(err));
         throw err;
     }
 }
 
-// ─── Tool definitions ─────────────────────────────────────────────────────────
-
-const TOOLS: ChatCompletionTool[] = [
-    {
-        type: 'function',
-        function: {
-            name: 'list_files',
-            description: 'List all files in the current workspace project.',
-            parameters: { type: 'object', properties: {}, required: [] },
-        },
-    },
-    {
-        type: 'function',
-        function: {
-            name: 'read_file',
-            description: 'Read the full text of a workspace file.',
-            parameters: {
-                type: 'object',
-                properties: {
-                    path: { type: 'string', description: 'Filename to read' },
-                },
-                required: ['path'],
-            },
-        },
-    },
-    {
-        type: 'function',
-        function: {
-            name: 'write_file',
-            description: 'Propose creating or overwriting a file. The user must approve the diff before it is saved.',
-            parameters: {
-                type: 'object',
-                properties: {
-                    path: { type: 'string', description: 'Filename to write' },
-                    content: { type: 'string', description: 'Complete new file content' },
-                },
-                required: ['path', 'content'],
-            },
-        },
-    },
-];
-
-const SYSTEM_PROMPT = `You are a terse coding assistant in a code editor. Be direct and pragmatic — no filler, no over-explanation. Only use file tools when the user explicitly asks.`;
-
-const TOOL_GUIDANCE_MSG = `[System note: You are a terse coding assistant with file access. Be direct and pragmatic — skip preamble, skip summaries of what you just did, no over-explanation. Use list_files, read_file, and write_file proactively when helping with code. Show results, not narration.]`;
+// Best-effort cleanup before the tab unloads. Firefox's GPU process holds
+// onto WebGPU buffers across page reloads even when the originating renderer
+// is gone; explicitly disposing the pipeline here gives the browser a chance
+// to release them. Doesn't fully fix the Firefox leak (the GPU process is
+// the bug surface, not us), but it removes the in-tab piece of the leak.
+//
+// `pagehide` fires more reliably than `beforeunload` across browsers and
+// also handles bfcache navigations. We don't await — there's no time
+// budget during unload, but dispose runs as far as it can before the
+// renderer dies.
+if (typeof window !== 'undefined') {
+    window.addEventListener('pagehide', () => {
+        const p = provider;
+        if (p) {
+            try { void p.reset(); } catch { /* ignore — page is dying */ }
+        }
+    });
+}
 
 // ─── Chat persistence ─────────────────────────────────────────────────────────
 
@@ -154,8 +122,8 @@ interface ChatRecord {
     title: string;
     createdAt: string;
     updatedAt: string;
-    modelId: string | null;
-    messages: ChatMsg[];
+    providerId: string | null;
+    messages: Msg[];
 }
 
 type ChatSummary = Omit<ChatRecord, 'messages'>;
@@ -164,8 +132,8 @@ function newChatId(): string {
     return Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
 }
 
-function deriveChatTitle(messages: ChatMsg[]): string {
-    const first = messages.find(m => m.role === 'user' && typeof m.content === 'string')?.content as string | undefined;
+function deriveChatTitle(messages: Msg[]): string {
+    const first = messages.find(m => m.role === 'user')?.content;
     if (!first) return 'New chat';
     return first.length > 45 ? first.slice(0, 45) + '…' : first;
 }
@@ -209,8 +177,10 @@ class ChatStore {
             try {
                 const fh = await this.dir.getFileHandle(entry.name);
                 const rec = JSON.parse(await (await fh.getFile()).text()) as ChatRecord;
-                out.push({ id: rec.id, title: rec.title, createdAt: rec.createdAt,
-                           updatedAt: rec.updatedAt, modelId: rec.modelId });
+                out.push({
+                    id: rec.id, title: rec.title, createdAt: rec.createdAt,
+                    updatedAt: rec.updatedAt, providerId: rec.providerId,
+                });
             } catch { /* skip corrupted */ }
         }
         return out.sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
@@ -221,82 +191,38 @@ class ChatStore {
     }
 }
 
-// ─── Line diff ────────────────────────────────────────────────────────────────
-
-type DiffLine = { type: 'same' | 'add' | 'remove'; text: string };
-
-function lineDiff(oldText: string, newText: string): DiffLine[] {
-    const a = oldText ? oldText.split('\n') : [];
-    const b = newText ? newText.split('\n') : [];
-    const m = a.length, n = b.length;
-    const dp: number[][] = Array.from({ length: m + 1 }, () => new Array(n + 1).fill(0));
-    for (let i = m - 1; i >= 0; i--)
-        for (let j = n - 1; j >= 0; j--)
-            dp[i][j] = a[i] === b[j] ? 1 + dp[i + 1][j + 1] : Math.max(dp[i + 1][j], dp[i][j + 1]);
-
-    const out: DiffLine[] = [];
-    let i = 0, j = 0;
-    while (i < m || j < n) {
-        if (i < m && j < n && a[i] === b[j]) {
-            out.push({ type: 'same', text: a[i] }); i++; j++;
-        } else if (j < n && (i >= m || dp[i + 1][j] >= dp[i][j + 1])) {
-            out.push({ type: 'add', text: b[j] }); j++;
-        } else {
-            out.push({ type: 'remove', text: a[i] }); i++;
-        }
-    }
-    return out;
-}
-
-// ─── JSON formatting + highlighting ──────────────────────────────────────────
+// Line-diff + diff rendering live in ./ai/ui/diff-approval (extracted so
+// they can be unit-tested in isolation and exercised in scripts/diff-demo.html).
 
 function escapeHtml(s: string): string {
     return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 }
 
-function formatJson(raw: string): string {
-    try { return JSON.stringify(JSON.parse(raw), null, 2); } catch { return raw; }
+function formatJson(raw: unknown): string {
+    try { return JSON.stringify(raw, null, 2); } catch { return String(raw); }
 }
 
 function highlightJson(json: string): string {
-    // Escape HTML first, then wrap tokens in <span> elements.
     const escaped = escapeHtml(json);
     return escaped.replace(
         /("(\\u[0-9a-fA-F]{4}|\\[^u]|[^\\"])*"(\s*:)?|\b(true|false|null)\b|-?\d+(?:\.\d*)?(?:[eE][+\-]?\d+)?)/g,
         (match) => {
-            let cls = 'json-n';  // number
-            if (match.startsWith('"')) {
-                cls = match.trimEnd().endsWith(':') ? 'json-k' : 'json-s';
-            } else if (match === 'true' || match === 'false') {
-                cls = 'json-b';
-            } else if (match === 'null') {
-                cls = 'json-null';
-            }
+            let cls = 'json-n';
+            if (match.startsWith('"')) cls = match.trimEnd().endsWith(':') ? 'json-k' : 'json-s';
+            else if (match === 'true' || match === 'false') cls = 'json-b';
+            else if (match === 'null') cls = 'json-null';
             return `<span class="${cls}">${match}</span>`;
         },
     );
 }
 
-function renderDiff(diff: DiffLine[]): HTMLElement {
-    const pre = document.createElement('pre');
-    pre.className = 'ai-diff';
-    for (const line of diff) {
-        const span = document.createElement('span');
-        span.className = `ai-diff-line ai-diff-${line.type}`;
-        const prefix = line.type === 'add' ? '+ ' : line.type === 'remove' ? '- ' : '  ';
-        span.textContent = prefix + line.text;
-        pre.appendChild(span);
-        pre.appendChild(document.createTextNode('\n'));
-    }
-    return pre;
-}
-
 // ─── Chat panel ───────────────────────────────────────────────────────────────
 
-const MAX_AGENT_ITERATIONS = 8;
-
-export function mountAiChat(container: HTMLElement, workspace: WorkspaceAdapter): void {
-    // ── DOM refs ────────────────────────────────────────────────────────────
+export function mountAiChat(
+    container: HTMLElement,
+    workspace: WorkspaceAdapter,
+    deps: ChatDependencies = {},
+): void {
     const pane = container.querySelector<HTMLElement>('#ai-chat-pane')!;
     const messagesEl = pane.querySelector<HTMLElement>('.ai-messages')!;
     const inputEl = pane.querySelector<HTMLTextAreaElement>('.ai-input')!;
@@ -313,24 +239,61 @@ export function mountAiChat(container: HTMLElement, workspace: WorkspaceAdapter)
     const historyList = pane.querySelector<HTMLElement>('.ai-history-list')!;
     const historyNewBtn = pane.querySelector<HTMLButtonElement>('.ai-history-new')!;
 
-    // ── State ───────────────────────────────────────────────────────────────
-    let history: ChatMsg[] = [];
     let activeChatId: string = newChatId();
     let generating = false;
+    let agent: Agent | null = null;
+    /** Kept on the panel so /tools and /context can inspect them without
+     *  reaching into the Agent's internals. Refreshed when the agent is
+     *  rebuilt (e.g. after a model swap). */
+    let toolRegistry: ToolRegistry = createDefaultRegistry();
+    /** Recent agent-event snapshot consumed by slash commands. */
+    const slashState: SlashStateSnapshot = emptySlashState();
+    const slashRegistry = createDefaultSlashRegistry();
+    /** Mounted diff-approval handles. Tracked so we can force-reject
+     *  them when the user aborts — otherwise the agent hangs forever on
+     *  a Promise that nothing else can resolve. */
+    const pendingDiffApprovals = new Set<DiffApprovalHandle>();
 
-    // ── Chat store ──────────────────────────────────────────────────────────
     const store = new ChatStore();
     void store.init().catch(e => console.warn('[fade/ai] chat store init failed:', e));
 
+    function buildAgent(): Agent | null {
+        if (!provider) return null;
+        toolRegistry = createDefaultRegistry();
+        const toolLog = getLogger('ai/tool');
+        return new Agent({
+            provider,
+            tools: toolRegistry,
+            toolContext: {
+                workspace,
+                diagnostics: deps.diagnostics,
+                editor: deps.editor,
+                confirmEdit: (path, oldContent, newContent) => {
+                    // Log every approval request — when a hang happens
+                    // again, the Logs panel shows what file + sizes were
+                    // involved (delta=0 usually means a no-op edit).
+                    toolLog.info(
+                        `confirmEdit: ${path} (old=${oldContent.length}b, new=${newContent.length}b, delta=${newContent.length - oldContent.length}b)`,
+                    );
+                    return requestDiffApproval(path, oldContent, newContent);
+                },
+                projectType: deps.getProjectType,
+            },
+            getProjectType: deps.getProjectType,
+        });
+    }
+
     function saveChat(): void {
+        if (!agent) return;
+        const history = agent.getHistory();
         if (history.length === 0) return;
         const record: ChatRecord = {
             id: activeChatId,
-            title: deriveChatTitle(history),
-            createdAt: activeChatId,   // id encodes creation time
+            title: deriveChatTitle(history as Msg[]),
+            createdAt: activeChatId,
             updatedAt: new Date().toISOString(),
-            modelId: engineModelId,
-            messages: history,
+            providerId: provider?.id ?? null,
+            messages: history as Msg[],
         };
         void store.save(record).catch(e => console.warn('[fade/ai] save chat failed:', e));
     }
@@ -396,49 +359,56 @@ export function mountAiChat(container: HTMLElement, workspace: WorkspaceAdapter)
     historyNewBtn.addEventListener('click', () => { closeHistoryMenu(); startNewChat(); });
 
     function startNewChat(): void {
-        history = [];
+        rejectPendingDiffs();
         activeChatId = newChatId();
+        agent?.clearHistory();
         messagesEl.innerHTML = '';
-        console.log('[fade/ai] new chat, id:', activeChatId);
     }
 
     async function loadChat(id: string): Promise<void> {
         const record = await store.load(id);
         if (!record) return;
-        history = record.messages;
+        if (!agent) agent = buildAgent();
+        agent?.setHistory(record.messages);
         activeChatId = id;
         renderHistoryToDOM(record.messages);
-        console.log('[fade/ai] loaded chat:', id, '—', record.messages.length, 'messages');
     }
 
-    function renderHistoryToDOM(msgs: ChatMsg[]): void {
+    function renderHistoryToDOM(msgs: Msg[]): void {
         messagesEl.innerHTML = '';
         for (const msg of msgs) {
-            if (msg.role === 'user' && msg.content) {
-                appendUserBubble(msg.content as string);
-            } else if (msg.role === 'assistant' && msg.content) {
-                const b = appendAssistantBubble();
-                b.setText(msg.content as string);
-            } else if (msg.role === 'assistant' && msg.tool_calls?.length) {
-                const div = document.createElement('div');
-                div.className = 'ai-tool-row';
-                const hdr = document.createElement('div');
-                hdr.className = 'ai-tool-header';
-                hdr.style.cursor = 'default';
-                hdr.innerHTML = `<span class="ai-tool-icon">⚙️</span><span class="ai-tool-label">${msg.tool_calls.map(tc => tc.function.name).join(', ')}</span><span class="ai-tool-badge" style="color:var(--fg-muted);font-size:0.68rem">restored</span>`;
-                div.appendChild(hdr);
-                messagesEl.appendChild(div);
+            if (msg.role === 'user') {
+                // Skip tool_result re-injections — these are protocol noise
+                if (msg.content.startsWith('<tool_result')) continue;
+                appendUserBubble(msg.content);
+            } else if (msg.role === 'assistant') {
+                const bubble = appendAssistantBubble();
+                bubble.setText(msg.content);
             }
         }
         scrollToBottom();
     }
 
-
     stopBtn.addEventListener('click', () => {
-        if (!generating || !engine) return;
-        console.log('[fade/ai] user requested stop');
-        void (engine as any).interruptGenerate?.();
+        if (!generating || !agent) return;
+        // Reject any pending diff approvals first — otherwise the agent
+        // hangs on the unresolved Promise forever and abort() can't break
+        // the loop.
+        rejectPendingDiffs();
+        agent.abort();
     });
+
+    /** Reject every pending diff-approval Promise with false (treats as
+     *  "user rejected"). Called from Stop, /clear, and at the start of a
+     *  new turn — anything that should unblock a hung confirmEdit. */
+    function rejectPendingDiffs(): void {
+        if (pendingDiffApprovals.size === 0) return;
+        const stuck = [...pendingDiffApprovals];
+        pendingDiffApprovals.clear();
+        for (const handle of stuck) {
+            try { handle.forceReject(); } catch { /* swallow */ }
+        }
+    }
 
     function setGenerating(on: boolean) {
         generating = on;
@@ -449,9 +419,9 @@ export function mountAiChat(container: HTMLElement, workspace: WorkspaceAdapter)
 
     // ── Status rendering ────────────────────────────────────────────────────
     function renderStatus() {
-        const modelLabel = MODELS.find(m => m.id === engineModelId)?.label ?? engineModelId ?? '—';
+        const providerLabel = provider?.label ?? PROVIDER_CATALOG.find(p => p.id === getSelectedProviderId())?.label ?? '—';
         if (engineStatus === 'ready') {
-            statusEl.textContent = modelLabel;
+            statusEl.textContent = providerLabel;
             statusEl.className = 'ai-chat-status ai-status-ready';
             loadBtn.hidden = true;
             sendBtn.disabled = false;
@@ -465,7 +435,7 @@ export function mountAiChat(container: HTMLElement, workspace: WorkspaceAdapter)
             inputEl.disabled = true;
             progressRow.hidden = false;
         } else if (engineStatus === 'error') {
-            statusEl.textContent = 'Error';
+            statusEl.textContent = `Error: ${engineError ?? ''}`;
             statusEl.className = 'ai-chat-status ai-status-error';
             loadBtn.hidden = false;
             loadBtn.textContent = 'Retry';
@@ -473,7 +443,6 @@ export function mountAiChat(container: HTMLElement, workspace: WorkspaceAdapter)
             inputEl.disabled = true;
             progressRow.hidden = true;
         } else {
-            // idle
             statusEl.textContent = 'No model loaded';
             statusEl.className = 'ai-chat-status';
             loadBtn.hidden = false;
@@ -500,6 +469,19 @@ export function mountAiChat(container: HTMLElement, workspace: WorkspaceAdapter)
         scrollToBottom();
     }
 
+    function appendAssistantBubble(): { setText(t: string): void; appendText(t: string): void; el: HTMLElement } {
+        const div = document.createElement('div');
+        div.className = 'ai-msg ai-msg-assistant';
+        messagesEl.appendChild(div);
+        scrollToBottom();
+        let buf = '';
+        return {
+            setText(t: string) { buf = t; div.textContent = t; scrollToBottom(); },
+            appendText(t: string) { buf += t; div.textContent = buf; scrollToBottom(); },
+            el: div,
+        };
+    }
+
     function showThinking(): () => void {
         const div = document.createElement('div');
         div.className = 'ai-thinking';
@@ -509,46 +491,158 @@ export function mountAiChat(container: HTMLElement, workspace: WorkspaceAdapter)
         return () => div.remove();
     }
 
-    function appendAssistantBubble(): { setText(t: string): void; el: HTMLElement } {
-        const div = document.createElement('div');
-        div.className = 'ai-msg ai-msg-assistant';
-        messagesEl.appendChild(div);
+    function appendSlashResult(result: SlashResult): void {
+        const wrap = document.createElement('div');
+        wrap.className = `ai-slash${result.variant === 'error' ? ' ai-slash-error' : ''}`;
+        const header = document.createElement('div');
+        header.className = 'ai-slash-header';
+        header.textContent = result.title;
+        wrap.appendChild(header);
+
+        const body = document.createElement('div');
+        body.className = 'ai-slash-body';
+        if (typeof result.body === 'string') {
+            body.textContent = result.body;
+        } else {
+            body.appendChild(result.body);
+        }
+        wrap.appendChild(body);
+        messagesEl.appendChild(wrap);
         scrollToBottom();
-        return {
-            setText(t: string) {
-                div.textContent = t;
-                scrollToBottom();
-            },
-            el: div,
-        };
+    }
+
+    function appendDocsCitations(hits: ReadonlyArray<{ chunk: { source: string; heading: string }; score: number }>): void {
+        if (hits.length === 0) return;
+        const wrap = document.createElement('div');
+        wrap.className = 'ai-docs';
+        const header = document.createElement('div');
+        header.className = 'ai-docs-header';
+        header.innerHTML = `<span class="ai-docs-icon">📚</span><span>Retrieved docs</span>`;
+        wrap.appendChild(header);
+        const list = document.createElement('ul');
+        list.className = 'ai-docs-list';
+        for (const hit of hits) {
+            const li = document.createElement('li');
+            const cite = hit.chunk.heading
+                ? `${hit.chunk.source} → ${hit.chunk.heading}`
+                : hit.chunk.source;
+            li.textContent = `${cite} (${hit.score.toFixed(2)})`;
+            list.appendChild(li);
+        }
+        wrap.appendChild(list);
+        messagesEl.appendChild(wrap);
+        scrollToBottom();
+    }
+
+    function appendPostEditDiagnostics(path: string, errors: number, warnings: number, clean: boolean): void {
+        // Quiet status row that surfaces the self-healing probe. Clean
+        // edits get a subdued green chip; errors get a red one the user
+        // can correlate with whatever the agent does next.
+        const row = document.createElement('div');
+        row.className = 'ai-post-edit-diags';
+        const icon = clean ? '✓' : (errors > 0 ? '⚠︎' : '·');
+        const text = clean
+            ? `Diagnostics clean for ${path}`
+            : errors > 0
+                ? `${errors} error${errors === 1 ? '' : 's'}${warnings > 0 ? `, ${warnings} warning${warnings === 1 ? '' : 's'}` : ''} in ${path} — agent will react`
+                : `${warnings} warning${warnings === 1 ? '' : 's'} in ${path}`;
+        row.dataset.state = clean ? 'clean' : (errors > 0 ? 'error' : 'warning');
+        row.innerHTML = `<span class="ai-post-edit-icon"></span><span class="ai-post-edit-text"></span>`;
+        row.querySelector('.ai-post-edit-icon')!.textContent = icon;
+        row.querySelector('.ai-post-edit-text')!.textContent = text;
+        messagesEl.appendChild(row);
+        scrollToBottom();
+    }
+
+    function appendPlanBubble(plan: AgentPlan): void {
+        const wrap = document.createElement('div');
+        wrap.className = 'ai-plan';
+
+        const header = document.createElement('div');
+        header.className = 'ai-plan-header';
+        header.innerHTML = `<span class="ai-plan-icon">📋</span><span class="ai-plan-goal"></span>`;
+        header.querySelector('.ai-plan-goal')!.textContent = plan.goal;
+        wrap.appendChild(header);
+
+        if (plan.steps.length > 0) {
+            const list = document.createElement('ol');
+            list.className = 'ai-plan-steps';
+            for (const step of plan.steps) {
+                const li = document.createElement('li');
+                if (step.tool) {
+                    const tag = document.createElement('code');
+                    tag.className = 'ai-plan-tool';
+                    tag.textContent = step.tool;
+                    li.appendChild(tag);
+                    li.appendChild(document.createTextNode(' ' + (step.description || '')));
+                } else {
+                    li.textContent = step.description;
+                }
+                list.appendChild(li);
+            }
+            wrap.appendChild(list);
+        }
+
+        messagesEl.appendChild(wrap);
+        scrollToBottom();
+    }
+
+    function showBudgetWarning(tokens: number, max: number): void {
+        const warn = document.createElement('div');
+        warn.className = 'ai-msg ai-msg-warn';
+        warn.textContent = `Context budget at ${Math.round((tokens / max) * 100)}% (${tokens.toLocaleString()} of ${max.toLocaleString()} tokens). Long chats may degrade — consider clearing.`;
+        messagesEl.appendChild(warn);
+        scrollToBottom();
+    }
+
+    function showEvictionNotice(
+        result: { elided: number; summarized: number; dropped: number; saved: number },
+        tokensBefore: number,
+        tokensAfter: number,
+        max: number,
+    ): void {
+        const wrap = document.createElement('div');
+        wrap.className = 'ai-eviction';
+        const header = document.createElement('div');
+        header.className = 'ai-eviction-header';
+        header.innerHTML = '<span class="ai-eviction-icon">🪶</span><span>Context trimmed</span>';
+        wrap.appendChild(header);
+
+        const parts: string[] = [];
+        if (result.elided > 0) parts.push(`${result.elided} tool result${result.elided === 1 ? '' : 's'} elided`);
+        if (result.summarized > 0) parts.push(`${result.summarized} message${result.summarized === 1 ? '' : 's'} summarized`);
+        if (result.dropped > 0) parts.push(`${result.dropped} oldest message${result.dropped === 1 ? '' : 's'} dropped`);
+
+        const detail = document.createElement('div');
+        detail.className = 'ai-eviction-detail';
+        const pctBefore = Math.round((tokensBefore / max) * 100);
+        const pctAfter = Math.round((tokensAfter / max) * 100);
+        detail.textContent = `${parts.join(' · ')} (${pctBefore}% → ${pctAfter}%)`;
+        wrap.appendChild(detail);
+        messagesEl.appendChild(wrap);
+        scrollToBottom();
     }
 
     function appendToolRow(icon: string, label: string): {
-        done(resultJson: string): void;
+        done(result: unknown): void;
         fail(message: string): void;
     } {
         const row = document.createElement('div');
         row.className = 'ai-tool-row';
-
         const header = document.createElement('button');
         header.className = 'ai-tool-header';
         header.disabled = true;
-
         const iconEl = document.createElement('span');
         iconEl.className = 'ai-tool-icon';
         iconEl.textContent = icon;
-
         const labelEl = document.createElement('span');
         labelEl.className = 'ai-tool-label';
         labelEl.textContent = label;
-
         const badge = document.createElement('span');
         badge.className = 'ai-tool-badge ai-tool-badge-running';
-
         const chevron = document.createElement('span');
         chevron.className = 'ai-tool-chevron';
         chevron.textContent = '▶';
-
         header.append(iconEl, labelEl, badge, chevron);
 
         const detail = document.createElement('div');
@@ -569,12 +663,12 @@ export function mountAiChat(container: HTMLElement, workspace: WorkspaceAdapter)
         });
 
         return {
-            done(resultJson: string) {
+            done(result: unknown) {
                 badge.className = 'ai-tool-badge ai-tool-badge-done';
                 badge.textContent = '✓';
                 const pre = document.createElement('pre');
                 pre.className = 'ai-tool-json';
-                pre.innerHTML = highlightJson(formatJson(resultJson));
+                pre.innerHTML = highlightJson(formatJson(result));
                 detail.appendChild(pre);
                 header.disabled = false;
                 scrollToBottom();
@@ -592,372 +686,134 @@ export function mountAiChat(container: HTMLElement, workspace: WorkspaceAdapter)
         };
     }
 
-    function appendDiffApproval(
-        path: string,
-        oldContent: string,
-        newContent: string,
-        onApply: () => void,
-        onReject: () => void,
-    ): void {
-        const wrapper = document.createElement('div');
-        wrapper.className = 'ai-diff-wrapper';
-
-        const header = document.createElement('div');
-        header.className = 'ai-diff-header';
-        header.textContent = `Proposed edit: ${path}`;
-        wrapper.appendChild(header);
-
-        const diff = lineDiff(oldContent, newContent);
-        wrapper.appendChild(renderDiff(diff));
-
-        const actions = document.createElement('div');
-        actions.className = 'ai-diff-actions';
-
-        const applyBtn = document.createElement('button');
-        applyBtn.className = 'ai-diff-apply';
-        applyBtn.textContent = 'Apply';
-        applyBtn.addEventListener('click', () => {
-            wrapper.classList.add('ai-diff-accepted');
-            applyBtn.disabled = true;
-            rejectBtn.disabled = true;
-            console.log('[fade/ai] write_file approved:', path);
-            onApply();
+    function requestDiffApproval(path: string, oldContent: string, newContent: string): Promise<boolean> {
+        return new Promise<boolean>(resolve => {
+            let handle: DiffApprovalHandle | null = null;
+            const settle = (approved: boolean) => {
+                if (handle) pendingDiffApprovals.delete(handle);
+                resolve(approved);
+            };
+            handle = mountDiffApproval({
+                container: messagesEl,
+                path,
+                oldContent,
+                newContent,
+                onApprove: () => settle(true),
+                onReject: () => settle(false),
+            });
+            pendingDiffApprovals.add(handle);
+            scrollToBottom();
         });
-
-        const rejectBtn = document.createElement('button');
-        rejectBtn.className = 'ai-diff-reject';
-        rejectBtn.textContent = 'Reject';
-        rejectBtn.addEventListener('click', () => {
-            wrapper.classList.add('ai-diff-rejected');
-            applyBtn.disabled = true;
-            rejectBtn.disabled = true;
-            console.log('[fade/ai] write_file rejected:', path);
-            onReject();
-        });
-
-        actions.appendChild(applyBtn);
-        actions.appendChild(rejectBtn);
-        wrapper.appendChild(actions);
-
-        const hint = document.createElement('div');
-        hint.className = 'ai-approval-hint';
-        hint.textContent = 'Review the diff above, then Apply or Reject to continue.';
-        messagesEl.appendChild(wrapper);
-        messagesEl.appendChild(hint);
-        scrollToBottom();
     }
 
     function scrollToBottom(): void {
         messagesEl.scrollTop = messagesEl.scrollHeight;
     }
 
-    // ── Tool execution ──────────────────────────────────────────────────────
-    async function executeTool(tc: ToolCall): Promise<string> {
-        let args: Record<string, unknown> = {};
-        try {
-            args = tc.function.arguments ? JSON.parse(tc.function.arguments) : {};
-        } catch {
-            console.warn('[fade/ai] could not parse tool arguments:', tc.function.arguments);
-            return JSON.stringify({ error: 'Could not parse tool arguments — invalid JSON.' });
-        }
-        console.log('[fade/ai] tool call:', tc.function.name, args);
-
-        // Validate required args before touching the UI or workspace.
-        const REQUIRED: Record<string, string[]> = {
-            read_file:  ['path'],
-            write_file: ['path', 'content'],
-        };
-        const missing = (REQUIRED[tc.function.name] ?? []).filter(k => args[k] == null || args[k] === '');
-        if (missing.length > 0) {
-            const msg = `Missing required argument(s): ${missing.join(', ')}`;
-            console.warn('[fade/ai] tool arg validation failed:', tc.function.name, msg);
-            const row = appendToolRow('⚠️', tc.function.name);
-            row.fail(msg);
-            return JSON.stringify({ error: msg });
-        }
-
-        switch (tc.function.name) {
-            case 'list_files': {
-                const row = appendToolRow('📂', 'list_files');
-                const files = await workspace.list();
-                const result = { files, project: workspace.currentProject() };
-                const json = JSON.stringify(result);
-                row.done(json);
-                console.log('[fade/ai] list_files result:', result);
-                return json;
-            }
-            case 'read_file': {
-                const path = args.path as string;
-                const row = appendToolRow('📄', `read_file  ${path}`);
-                try {
-                    const content = await workspace.read(path);
-                    const result = { path, content };
-                    const json = JSON.stringify(result);
-                    row.done(json);
-                    console.log('[fade/ai] read_file: path=%s, %d chars', path, content.length);
-                    return json;
-                } catch {
-                    const result = { error: `File not found: ${path}` };
-                    const json = JSON.stringify(result);
-                    row.fail(`File not found: ${path}`);
-                    console.warn('[fade/ai] read_file: not found:', path);
-                    return json;
-                }
-            }
-            case 'write_file': {
-                const path = args.path as string;
-                const newContent = args.content as string;
-                let oldContent = '';
-                try { oldContent = await workspace.read(path); } catch { /* new file */ }
-                const isNew = oldContent === '';
-                console.log('[fade/ai] write_file: proposing %s (%s, %d chars)',
-                    path, isNew ? 'new file' : 'edit', newContent.length);
-                const row = appendToolRow('✏️', `write_file  ${path}`);
-                return new Promise<string>(resolve => {
-                    appendDiffApproval(
-                        path, oldContent, newContent,
-                        async () => {
-                            await workspace.write(path, newContent);
-                            const result = { success: true, path };
-                            const json = JSON.stringify(result);
-                            row.done(json);
-                            console.log('[fade/ai] write_file applied:', path);
-                            resolve(json);
-                        },
-                        () => {
-                            const result = { success: false, reason: 'User rejected the change.' };
-                            const json = JSON.stringify(result);
-                            row.done(json);
-                            console.log('[fade/ai] write_file rejected:', path);
-                            resolve(json);
-                        },
-                    );
-                });
-            }
-            default:
-                console.warn('[fade/ai] unknown tool:', tc.function.name);
-                return JSON.stringify({ error: `Unknown tool: ${tc.function.name}` });
-        }
-    }
-
-    // ── Agent loop ──────────────────────────────────────────────────────────
-    async function runLoop(userText: string): Promise<void> {
-        if (!engine) return;
-
-        setGenerating(true);
-        inputEl.disabled = true;
-
-        history.push({ role: 'user', content: userText });
-
-        console.log('[fade/ai] starting agent loop, model:', engineModelId,
-            'history:', history.length, 'msgs');
-
-        const modelMeta = MODELS.find(m => m.id === engineModelId);
-        const useTools = modelMeta?.supportsTools === true;
-
-        // Hermes models bake a system prompt into their tool-calling template and
-        // reject any custom one (CustomSystemPromptError). Skip the system prompt
-        // upfront for tool-capable models; use a user-role note instead.
-        // Non-tool models (Qwen, Phi, etc.) accept a system prompt normally.
-        let includeSystemMsg = !useTools;
-
-        const TOOL_GUIDANCE: ChatMsg = { role: 'user', content: TOOL_GUIDANCE_MSG };
-
-        const buildMsgs = (): ChatMsg[] => {
-            if (includeSystemMsg) return [{ role: 'system', content: SYSTEM_PROMPT }, ...history];
-            return useTools ? [TOOL_GUIDANCE, ...history] : history;
-        };
-
-        const msgs = buildMsgs();
-
-        // In agent mode, prime the first user message with real workspace context.
-        // We enrich the user message text rather than injecting fake tool-call
-        // messages into history — injecting assistant tool_calls confuses WebLLM's
-        // Hermes parser, which then expects every subsequent assistant turn to also
-        // be a tool call and throws ToolCallOutputParseError on plain-text replies.
-        if (useTools && history.filter(m => m.role === 'user').length === 1) {
-            try {
-                const files = await workspace.list();
-                const listResult = JSON.stringify({ files, project: workspace.currentProject() });
-                const row = appendToolRow('📂', 'list_files');
-                row.done(listResult);
-                console.log('[fade/ai] agent primed with file list:', files);
-                const firstUserIdx = msgs.findIndex(m => m.role === 'user');
-                if (firstUserIdx >= 0) {
-                    const orig = msgs[firstUserIdx].content as string;
-                    msgs[firstUserIdx] = {
-                        ...msgs[firstUserIdx],
-                        content: `[Workspace: project="${workspace.currentProject()}", files: ${files.join(', ')}]\n\n${orig}`,
-                    };
-                }
-            } catch (e) {
-                console.warn('[fade/ai] auto list_files failed:', e);
-            }
-        }
-
-        const hideThinking = showThinking();
-
-        try {
-            let iteration = 0;
-            while (true) {
-                iteration++;
-                console.log('[fade/ai] iteration %d — sending %d messages to model', iteration, msgs.length);
-
-                const bubble = appendAssistantBubble();
-                let textAcc = '';
-                const tcAcc: ToolCall[] = [];
-                let finishReason: string | null = null;
-                let firstToken = false;
-                let stream: any;
-
-                const createOpts: any = {
-                    messages: msgs,
-                    stream: true,
-                    temperature: 0.6,
-                };
-                if (useTools) {
-                    createOpts.tools = TOOLS;
-                    createOpts.tool_choice = 'auto';
-                } else if (!useTools && iteration === 1 && modelMeta) {
-                    // Model loaded but doesn't support tools — warn once per run.
-                    const noteDiv = document.createElement('div');
-                    noteDiv.className = 'ai-msg ai-msg-error';
-                    noteDiv.textContent = `${modelMeta.label} doesn't support tool calling. Switch to a Hermes model to use file tools.`;
-                    messagesEl.appendChild(noteDiv);
-                    console.warn('[fade/ai] model lacks tool support:', engineModelId);
-                }
-                try {
-                    stream = await engine.chat.completions.create(createOpts);
-                } catch (e) {
-                    if (String(e).includes('CustomSystemPromptError') || (e as any)?.name === 'CustomSystemPromptError') {
-                        console.warn('[fade/ai] CustomSystemPromptError — retrying without system message');
-                        includeSystemMsg = false;
-                        msgs.splice(0, msgs.length, ...buildMsgs());
-                        stream = await engine.chat.completions.create(createOpts);
-                    } else if (String(e).includes('UnsupportedModelIdError')) {
-                        console.warn('[fade/ai] UnsupportedModelIdError — model does not support tools, retrying without');
-                        delete createOpts.tools;
-                        delete createOpts.tool_choice;
-                        stream = await engine.chat.completions.create(createOpts);
-                    } else {
-                        throw e;
-                    }
-                }
-
-                try {
-                    for await (const chunk of stream) {
-                        if (!firstToken) {
-                            hideThinking();
-                            firstToken = true;
-                        }
-                        const choice = chunk.choices[0];
-                        if (!choice) continue;
-                        finishReason = choice.finish_reason;
-
-                        const delta = choice.delta;
-                        if (delta.content) {
-                            textAcc += delta.content;
-                            bubble.setText(textAcc);
-                        }
-
-                        if ((delta as any).tool_calls) {
-                            for (const tc of (delta as any).tool_calls) {
-                                while (tcAcc.length <= tc.index) tcAcc.push({ id: '', type: 'function', function: { name: '', arguments: '' } });
-                                if (tc.id) tcAcc[tc.index].id += tc.id;
-                                if (tc.function?.name) tcAcc[tc.index].function.name += tc.function.name;
-                                if (tc.function?.arguments) tcAcc[tc.index].function.arguments += tc.function.arguments;
-                            }
-                        }
-                    }
-                } catch (streamErr) {
-                    // WebLLM's Hermes parser throws ToolCallOutputParseError when the
-                    // model replies with plain text in a tool-calling context. The actual
-                    // response is embedded in the error message — extract and display it.
-                    if (String(streamErr).includes('ToolCallOutputParseError')) {
-                        const raw = (streamErr as Error).message ?? String(streamErr);
-                        const match = raw.match(/Got outputMessage:\s*([\s\S]*?)(?:\nGot error:|$)/);
-                        const extracted = (match?.[1] ?? '').trim();
-                        if (!firstToken) { hideThinking(); firstToken = true; }
-                        if (extracted) { textAcc = extracted; bubble.setText(extracted); }
-                        finishReason = 'stop';
-                        console.warn('[fade/ai] ToolCallOutputParseError — extracted response (%d chars)', extracted.length);
-                    } else {
-                        throw streamErr;
-                    }
-                }
-
-                console.log('[fade/ai] stream done — finish_reason=%s text=%d chars tool_calls=%d',
-                    finishReason, textAcc.length, tcAcc.length);
-
-                // Remove the empty placeholder bubble if the model only called tools
-                if (!textAcc && tcAcc.length > 0) {
-                    bubble.el.remove();
-                }
-
-                const assistantMsg: ChatMsg = { role: 'assistant', content: textAcc || '' };
-                if (tcAcc.length > 0) assistantMsg.tool_calls = tcAcc;
-                history.push(assistantMsg);
-                msgs.push(assistantMsg);
-
-                if (!tcAcc.length || finishReason === 'stop') {
-                    console.log('[fade/ai] agent loop complete after %d iteration(s)', iteration);
-                    break;
-                }
-
-                if (iteration >= MAX_AGENT_ITERATIONS) {
-                    console.warn('[fade/ai] hit max iterations (%d) — stopping to avoid loop', MAX_AGENT_ITERATIONS);
-                    const warnDiv = document.createElement('div');
-                    warnDiv.className = 'ai-msg ai-msg-error';
-                    warnDiv.textContent = `Stopped after ${MAX_AGENT_ITERATIONS} iterations. The model may be looping — try rephrasing or disabling agent mode.`;
-                    messagesEl.appendChild(warnDiv);
-                    break;
-                }
-
-                // Execute tool calls in parallel (write_file still pauses per-call
-                // for diff approval, but list_files / read_file can overlap).
-                console.log('[fade/ai] executing %d tool call(s) in parallel', tcAcc.length);
-                const toolResults = await Promise.all(tcAcc.map(tc => executeTool(tc)));
-                for (let i = 0; i < tcAcc.length; i++) {
-                    console.log('[fade/ai] tool result for', tcAcc[i].function.name, ':', toolResults[i].slice(0, 120));
-                    const toolMsg: ChatMsg = {
-                        role: 'tool',
-                        tool_call_id: tcAcc[i].id,
-                        content: toolResults[i],
-                    };
-                    history.push(toolMsg);
-                    msgs.push(toolMsg);
-                }
-            }
-        } catch (err) {
-            hideThinking();
-            console.error('[fade/ai] agent loop error:', err);
-            const errDiv = document.createElement('div');
-            errDiv.className = 'ai-msg ai-msg-error';
-            errDiv.textContent = `Error: ${(err as Error).message ?? String(err)}`;
-            messagesEl.appendChild(errDiv);
-        }
-
-        saveChat();
-        setGenerating(false);
-        inputEl.disabled = false;
-        inputEl.focus();
-    }
-
     // ── Send handler ────────────────────────────────────────────────────────
-    function handleSend(): void {
+    async function handleSend(): Promise<void> {
         const text = inputEl.value.trim();
-        if (!text || engineStatus !== 'ready' || generating) return;
+        if (!text || generating) return;
+
+        // Slash commands are dispatched client-side and never reach the
+        // model. Engine doesn't need to be loaded for /help, /tools, etc.
+        if (text.startsWith('/')) {
+            inputEl.value = '';
+            inputEl.style.height = 'auto';
+            appendUserBubble(text);
+            const slashResult = await slashRegistry.run(text, () => ({
+                agent,
+                provider,
+                tools: toolRegistry,
+                state: slashState,
+                callbacks: {
+                    clearConversation: () => startNewChat(),
+                    focusLogs: deps.focusLogs,
+                },
+            }));
+            if (slashResult) appendSlashResult(slashResult);
+            inputEl.focus();
+            return;
+        }
+
+        if (engineStatus !== 'ready') return;
         inputEl.value = '';
         inputEl.style.height = 'auto';
         appendUserBubble(text);
-        void runLoop(text);
+
+        if (!agent) agent = buildAgent();
+        if (!agent) return;
+
+        setGenerating(true);
+        inputEl.disabled = true;
+        const hideThinking = showThinking();
+        let firstDelta = true;
+        let currentBubble: ReturnType<typeof appendAssistantBubble> | null = null;
+        const toolRows = new Map<string, ReturnType<typeof appendToolRow>>();
+
+        const unbind = agent.on((ev: AgentEvent) => {
+            // Snapshot recent events for /context to inspect. Cap the
+            // buffer so a long session doesn't grow it unbounded.
+            slashState.recentEvents.push(ev);
+            if (slashState.recentEvents.length > 200) slashState.recentEvents.shift();
+            if (ev.kind === 'docs_retrieved') slashState.lastDocs = ev.hits;
+            else if (ev.kind === 'plan_emitted') slashState.lastPlan = ev.plan;
+
+            if (ev.kind === 'text_delta') {
+                if (firstDelta) { hideThinking(); firstDelta = false; }
+                if (!currentBubble) currentBubble = appendAssistantBubble();
+                currentBubble.appendText(ev.delta);
+            } else if (ev.kind === 'iteration_start' && ev.iteration > 1) {
+                currentBubble = null;
+            } else if (ev.kind === 'plan_emitted') {
+                if (firstDelta) { hideThinking(); firstDelta = false; }
+                appendPlanBubble(ev.plan);
+                currentBubble = null;
+            } else if (ev.kind === 'docs_retrieved') {
+                appendDocsCitations(ev.hits);
+            } else if (ev.kind === 'post_edit_diagnostics') {
+                appendPostEditDiagnostics(ev.path, ev.errors, ev.warnings, ev.clean);
+            } else if (ev.kind === 'tool_call_start') {
+                if (firstDelta) { hideThinking(); firstDelta = false; }
+                const icon = toolIcon(ev.name);
+                const row = appendToolRow(icon, ev.name);
+                toolRows.set(ev.id, row);
+            } else if (ev.kind === 'tool_call_result') {
+                const row = toolRows.get(ev.id);
+                if (!row) return;
+                if (ev.ok) row.done(ev.result);
+                else row.fail(typeof ev.result === 'string' ? ev.result : formatJson(ev.result));
+            } else if (ev.kind === 'budget_warning') {
+                showBudgetWarning(ev.tokens, ev.max);
+            } else if (ev.kind === 'eviction') {
+                showEvictionNotice(ev.result, ev.tokensBefore, ev.tokensAfter, ev.max);
+            } else if (ev.kind === 'error') {
+                if (firstDelta) { hideThinking(); firstDelta = false; }
+                const err = document.createElement('div');
+                err.className = 'ai-msg ai-msg-error';
+                err.textContent = `Error: ${ev.message}`;
+                messagesEl.appendChild(err);
+                scrollToBottom();
+            }
+        });
+
+        try {
+            await agent.send(text);
+        } finally {
+            unbind();
+            if (firstDelta) hideThinking();
+            saveChat();
+            setGenerating(false);
+            inputEl.disabled = false;
+            inputEl.focus();
+        }
     }
 
-    sendBtn.addEventListener('click', handleSend);
+    sendBtn.addEventListener('click', () => void handleSend());
     inputEl.addEventListener('keydown', (e) => {
         if (e.key === 'Enter' && !e.shiftKey) {
             e.preventDefault();
-            handleSend();
+            void handleSend();
         }
     });
     inputEl.addEventListener('input', () => {
@@ -966,56 +822,37 @@ export function mountAiChat(container: HTMLElement, workspace: WorkspaceAdapter)
     });
 
     clearBtn.addEventListener('click', () => {
-        history = [];
-        messagesEl.innerHTML = '';
+        startNewChat();
     });
 
     loadBtn.addEventListener('click', () => {
-        const modelId = getSelectedModelId();
-        void loadModel(modelId);
+        void loadSelectedProvider();
     });
+}
 
-    // Auto-load if a model was previously selected and is cached
-    void (async () => {
-        const modelId = getSelectedModelId();
-        try {
-            const cached = await hasModelInCache(modelId);
-            if (cached) void loadModel(modelId);
-        } catch { /* hasModelInCache may not be available in all builds */ }
-    })();
+function toolIcon(name: string): string {
+    switch (name) {
+        case 'list_files': return '📂';
+        case 'read_file': return '📄';
+        case 'apply_edit': return '✏️';
+        case 'create_file': return '✨';
+        case 'search_docs': return '🔍';
+        default: return '⚙️';
+    }
 }
 
 // ─── Models panel ─────────────────────────────────────────────────────────────
-
-async function evictModelFromCache(modelId: string): Promise<number> {
-    let count = 0;
-    try {
-        const names = await caches.keys();
-        for (const name of names) {
-            const cache = await caches.open(name);
-            for (const req of await cache.keys()) {
-                if (req.url.includes(modelId)) {
-                    await cache.delete(req);
-                    count++;
-                }
-            }
-        }
-    } catch (e) {
-        console.error('[fade/ai] evictModelFromCache error:', e);
-    }
-    console.log('[fade/ai] evicted %d cache entries for model:', count, modelId);
-    return count;
-}
 
 export function mountAiModels(container: HTMLElement): void {
     const list = container.querySelector<HTMLElement>('.ai-models-list')!;
 
     interface RowState {
-        meta: ModelMeta;
+        id: string;
+        label: string;
+        note?: string;
         rowEl: HTMLElement;
         statusEl: HTMLElement;
         btnEl: HTMLButtonElement;
-        delEl: HTMLButtonElement;
         barEl: HTMLElement;
         barFill: HTMLElement;
     }
@@ -1025,7 +862,7 @@ export function mountAiModels(container: HTMLElement): void {
         list.innerHTML = '';
         rows.length = 0;
 
-        for (const meta of MODELS) {
+        for (const entry of PROVIDER_CATALOG) {
             const row = document.createElement('div');
             row.className = 'ai-model-row';
 
@@ -1034,15 +871,13 @@ export function mountAiModels(container: HTMLElement): void {
 
             const nameEl = document.createElement('div');
             nameEl.className = 'ai-model-name';
-            nameEl.textContent = meta.label;
+            nameEl.textContent = entry.label;
 
             const noteEl = document.createElement('div');
             noteEl.className = 'ai-model-note';
-            const tags = [meta.note, meta.supportsTools ? '🔧 tools' : null, `~${Math.round(meta.sizeMb / 100) / 10} GB`].filter(Boolean);
-            noteEl.textContent = tags.join(' · ');
+            noteEl.textContent = entry.note ?? '';
 
-            info.appendChild(nameEl);
-            info.appendChild(noteEl);
+            info.append(nameEl, noteEl);
 
             const right = document.createElement('div');
             right.className = 'ai-model-right';
@@ -1053,11 +888,7 @@ export function mountAiModels(container: HTMLElement): void {
             const btnEl = document.createElement('button');
             btnEl.className = 'ai-model-btn';
 
-            const delEl = document.createElement('button');
-            delEl.className = 'ai-model-del';
-            delEl.title = 'Remove from cache';
-            delEl.textContent = '🗑';
-            delEl.hidden = true;
+            right.append(statusEl, btnEl);
 
             const barWrap = document.createElement('div');
             barWrap.className = 'ai-model-bar';
@@ -1066,52 +897,29 @@ export function mountAiModels(container: HTMLElement): void {
             barFill.className = 'ai-model-bar-fill';
             barWrap.appendChild(barFill);
 
-            right.appendChild(statusEl);
-            right.appendChild(btnEl);
-            right.appendChild(delEl);
-            row.appendChild(info);
-            row.appendChild(right);
-            row.appendChild(barWrap);
+            row.append(info, right, barWrap);
             list.appendChild(row);
 
-            const state: RowState = { meta, rowEl: row, statusEl, btnEl, delEl, barEl: barWrap, barFill };
+            const state: RowState = { id: entry.id, label: entry.label, note: entry.note, rowEl: row, statusEl, btnEl, barEl: barWrap, barFill };
             rows.push(state);
 
-            btnEl.addEventListener('click', async () => {
+            btnEl.addEventListener('click', () => {
                 if (engineStatus === 'loading') return;
-                setSelectedModelId(meta.id);
+                setSelectedProviderId(entry.id);
+                // Force re-creation of the provider on next load
+                provider = null;
                 updateRows();
-                try {
-                    await loadModel(meta.id);
-                } catch { /* error shown via status listener */ }
+                void loadSelectedProvider().catch(() => { /* error shown via status */ });
             });
-
-            delEl.addEventListener('click', async () => {
-                if (!confirm(`Remove "${meta.label}" from browser cache?\n\nYou'll need to re-download it (~${Math.round(meta.sizeMb / 100) / 10} GB) to use it again.`)) return;
-                delEl.disabled = true;
-                delEl.textContent = '…';
-                const n = await evictModelFromCache(meta.id);
-                if (n === 0) {
-                    console.warn('[fade/ai] no cache entries found for', meta.id);
-                }
-                state.rowEl.dataset.cached = '0';
-                updateRowState(state);
-            });
-
-            // Check cache status asynchronously
-            void hasModelInCache(meta.id).then(cached => {
-                state.rowEl.dataset.cached = cached ? '1' : '0';
-                updateRowState(state);
-            }).catch(() => { /* not supported */ });
 
             updateRowState(state);
         }
     }
 
     function updateRowState(state: RowState): void {
-        const isLoading = engineStatus === 'loading' && getSelectedModelId() === state.meta.id;
-        const isReady = engineStatus === 'ready' && engineModelId === state.meta.id;
-        const isCached = state.rowEl.dataset.cached === '1';
+        const selected = getSelectedProviderId() === state.id;
+        const isLoading = engineStatus === 'loading' && selected;
+        const isReady = engineStatus === 'ready' && selected;
 
         state.rowEl.classList.toggle('ai-model-active', isReady);
 
@@ -1120,29 +928,18 @@ export function mountAiModels(container: HTMLElement): void {
             state.statusEl.className = 'ai-model-status ai-model-status-ready';
             state.btnEl.textContent = 'Loaded';
             state.btnEl.disabled = true;
-            state.delEl.hidden = true;
+            state.barEl.hidden = true;
         } else if (isLoading) {
             state.statusEl.textContent = 'Loading…';
             state.statusEl.className = 'ai-model-status ai-model-status-loading';
             state.btnEl.textContent = 'Loading…';
             state.btnEl.disabled = true;
             state.barEl.hidden = false;
-            state.delEl.hidden = true;
-        } else if (isCached) {
-            state.statusEl.textContent = 'Cached';
-            state.statusEl.className = 'ai-model-status ai-model-status-cached';
-            state.btnEl.textContent = 'Load';
-            state.btnEl.disabled = false;
-            state.barEl.hidden = true;
-            state.delEl.hidden = false;
-            state.delEl.disabled = false;
-            state.delEl.textContent = '🗑';
         } else {
-            state.statusEl.textContent = '';
-            state.btnEl.textContent = 'Download & Load';
+            state.statusEl.textContent = selected ? 'Selected' : '';
+            state.btnEl.textContent = selected ? 'Load' : 'Use';
             state.btnEl.disabled = false;
             state.barEl.hidden = true;
-            state.delEl.hidden = true;
         }
     }
 
@@ -1152,10 +949,9 @@ export function mountAiModels(container: HTMLElement): void {
 
     statusListeners.add(updateRows);
     progressListeners.add((_, pct) => {
+        const sel = getSelectedProviderId();
         for (const state of rows) {
-            if (getSelectedModelId() === state.meta.id) {
-                state.barFill.style.width = `${Math.round(pct * 100)}%`;
-            }
+            if (state.id === sel) state.barFill.style.width = `${Math.round(pct * 100)}%`;
         }
     });
 

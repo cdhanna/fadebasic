@@ -159,12 +159,16 @@ export function parseFadeProject(jsonText: string): FadeConfigParseResult {
 }
 
 // Build a default fade.json for a fresh project. Used when migrating legacy
-// flat OPFS files into the first project folder, and when (later) creating
-// a new project from the project viewer.
-export function defaultFadeProject(projectName: string, sources: string[]): FadeProject {
+// flat OPFS files into the first project folder, and when creating a new
+// project from the project viewer (which now lets the user pick a type).
+export function defaultFadeProject(
+    projectName: string,
+    sources: string[],
+    type: FadeProjectType = 'web',
+): FadeProject {
     return {
         name: projectName,
-        type: 'web',
+        type,
         commandDlls: [],
         sources: sources.length > 0 ? sources : ['main.fbasic'],
     };

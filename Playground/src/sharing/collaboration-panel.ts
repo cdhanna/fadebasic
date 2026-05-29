@@ -2460,7 +2460,10 @@ function injectStylesOnce(): void {
     height: 100%; box-sizing: border-box;
     padding: 8px 10px;
     overflow-y: auto;
-    color: var(--vscode-foreground, #ddd);
+    /* Match the workspace sidebar so the panel reads as another sidebar
+       rather than as an unrelated chunk of the editor canvas. */
+    background: var(--bg-2);
+    color: var(--fg);
     font: 13px/1.4 ui-sans-serif, system-ui, sans-serif;
 }
 .${CSS_PREFIX}-header {
@@ -2780,20 +2783,24 @@ function injectStylesOnce(): void {
     text-align: center;
     vertical-align: middle;
 }
-.sharing-added    { background: rgba(110,230,110,0.18); color: #6e6; }
-.sharing-modified { background: rgba(255,200,90,0.18);  color: #fc6; }
-.sharing-deleted  { background: rgba(255,120,120,0.18); color: #f88; }
+/* Each badge picks its text color from a CSS variable so light themes can
+   dial up the contrast without losing the semantic hue. Defaults below are
+   the original pastel-on-dark; per-theme overrides live in index.html under
+   the matching html[data-theme] block. */
+.sharing-added    { background: rgba(110,230,110,0.18); color: var(--badge-added-fg, #6e6); }
+.sharing-modified { background: rgba(255,200,90,0.18);  color: var(--badge-modified-fg, #fc6); }
+.sharing-deleted  { background: rgba(255,120,120,0.18); color: var(--badge-deleted-fg, #f88); }
 .sharing-pending-pull {
-    background: rgba(80,140,200,0.20); color: #88c8ff;
+    background: rgba(80,140,200,0.20); color: var(--badge-pull-fg, #88c8ff);
     font-weight: 700;
 }
 .sharing-conflict {
-    background: rgba(255,90,90,0.25); color: #ffb0b0;
+    background: rgba(255,90,90,0.25); color: var(--badge-conflict-fg, #ffb0b0);
     font-weight: 700;
     border: 1px solid rgba(255,90,90,0.55);
 }
 .sharing-conflict-sibling {
-    background: rgba(255,170,90,0.15); color: #ffc890;
+    background: rgba(255,170,90,0.15); color: var(--badge-sibling-fg, #ffc890);
     font-weight: 500;
     font-style: italic;
     text-transform: uppercase;

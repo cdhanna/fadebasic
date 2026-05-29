@@ -78,7 +78,10 @@ import { patchXnbForKni } from './xnb/xnb-previews';
 import { mountHelpPanel } from './help';
 import { monoGameHost } from './monogame-host';
 import { mountAiChat, mountAiModels } from './ai-chat';
-import type { CommandDocEntry as HelpCommandDocEntry } from './help';
+import { monacoDiagnosticsProvider } from './ai/adapters/monaco-diagnostics';
+import { PLAYGROUND_VERSION } from './changelog';
+import { maybeShowChangelogPopup, showFullChangelog } from './version-popup';
+import type { CommandDocEntry as HelpCommandDocEntry, HelpSnippetToken } from './help';
 import {
     mountCollaboration,
     statusGlyph,
@@ -92,6 +95,15 @@ import {
     type GutterHandle,
 } from './sharing';
 import { mountLogsPanel } from './logs-panel';
+import { mountSearchPanel } from './search-panel';
+import { mountSettingsPanel } from './settings-panel';
+import {
+    initSettings,
+    onSettingsChange,
+    currentSettings,
+    type SettingsState,
+} from './settings';
+import { resolveTheme } from './themes';
 import { getLogger } from './log-bus';
 import {
     FADE_JSON_NAME,
@@ -101,24 +113,55 @@ import {
     locateJsonPaths,
     offsetsToLineCol,
     type FadeProject,
+    type FadeProjectType,
     type FadeConfigError,
     type CommandDllEntry,
 } from './fade-config';
+import { ProjectSourceMap } from './project-source-map';
+
+// Synthetic URI for the joined "project document" we push to the LSP whenever
+// a Fade project has more than one source listed in fade.json. The LSP sees
+// one .fbasic doc with every file's lines concatenated in declaration order;
+// JS translates per-file positions in and out via ProjectSourceMap so the
+// LSP can keep treating documents as independent compilation units (no LSP-
+// side changes needed — see [FadeBasic/LSP.Core/FadeWorkspace.cs]).
+const PROJECT_LSP_URI = monaco.Uri.file('/workspace/__fade_project__.fbasic').toString();
 (self as any).MonacoEnvironment = {
     getWorker: () => new EditorWorker(),
 };
 // Expose monaco globally for diagnostic probing from Playwright
 (window as any).monaco = monaco;
 
-const DEFAULT_SOURCE = [
+// Per-type starter source for `main.fbasic` when a new workspace is
+// created. Picked by createProject() based on the workspace type. The
+// web starter sticks to print/loop primitives that work in the
+// browser-only runtime; the MonoGame starter sets up the canonical
+// `set sync rate` + DO/sync/LOOP frame loop. Tweak these freely — they
+// only affect the seed of brand-new workspaces, not existing ones.
+const WEB_STARTER_SOURCE = [
     'print upper$("hello from the playground")',
-    'for n = 1 to 5',
+    'for n = 1 to 3',
     '  print "tick " + str$(n)',
     '  wait ms(300)',
     'next',
-    'x = rnd(100)',
-    'y = x * 2',
+    'name$ = prompt$("what is your name?")',
+    'print "your name has " + str$(len(name$)) + " letters."'
 ].join('\n');
+
+const MONOGAME_STARTER_SOURCE = [
+    'set render size 1280, 720',
+    'set background color rgb(56, 71, 107)',
+    'sprite 1, render width()/2, render height()/2, 0',
+    'size sprite 1, 100, 100',
+    'do',
+    '  sync',
+    'loop',
+].join('\n');
+
+// Default starter used by recovery paths (seedIfEmpty / legacy migration)
+// where the project type isn't known. We bias toward web because it's
+// the simpler runtime and won't crash if MonoGame isn't bootstrapped.
+const DEFAULT_SOURCE = WEB_STARTER_SOURCE;
 
 // ─── DOM refs ───────────────────────────────────────────────────────────────
 // runBtn is a <vscode-button> custom element; it accepts `disabled` as an
@@ -164,7 +207,15 @@ class OpfsWorkspace {
     private dir!: FileSystemDirectoryHandle;        // workspace/<active-project>/
     private activeProject: string = DEFAULT_PROJECT_NAME;
 
-    async init() {
+    /** Initialize OPFS + pick an active project if one already exists.
+     *
+     *  Returns `false` when there are zero projects on disk — the caller
+     *  is then expected to show the "create your first workspace" UI and
+     *  call createProject + setActiveProject before touching any other
+     *  workspace API. We deliberately do NOT auto-create a `default`
+     *  project here, because that would force the type to `web` and rob
+     *  first-time users of the chance to pick `monogame`. */
+    async init(): Promise<boolean> {
         const opfsRoot = await navigator.storage.getDirectory();
         this.root = await opfsRoot.getDirectoryHandle('workspace', { create: true });
 
@@ -172,13 +223,14 @@ class OpfsWorkspace {
         // project folder so the new layout invariant holds.
         await this.migrateLegacyFlatLayout();
 
-        // Determine which project to open. Validated against the actual
-        // folders on disk; if the stored name is gone, fall back to the
-        // first project we find (creating one if none exist).
-        let target = localStorage.getItem(ACTIVE_PROJECT_KEY) || DEFAULT_PROJECT_NAME;
         const projects = await this.listProjects();
-        if (!projects.includes(target)) target = projects[0] ?? DEFAULT_PROJECT_NAME;
+        if (projects.length === 0) return false;
+
+        // Prefer the previously-active project if it still exists on disk.
+        let target = localStorage.getItem(ACTIVE_PROJECT_KEY) || projects[0];
+        if (!projects.includes(target)) target = projects[0];
         await this.setActiveProject(target, /*seedIfEmpty*/ true);
+        return true;
     }
 
     // Promote any leaf files at the workspace root into a project folder.
@@ -248,7 +300,11 @@ class OpfsWorkspace {
     }
 
     // Create a fresh project folder with a starter main.fbasic + fade.json.
-    async createProject(name: string): Promise<void> {
+    // `type` controls the runtime stamped into fade.json — `web` (the
+    // browser-only path) or `monogame` (iframe-hosted MonoGame). The user
+    // picks this in the new-project modal; falling back to `web` keeps
+    // legacy callers behaving as before.
+    async createProject(name: string, type: FadeProjectType = 'web'): Promise<void> {
         const dir = await this.root.getDirectoryHandle(name, { create: true });
         // Avoid clobbering an existing project.
         let hasAny = false;
@@ -256,9 +312,10 @@ class OpfsWorkspace {
         if (hasAny) return;
         const mainFh = await dir.getFileHandle('main.fbasic', { create: true });
         const mainW = await mainFh.createWritable();
-        await mainW.write(DEFAULT_SOURCE);
+        const starter = type === 'monogame' ? MONOGAME_STARTER_SOURCE : WEB_STARTER_SOURCE;
+        await mainW.write(starter);
         await mainW.close();
-        const proj = defaultFadeProject(name, ['main.fbasic']);
+        const proj = defaultFadeProject(name, ['main.fbasic'], type);
         const manifestFh = await dir.getFileHandle(FADE_JSON_NAME, { create: true });
         const manifestW = await manifestFh.createWritable();
         await manifestW.write(stringifyFadeProject(proj));
@@ -546,6 +603,44 @@ async function flushPendingSaves(workspace: OpfsWorkspace): Promise<void> {
     }
 }
 
+// Resolve the requested theme id to a concrete preset (handles 'auto'), then
+// push the three layers — CSS palette, Monaco, dockview — in lockstep.
+function applyTheme(state: SettingsState): void {
+    const requested = String(state.effective['ui.theme'] ?? 'dark');
+    const preset = resolveTheme(requested);
+    document.documentElement.dataset.theme = preset.id;
+    try { monaco.editor.setTheme(preset.monaco); }
+    catch { /* called before defineTheme on first render — onSettingsChange replays after */ }
+    // Dockview ships its own theme classes; swap them in lockstep so the
+    // splitters/tabs match the rest of the UI. `__fadeDockview` is set during
+    // setupDockview() — guard for the early-boot call that fires before
+    // dockview is constructed.
+    const dock = (window as any).__fadeDockview as { updateOptions?: (o: any) => void } | undefined;
+    try {
+        dock?.updateOptions?.({
+            theme: { name: preset.id, className: preset.dockview },
+        });
+    } catch { /* dockview not ready yet */ }
+}
+
+// Maps the flat settings dictionary onto Monaco's editor options. Called
+// at editor.create() and again whenever settings change. tabSize /
+// insertSpaces are model options (applied separately by the listener).
+function editorOptionsFromSettings(state: SettingsState): monaco.editor.IEditorOptions {
+    const eff = state.effective;
+    const lineHeight = Number(eff['editor.lineHeight'] ?? 0);
+    return {
+        fontSize: Number(eff['editor.fontSize'] ?? 14),
+        fontFamily: String(eff['editor.fontFamily'] ?? ''),
+        lineHeight: lineHeight > 0 ? lineHeight : undefined,
+        minimap: { enabled: Boolean(eff['editor.minimap'] ?? false) },
+        wordWrap: (eff['editor.wordWrap'] as 'off' | 'on' | 'bounded') ?? 'off',
+        renderWhitespace: (eff['editor.renderWhitespace'] as
+            'none' | 'boundary' | 'selection' | 'all') ?? 'none',
+        lineNumbers: (eff['editor.lineNumbers'] ?? true) ? 'on' : 'off',
+    } as monaco.editor.IEditorOptions;
+}
+
 function languageFor(name: string): string {
     if (name.endsWith('.fbasic') || name.endsWith('.fb')) return 'fade';
     const extra = languageForExtra(name);
@@ -571,6 +666,13 @@ async function openFile(workspace: OpfsWorkspace, name: string) {
         let model = monaco.editor.getModel(uri);
         if (!model) {
             model = monaco.editor.createModel(text, languageFor(name), uri);
+            // Seed tab settings from the current effective config so the
+            // brand-new model lines up with the editor's existing tabs.
+            const eff = currentSettings().effective;
+            model.updateOptions({
+                tabSize: Number(eff['editor.tabSize'] ?? 2),
+                insertSpaces: Boolean(eff['editor.insertSpaces'] ?? true),
+            });
         }
         // Hook this model for LSP push + decoration (if available)
         (window as any).__fadeHookModel?.(model);
@@ -598,6 +700,7 @@ async function openFile(workspace: OpfsWorkspace, name: string) {
             // + a refreshStatus round-trip).
             sharingController?.setHasDirtyTabs(true);
             clearTimeout(tab!.saveTimer);
+            const debounceMs = Number(currentSettings().effective['autosave.debounceMs'] ?? 600);
             tab!.saveTimer = window.setTimeout(async () => {
                 try {
                     await workspace.write(tab!.name, tab!.model.getValue());
@@ -607,13 +710,13 @@ async function openFile(workspace: OpfsWorkspace, name: string) {
                     // Lightweight per-file refresh — invalidates just this
                     // path's cached hash. The other ~N-1 files in the
                     // workspace stay cached, which is the difference
-                    // between hashing every file every 600 ms and hashing
-                    // only the file the user just typed in.
+                    // between hashing every file every debounce window and
+                    // hashing only the file the user just typed in.
                     void sharingController?.refreshStatusForFile(tab!.name);
                 } catch (e) {
                     console.error('[fade] save failed for', tab!.name, e);
                 }
-            }, 600);
+            }, debounceMs);
             renderTabs();
         });
         tabs.set(name, tab);
@@ -1431,6 +1534,7 @@ class FadeRunner {
         if (msg.type === 'clear-command-assemblies-result')    { this.resolvePending(msg.id, undefined); return; }
         if (msg.type === 'list-tests-result')         { this.resolvePending(msg.id, msg.tests); return; }
         if (msg.type === 'list-command-docs-result')  { this.resolvePending(msg.id, msg.docs); return; }
+        if (msg.type === 'lsp-tokenize-snippet-result') { this.resolvePending(msg.id, msg.tokens); return; }
         if (msg.type === 'get-version-info-result')   { this.resolvePending(msg.id, msg.info); return; }
         if (msg.type === 'run-tests-result')          { this.resolvePending(msg.id, msg.result); return; }
         if (msg.type === 'debug-start-result')        { this.resolvePending(msg.id, msg.result); return; }
@@ -1799,6 +1903,23 @@ class FadeRunner {
                 } catch { resolve([]); }
             });
             this.lspWorker.postMessage({ type: 'list-command-docs', id });
+        });
+    }
+
+    // Free-floating tokenize for Help-tab code blocks — bypasses the LSP
+    // workspace's _docs map so it doesn't publish diagnostics or churn the
+    // open-file set. Returns the legend-classified tokens (line/col/length/
+    // type) the help-side renderer wraps into spans.
+    async tokenizeSnippet(source: string): Promise<HelpSnippetToken[]> {
+        const id = ++this.nextId;
+        return new Promise<HelpSnippetToken[]>((resolve) => {
+            this.pending.set(id, (json: string) => {
+                try {
+                    const parsed = JSON.parse(json);
+                    resolve(Array.isArray(parsed) ? parsed : []);
+                } catch { resolve([]); }
+            });
+            this.lspWorker.postMessage({ type: 'lsp-tokenize-snippet', id, source });
         });
     }
 
@@ -2173,6 +2294,90 @@ interface CompletionItem {
     triggerParameterHints: boolean;
 }
 
+// ─── First-run workspace picker ─────────────────────────────────────────────
+// Shown when OpfsWorkspace.init() reports zero existing projects. Reuses
+// the regular project-overlay markup but hides the list + close button so
+// the user has to commit to a workspace type before the editor mounts.
+// On submit we createProject + setActiveProject and then reload — the
+// second boot pass then takes the normal happy path.
+async function runFirstRunFlow(workspace: OpfsWorkspace): Promise<never> {
+    const overlay = document.getElementById('project-overlay')!;
+    const titleEl = document.getElementById('project-modal-title')!;
+    const headingEl = document.getElementById('project-new-heading')!;
+    const nameInput = document.getElementById('project-new-input') as HTMLInputElement;
+    const errorEl = document.getElementById('project-new-error')!;
+    const createBtn = document.getElementById('project-new-create') as HTMLButtonElement;
+    const cards = Array.from(
+        document.querySelectorAll<HTMLButtonElement>('.project-type-card'),
+    );
+
+    overlay.classList.add('first-run');
+    overlay.hidden = false;
+    titleEl.textContent = 'Welcome';
+    headingEl.textContent = 'Create your first workspace';
+
+    let selected: FadeProjectType | null = null;
+    const updateBtn = () => {
+        createBtn.disabled =
+            nameInput.value.trim().length === 0 || selected === null;
+    };
+    const showError = (msg: string) => {
+        errorEl.textContent = msg;
+        errorEl.hidden = false;
+    };
+    const clearError = () => {
+        errorEl.textContent = '';
+        errorEl.hidden = true;
+    };
+
+    for (const card of cards) {
+        card.addEventListener('click', () => {
+            const t = card.dataset.type as FadeProjectType | undefined;
+            if (t !== 'web' && t !== 'monogame') return;
+            selected = t;
+            for (const c of cards) {
+                const match = c === card;
+                c.classList.toggle('selected', match);
+                c.setAttribute('aria-checked', match ? 'true' : 'false');
+            }
+            updateBtn();
+        });
+    }
+    nameInput.addEventListener('input', () => { clearError(); updateBtn(); });
+
+    const submit = async () => {
+        const name = nameInput.value.trim();
+        if (!name || !selected) return;
+        if (!/^[\w.-]+$/.test(name)) {
+            showError('Invalid name. Letters, digits, dot, dash, underscore only.');
+            return;
+        }
+        try {
+            await workspace.createProject(name, selected);
+            await workspace.setActiveProject(name);
+        } catch (e: any) {
+            showError('Create failed: ' + (e?.message ?? e));
+            return;
+        }
+        // Reload: lets the post-init boot path run cleanly with the
+        // freshly-created project active.
+        location.reload();
+    };
+
+    createBtn.addEventListener('click', submit);
+    nameInput.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter' && !createBtn.disabled) {
+            e.preventDefault();
+            submit();
+        }
+    });
+
+    setTimeout(() => nameInput.focus(), 0);
+    // Never resolves — the only way out is the reload above. Caller
+    // awaits this so it can stay `async` without an unreachable return.
+    return new Promise<never>(() => { /* intentional */ });
+}
+
 // ─── bootstrap ──────────────────────────────────────────────────────────────
 async function bootstrap() {
     const pgSplash = (window as any).__pgSplash as
@@ -2233,6 +2438,168 @@ async function bootstrap() {
         ],
         colors: {},
     });
+    // Light counterpart — VSCode Light+ palette. Same semantic token list so
+    // the editor switches themes without reloading.
+    monaco.editor.defineTheme('fade-light', {
+        base: 'vs',
+        inherit: true,
+        rules: [
+            { token: 'comment',   foreground: '008000', fontStyle: 'italic' },
+            { token: 'keyword',   foreground: 'AF00DB' },
+            { token: 'function',  foreground: '795E26' },
+            { token: 'method',    foreground: '795E26' },
+            { token: 'macro',     foreground: 'AF00DB' },
+            { token: 'parameter', foreground: '001080' },
+            { token: 'struct',    foreground: '267F99' },
+            { token: 'type',      foreground: '267F99' },
+            { token: 'operator',  foreground: '000000' },
+            { token: 'number',    foreground: '098658' },
+            { token: 'string',    foreground: 'A31515' },
+            ...extraThemeRules('light'),
+        ],
+        colors: {},
+    });
+
+    // ── Fun themes ────────────────────────────────────────────────────────
+    // Each preset replaces the per-token foreground colors; the CSS palette
+    // for the rest of the UI lives in index.html under matching
+    // html[data-theme="<id>"] blocks. Token sets mirror the dark theme so
+    // semantic-highlighting picks them up unchanged.
+    monaco.editor.defineTheme('fade-dracula', {
+        base: 'vs-dark', inherit: true,
+        rules: [
+            { token: 'comment',   foreground: '6272A4', fontStyle: 'italic' },
+            { token: 'keyword',   foreground: 'FF79C6' },
+            { token: 'function',  foreground: '50FA7B' },
+            { token: 'method',    foreground: '50FA7B' },
+            { token: 'macro',     foreground: 'FF79C6' },
+            { token: 'parameter', foreground: 'FFB86C' },
+            { token: 'struct',    foreground: '8BE9FD' },
+            { token: 'type',      foreground: '8BE9FD' },
+            { token: 'operator',  foreground: 'F8F8F2' },
+            { token: 'number',    foreground: 'BD93F9' },
+            { token: 'string',    foreground: 'F1FA8C' },
+            ...extraThemeRules(),
+        ],
+        colors: {
+            'editor.background': '#282A36',
+            'editor.foreground': '#F8F8F2',
+        },
+    });
+    monaco.editor.defineTheme('fade-solarized-dark', {
+        base: 'vs-dark', inherit: true,
+        rules: [
+            { token: 'comment',   foreground: '586E75', fontStyle: 'italic' },
+            { token: 'keyword',   foreground: '859900' },
+            { token: 'function',  foreground: 'B58900' },
+            { token: 'method',    foreground: 'B58900' },
+            { token: 'macro',     foreground: '859900' },
+            { token: 'parameter', foreground: 'CB4B16' },
+            { token: 'struct',    foreground: '2AA198' },
+            { token: 'type',      foreground: '2AA198' },
+            { token: 'operator',  foreground: '93A1A1' },
+            { token: 'number',    foreground: 'D33682' },
+            { token: 'string',    foreground: '2AA198' },
+            ...extraThemeRules(),
+        ],
+        colors: {
+            'editor.background': '#002B36',
+            'editor.foreground': '#93A1A1',
+        },
+    });
+    monaco.editor.defineTheme('fade-monokai', {
+        base: 'vs-dark', inherit: true,
+        rules: [
+            { token: 'comment',   foreground: '75715E', fontStyle: 'italic' },
+            { token: 'keyword',   foreground: 'F92672' },
+            { token: 'function',  foreground: 'A6E22E' },
+            { token: 'method',    foreground: 'A6E22E' },
+            { token: 'macro',     foreground: 'F92672' },
+            { token: 'parameter', foreground: 'FD971F' },
+            { token: 'struct',    foreground: '66D9EF' },
+            { token: 'type',      foreground: '66D9EF' },
+            { token: 'operator',  foreground: 'F8F8F2' },
+            { token: 'number',    foreground: 'AE81FF' },
+            { token: 'string',    foreground: 'E6DB74' },
+            ...extraThemeRules(),
+        ],
+        colors: {
+            'editor.background': '#272822',
+            'editor.foreground': '#F8F8F2',
+        },
+    });
+    monaco.editor.defineTheme('fade-nord', {
+        base: 'vs-dark', inherit: true,
+        rules: [
+            { token: 'comment',   foreground: '4C566A', fontStyle: 'italic' },
+            { token: 'keyword',   foreground: '81A1C1' },
+            { token: 'function',  foreground: '88C0D0' },
+            { token: 'method',    foreground: '88C0D0' },
+            { token: 'macro',     foreground: 'B48EAD' },
+            { token: 'parameter', foreground: 'D08770' },
+            { token: 'struct',    foreground: '8FBCBB' },
+            { token: 'type',      foreground: '8FBCBB' },
+            { token: 'operator',  foreground: 'ECEFF4' },
+            { token: 'number',    foreground: 'B48EAD' },
+            { token: 'string',    foreground: 'A3BE8C' },
+            ...extraThemeRules(),
+        ],
+        colors: {
+            'editor.background': '#2E3440',
+            'editor.foreground': '#D8DEE9',
+        },
+    });
+    monaco.editor.defineTheme('fade-high-contrast', {
+        base: 'hc-black', inherit: true,
+        rules: [
+            { token: 'comment',   foreground: '7CA668', fontStyle: 'italic' },
+            { token: 'keyword',   foreground: '569CD6' },
+            { token: 'function',  foreground: 'DCDCAA' },
+            { token: 'method',    foreground: 'DCDCAA' },
+            { token: 'macro',     foreground: 'C586C0' },
+            { token: 'parameter', foreground: '9CDCFE' },
+            { token: 'struct',    foreground: '4EC9B0' },
+            { token: 'type',      foreground: '4EC9B0' },
+            { token: 'operator',  foreground: 'FFFFFF' },
+            { token: 'number',    foreground: 'B5CEA8' },
+            { token: 'string',    foreground: 'CE9178' },
+            ...extraThemeRules(),
+        ],
+        colors: {},
+    });
+    // DBP — tribute to the original DarkBASIC Professional editor. Reference
+    // screenshot: pure-blue commands (`load`, `sync`, `set`, `make`,
+    // `position`, …), grey-italic REM comments, maroon strings, and the
+    // rest in plain black on a white canvas. We map keyword/function/method
+    // → blue so both control flow (for, next, if) AND built-in command
+    // tokens land in the same hue, since DBP didn't distinguish them.
+    monaco.editor.defineTheme('fade-dbp', {
+        base: 'vs', inherit: true,
+        rules: [
+            { token: 'comment',   foreground: '808080', fontStyle: 'italic' },
+            { token: 'keyword',   foreground: '0000FF' },
+            { token: 'function',  foreground: '0000FF' },
+            { token: 'method',    foreground: '0000FF' },
+            { token: 'macro',     foreground: '0000FF' },
+            { token: 'parameter', foreground: '000000' },
+            { token: 'struct',    foreground: '000000' },
+            { token: 'type',      foreground: '000000' },
+            { token: 'operator',  foreground: '000000' },
+            { token: 'number',    foreground: '2E8B57' },
+            { token: 'string',    foreground: '800080' },
+            ...extraThemeRules('light'),
+        ],
+        colors: {
+            'editor.background':        '#FFFFFF',
+            'editor.foreground':        '#000000',
+            'editorLineNumber.foreground':       '#A0A0A0',
+            'editorLineNumber.activeForeground': '#000000',
+            'editor.selectionBackground':        '#316AC5',
+            'editor.inactiveSelectionBackground':'#C2D5F2',
+            'editor.lineHighlightBackground':    '#F4F4F4',
+        },
+    });
+
     monaco.editor.setTheme('fade-dark');
 
     pgSplash?.setStatus('Loading language server…');
@@ -2300,6 +2667,15 @@ async function bootstrap() {
 
     async function applySemanticTokens(model: monaco.editor.ITextModel) {
         const uri = model.uri.toString();
+        const fileName = projectFileNameFromUri(uri);
+        // In-project files share a single token stream from the joined doc.
+        // applyProjectSemanticTokens fans it out to every in-project model
+        // in one pass, so for an in-project model we route there instead of
+        // duplicating the work N times across N tabs.
+        if (fileName) {
+            await applyProjectSemanticTokens();
+            return;
+        }
         const tokens = await lsp.getTokens(uri);
         const newDecorations: monaco.editor.IModelDeltaDecoration[] = [];
         let line = 0;
@@ -2323,6 +2699,49 @@ async function bootstrap() {
         const next = model.deltaDecorations(prev, newDecorations);
         decorationsByUri.set(uri, next);
         console.log('[fade-lsp] applied', newDecorations.length, 'decorations for', uri);
+    }
+
+    // Fetch the joined doc's token stream once, decode it, then bin tokens
+    // by the file each line belongs to and apply per-file decorations. Called
+    // when any in-project file's tokens need a refresh — much cheaper than
+    // calling getTokens once per tab when N tabs all map to the same project
+    // URI on the worker side.
+    async function applyProjectSemanticTokens(): Promise<void> {
+        const map = projectSourceMap;
+        if (!map) return;
+        const tokens = await lsp.getTokens(PROJECT_LSP_URI);
+        // Bucket decorations by file name first; apply them to each file's
+        // Monaco model at the end so a single LSP round-trip covers the
+        // whole project.
+        const byFile = new Map<string, monaco.editor.IModelDeltaDecoration[]>();
+        for (const r of map.ranges) byFile.set(r.name, []);
+        let joinedLine = 0;
+        let ch = 0;
+        for (let i = 0; i + 4 < tokens.length; i += 5) {
+            const dLine = tokens[i];
+            const dChar = tokens[i + 1];
+            const len = tokens[i + 2];
+            const typeIdx = tokens[i + 3];
+            if (dLine > 0) { joinedLine += dLine; ch = dChar; }
+            else { ch += dChar; }
+            const mapped = map.fromProject(joinedLine, ch);
+            if (!mapped) continue;
+            const list = byFile.get(mapped.name);
+            if (!list) continue;
+            const tokenName = tokenTypes[typeIdx] ?? 'unknown';
+            list.push({
+                range: new monaco.Range(mapped.line + 1, mapped.character + 1, mapped.line + 1, mapped.character + 1 + len),
+                options: { inlineClassName: 'fade-token-' + tokenName },
+            });
+        }
+        for (const r of map.ranges) {
+            const fileUri = monaco.Uri.file(`/workspace/${r.name}`);
+            const model = monaco.editor.getModel(fileUri);
+            if (!model) continue;
+            const uriKey = fileUri.toString();
+            const next = model.deltaDecorations(decorationsByUri.get(uriKey) ?? [], byFile.get(r.name) ?? []);
+            decorationsByUri.set(uriKey, next);
+        }
     }
 
     // Hover provider — surfaces diagnostic messages and basic token info.
@@ -2360,7 +2779,8 @@ async function bootstrap() {
                 } catch { /* fall through to LSP hover */ }
             }
 
-            const hover = await runner.getHover(uri, position.lineNumber - 1, position.column - 1);
+            const mappedPos = toLspPosition(uri, position.lineNumber - 1, position.column - 1);
+            const hover = await runner.getHover(lspUriFor(uri), mappedPos.line, mappedPos.character);
             if (hover) {
                 let value = hover.contents;
                 // BuildCommandMarkdown emits `### commandname\n...` as
@@ -2378,11 +2798,12 @@ async function bootstrap() {
                     contents.push({ value });
                 }
                 if (!range) {
+                    const localRange = rangeFromLsp(uri, hover.range);
                     range = new monaco.Range(
-                        hover.range.start.line + 1,
-                        hover.range.start.character + 1,
-                        hover.range.end.line + 1,
-                        hover.range.end.character + 1,
+                        localRange.start.line + 1,
+                        localRange.start.character + 1,
+                        localRange.end.line + 1,
+                        localRange.end.character + 1,
                     );
                 }
             }
@@ -2395,7 +2816,8 @@ async function bootstrap() {
         triggerCharacters: [' ', '.', '(', '=', '+', '*', '-', '/'],
         provideCompletionItems: async (model, position) => {
             const uri = model.uri.toString();
-            const items = await runner.getCompletions(uri, position.lineNumber - 1, position.column - 1);
+            const mapped = toLspPosition(uri, position.lineNumber - 1, position.column - 1);
+            const items = await runner.getCompletions(lspUriFor(uri), mapped.line, mapped.character);
             const word = model.getWordUntilPosition(position);
             const range = new monaco.Range(
                 position.lineNumber, word.startColumn,
@@ -2430,7 +2852,8 @@ async function bootstrap() {
         signatureHelpRetriggerCharacters: [','],
         provideSignatureHelp: async (model, position) => {
             const uri = model.uri.toString();
-            const sig = await runner.getSignatureHelp(uri, position.lineNumber - 1, position.column - 1);
+            const mapped = toLspPosition(uri, position.lineNumber - 1, position.column - 1);
+            const sig = await runner.getSignatureHelp(lspUriFor(uri), mapped.line, mapped.character);
             if (!sig || !sig.signatures?.length) return null;
             return {
                 value: {
@@ -2454,14 +2877,22 @@ async function bootstrap() {
     monaco.languages.registerReferenceProvider('fade', {
         provideReferences: async (model, position) => {
             const uri = model.uri.toString();
-            const refs = await runner.getReferences(uri, position.lineNumber - 1, position.column - 1);
-            return refs.map((r) => ({
-                uri: monaco.Uri.parse(r.uri),
-                range: new monaco.Range(
-                    r.range.start.line + 1, r.range.start.character + 1,
-                    r.range.end.line + 1, r.range.end.character + 1,
-                ),
-            }));
+            const mapped = toLspPosition(uri, position.lineNumber - 1, position.column - 1);
+            const refs = await runner.getReferences(lspUriFor(uri), mapped.line, mapped.character);
+            return refs.map((r) => {
+                // Each reference may live in a different in-project file;
+                // fromLspLocation rewrites the URI per-file based on the
+                // joined-line range.
+                const start = fromLspLocation(uri, r.range.start.line, r.range.start.character);
+                const end   = fromLspLocation(uri, r.range.end.line,   r.range.end.character);
+                return {
+                    uri: monaco.Uri.parse(start.uri),
+                    range: new monaco.Range(
+                        start.line + 1, start.character + 1,
+                        end.line + 1,   end.character + 1,
+                    ),
+                };
+            });
         },
     });
 
@@ -2469,13 +2900,16 @@ async function bootstrap() {
     monaco.languages.registerDefinitionProvider('fade', {
         provideDefinition: async (model, position) => {
             const uri = model.uri.toString();
-            const def = await runner.getDefinition(uri, position.lineNumber - 1, position.column - 1);
+            const mapped = toLspPosition(uri, position.lineNumber - 1, position.column - 1);
+            const def = await runner.getDefinition(lspUriFor(uri), mapped.line, mapped.character);
             if (!def) return null;
+            const start = fromLspLocation(uri, def.range.start.line, def.range.start.character);
+            const end   = fromLspLocation(uri, def.range.end.line,   def.range.end.character);
             return {
-                uri: monaco.Uri.parse(def.uri),
+                uri: monaco.Uri.parse(start.uri),
                 range: new monaco.Range(
-                    def.range.start.line + 1, def.range.start.character + 1,
-                    def.range.end.line + 1, def.range.end.character + 1,
+                    start.line + 1, start.character + 1,
+                    end.line + 1,   end.character + 1,
                 ),
             };
         },
@@ -2487,26 +2921,35 @@ async function bootstrap() {
         displayName: 'Fade',
         provideDocumentSymbols: async (model) => {
             const uri = model.uri.toString();
-            const syms = await runner.getDocumentSymbols(uri);
-            return syms.map(toMonacoSymbol);
+            const syms = await runner.getDocumentSymbols(lspUriFor(uri));
+            // In multi-source mode the LSP returns symbols across the
+            // entire joined doc; filter to only those whose range starts
+            // inside the requested file's slice so the outline shows just
+            // this file's symbols.
+            const filtered = projectFileNameFromUri(uri)
+                ? syms.filter((s) => joinedLineBelongsTo(uri, s.range.start.line))
+                : syms;
+            return filtered.map((s) => toMonacoSymbol(uri, s));
         },
     });
 
-    function toMonacoSymbol(s: DocSymbol): monaco.languages.DocumentSymbol {
+    function toMonacoSymbol(uri: string, s: DocSymbol): monaco.languages.DocumentSymbol {
+        const r = rangeFromLsp(uri, s.range);
+        const sr = rangeFromLsp(uri, s.selectionRange);
         return {
             name: s.name,
             detail: s.detail ?? '',
             kind: lspSymKindToMonaco(s.kind),
             tags: [],
             range: new monaco.Range(
-                s.range.start.line + 1, s.range.start.character + 1,
-                s.range.end.line + 1, s.range.end.character + 1,
+                r.start.line + 1, r.start.character + 1,
+                r.end.line + 1, r.end.character + 1,
             ),
             selectionRange: new monaco.Range(
-                s.selectionRange.start.line + 1, s.selectionRange.start.character + 1,
-                s.selectionRange.end.line + 1, s.selectionRange.end.character + 1,
+                sr.start.line + 1, sr.start.character + 1,
+                sr.end.line + 1, sr.end.character + 1,
             ),
-            children: s.children?.map(toMonacoSymbol) ?? [],
+            children: s.children?.map((c) => toMonacoSymbol(uri, c)) ?? [],
         };
     }
 
@@ -2531,16 +2974,28 @@ async function bootstrap() {
     monaco.languages.registerFoldingRangeProvider('fade', {
         provideFoldingRanges: async (model) => {
             const uri = model.uri.toString();
-            const ranges = await runner.getFoldingRanges(uri);
-            return ranges.map((r) => ({
-                start: r.startLine + 1,
-                end: r.endLine + 1,
-                kind: r.kind === 1
-                    ? monaco.languages.FoldingRangeKind.Comment
-                    : r.kind === 2
-                        ? monaco.languages.FoldingRangeKind.Imports
-                        : monaco.languages.FoldingRangeKind.Region,
-            }));
+            const ranges = await runner.getFoldingRanges(lspUriFor(uri));
+            // Filter to ranges whose start line falls inside the requested
+            // file's slice, then translate. Otherwise file B would show
+            // foldable regions belonging to file A.
+            const inFile = projectFileNameFromUri(uri)
+                ? ranges.filter((r) => joinedLineBelongsTo(uri, r.startLine))
+                : ranges;
+            return inFile.map((r) => {
+                const localStart = rangeFromLsp(uri, {
+                    start: { line: r.startLine, character: 0 },
+                    end:   { line: r.endLine,   character: 0 },
+                });
+                return {
+                    start: localStart.start.line + 1,
+                    end:   localStart.end.line + 1,
+                    kind: r.kind === 1
+                        ? monaco.languages.FoldingRangeKind.Comment
+                        : r.kind === 2
+                            ? monaco.languages.FoldingRangeKind.Imports
+                            : monaco.languages.FoldingRangeKind.Region,
+                };
+            });
         },
     });
 
@@ -2550,21 +3005,34 @@ async function bootstrap() {
         insertSpaces: opts.insertSpaces,
         casing: 0, // Ignore — could be wired to a user setting later
     });
-    const toMonacoEdit = (e: TextEdit): monaco.languages.TextEdit => ({
-        range: new monaco.Range(
-            e.range.start.line + 1, e.range.start.character + 1,
-            e.range.end.line + 1, e.range.end.character + 1,
-        ),
-        text: e.newText,
-    });
+
+    // Translate an edit from joined-doc coords back to per-file coords.
+    // For format requests on file B, the LSP may return edits across the
+    // entire joined doc; filter to edits that start inside B's slice and
+    // subtract its startLine.
+    const toMonacoEdit = (uri: string, e: TextEdit): monaco.languages.TextEdit => {
+        const local = rangeFromLsp(uri, e.range);
+        return {
+            range: new monaco.Range(
+                local.start.line + 1, local.start.character + 1,
+                local.end.line + 1, local.end.character + 1,
+            ),
+            text: e.newText,
+        };
+    };
+    const filterEditsForFile = (uri: string, edits: TextEdit[]): TextEdit[] => {
+        if (!projectFileNameFromUri(uri)) return edits;
+        return edits.filter((e) => joinedLineBelongsTo(uri, e.range.start.line));
+    };
 
     // extensionId / displayName let VSCode treat this as a "named" formatter
     // — matched by the user config setting `[fade].editor.defaultFormatter`.
     const docFormatter: monaco.languages.DocumentFormattingEditProvider = {
         displayName: 'Fade Basic',
         provideDocumentFormattingEdits: async (model, opts) => {
-            const edits = await runner.format(model.uri.toString(), buildFormattingOptions(opts));
-            return edits.map(toMonacoEdit);
+            const uri = model.uri.toString();
+            const edits = await runner.format(lspUriFor(uri), buildFormattingOptions(opts));
+            return filterEditsForFile(uri, edits).map((e) => toMonacoEdit(uri, e));
         },
     };
     (docFormatter as any).extensionId = 'fade-basic';
@@ -2573,13 +3041,16 @@ async function bootstrap() {
     const rangeFormatter: monaco.languages.DocumentRangeFormattingEditProvider = {
         displayName: 'Fade Basic',
         provideDocumentRangeFormattingEdits: async (model, range, opts) => {
-            const edits = await runner.formatRange(model.uri.toString(), buildFormattingOptions(opts), {
-                startLine: range.startLineNumber - 1,
-                startCh: range.startColumn - 1,
-                endLine: range.endLineNumber - 1,
-                endCh: range.endColumn - 1,
+            const uri = model.uri.toString();
+            const mappedStart = toLspPosition(uri, range.startLineNumber - 1, range.startColumn - 1);
+            const mappedEnd   = toLspPosition(uri, range.endLineNumber - 1,   range.endColumn - 1);
+            const edits = await runner.formatRange(lspUriFor(uri), buildFormattingOptions(opts), {
+                startLine: mappedStart.line,
+                startCh:   mappedStart.character,
+                endLine:   mappedEnd.line,
+                endCh:     mappedEnd.character,
             });
-            return edits.map(toMonacoEdit);
+            return filterEditsForFile(uri, edits).map((e) => toMonacoEdit(uri, e));
         },
     };
     (rangeFormatter as any).extensionId = 'fade-basic';
@@ -2588,12 +3059,14 @@ async function bootstrap() {
     monaco.languages.registerOnTypeFormattingEditProvider('fade', {
         autoFormatTriggerCharacters: ['(', ')', ',', '\n', ' '],
         provideOnTypeFormattingEdits: async (model, position, _ch, opts) => {
+            const uri = model.uri.toString();
+            const mapped = toLspPosition(uri, position.lineNumber - 1, position.column - 1);
             const edits = await runner.formatOnType(
-                model.uri.toString(),
+                lspUriFor(uri),
                 buildFormattingOptions(opts),
-                position.lineNumber - 1, position.column - 1,
+                mapped.line, mapped.character,
             );
-            return edits.map(toMonacoEdit);
+            return filterEditsForFile(uri, edits).map((e) => toMonacoEdit(uri, e));
         },
     });
 
@@ -2601,19 +3074,26 @@ async function bootstrap() {
     monaco.languages.registerRenameProvider('fade', {
         provideRenameEdits: async (model, position, newName) => {
             const uri = model.uri.toString();
-            const result = await runner.rename(uri, position.lineNumber - 1, position.column - 1, newName);
+            const mapped = toLspPosition(uri, position.lineNumber - 1, position.column - 1);
+            const result = await runner.rename(lspUriFor(uri), mapped.line, mapped.character, newName);
             if (!result?.changes) {
                 return { edits: [] };
             }
             const edits: monaco.languages.IWorkspaceTextEdit[] = [];
             for (const [resourceUri, textEdits] of Object.entries(result.changes)) {
                 for (const e of textEdits) {
+                    // When the rename was routed through PROJECT_LSP_URI,
+                    // resourceUri will be PROJECT_LSP_URI for every edit;
+                    // fan each edit out to the file its range lives in.
+                    const start = fromLspLocation(uri, e.range.start.line, e.range.start.character);
+                    const end   = fromLspLocation(uri, e.range.end.line,   e.range.end.character);
+                    const targetUri = resourceUri === PROJECT_LSP_URI ? start.uri : resourceUri;
                     edits.push({
-                        resource: monaco.Uri.parse(resourceUri),
+                        resource: monaco.Uri.parse(targetUri),
                         textEdit: {
                             range: new monaco.Range(
-                                e.range.start.line + 1, e.range.start.character + 1,
-                                e.range.end.line + 1, e.range.end.character + 1,
+                                start.line + 1, start.character + 1,
+                                end.line + 1,   end.character + 1,
                             ),
                             text: e.newText,
                         },
@@ -2661,32 +3141,91 @@ async function bootstrap() {
     let testsBusy = false;
     let exportBusy = false;
 
+    // Translate a single Diagnostic from joined-doc coords (start.line +
+    // end.line in the project URI's space) to per-file coords. Returns
+    // null when the diagnostic doesn't belong to a known project source —
+    // we drop those rather than misattribute them to a random file.
+    function splitProjectDiagnostic(d: Diagnostic): { name: string; diagnostic: Diagnostic } | null {
+        const map = projectSourceMap;
+        if (!map) return null;
+        const startMap = map.fromProject(d.range.start.line, d.range.start.character);
+        if (!startMap) return null;
+        const endMap = map.fromProject(d.range.end.line, d.range.end.character);
+        // A diagnostic that straddles a file boundary clamps to the start
+        // file's end-of-text. That's a pathological case (the LSP would
+        // need to have reported a range across files) — keep something
+        // visible rather than silently dropping.
+        const end = endMap && endMap.name === startMap.name
+            ? endMap
+            : { name: startMap.name, line: startMap.line, character: startMap.character };
+        const local: Diagnostic = {
+            severity: d.severity,
+            message: d.message,
+            code: d.code,
+            source: d.source,
+            range: {
+                start: { line: startMap.line, character: startMap.character },
+                end:   { line: end.line,      character: end.character },
+            },
+        };
+        return { name: startMap.name, diagnostic: local };
+    }
+
+    const markerFor = (d: Diagnostic): monaco.editor.IMarkerData => ({
+        severity: d.severity === 1 ? monaco.MarkerSeverity.Error
+            : d.severity === 2 ? monaco.MarkerSeverity.Warning
+            : d.severity === 3 ? monaco.MarkerSeverity.Info
+            : monaco.MarkerSeverity.Hint,
+        startLineNumber: d.range.start.line + 1,
+        startColumn: d.range.start.character + 1,
+        endLineNumber: d.range.end.line + 1,
+        endColumn: d.range.end.character + 1,
+        message: d.message,
+        code: d.code,
+        source: d.source ?? 'fade',
+    });
+
     lsp.setDiagnosticsHandler((uri, diagnostics) => {
-        // Find ALL models with this URI — codingame may create duplicate
-        // model objects (different instances, same URI). Apply markers to
-        // all of them so the live editor's model is always covered.
+        // Multi-source fan-out: when the LSP pushed diagnostics for the
+        // joined project doc, bucket each entry by origin file (via
+        // projectSourceMap.fromProject) and apply markers per-file. Files
+        // listed in fade.json:sources but with NO diagnostics still get
+        // their markers cleared — pre-seed empty buckets for every member.
+        if (uri === PROJECT_LSP_URI && projectSourceMap) {
+            const map = projectSourceMap;
+            const byFile = new Map<string, Diagnostic[]>();
+            for (const name of map.fileNames()) byFile.set(name, []);
+            for (const d of diagnostics) {
+                const split = splitProjectDiagnostic(d);
+                if (!split) continue;
+                byFile.get(split.name)!.push(split.diagnostic);
+            }
+            // Refresh semantic tokens once for the whole project — see
+            // applyProjectSemanticTokens for the same fan-out shape.
+            void applyProjectSemanticTokens();
+            for (const [name, diags] of byFile) {
+                const fileUri = monaco.Uri.file(`/workspace/${name}`).toString();
+                const allModels = monaco.editor.getModels().filter((m) => m.uri.toString() === fileUri);
+                const markers = diags.map(markerFor);
+                for (const m of allModels) {
+                    monaco.editor.setModelMarkers(m, 'fade', markers);
+                }
+                diagnosticsByUri.set(fileUri, diags);
+            }
+            renderProblems();
+            const wasBlocked = lastBlockedByErrors;
+            refreshRunButtons();
+            if (wasBlocked && !lastBlockedByErrors) refreshDebounce();
+            return;
+        }
+
+        // Single-file (orphan) path — unchanged from pre-multi-source.
         const allModels = monaco.editor.getModels().filter((m) => m.uri.toString() === uri);
         if (!allModels.length) return;
-        // Refresh semantic-token decorations on EVERY model with this URI,
-        // not just the editor's active one. Decorations are stored on the
-        // model itself, so doing this for inactive tabs means switching to
-        // them later shows them already highlighted (no edit needed).
         for (const m of allModels) {
             void applySemanticTokens(m);
         }
-        const markers: monaco.editor.IMarkerData[] = diagnostics.map((d) => ({
-            severity: d.severity === 1 ? monaco.MarkerSeverity.Error
-                : d.severity === 2 ? monaco.MarkerSeverity.Warning
-                : d.severity === 3 ? monaco.MarkerSeverity.Info
-                : monaco.MarkerSeverity.Hint,
-            startLineNumber: d.range.start.line + 1,
-            startColumn: d.range.start.character + 1,
-            endLineNumber: d.range.end.line + 1,
-            endColumn: d.range.end.character + 1,
-            message: d.message,
-            code: d.code,
-            source: d.source ?? 'fade',
-        }));
+        const markers = diagnostics.map(markerFor);
         for (const m of allModels) {
             monaco.editor.setModelMarkers(m, 'fade', markers);
         }
@@ -2900,6 +3439,20 @@ async function bootstrap() {
     let lastWorkerProjectType: string | null = null;
     let lastCommandDllsKey: string | null = null;
 
+    // ─── Multi-source joined-doc state ───────────────────────────────────
+    // The LSP only sees ONE document — a synthetic file whose text is every
+    // in-project source's content concatenated in fade.json order. Providers
+    // translate per-file Monaco positions through projectSourceMap before
+    // talking to the LSP; diagnostics + tokens get reverse-translated and
+    // fanned out per file. See [project-source-map.ts](src/project-source-map.ts).
+    //
+    // projectSourceMap is null until the first successful build (no fade.json,
+    // or fade.json with no resolvable sources). Providers fall back to the
+    // per-file LSP path in that case so a fresh / orphan-only workspace
+    // behaves identically to the pre-multi-source code.
+    let projectSourceMap: ProjectSourceMap | null = null;
+    let lastPushedProjectText: string | null = null;
+
     // Set after the Help panel is mounted (further down in bootstrap). The
     // project-type-change branch below uses this to re-fetch the command
     // doc list so Help reflects whichever CommandCollection the LSP just
@@ -2919,6 +3472,135 @@ async function bootstrap() {
         if (tab) return tab.model.getValue();
         try { return await workspace.read(name); }
         catch { return ''; }
+    }
+
+    // Synchronously read every in-project source's current text from its
+    // Monaco model (no OPFS round-trip — every workspace file gets a model
+    // at bootstrap; new files are created with a model up front). Skips
+    // sources whose model is missing so a stale fade.json entry doesn't
+    // break the rest of the build.
+    function readProjectSourcesSync(): { name: string; text: string }[] {
+        if (!currentProject) return [];
+        const out: { name: string; text: string }[] = [];
+        for (const name of currentProject.sources) {
+            const uri = monaco.Uri.file(`/workspace/${name}`);
+            const model = monaco.editor.getModel(uri);
+            if (!model) continue;
+            out.push({ name, text: model.getValue() });
+        }
+        return out;
+    }
+
+    // Returns true iff the given Monaco model URI maps to a file currently
+    // listed in fade.json:sources. Providers gate on this to decide whether
+    // to translate-and-route through the project doc or fall through to the
+    // standalone per-file LSP path.
+    function projectFileNameFromUri(uri: string): string | null {
+        if (!projectSourceMap) return null;
+        // Monaco URIs come back as file:///workspace/<name>; strip the prefix.
+        const m = /^file:\/\/\/workspace\/(.+)$/.exec(uri);
+        if (!m) return null;
+        const name = m[1];
+        return projectSourceMap.hasFile(name) ? name : null;
+    }
+
+    // Rebuild the joined project text from current model contents and push
+    // it to the LSP. Idempotent: if the joined text matches what we last
+    // pushed, skip the postMessage round-trip entirely. Returns true when a
+    // push happened (callers can use this to know diagnostics will follow).
+    function rebuildAndPushProjectDoc(force = false): boolean {
+        const inputs = readProjectSourcesSync();
+        if (inputs.length === 0) {
+            projectSourceMap = null;
+            // Clear the stale-push cache so the next non-empty build always
+            // re-pushes (even if its joined text accidentally matches a
+            // previous push).
+            lastPushedProjectText = null;
+            return false;
+        }
+        const map = ProjectSourceMap.build(inputs);
+        projectSourceMap = map;
+        if (!force && lastPushedProjectText === map.joined) return false;
+        lastPushedProjectText = map.joined;
+        runner.setDocument(PROJECT_LSP_URI, map.joined);
+        return true;
+    }
+
+    // ─── Project-aware LSP wrappers ──────────────────────────────────────
+    // Translate per-file (uri, line, char) into joined-doc coords when the
+    // file is in fade.json:sources; pass through otherwise. Orphan files
+    // still talk to the LSP under their own URI so they keep getting
+    // per-file diagnostics + hover + goto-def the way they always did.
+    //
+    // These mostly just sit between the Monaco providers and `runner.getX`
+    // — the LSP itself stays unaware that multiple "files" are sharing a
+    // single document. See [project-source-map.ts](src/project-source-map.ts)
+    // for the translation math.
+
+    // Build the LSP URI a request should target. PROJECT_LSP_URI for any
+    // file currently listed in fade.json:sources; the file's own URI for
+    // orphans + fade.json itself.
+    function lspUriFor(uri: string): string {
+        return projectFileNameFromUri(uri) ? PROJECT_LSP_URI : uri;
+    }
+
+    // Translate a per-file (line, char) into joined-doc coords for an
+    // outgoing LSP call. Pass-through for orphans.
+    function toLspPosition(uri: string, line: number, character: number): { line: number; character: number } {
+        const name = projectFileNameFromUri(uri);
+        if (!name || !projectSourceMap) return { line, character };
+        return projectSourceMap.toProject(name, line, character) ?? { line, character };
+    }
+
+    // Reverse-translate a (joinedLine, char) returned by the LSP into the
+    // file it belongs to. `originalUri` is the URI the request came in on
+    // — when the LSP response refers to a *different* file (cross-file
+    // goto-def / references), this returns the URI of the *target* file
+    // and the local line within it. For orphans, returns originalUri
+    // unchanged.
+    function fromLspLocation(
+        originalUri: string,
+        joinedLine: number,
+        character: number,
+    ): { uri: string; line: number; character: number } {
+        if (!projectFileNameFromUri(originalUri) || !projectSourceMap) {
+            return { uri: originalUri, line: joinedLine, character };
+        }
+        const mapped = projectSourceMap.fromProject(joinedLine, character);
+        if (!mapped) return { uri: originalUri, line: joinedLine, character };
+        return {
+            uri: monaco.Uri.file(`/workspace/${mapped.name}`).toString(),
+            line: mapped.line,
+            character: mapped.character,
+        };
+    }
+
+    // Translate a range whose start + end are both expected to belong to
+    // the SAME file as `originalUri` (hover ranges, completion ranges,
+    // selectionRange of a symbol entry). When the file is in-project this
+    // just subtracts the file's startLine from both endpoints.
+    function rangeFromLsp(
+        originalUri: string,
+        range: { start: { line: number; character: number }; end: { line: number; character: number } },
+    ): { start: { line: number; character: number }; end: { line: number; character: number } } {
+        const name = projectFileNameFromUri(originalUri);
+        if (!name || !projectSourceMap) return range;
+        const r = projectSourceMap.ranges.find((x) => x.name === name);
+        if (!r) return range;
+        return {
+            start: { line: range.start.line - r.startLine, character: range.start.character },
+            end:   { line: range.end.line   - r.startLine, character: range.end.character   },
+        };
+    }
+
+    // Is this joined-line within the originalUri's slice of the project?
+    // Used to filter document-symbol / folding / format edits so a request
+    // on file B doesn't return entries that belong to file A.
+    function joinedLineBelongsTo(originalUri: string, joinedLine: number): boolean {
+        const name = projectFileNameFromUri(originalUri);
+        if (!name || !projectSourceMap) return true;
+        const r = projectSourceMap.ranges.find((x) => x.name === name);
+        return !!r && joinedLine >= r.startLine && joinedLine < r.endLine;
     }
 
     async function refreshFadeProject(): Promise<void> {
@@ -3035,10 +3717,15 @@ async function bootstrap() {
                     }
                 }
                 // Re-push documents so LSP picks up the new command surface.
+                // In-project sources go through the joined project doc;
+                // orphan fade files (not in fade.json:sources) keep their
+                // standalone push path so they still get diagnostics.
+                rebuildAndPushProjectDoc(true);
                 for (const model of monaco.editor.getModels()) {
-                    if (model.getLanguageId() === 'fade') {
-                        runner.setDocument(model.uri.toString(), model.getValue());
-                    }
+                    if (model.getLanguageId() !== 'fade') continue;
+                    const uri = model.uri.toString();
+                    if (projectFileNameFromUri(uri)) continue;
+                    runner.setDocument(uri, model.getValue());
                 }
                 renderProblems();
                 refreshHelpEntriesFromWorker?.();
@@ -3111,6 +3798,12 @@ async function bootstrap() {
         } else {
             setProjectStatus(workspace.currentProject() + ' (fade.json invalid)');
         }
+
+        // Rebuild + push the joined project doc whenever fade.json's source
+        // list changes (or its order does). The DLL-reload branch above
+        // already force-pushes when type/commandDlls flip; this catches the
+        // far more common case of editing just `sources[]`.
+        rebuildAndPushProjectDoc();
     }
 
     // Mutations triggered from the file-list source badges. They edit
@@ -3477,14 +4170,20 @@ async function bootstrap() {
     // Concatenate the project's .fbasic sources in fade.json order. Falls
     // back to the active tab's contents when fade.json is missing/invalid
     // so the playground still runs *something* for new users mid-edit.
+    //
+    // Goes through ProjectSourceMap.build so the joined text the runtime/
+    // debugger compiles is byte-identical to what the LSP sees via
+    // rebuildAndPushProjectDoc. parts.join('\n') used to differ when a
+    // file ended with '\n' (it added a phantom blank line between files)
+    // which shifted all subsequent line numbers and made LSP-reported
+    // ranges disagree with runtime stack frames.
     async function getProjectSource(): Promise<string> {
         if (!currentProject) return getActiveSource();
-        const parts: string[] = [];
+        const inputs: { name: string; text: string }[] = [];
         for (const name of currentProject.sources) {
-            const text = await readFile(name);
-            parts.push(text);
+            inputs.push({ name, text: await readFile(name) });
         }
-        return parts.join('\n');
+        return ProjectSourceMap.build(inputs).joined;
     }
 
     async function refreshTests() {
@@ -3960,8 +4659,60 @@ async function bootstrap() {
     };
 
     pgSplash?.setStatus('Loading workspace…');
+
+    // `?reset=1` (or `?fresh=1`) wipes OPFS + workspace localStorage
+    // BEFORE init runs, so each reload puts you back at the first-run
+    // picker. Strictly a dev/test affordance — the param is stripped
+    // from the URL after the wipe so a refresh doesn't re-wipe.
+    const urlParams = new URLSearchParams(location.search);
+    if (urlParams.get('reset') === '1' || urlParams.get('fresh') === '1') {
+        try {
+            const root = await navigator.storage.getDirectory();
+            try { await root.removeEntry('workspace', { recursive: true }); }
+            catch { /* nothing to remove */ }
+        } catch (e) {
+            console.error('[fade] ?reset wipe failed', e);
+        }
+        try {
+            // LAYOUT_STORAGE_KEY is declared later in bootstrap; inline the
+            // literal so this guard runs before it's in scope.
+            localStorage.removeItem('fade.dockview.layout.v8');
+            localStorage.removeItem(ACTIVE_PROJECT_KEY);
+        } catch { /* ignore */ }
+        urlParams.delete('reset');
+        urlParams.delete('fresh');
+        const qs = urlParams.toString();
+        history.replaceState(null, '', location.pathname + (qs ? '?' + qs : ''));
+        console.info('[fade] ?reset processed — first-run picker will show next');
+    }
+
     const workspace = new OpfsWorkspace();
-    await workspace.init();
+    const hadExistingProject = await workspace.init();
+    if (!hadExistingProject) {
+        // Brand-new install (or post-reset). Hide the splash, show the
+        // first-run modal, and stop booting. The submit handler reloads
+        // the page so the next pass finds a project on disk and skips
+        // this branch entirely.
+        pgSplash?.hide();
+        await runFirstRunFlow(workspace);
+        return;
+    }
+
+    // Settings: load user (localStorage) + workspace (<project>/.fade/settings.json).
+    // Must complete before the editor is created so initial font/tab/etc.
+    // match what the user configured. Re-fired on project switch.
+    pgSplash?.setStatus('Loading settings…');
+    await initSettings({
+        read: (p) => workspace.read(p),
+        write: (p, c) => workspace.write(p, c),
+        mkdir: (p) => workspace.mkdir(p),
+        currentProject: () => workspace.currentProject(),
+    });
+    // Set the [data-theme] attribute as early as possible so the splash and
+    // first paint already match the user's choice (avoids a dark→light flash
+    // for users on the light theme). Monaco-side theme switch happens later
+    // when the editor mounts — see the onSettingsChange listener.
+    applyTheme(currentSettings());
 
     // ─── Dockview setup ─────────────────────────────────────────────────
     // `createComponent` returns the matching `.panel-cell` div from the
@@ -4165,7 +4916,7 @@ async function bootstrap() {
     // to drop restored panels with unknown component names + re-add any
     // expected default that's missing.
     const KNOWN_COMPONENTS = new Set([
-        'workspace', 'editor', 'debug',
+        'workspace', 'editor', 'debug', 'search', 'settings',
         'output', 'problems', 'tests', 'debug-console',
         'game', 'help', 'diagnostics',
         // Dynamic — created on demand by the markdown preview button.
@@ -4438,6 +5189,49 @@ async function bootstrap() {
         bootLog.info('Playground booted');
     }
 
+    // Find-in-Files panel. Mounted once at boot into the offscreen
+    // #search-host; dockview reparents the host into whichever tab group
+    // hosts the 'search' panel. Click a result → open the file + reveal the
+    // line, mirroring the Problems panel's navigation behavior.
+    const settingsHost = document.getElementById('settings-host');
+    let settingsPanelHandle: { focus(): void; dispose(): void } | undefined;
+    if (settingsHost) {
+        settingsPanelHandle = mountSettingsPanel({
+            container: settingsHost,
+            getProjectName: () => workspace.currentProject(),
+        });
+    }
+
+    const searchHost = document.getElementById('search-host');
+    let searchPanelHandle: { focus(): void; dispose(): void } | undefined;
+    if (searchHost) {
+        searchPanelHandle = mountSearchPanel({
+            container: searchHost,
+            workspace,
+            getExcludeGlobs: () => {
+                const v = currentSettings().effective['search.exclude'];
+                return Array.isArray(v) ? (v as string[]) : [];
+            },
+            openMatch: async ({ path, lineNumber, column, length }) => {
+                try {
+                    await openFile(workspace, path);
+                    if (editor) {
+                        editor.revealLineInCenter(lineNumber, monaco.editor.ScrollType.Smooth);
+                        editor.setSelection({
+                            startLineNumber: lineNumber,
+                            startColumn: column,
+                            endLineNumber: lineNumber,
+                            endColumn: column + length,
+                        });
+                        editor.focus();
+                    }
+                } catch (e) {
+                    console.warn('[fade] search openMatch failed', e);
+                }
+            },
+        });
+    }
+
     // Source Control panel: mounts into the offscreen #collaboration-host
     // that dockview moves into the workspace tab group. Bound to the active
     // project; flushPendingSaves is bound here so the panel doesn't need a
@@ -4673,7 +5467,9 @@ async function bootstrap() {
     // Mount the Help panel's TOC + search + reader. Populated below
     // once the LSP worker is ready (no source needed — it reads from
     // the bridge's loaded CommandCollection).
-    const helpCtl = mountHelpPanel();
+    const helpCtl = mountHelpPanel({
+        tokenizeSnippet: (source) => runner.tokenizeSnippet(source),
+    });
     // Open the Help tab + focus a specific command. Used by the hover
     // provider's "View in Help →" link and by external probes via
     // window.__fadeHelp.openCommand(name).
@@ -4698,8 +5494,64 @@ async function bootstrap() {
 
     // Mount AI panels (chat + model manager). Both reference the same
     // module-level engine state; chat needs workspace access for file tools.
-    mountAiChat(document.getElementById('ai-chat-pane')!.parentElement!, workspace);
+    //
+    // The adapter wraps OpfsWorkspace so reads/writes go through Monaco
+    // models when a tab is open:
+    //   read  — prefer the live model (covers unsaved edits not yet flushed
+    //           to OPFS by the 600 ms debounce).
+    //   write — write to OPFS *and* mirror the change into the live Monaco
+    //           model via pushEditOperations, so the editor reflects what
+    //           the LLM just wrote. Without this, apply_edit succeeded but
+    //           the editor kept showing stale content — the user's
+    //           keystroke would overwrite the agent's write 600 ms later.
+    const aiWorkspaceAdapter = {
+        list: () => workspace.list(),
+        read: async (path: string) => {
+            const tab = tabs.get(path);
+            if (tab) return tab.model.getValue();
+            return workspace.read(path);
+        },
+        write: async (path: string, content: string) => {
+            await workspace.write(path, content);
+            const tab = tabs.get(path);
+            if (tab && tab.model.getValue() !== content) {
+                tab.model.pushEditOperations(
+                    [],
+                    [{ range: tab.model.getFullModelRange(), text: content }],
+                    () => null,
+                );
+                // We just persisted to OPFS, so the model isn't dirty.
+                // (onDidChangeContent will flip it back to dirty if the
+                // user types — that's fine.)
+                tab.dirty = false;
+            }
+        },
+        currentProject: () => workspace.currentProject(),
+    };
+    mountAiChat(
+        document.getElementById('ai-chat-pane')!.parentElement!,
+        aiWorkspaceAdapter,
+        {
+            diagnostics: monacoDiagnosticsProvider,
+            // Re-read on every retrieval so a project-type switch mid-chat
+            // (web → monogame or back) is picked up without a remount.
+            getProjectType: () => currentProject?.type,
+        },
+    );
     mountAiModels(document.getElementById('ai-models-pane')!.parentElement!);
+
+    // Playground app version — surfaced in Diagnostics and used to
+    // drive the "What's new" popup. The version row is clickable so
+    // the user can re-open the full changelog without waiting for the
+    // next bump.
+    {
+        const versionEl = document.getElementById('diag-playground-version');
+        if (versionEl) {
+            versionEl.textContent = PLAYGROUND_VERSION;
+            versionEl.addEventListener('click', () => showFullChangelog());
+        }
+        maybeShowChangelogPopup();
+    }
 
     // Populate the Diagnostics panel version rows from the worker runtime.
     void runner.getVersionInfo().then((info) => {
@@ -4747,6 +5599,8 @@ async function bootstrap() {
     const VIEW_PANELS: Array<{ id: string; label: string }> = [
         { id: 'editor',        label: 'Editor' },
         { id: 'workspace',     label: 'Workspace' },
+        { id: 'search',        label: 'Search' },
+        { id: 'settings',      label: 'Settings' },
         { id: 'collaboration', label: 'Collaboration' },
         { id: 'logs',          label: 'Logs' },
         { id: 'history',       label: 'History' },
@@ -4915,6 +5769,39 @@ async function bootstrap() {
                 });
                 dockApi.getPanel('diagnostics')?.api?.setActive();
             } catch (e) { console.warn('[fade] failed to open diagnostics panel', e); }
+        } else if (id === 'settings') {
+            // Settings opens into the editor tab group — it's a full-width
+            // page (form + JSON view), not a sidebar. Falls back to the
+            // workspace group only if the editor isn't around.
+            const ref = dockApi.getPanel('editor')?.id ?? dockApi.getPanel('workspace')?.id;
+            try {
+                dockApi.addPanel({
+                    id: 'settings',
+                    component: 'settings',
+                    title: 'Settings',
+                    position: ref ? { referencePanel: ref, direction: 'within' } : undefined,
+                    renderer: RENDER_ALWAYS,
+                });
+                dockApi.getPanel('settings')?.api?.setActive();
+                settingsPanelHandle?.focus();
+            } catch (e) { console.warn('[fade] failed to open settings panel', e); }
+        } else if (id === 'search') {
+            // Search slots into the left column (Workspace tab group) so the
+            // user keeps a clear view of code in the main editor area while
+            // browsing results. Fall back to the editor group only if the
+            // workspace panel got closed.
+            const ref = dockApi.getPanel('workspace')?.id ?? dockApi.getPanel('editor')?.id;
+            try {
+                dockApi.addPanel({
+                    id: 'search',
+                    component: 'search',
+                    title: 'Search',
+                    position: ref ? { referencePanel: ref, direction: 'within' } : undefined,
+                    renderer: RENDER_ALWAYS,
+                });
+                dockApi.getPanel('search')?.api?.setActive();
+                searchPanelHandle?.focus();
+            } catch (e) { console.warn('[fade] failed to open search panel', e); }
         } else if (id === 'collaboration' || id === 'history' || id === 'logs') {
             // These panels aren't part of the default tab strip — opening
             // them via the View menu drops them into the editor tab group
@@ -5120,17 +6007,45 @@ async function bootstrap() {
     };
 
     // ─── Project viewer overlay ──────────────────────────────────────────
-    // Modal dialog that lists OPFS projects and offers a "new project"
-    // input. Switching reloads the page — simplest way to ensure all
-    // dock panels, Monaco models, and the polling loop pick up the new
-    // project cleanly (the dockview layout is global and persists
-    // across switches).
+    // Modal dialog that lists OPFS projects and hosts the "new workspace"
+    // form (name + web/monogame type picker). Switching reloads the page
+    // — simplest way to ensure all dock panels, Monaco models, and the
+    // polling loop pick up the new project cleanly (the dockview layout
+    // is global and persists across switches).
+    //
+    // First-run mode (.first-run class) hides the existing-project list
+    // and the × button so a brand-new user can't bypass the type pick.
     const projectOverlay = document.getElementById('project-overlay')!;
     const projectListEl = document.getElementById('project-list')!;
     const projectOverlayCloseBtn = document.getElementById('project-overlay-close')!;
+    const projectModalTitleEl = document.getElementById('project-modal-title')!;
+    const projectNewHeadingEl = document.getElementById('project-new-heading')!;
     const projectNewInput = document.getElementById('project-new-input') as HTMLInputElement;
     const projectNewError = document.getElementById('project-new-error')!;
+    const projectNewCreateBtn = document.getElementById('project-new-create') as HTMLButtonElement;
+    const projectTypeCards = Array.from(
+        document.querySelectorAll<HTMLButtonElement>('.project-type-card'),
+    );
     const openProjectsBtn = document.getElementById('open-projects')!;
+
+    let selectedProjectType: FadeProjectType | null = null;
+    let firstRunMode = false;
+
+    function setSelectedProjectType(type: FadeProjectType | null) {
+        selectedProjectType = type;
+        for (const card of projectTypeCards) {
+            const match = card.dataset.type === type;
+            card.classList.toggle('selected', match);
+            card.setAttribute('aria-checked', match ? 'true' : 'false');
+        }
+        updateCreateButtonState();
+    }
+
+    function updateCreateButtonState() {
+        const name = projectNewInput.value.trim();
+        projectNewCreateBtn.disabled =
+            name.length === 0 || selectedProjectType === null;
+    }
 
     function showProjectError(msg: string) {
         projectNewError.textContent = msg;
@@ -5217,9 +6132,13 @@ async function bootstrap() {
         location.reload();
     }
 
-    async function createNewProject(rawName: string) {
+    async function createNewProject(rawName: string, type: FadeProjectType | null) {
         const name = rawName.trim();
         if (!name) return;
+        if (!type) {
+            showProjectError('Pick a workspace type before creating.');
+            return;
+        }
         if (!/^[\w.-]+$/.test(name)) {
             showProjectError('Invalid name. Letters, digits, dot, dash, underscore only.');
             return;
@@ -5230,7 +6149,7 @@ async function bootstrap() {
             return;
         }
         try {
-            await workspace.createProject(name);
+            await workspace.createProject(name, type);
         } catch (e: any) {
             showProjectError('Create failed: ' + (e?.message ?? e));
             return;
@@ -5239,19 +6158,47 @@ async function bootstrap() {
         await switchToProject(name);
     }
 
-    function openProjectOverlay() {
+    function openProjectOverlay(opts: { firstRun?: boolean } = {}) {
+        firstRunMode = !!opts.firstRun;
+        projectOverlay.classList.toggle('first-run', firstRunMode);
+        projectModalTitleEl.textContent = firstRunMode ? 'Welcome' : 'Projects';
+        projectNewHeadingEl.textContent = firstRunMode
+            ? 'Create your first workspace'
+            : 'New workspace';
         clearProjectError();
         projectNewInput.value = '';
+        setSelectedProjectType(null);
         projectOverlay.hidden = false;
-        renderProjectList().catch((e) => console.error('[fade] project list render failed', e));
+        if (!firstRunMode) {
+            renderProjectList().catch((e) =>
+                console.error('[fade] project list render failed', e),
+            );
+        } else {
+            projectListEl.innerHTML = '';
+        }
         // Focus the new-project input on a microtask so screen readers + the
         // browser's focus ring land correctly after the show animation.
         setTimeout(() => projectNewInput.focus(), 0);
     }
-    function closeProjectOverlay() { projectOverlay.hidden = true; }
+    function closeProjectOverlay() {
+        // First-run mode is required: the editor below is unmounted/blank
+        // until a project exists, so we refuse to close.
+        if (firstRunMode) return;
+        projectOverlay.hidden = true;
+    }
 
-    openProjectsBtn.addEventListener('click', openProjectOverlay);
-    projectNameEl.addEventListener('click', openProjectOverlay);
+    for (const card of projectTypeCards) {
+        card.addEventListener('click', () => {
+            const t = card.dataset.type as FadeProjectType | undefined;
+            if (t === 'web' || t === 'monogame') setSelectedProjectType(t);
+        });
+    }
+    projectNewCreateBtn.addEventListener('click', () => {
+        createNewProject(projectNewInput.value, selectedProjectType);
+    });
+
+    openProjectsBtn.addEventListener('click', () => openProjectOverlay());
+    projectNameEl.addEventListener('click', () => openProjectOverlay());
     projectOverlayCloseBtn.addEventListener('click', closeProjectOverlay);
     projectOverlay.addEventListener('click', (e) => {
         if (e.target === projectOverlay) closeProjectOverlay();
@@ -5265,19 +6212,54 @@ async function bootstrap() {
             // print shortcut since users are editing code, not paper docs.
             e.preventDefault();
             openProjectOverlay();
+        } else if ((e.metaKey || e.ctrlKey) && e.shiftKey && e.key.toLowerCase() === 'f') {
+            // ⌘⇧F / Ctrl+⇧F opens the workspace Search panel. Browsers
+            // leave this combo unbound (Cmd+F is in-page find, not this),
+            // so we get the VSCode-equivalent shortcut for free.
+            e.preventDefault();
+            const existing = dockApi.getPanel('search');
+            if (existing) {
+                existing.api?.setActive();
+                searchPanelHandle?.focus();
+            } else {
+                openPanelById('search');
+                // openPanelById already calls focus(), but only synchronously
+                // after addPanel — re-focus after a tick so the input wins
+                // out over any focus reshuffling dockview does on attach.
+                setTimeout(() => searchPanelHandle?.focus(), 0);
+            }
+        } else if ((e.metaKey || e.ctrlKey) && e.key === ',' && !e.shiftKey) {
+            // ⌘, / Ctrl+, opens the Settings panel — matches VSCode's
+            // shortcut. Browsers don't bind this combo.
+            e.preventDefault();
+            const existing = dockApi.getPanel('settings');
+            if (existing) {
+                existing.api?.setActive();
+                settingsPanelHandle?.focus();
+            } else {
+                openPanelById('settings');
+                setTimeout(() => settingsPanelHandle?.focus(), 0);
+            }
         }
     });
     projectNewInput.addEventListener('keydown', (e) => {
         if (e.key === 'Enter') {
             e.preventDefault();
-            createNewProject(projectNewInput.value);
+            // Enter is a shortcut for clicking Create — same gating, so
+            // it's a no-op until a type has been picked.
+            if (!projectNewCreateBtn.disabled) {
+                createNewProject(projectNewInput.value, selectedProjectType);
+            }
         }
         if (e.key === 'Escape') {
             e.stopPropagation();
             closeProjectOverlay();
         }
     });
-    projectNewInput.addEventListener('input', clearProjectError);
+    projectNewInput.addEventListener('input', () => {
+        clearProjectError();
+        updateCreateButtonState();
+    });
 
     pgSplash?.setStatus('Mounting editor…');
     editor = monaco.editor.create(editorContainer, {
@@ -5285,8 +6267,6 @@ async function bootstrap() {
         language: 'fade',
         theme: 'fade-dark',
         automaticLayout: true,
-        minimap: { enabled: false },
-        fontSize: 14,
         hover: { enabled: 'on', delay: 200, sticky: true },
         'semanticHighlighting.enabled': true,
         // Reparent overflow widgets (suggest popup, hover, signature help)
@@ -5294,7 +6274,33 @@ async function bootstrap() {
         // that one ships via the IContextViewService and uses its own
         // container; see the reparent-on-mutation observer below.
         fixedOverflowWidgets: true,
+        // The rest (font, minimap, tabs, wrap, …) come from settings —
+        // applySettingsToEditor below seeds them and re-applies on change.
+        ...editorOptionsFromSettings(currentSettings()),
     } as monaco.editor.IStandaloneEditorConstructionOptions);
+
+    // Reactively re-apply editor settings whenever they change (user toggles
+    // a value, or the workspace switches projects).
+    onSettingsChange((state) => {
+        applyTheme(state);
+        if (!editor) return;
+        editor.updateOptions(editorOptionsFromSettings(state) as monaco.editor.IEditorOptions);
+        // tabSize / insertSpaces are model options, not editor options —
+        // apply to every open model so toggling propagates to all tabs.
+        const eff = state.effective;
+        const tabSize = Number(eff['editor.tabSize'] ?? 2);
+        const insertSpaces = Boolean(eff['editor.insertSpaces'] ?? true);
+        for (const m of monaco.editor.getModels()) {
+            m.updateOptions({ tabSize, insertSpaces });
+        }
+    });
+    // Follow OS dark/light flips when ui.theme is 'auto'. The listener pulls
+    // the current setting each time so toggling away from 'auto' just stops
+    // doing anything.
+    try {
+        const mq = window.matchMedia('(prefers-color-scheme: light)');
+        mq.addEventListener('change', () => applyTheme(currentSettings()));
+    } catch { /* matchMedia missing on very old browsers; harmless */ }
 
     // ─── Game panel toolbar ──────────────────────────────────────────────
     // The in-panel toolbar (status dot + text, mute, fullscreen) drives all
@@ -5385,9 +6391,16 @@ async function bootstrap() {
     // can have duplicates with the same URI under codingame's services).
     // Also watches fade.json so the project manifest stays in sync with
     // the live editor (drives source-list concat + Problems entries).
+    //
+    // Multi-source projects push ONE joined document under PROJECT_LSP_URI
+    // (rebuilt via rebuildAndPushProjectDoc) instead of one document per
+    // file. Files that aren't listed in fade.json:sources still get their
+    // standalone per-file push so orphan .fbasic files keep getting
+    // diagnostics — same behavior as before this branch.
     const lastPushedByUri = new Map<string, string>();
     setInterval(() => {
-        let anyChanged = false;
+        let anyInProjectChanged = false;
+        let anyOrphanChanged = false;
         let manifestChanged = false;
         for (const m of monaco.editor.getModels()) {
             const lang = m.getLanguageId();
@@ -5396,16 +6409,27 @@ async function bootstrap() {
             if (lastPushedByUri.get(uri) === value) continue;
             lastPushedByUri.set(uri, value);
             if (lang === 'fade') {
-                lsp.setDocument(uri, value);
-                anyChanged = true;
+                if (projectFileNameFromUri(uri)) {
+                    anyInProjectChanged = true;
+                } else {
+                    lsp.setDocument(uri, value);
+                    anyOrphanChanged = true;
+                }
             } else if (uri.endsWith('/' + FADE_JSON_NAME)) {
                 manifestChanged = true;
             }
         }
+        if (anyInProjectChanged) {
+            // Rebuild the joined doc from the current set of in-project
+            // model contents and push once. Cheap to call; idempotent when
+            // joined text matches what we last pushed.
+            rebuildAndPushProjectDoc();
+        }
         // Re-discover tests in the background whenever the active file moves.
-        if (anyChanged) refreshDebounce();
+        if (anyInProjectChanged || anyOrphanChanged) refreshDebounce();
         if (manifestChanged) {
             // fade.json edit landed — re-validate + refresh derived state.
+            // refreshFadeProject calls rebuildAndPushProjectDoc itself.
             refreshFadeProject().then(() => refreshDebounce());
         }
     }, 250);
@@ -6120,6 +7144,12 @@ async function bootstrap() {
     // "current line" highlight when paused.
     let bpDecorations: string[] = [];
     let currentLineDecorations: string[] = [];
+    // Which model the current-line decoration is on. When the debugger
+    // steps across a file boundary we tab-switch to the new file, which
+    // changes editor.getModel() — but the old file's decoration is still
+    // attached to the old model. Track the owner so we can clear it
+    // explicitly instead of leaving a ghost arrow in the previous file.
+    let currentLineModel: monaco.editor.ITextModel | null = null;
 
     function setDebugButtons() {
         const hasSession = debugSessionActive;
@@ -6168,11 +7198,22 @@ async function bootstrap() {
     }
 
     function setCurrentLine(line: number | null) {
+        if (line == null) {
+            if (currentLineModel) {
+                currentLineModel.deltaDecorations(currentLineDecorations, []);
+            }
+            currentLineDecorations = [];
+            currentLineModel = null;
+            return;
+        }
         const model = editor?.getModel();
         if (!model) return;
-        if (line == null) {
-            currentLineDecorations = model.deltaDecorations(currentLineDecorations, []);
-            return;
+        // Switching models (debugger stepped from file A to file B): clear
+        // the decoration on the previous owner so an arrow doesn't linger
+        // in the file the user just stepped *out* of.
+        if (currentLineModel && currentLineModel !== model) {
+            currentLineModel.deltaDecorations(currentLineDecorations, []);
+            currentLineDecorations = [];
         }
         currentLineDecorations = model.deltaDecorations(currentLineDecorations, [{
             range: new monaco.Range(line, 1, line, 1),
@@ -6182,12 +7223,34 @@ async function bootstrap() {
                 glyphMarginClassName: 'codicon codicon-debug-stackframe fade-current',
             },
         }]);
+        currentLineModel = model;
         // Scroll the editor so the current execution line is in view. Use
         // revealLineInCenterIfOutsideViewport so we don't jitter when the
         // line is already visible.
         try {
             editor?.revealLineInCenterIfOutsideViewport(line, monaco.editor.ScrollType.Smooth);
         } catch { /* editor may not be ready */ }
+    }
+
+    // Translate a joined-doc line (as reported by the debugger / a stack
+    // frame) into the originating file + local line, switch the editor to
+    // that file if it's not already active, then paint the current-line
+    // decoration. Falls back to plain setCurrentLine when there's no
+    // multi-source project (single-file workspaces still pass through this
+    // helper but skip the tab-switch).
+    async function focusJoinedDebugLine(joinedLine: number): Promise<void> {
+        if (projectSourceMap) {
+            const m = projectSourceMap.fromProject(joinedLine, 0);
+            if (m) {
+                if (m.name !== activeName) {
+                    try { await openFile(workspace, m.name); }
+                    catch { /* fall through to setCurrentLine on whatever's active */ }
+                }
+                setCurrentLine(m.line + 1);
+                return;
+            }
+        }
+        setCurrentLine(joinedLine + 1);
     }
 
     function syncBreakpointsToWorker() {
@@ -6396,7 +7459,7 @@ async function bootstrap() {
         renderFrames(frames);
         if (frames.length > 0) {
             activeFrameId = 0;
-            setCurrentLine(frames[0].lineNumber + 1);
+            await focusJoinedDebugLine(frames[0].lineNumber);
             await refreshScopes(0);
             await refreshWatches();
             setDebugEmptyStates(false);
@@ -6423,7 +7486,7 @@ async function bootstrap() {
             li.append(name, loc);
             li.onclick = async () => {
                 activeFrameId = idx;
-                setCurrentLine(f.lineNumber + 1);
+                await focusJoinedDebugLine(f.lineNumber);
                 renderFrames(frames);
                 await refreshScopes(idx);
             };
@@ -7511,21 +8574,27 @@ async function bootstrap() {
 
     // Test probe — bypasses Monaco UI and goes straight to the worker. Used by
     // scripts/test-lsp.mjs to validate Core handlers independent of editor wiring.
+    // Routes through the same project-aware wrappers the Monaco providers
+    // use so multi-source fade.json projects behave identically here.
     (window as any).__fadeLspProbe = async (method: string, params: any) => {
         const m = monaco.editor.getModels().find((mod) => mod.getLanguageId() === 'fade');
         if (!m) throw new Error('no fade model');
         const uri = m.uri.toString();
+        const lspUri = lspUriFor(uri);
+        const p = params?.line != null
+            ? toLspPosition(uri, params.line, params.character)
+            : { line: 0, character: 0 };
         switch (method) {
-            case 'completion': return runner.getCompletions(uri, params.line, params.character);
-            case 'hover': return runner.getHover(uri, params.line, params.character);
-            case 'signature-help': return runner.getSignatureHelp(uri, params.line, params.character);
-            case 'references': return runner.getReferences(uri, params.line, params.character);
-            case 'goto-def': return runner.getDefinition(uri, params.line, params.character);
-            case 'document-symbols': return runner.getDocumentSymbols(uri);
-            case 'folding-ranges': return runner.getFoldingRanges(uri);
-            case 'format': return runner.format(uri, params.options ?? { tabSize: 4, insertSpaces: true, casing: 0 });
-            case 'format-range': return runner.formatRange(uri, params.options ?? { tabSize: 4, insertSpaces: true, casing: 0 }, params.range);
-            case 'rename': return runner.rename(uri, params.line, params.character, params.newName);
+            case 'completion': return runner.getCompletions(lspUri, p.line, p.character);
+            case 'hover': return runner.getHover(lspUri, p.line, p.character);
+            case 'signature-help': return runner.getSignatureHelp(lspUri, p.line, p.character);
+            case 'references': return runner.getReferences(lspUri, p.line, p.character);
+            case 'goto-def': return runner.getDefinition(lspUri, p.line, p.character);
+            case 'document-symbols': return runner.getDocumentSymbols(lspUri);
+            case 'folding-ranges': return runner.getFoldingRanges(lspUri);
+            case 'format': return runner.format(lspUri, params.options ?? { tabSize: 4, insertSpaces: true, casing: 0 });
+            case 'format-range': return runner.formatRange(lspUri, params.options ?? { tabSize: 4, insertSpaces: true, casing: 0 }, params.range);
+            case 'rename': return runner.rename(lspUri, p.line, p.character, params.newName);
             default: throw new Error('unknown probe method: ' + method);
         }
     };

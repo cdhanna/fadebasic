@@ -7,15 +7,14 @@
 //     → ProjectDocs (ProjectDocMethods.LoadDocs<MarkdownDocParser>)
 //     → ICommandDocsProvider (ProjectDocsCommandDocsProvider)
 //
-// One file with two builders: web (StandardCommands only) and monogame
-// (FadeMonoGameCommands + StandardCommands). Both go through the same
-// LoadDocs pipeline, which accepts a list — so monogame just passes both
-// metadata blobs.
+// Callers pass every COMMANDS_JSON blob that's currently live — Standard
+// plus whatever assemblies were dynamically registered. The pipeline
+// merges them into one ProjectDocs map keyed by callName + sig.
 
 using System.Collections.Generic;
+using System.Diagnostics.CodeAnalysis;
 using System.Text.Json;
 using FadeBasic.ApplicationSupport.Project;
-using FadeBasic.Lib.Standard;
 using FadeBasic.LSP.Core;
 
 namespace FadeBasic.Export.Web;
@@ -28,26 +27,24 @@ internal static class StandardCommandDocs
         PropertyNameCaseInsensitive = true,
     };
 
-    /// <summary>Docs for the 'web' command surface — WebCommands + StandardCommands.</summary>
-    /// <remarks>
-    /// WebCommands doesn't ship a source-generator metadata blob (it's tiny;
-    /// hover falls back to the basic signature header for those). Standard
-    /// is the only set with rich docs in this branch.
-    /// </remarks>
-    public static ICommandDocsProvider BuildWeb() =>
-        BuildFromMetadata(StandardCommandsMetaData.COMMANDS_JSON);
-
-    /// <summary>Docs for the 'monogame' command surface — placeholder until dynamic command registration is wired up.</summary>
-    public static ICommandDocsProvider BuildMonoGame() =>
-        BuildFromMetadata(StandardCommandsMetaData.COMMANDS_JSON);
-
-    private static ICommandDocsProvider BuildFromMetadata(params string[] commandsJsonBlobs)
+    // System.Text.Json reflects ctors + fields off these types at deserialize
+    // time. In the Release/trimmed publish the trimmer drops the default
+    // ctors (so STJ throws "Deserialization of types without a parameterless
+    // constructor … is not supported") and the public fields (so even with
+    // ctors, every field deserializes to default). These dependencies pin
+    // both. Without them every command in the Help tab renders as just a
+    // signature header, with no summary, parameters, or examples.
+    [DynamicDependency(DynamicallyAccessedMemberTypes.PublicConstructors | DynamicallyAccessedMemberTypes.PublicFields, typeof(CommandMetadata))]
+    [DynamicDependency(DynamicallyAccessedMemberTypes.PublicConstructors | DynamicallyAccessedMemberTypes.PublicFields, typeof(ProjectCommandMetadata))]
+    [DynamicDependency(DynamicallyAccessedMemberTypes.PublicConstructors | DynamicallyAccessedMemberTypes.PublicFields, typeof(ProjectCommandParameterMetedata))]
+    public static ICommandDocsProvider Build(params string[] commandsJsonBlobs)
     {
         try
         {
             var metas = new List<CommandMetadata>(commandsJsonBlobs.Length);
             foreach (var json in commandsJsonBlobs)
             {
+                if (string.IsNullOrEmpty(json)) continue;
                 var m = JsonSerializer.Deserialize<CommandMetadata>(json, _opts);
                 if (m != null) metas.Add(m);
             }
@@ -57,7 +54,7 @@ internal static class StandardCommandDocs
         }
         catch
         {
-            // Best-effort — hover falls back to the basic signature header.
+            // Best-effort — hover/help fall back to the basic signature header.
             return null!;
         }
     }

@@ -1,0 +1,17 @@
+{
+    "name": "fade-oauth-proxy",
+    "version": "0.1.0",
+    "private": true,
+    "description": "Stateless CORS proxy for GitHub's OAuth device-flow endpoints so a browser-only SPA can complete the flow without holding a client_secret. Holds NO credentials.",
+    "scripts": {
+        "dev": "wrangler dev",
+        "deploy": "wrangler deploy",
+        "typecheck": "tsc --noEmit",
+        "tail": "wrangler tail"
+    },
+    "devDependencies": {
+        "@cloudflare/workers-types": "^4.20250101.0",
+        "typescript": "^5.5.0",
+        "wrangler": "^3.90.0"
+    }
+}

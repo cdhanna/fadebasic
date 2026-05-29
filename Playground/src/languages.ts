@@ -30,6 +30,23 @@ const themeContributions: ThemeRule[] = [
     // hlsl shares fade's keyword/type/number/string tokens — no extras.
 ];
 
+// Light-theme counterparts. Same token set; colors chosen for contrast on a
+// white background (VSCode Light+ palette). Anything light-gray in the dark
+// rules becomes black here so it stays visible.
+const themeContributionsLight: ThemeRule[] = [
+    { token: 'heading.md',    foreground: '0451A5', fontStyle: 'bold' },
+    { token: 'strong.md',     foreground: '000000', fontStyle: 'bold' },
+    { token: 'emphasis.md',   foreground: '000000', fontStyle: 'italic' },
+    { token: 'code.md',       foreground: 'A31515' },
+    { token: 'link.md',       foreground: '0451A5', fontStyle: 'underline' },
+    { token: 'list.md',       foreground: 'AF00DB' },
+    { token: 'quote.md',      foreground: '008000' },
+    { token: 'hr.md',         foreground: '008000' },
+    { token: 'key.json',      foreground: '0451A5' },
+    { token: 'key.yaml',      foreground: '0451A5' },
+    { token: 'anchor.yaml',   foreground: '795E26' },
+];
+
 // ─── markdown ───────────────────────────────────────────────────────────
 const markdownLang: monaco.languages.IMonarchLanguage = {
     defaultToken: '',
@@ -249,6 +266,6 @@ export function registerExtraLanguages() {
 
 // Theme rules to merge into the playground's fade-dark theme. Callers
 // merge before defineTheme so all rules apply in one pass.
-export function extraThemeRules(): ThemeRule[] {
-    return themeContributions;
+export function extraThemeRules(variant: 'dark' | 'light' = 'dark'): ThemeRule[] {
+    return variant === 'light' ? themeContributionsLight : themeContributions;
 }
