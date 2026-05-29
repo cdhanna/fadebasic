@@ -135,6 +135,7 @@ const viewResetLayoutBtn = document.getElementById('view-reset-layout') as HTMLB
 const viewSavedLayouts = document.getElementById('view-saved-layouts') as HTMLElement;
 const viewSemanticLayouts = document.getElementById('view-semantic-layouts') as HTMLElement;
 const newFileBtn = document.getElementById('new-file') as HTMLButtonElement;
+const newFolderBtn = document.getElementById('new-folder') as HTMLButtonElement;
 const fileListEl = document.getElementById('file-list')!;
 const tabsEl = document.getElementById('tabs')!;
 const editorContainer = document.getElementById('editor')!;
@@ -264,24 +265,81 @@ class OpfsWorkspace {
         await manifestW.close();
     }
 
-    // File-level operations, scoped to the active project.
-    async list(): Promise<string[]> {
-        const names: string[] = [];
-        for await (const entry of (this.dir as any).values()) {
-            if (entry.kind === 'file') names.push(entry.name);
+    // ─── Path-aware helpers ──────────────────────────────────────────────
+    // Paths can include forward slashes; intermediate segments are OPFS
+    // subdirectories. `list()` walks the tree and returns flat paths
+    // (slashes included). All file ops accept either a flat name (legacy
+    // root-level file) or a slashed path; both go through `walkPath()`
+    // which produces the parent directory handle + leaf name.
+
+    /** Split a path on `/`, navigate (or create) the intermediate
+     *  directories, and return `{ parent, leaf }`. `create: true` makes
+     *  missing dirs; `create: false` throws on missing. */
+    private async walkPath(
+        path: string,
+        opts: { create: boolean },
+    ): Promise<{ parent: FileSystemDirectoryHandle; leaf: string }> {
+        const segments = path.split('/').filter((s) => s.length > 0);
+        if (segments.length === 0) throw new Error('Empty path');
+        const leaf = segments.pop()!;
+        let cur: FileSystemDirectoryHandle = this.dir;
+        for (const seg of segments) {
+            cur = await cur.getDirectoryHandle(seg, { create: opts.create });
         }
-        names.sort();
-        return names;
+        return { parent: cur, leaf };
     }
 
-    async read(name: string): Promise<string> {
-        const fh = await this.dir.getFileHandle(name);
+    /** Recursive file listing. Returns slashed paths for every file in
+     *  the project, depth-first sorted. Directories are NOT returned;
+     *  use `listEntries()` if you need the directory structure too. */
+    async list(): Promise<string[]> {
+        const out: string[] = [];
+        const walk = async (dir: FileSystemDirectoryHandle, prefix: string) => {
+            for await (const entry of (dir as any).values() as AsyncIterable<FileSystemHandle>) {
+                const childPath = prefix ? `${prefix}/${entry.name}` : entry.name;
+                if (entry.kind === 'file') {
+                    out.push(childPath);
+                } else if (entry.kind === 'directory') {
+                    await walk(entry as FileSystemDirectoryHandle, childPath);
+                }
+            }
+        };
+        await walk(this.dir, '');
+        out.sort();
+        return out;
+    }
+
+    /** Tree-shaped listing: every file AND every directory, with kind
+     *  + slashed path. Used by the file-list renderer to draw the
+     *  expandable tree. */
+    async listEntries(): Promise<Array<{ path: string; kind: 'file' | 'directory' }>> {
+        const out: Array<{ path: string; kind: 'file' | 'directory' }> = [];
+        const walk = async (dir: FileSystemDirectoryHandle, prefix: string) => {
+            for await (const entry of (dir as any).values() as AsyncIterable<FileSystemHandle>) {
+                const childPath = prefix ? `${prefix}/${entry.name}` : entry.name;
+                if (entry.kind === 'file') {
+                    out.push({ path: childPath, kind: 'file' });
+                } else if (entry.kind === 'directory') {
+                    out.push({ path: childPath, kind: 'directory' });
+                    await walk(entry as FileSystemDirectoryHandle, childPath);
+                }
+            }
+        };
+        await walk(this.dir, '');
+        out.sort((a, b) => a.path.localeCompare(b.path));
+        return out;
+    }
+
+    async read(path: string): Promise<string> {
+        const { parent, leaf } = await this.walkPath(path, { create: false });
+        const fh = await parent.getFileHandle(leaf);
         const f = await fh.getFile();
         return await f.text();
     }
 
-    async write(name: string, content: string): Promise<void> {
-        const fh = await this.dir.getFileHandle(name, { create: true });
+    async write(path: string, content: string): Promise<void> {
+        const { parent, leaf } = await this.walkPath(path, { create: true });
+        const fh = await parent.getFileHandle(leaf, { create: true });
         const w = await fh.createWritable();
         await w.write(content);
         await w.close();
@@ -291,14 +349,16 @@ class OpfsWorkspace {
     // The text-based read/write above is kept intact; callers route through
     // one or the other based on the file extension. The underlying OPFS
     // handle is the same; only the decode/encode shape differs.
-    async readBytes(name: string): Promise<Uint8Array> {
-        const fh = await this.dir.getFileHandle(name);
+    async readBytes(path: string): Promise<Uint8Array> {
+        const { parent, leaf } = await this.walkPath(path, { create: false });
+        const fh = await parent.getFileHandle(leaf);
         const f = await fh.getFile();
         return new Uint8Array(await f.arrayBuffer());
     }
 
-    async writeBytes(name: string, bytes: Uint8Array): Promise<void> {
-        const fh = await this.dir.getFileHandle(name, { create: true });
+    async writeBytes(path: string, bytes: Uint8Array): Promise<void> {
+        const { parent, leaf } = await this.walkPath(path, { create: true });
+        const fh = await parent.getFileHandle(leaf, { create: true });
         const w = await fh.createWritable();
         // Wrap in a Blob so the writable stream's union type doesn't
         // reject Uint8Array<ArrayBufferLike> when SharedArrayBuffer is in
@@ -307,40 +367,118 @@ class OpfsWorkspace {
         await w.close();
     }
 
-    async delete(name: string): Promise<void> {
-        if (name === FADE_JSON_NAME) {
+    async delete(path: string): Promise<void> {
+        if (path === FADE_JSON_NAME) {
             throw new Error('fade.json is required and cannot be deleted.');
         }
-        await this.dir.removeEntry(name);
+        const { parent, leaf } = await this.walkPath(path, { create: false });
+        // recursive: true so deleting a folder cleans children too. For
+        // files it has no effect (kept for spec uniformity).
+        await parent.removeEntry(leaf, { recursive: true });
     }
 
-    // OPFS has no atomic rename. Read → write under the new name → remove
-    // the old. If write fails partway, the old file is preserved (we only
-    // remove after the new file lands successfully).
-    async rename(oldName: string, newName: string): Promise<void> {
-        if (oldName === FADE_JSON_NAME || newName === FADE_JSON_NAME) {
+    /** Create an empty directory. No-op if already exists. */
+    async mkdir(path: string): Promise<void> {
+        // walkPath with create:true gives us the leaf's parent; the leaf
+        // itself is the directory we want.
+        const { parent, leaf } = await this.walkPath(path, { create: true });
+        await parent.getDirectoryHandle(leaf, { create: true });
+    }
+
+    /** True iff `path` exists and refers to a directory. */
+    async isDirectory(path: string): Promise<boolean> {
+        try {
+            const { parent, leaf } = await this.walkPath(path, { create: false });
+            await parent.getDirectoryHandle(leaf);
+            return true;
+        } catch {
+            return false;
+        }
+    }
+
+    /** True iff `path` exists (file or directory). */
+    async exists(path: string): Promise<boolean> {
+        try {
+            const { parent, leaf } = await this.walkPath(path, { create: false });
+            try { await parent.getFileHandle(leaf); return true; }
+            catch { /* fall through to directory check */ }
+            try { await parent.getDirectoryHandle(leaf); return true; }
+            catch { return false; }
+        } catch {
+            return false;
+        }
+    }
+
+    /** Move a file or directory. OPFS has no atomic rename. Files are
+     *  copied + the source removed. Directories are walked recursively.
+     *  `newPath === oldPath` is a no-op. Refuses to overwrite an
+     *  existing destination. fade.json is locked. */
+    async rename(oldPath: string, newPath: string): Promise<void> {
+        if (oldPath === FADE_JSON_NAME || newPath === FADE_JSON_NAME) {
             throw new Error('fade.json is required and cannot be renamed.');
         }
-        if (oldName === newName) return;
-        if (!/^[\w.\-]+$/.test(newName)) {
-            throw new Error('Invalid name. Letters, digits, dot, dash, underscore only.');
+        if (oldPath === newPath) return;
+        // Validate every path segment.
+        for (const seg of newPath.split('/')) {
+            if (seg.length === 0) throw new Error('Invalid path (empty segment).');
+            if (!/^[\w.\-]+$/.test(seg)) {
+                throw new Error(`Invalid path segment "${seg}". Letters, digits, dot, dash, underscore only.`);
+            }
         }
-        // Collision check.
-        let collision = false;
-        try {
-            await this.dir.getFileHandle(newName);
-            collision = true;
-        } catch { /* NotFoundError → free to proceed */ }
-        if (collision) throw new Error(`A file named "${newName}" already exists.`);
-        const content = await this.read(oldName);
-        await this.write(newName, content);
-        try { await this.dir.removeEntry(oldName); }
+        // Block moving a directory INTO itself or its own children.
+        if (newPath === oldPath || newPath.startsWith(oldPath + '/')) {
+            throw new Error(`Can't move "${oldPath}" into its own subtree.`);
+        }
+        if (await this.exists(newPath)) {
+            throw new Error(`"${newPath}" already exists.`);
+        }
+        const wasDir = await this.isDirectory(oldPath);
+        if (wasDir) {
+            // Recursively walk + copy + delete. Build a manifest first
+            // so a mid-flight error doesn't leave us with half-copied
+            // half-deleted state — we copy everything, then delete the
+            // source tree.
+            const entries: Array<{ from: string; to: string }> = [];
+            const walk = async (relFrom: string, relTo: string) => {
+                const fromHandle = await this.dirHandleAt(relFrom);
+                for await (const entry of (fromHandle as any).values() as AsyncIterable<FileSystemHandle>) {
+                    const subFrom = `${relFrom}/${entry.name}`;
+                    const subTo = `${relTo}/${entry.name}`;
+                    if (entry.kind === 'file') {
+                        entries.push({ from: subFrom, to: subTo });
+                    } else {
+                        await walk(subFrom, subTo);
+                    }
+                }
+            };
+            await this.mkdir(newPath);
+            await walk(oldPath, newPath);
+            for (const { from, to } of entries) {
+                const bytes = await this.readBytes(from);
+                await this.writeBytes(to, bytes);
+            }
+            try { await this.delete(oldPath); }
+            catch (e) { console.warn('[fade] rename: failed to remove source dir', oldPath, e); }
+            return;
+        }
+        // File move.
+        const bytes = await this.readBytes(oldPath);
+        await this.writeBytes(newPath, bytes);
+        try { await this.delete(oldPath); }
         catch (e) {
-            // Best-effort cleanup. The new file already landed, so the
-            // rename is effectively complete even if we couldn't remove
-            // the source.
-            console.warn('[fade] rename: failed to remove old file', oldName, e);
+            console.warn('[fade] rename: failed to remove old file', oldPath, e);
         }
+    }
+
+    /** Resolve a directory handle at a slashed path (relative to the
+     *  project root). Errors if any segment is missing. */
+    private async dirHandleAt(path: string): Promise<FileSystemDirectoryHandle> {
+        const segments = path.split('/').filter((s) => s.length > 0);
+        let cur: FileSystemDirectoryHandle = this.dir;
+        for (const seg of segments) {
+            cur = await cur.getDirectoryHandle(seg);
+        }
+        return cur;
     }
 }
 
@@ -522,12 +660,17 @@ function closeTab(name: string) {
 
 function renderTabs() {
     tabsEl.innerHTML = '';
+    // Tab labels show the basename so deeply-nested files don't blow
+    // out the tab strip; the full path is in the tooltip for
+    // disambiguation when multiple files share a name across folders.
     for (const [name, tab] of tabs) {
+        const basename = name.split('/').pop() ?? name;
         const el = document.createElement('div');
         el.className = 'tab' + (name === activeName ? ' active' : '');
         const label = document.createElement('span');
         label.className = tab.dirty ? 'dirty' : '';
-        label.textContent = (tab.dirty ? '● ' : '') + name;
+        label.textContent = (tab.dirty ? '● ' : '') + basename;
+        label.title = name;
         label.onclick = () => {
             activeName = name;
             if (editor) editor.setModel(tab.model);
@@ -615,8 +758,36 @@ interface ProjectOps {
     revealSourceInManifest(name: string): Promise<void>;
     renameFile(name: string): Promise<void>;
     deleteFile(name: string): Promise<void>;
+    /** Create an empty folder at the given path (root-relative,
+     *  slashes allowed for nested creation). No-op if it exists. */
+    createFolder(path: string): Promise<void>;
+    /** Move a file or folder. Works with slashed paths; folders move
+     *  recursively. Updates fade.json sources if the moved path is
+     *  listed (or any descendant is listed, for folder moves). */
+    renamePath(oldPath: string, newPath: string): Promise<void>;
+    /** Inline-create a new file with the given extension. If
+     *  `parentFolder` is set, the file lands inside it (and the
+     *  folder is auto-expanded). Triggered from the folder right-
+     *  click menu; the inline-edit row UI lives in the bootstrap
+     *  closure, so this exposes it through the projectOps surface. */
+    inlineCreateFile(ext: string, parentFolder?: string): void;
+    /** Inline-create a new folder, optionally nested inside
+     *  `parentFolder`. Same pattern as `inlineCreateFile`. */
+    inlineCreateFolder(parentFolder?: string): void;
 }
 let projectOps: ProjectOps | null = null;
+
+/** File extensions offered in the "New …" menus (both root-area and
+ *  folder-row right-clicks). Module-scoped so the folder-context menu
+ *  — which lives at module scope, outside the bootstrap closure —
+ *  can iterate the same list as the root-area menu and the new-file
+ *  button. Add new types here and they'll appear in every menu. */
+const NEW_FILE_EXTENSIONS: ReadonlyArray<{ label: string; ext: string }> = [
+    { label: 'Fade source (.fbasic)', ext: 'fbasic' },
+    { label: 'Shader (.fx)',          ext: 'fx' },
+    { label: 'JSON (.json)',          ext: 'json' },
+    { label: 'Text (.txt)',           ext: 'txt' },
+];
 
 // Source-control wiring: the panel mounts at bootstrap (after dockview is up)
 // and publishes a status map (path → A/M/D) via onStatusChange. We mirror it
@@ -630,15 +801,183 @@ let sharingPendingPull: Set<string> = new Set();
  *  exists). Drives the red 'C' badge in the workspace file list. */
 let sharingConflicts: { text: Set<string>; binary: Set<string> } = { text: new Set(), binary: new Set() };
 
+/** Collapsed folder paths. Renders skip files whose parent (at any
+ *  level) is in this set. In-memory only — folder state resets on
+ *  reload, which keeps the UI predictable across sessions. */
+const collapsedFolders = new Set<string>();
+
+/** MIME type for internal drag-drop. Distinct from `text/plain` so we
+ *  never confuse a workspace move with an external drop (file content
+ *  from the OS, a URL string, etc.). */
+const FADE_DRAG_MIME = 'application/x-fade-path';
+
+/** Compute the destination path when `srcPath` is dropped onto
+ *  `destFolder`. `destFolder === ''` means the workspace root. Returns
+ *  null if the drop is a no-op (already in that folder) or invalid
+ *  (would move into its own subtree). */
+function computeDropTarget(srcPath: string, destFolder: string): string | null {
+    const basename = srcPath.split('/').pop() ?? srcPath;
+    const target = destFolder ? `${destFolder}/${basename}` : basename;
+    if (target === srcPath) return null;
+    // Block moving a folder into itself or a descendant.
+    if (destFolder === srcPath || destFolder.startsWith(srcPath + '/')) return null;
+    return target;
+}
+
+/** Clear the drop-target highlight from every row. Called on dragend,
+ *  drop, and any time the user leaves a target without committing. */
+function clearDropHighlights() {
+    for (const el of fileListEl.querySelectorAll('.drop-target')) {
+        el.classList.remove('drop-target');
+    }
+    fileListEl.classList.remove('drop-target');
+}
+
+/** Wire a row as a drag source. Sets the transfer data to the row's
+ *  path so the drop handler knows what's being moved. fade.json is
+ *  refused (it's pinned to root). */
+function wireDragSource(li: HTMLElement, path: string) {
+    if (path === FADE_JSON_NAME) return;
+    li.draggable = true;
+    li.addEventListener('dragstart', (e) => {
+        if (!e.dataTransfer) return;
+        e.dataTransfer.setData(FADE_DRAG_MIME, path);
+        e.dataTransfer.effectAllowed = 'move';
+    });
+    li.addEventListener('dragend', () => clearDropHighlights());
+}
+
+/** Wire a row (or the root) as a drop target. `destFolder === ''` for
+ *  the root; otherwise the folder's path. Uses computeDropTarget to
+ *  decide whether the drop is valid before highlighting. */
+function wireDropTarget(el: HTMLElement, destFolder: string) {
+    el.addEventListener('dragover', (e) => {
+        const srcPath = e.dataTransfer?.types.includes(FADE_DRAG_MIME)
+            ? '' // we'll read the actual value on drop; just check the type for dragover
+            : null;
+        if (srcPath === null) return;
+        // We can't read getData during dragover (browsers redact it for
+        // security). So we accept the drag if the type is right and
+        // let the drop handler do the real validation.
+        e.preventDefault();
+        if (e.dataTransfer) e.dataTransfer.dropEffect = 'move';
+        el.classList.add('drop-target');
+    });
+    el.addEventListener('dragleave', (e) => {
+        // dragleave fires when crossing child boundaries too. Only
+        // clear if the pointer actually left the element's bounds.
+        if (e.currentTarget === el && !(el as Node).contains(e.relatedTarget as Node)) {
+            el.classList.remove('drop-target');
+        }
+    });
+    el.addEventListener('drop', (e) => {
+        e.preventDefault();
+        // Stop the event before it bubbles to the root drop handler
+        // (`fileListEl`) — otherwise dropping on a folder would also
+        // trigger a second move-to-root pass with an already-moved
+        // source. Safe to call on the root too; it has no parent
+        // listener of consequence.
+        e.stopPropagation();
+        el.classList.remove('drop-target');
+        clearDropHighlights();
+        const srcPath = e.dataTransfer?.getData(FADE_DRAG_MIME);
+        if (!srcPath) return;
+        const target = computeDropTarget(srcPath, destFolder);
+        if (!target) return;
+        void projectOps?.renamePath(srcPath, target);
+    });
+}
+
+/** True iff any ancestor of `path` is in `collapsedFolders`. */
+function isHiddenByCollapsedAncestor(path: string): boolean {
+    // For a/b/c.fbasic, the ancestors are 'a' and 'a/b'. We don't check
+    // the full path itself — a collapsed folder still renders its own
+    // row, just not children.
+    const parts = path.split('/');
+    if (parts.length < 2) return false;
+    let prefix = '';
+    for (let i = 0; i < parts.length - 1; i++) {
+        prefix = prefix ? `${prefix}/${parts[i]}` : parts[i];
+        if (collapsedFolders.has(prefix)) return true;
+    }
+    return false;
+}
+
+/** Wire the file-list root as a drop target ONCE on first render.
+ *  Drops here move the file to the workspace root. Using a flag (vs
+ *  binding on every render) keeps duplicate listeners from stacking. */
+let fileListRootDropWired = false;
+
 async function renderFileList(workspace: OpfsWorkspace) {
-    const names = await workspace.list();
+    const entries = await workspace.listEntries();
     fileListEl.innerHTML = '';
+    if (!fileListRootDropWired) {
+        // Drop on empty space inside the file list → move to root.
+        // Folder rows stop propagation on their own drop handlers so
+        // a drop on a folder doesn't also fire here.
+        wireDropTarget(fileListEl, '');
+        fileListRootDropWired = true;
+    }
     const sources = currentProjectRef?.sources ?? [];
-    for (const name of names) {
+    for (const entry of entries) {
+        const { path, kind } = entry;
+        // Skip rows whose parent folder is collapsed. The folder itself
+        // still renders (its row IS what the user expands/collapses).
+        if (isHiddenByCollapsedAncestor(path)) continue;
+        const depth = path.split('/').length - 1;
         const li = document.createElement('li');
-        li.dataset.name = name;
+        li.dataset.name = path;
+        // Pad each row by depth * 14px so children sit visibly under
+        // their folder. The base padding (1rem) is preserved.
+        if (depth > 0) li.style.paddingLeft = `calc(1rem + ${depth * 14}px)`;
+
+        if (kind === 'directory') {
+            // ── Folder row ────────────────────────────────────────────
+            li.classList.add('folder-row');
+            li.dataset.folder = path;
+            const collapsed = collapsedFolders.has(path);
+            const chevron = document.createElement('span');
+            chevron.className = 'folder-chevron';
+            chevron.textContent = collapsed ? '▶' : '▼';
+            const icon = document.createElement('span');
+            icon.className = collapsed
+                ? 'codicon codicon-folder'
+                : 'codicon codicon-folder-opened';
+            const label = document.createElement('span');
+            label.className = 'file-label';
+            // Show only the basename — the indent + position in the
+            // tree communicate the parent. Tooltip has the full path
+            // for disambiguation.
+            label.textContent = path.split('/').pop() ?? path;
+            label.title = path;
+            li.append(chevron, icon, label);
+            li.addEventListener('contextmenu', (e) => {
+                e.preventDefault();
+                showFolderContextMenu(e.clientX, e.clientY, path);
+            });
+            li.onclick = () => {
+                if (collapsedFolders.has(path)) collapsedFolders.delete(path);
+                else collapsedFolders.add(path);
+                void renderFileList(workspace);
+            };
+            // Folders are both drag sources (move the folder) and drop
+            // targets (move items into this folder).
+            wireDragSource(li, path);
+            wireDropTarget(li, path);
+            fileListEl.append(li);
+            continue;
+        }
+
+        // ── File row ──────────────────────────────────────────────────
+        li.classList.add('file-row');
+        const name = path; // legacy code below uses `name` for both display + sources lookup
+        const indent = document.createElement('span');
+        indent.className = 'file-indent';
+        li.append(indent);
         const label = document.createElement('span');
-        label.textContent = name;
+        label.className = 'file-label';
+        label.textContent = path.split('/').pop() ?? path;
+        label.title = path;
         li.append(label);
         if (name === FADE_JSON_NAME) {
             // Visible cue that the manifest is locked from delete/rename
@@ -749,6 +1088,10 @@ async function renderFileList(workspace: OpfsWorkspace) {
                 void openFile(workspace, name);
             }
         };
+        // File rows are drag sources only. Drop on a file isn't
+        // meaningful (we don't open arbitrary file-to-file drops);
+        // dropping on a folder OR the root area is how moves happen.
+        wireDragSource(li, name);
         fileListEl.append(li);
     }
 }
@@ -823,6 +1166,80 @@ function closeAnyFileMenu() {
         (m as any).__cleanup?.();
         m.remove();
     }
+}
+
+/** Right-click menu for a folder row. Smaller than the file menu —
+ *  folders don't participate in fade.json sources or git status the
+ *  same way. Rename (drag-drop preferred, but typed-rename available
+ *  for awkward characters) + Delete. */
+function showFolderContextMenu(x: number, y: number, folderPath: string) {
+    closeAnyFileMenu();
+    if (!projectOps) return;
+    const menu = document.createElement('div');
+    menu.className = 'source-badge-menu';
+    menu.dataset.menu = 'file-context';
+    const addItem = (label: string, handler: () => void) => {
+        const item = document.createElement('button');
+        item.className = 'source-badge-item';
+        item.type = 'button';
+        item.textContent = label;
+        item.onclick = (e) => {
+            e.stopPropagation();
+            closeAnyFileMenu();
+            handler();
+        };
+        menu.append(item);
+    };
+    // Context header so the user can see WHERE the create actions
+    // will land — keeps "New JSON file" from feeling rootless when
+    // four folders share a context menu shape.
+    const ctx = document.createElement('div');
+    ctx.className = 'source-badge-sep-label';
+    ctx.textContent = `in ${folderPath}`;
+    menu.append(ctx);
+    // "Create inside this folder" — full extension list, same shape
+    // as the root-area menu. Mirrors NEW_FILE_EXTENSIONS so users
+    // never have to learn two different menu vocabularies.
+    addItem('New folder…', () => {
+        projectOps!.inlineCreateFolder(folderPath);
+    });
+    const sepAfterFolder = document.createElement('div');
+    sepAfterFolder.className = 'source-badge-sep';
+    menu.append(sepAfterFolder);
+    for (const { label, ext } of NEW_FILE_EXTENSIONS) {
+        addItem(label, () => projectOps!.inlineCreateFile(ext, folderPath));
+    }
+    // Separator between create-actions and modify-actions.
+    const sep = document.createElement('div');
+    sep.className = 'source-badge-sep';
+    menu.append(sep);
+    addItem('Rename folder…', () => {
+        const newPath = window.prompt(`Rename "${folderPath}" to:`, folderPath);
+        if (!newPath || newPath === folderPath) return;
+        void projectOps!.renamePath(folderPath, newPath.trim())
+            .catch((e: unknown) => console.warn('[fade] rename folder failed', e));
+    });
+    addItem('Delete folder…', () => {
+        if (!confirm(`Delete "${folderPath}" and ALL its contents? This can't be undone.`)) return;
+        void projectOps!.deleteFile(folderPath)
+            .catch((e: unknown) => console.warn('[fade] delete folder failed', e));
+    });
+    menu.style.position = 'fixed';
+    menu.style.left = `${x}px`;
+    menu.style.top = `${y}px`;
+    document.body.append(menu);
+    setTimeout(() => {
+        const onClick = (e: MouseEvent) => {
+            if (!menu.contains(e.target as Node)) closeAnyFileMenu();
+        };
+        const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') closeAnyFileMenu(); };
+        document.addEventListener('click', onClick, true);
+        document.addEventListener('keydown', onKey, true);
+        (menu as any).__cleanup = () => {
+            document.removeEventListener('click', onClick, true);
+            document.removeEventListener('keydown', onKey, true);
+        };
+    }, 0);
 }
 
 function renderFileListSelection() {
@@ -2847,10 +3264,71 @@ async function bootstrap() {
                 return;
             }
             // If the deleted file was a listed source, remove it from
-            // fade.json so we don't trip the missing-source error.
+            // fade.json so we don't trip the missing-source error. For
+            // folder deletes, drop every source under the folder too.
             await mutateManifest((p) => {
-                if (!p.sources.includes(name)) return null;
-                return { ...p, sources: p.sources.filter((s) => s !== name) };
+                const folderPrefix = name + '/';
+                const filtered = p.sources.filter(
+                    (s) => s !== name && !s.startsWith(folderPrefix),
+                );
+                if (filtered.length === p.sources.length) return null;
+                return { ...p, sources: filtered };
+            });
+            await refreshFadeProject();
+            renderTabs();
+            await renderFileList(workspace);
+        },
+        createFolder: async (path) => {
+            // Validate per-segment so any nesting depth is fine. The
+            // workspace.mkdir helper happily creates intermediate dirs
+            // on demand; we just guard against bad characters here.
+            for (const seg of path.split('/')) {
+                if (!seg) continue;
+                if (!/^[\w.\-]+$/.test(seg)) {
+                    alert(`Invalid folder name segment "${seg}". Letters, digits, dot, dash, underscore only.`);
+                    return;
+                }
+            }
+            try { await workspace.mkdir(path); }
+            catch (e: any) { alert('Create folder failed: ' + (e?.message ?? e)); return; }
+            await renderFileList(workspace);
+        },
+        inlineCreateFile: (ext, parentFolder) => {
+            void startInlineCreate(ext, parentFolder);
+        },
+        inlineCreateFolder: (parentFolder) => {
+            void startInlineFolderCreate(parentFolder);
+        },
+        renamePath: async (oldPath, newPath) => {
+            if (oldPath === newPath) return;
+            // Collect every tab whose path lives under the moved tree —
+            // we'll reopen them at their new paths after the rename so
+            // the user doesn't lose editor state. (For now we just
+            // close them — phase 5 wires the reopen path through the
+            // tab system's path-aware identity.)
+            const folderPrefix = oldPath + '/';
+            const affectedTabs: string[] = [];
+            for (const [tabName] of tabs) {
+                if (tabName === oldPath || tabName.startsWith(folderPrefix)) {
+                    affectedTabs.push(tabName);
+                }
+            }
+            for (const tabName of affectedTabs) closeTab(tabName);
+            try { await workspace.rename(oldPath, newPath); }
+            catch (e: any) { alert('Rename failed: ' + (e?.message ?? e)); return; }
+            // Update fade.json: any source matching oldPath exactly, or
+            // sitting under oldPath/, gets rewritten to its new home.
+            await mutateManifest((p) => {
+                let touched = false;
+                const updated = p.sources.map((s) => {
+                    if (s === oldPath) { touched = true; return newPath; }
+                    if (s.startsWith(folderPrefix)) {
+                        touched = true;
+                        return newPath + '/' + s.slice(folderPrefix.length);
+                    }
+                    return s;
+                });
+                return touched ? { ...p, sources: updated } : null;
             });
             await refreshFadeProject();
             renderTabs();
@@ -6682,18 +7160,34 @@ async function bootstrap() {
     // inline edit row appears in the file list, pre-filled with a
     // suggested name (base portion selected). Enter saves; Escape /
     // blur / invalid name silently discards.
-    const NEW_FILE_EXTENSIONS: Array<{ label: string; ext: string }> = [
-        { label: 'Fade source (.fbasic)', ext: 'fbasic' },
-        { label: 'Shader (.fx)',          ext: 'fx' },
-        { label: 'JSON (.json)',          ext: 'json' },
-        { label: 'Text (.txt)',           ext: 'txt' },
-    ];
-
-    function showNewFileMenu(x: number, y: number) {
+    function showNewFileMenu(x: number, y: number, parentFolder?: string) {
         closeAnyFileMenu();
         const menu = document.createElement('div');
         menu.className = 'source-badge-menu';
         menu.dataset.menu = 'file-context';
+        // Folder context appears as a faint header so it's obvious WHERE
+        // the new item will land. Omitted at the root.
+        if (parentFolder) {
+            const ctx = document.createElement('div');
+            ctx.className = 'source-badge-sep-label';
+            ctx.textContent = `in ${parentFolder}`;
+            menu.append(ctx);
+        }
+        // New folder — first item since "create a place to put things"
+        // is the action users come for when right-clicking.
+        const folderItem = document.createElement('button');
+        folderItem.className = 'source-badge-item';
+        folderItem.type = 'button';
+        folderItem.textContent = 'New folder…';
+        folderItem.onclick = (e) => {
+            e.stopPropagation();
+            closeAnyFileMenu();
+            startInlineFolderCreate(parentFolder);
+        };
+        menu.append(folderItem);
+        const sepAfterFolder = document.createElement('div');
+        sepAfterFolder.className = 'source-badge-sep';
+        menu.append(sepAfterFolder);
         for (const { label, ext } of NEW_FILE_EXTENSIONS) {
             const item = document.createElement('button');
             item.className = 'source-badge-item';
@@ -6702,13 +7196,15 @@ async function bootstrap() {
             item.onclick = (e) => {
                 e.stopPropagation();
                 closeAnyFileMenu();
-                startInlineCreate(ext);
+                startInlineCreate(ext, parentFolder);
             };
             menu.append(item);
         }
         // Separator + upload action. Opens a file picker; selected files
         // land in OPFS under their original names (collision-renamed) and
-        // the first one is auto-previewed.
+        // the first one is auto-previewed. Upload always targets the
+        // root for now — extending it to drop inside `parentFolder`
+        // would be straightforward; deferred until someone asks.
         const sep = document.createElement('div');
         sep.className = 'source-badge-sep';
         menu.append(sep);
@@ -6744,21 +7240,33 @@ async function bootstrap() {
 
     // Insert an inline-edit row at the top of the file list and focus
     // its input. Commit on Enter; cancel on Escape/blur/invalid.
+    // `parentFolder` (optional) scopes the new file to that folder's
+    // path; auto-expands it on success so the new row is visible.
     let inlineCreateRow: HTMLLIElement | null = null;
-    async function startInlineCreate(ext: string) {
+    async function startInlineCreate(ext: string, parentFolder?: string) {
         // If a previous row is hanging, kill it first.
         inlineCreateRow?.remove();
         inlineCreateRow = null;
 
-        // Find a name that doesn't collide.
-        const existing = new Set(await workspace.list());
-        let base = 'untitled';
+        // Find a name that doesn't collide. Uniqueness is computed in
+        // the parentFolder's namespace — `untitled.fb` at the root is
+        // distinct from `src/untitled.fb`.
+        const allPaths = new Set(await workspace.list());
+        const inFolder = (n: string) => parentFolder ? `${parentFolder}/${n}` : n;
+        const base = 'untitled';
         let candidate = `${base}.${ext}`;
         let n = 1;
-        while (existing.has(candidate)) candidate = `${base}${++n}.${ext}`;
+        while (allPaths.has(inFolder(candidate))) candidate = `${base}${++n}.${ext}`;
 
         const li = document.createElement('li');
         li.className = 'file-edit-row';
+        if (parentFolder) {
+            // Indent the edit row to match where the new file will sit
+            // in the tree once committed. Matches the depth math used
+            // in renderFileList.
+            const depth = parentFolder.split('/').length;
+            li.style.paddingLeft = `calc(1rem + ${depth * 14}px)`;
+        }
         const input = document.createElement('input');
         input.type = 'text';
         input.spellcheck = false;
@@ -6785,16 +7293,87 @@ async function bootstrap() {
             if (!name) return;
             if (!/^[\w.-]+$/.test(name)) return;
             if (name === FADE_JSON_NAME) return;
-            const names = await workspace.list();
-            if (names.includes(name)) return;
+            const fullPath = inFolder(name);
+            if ((await workspace.list()).includes(fullPath)) return;
             try {
-                await workspace.write(name, '');
-                await openFile(workspace, name);
-                if (/\.(fbasic|fb)$/i.test(name)) {
-                    await projectOps?.addSourceAt(name, 'end');
+                await workspace.write(fullPath, '');
+                // Make sure the parent folder is expanded so the new
+                // file is visible. Without this, creating a file in a
+                // collapsed folder feels like nothing happened.
+                if (parentFolder) collapsedFolders.delete(parentFolder);
+                await openFile(workspace, fullPath);
+                if (/\.(fbasic|fb)$/i.test(fullPath)) {
+                    await projectOps?.addSourceAt(fullPath, 'end');
                 }
             } catch (e) {
                 console.error('[fade] new-file failed:', e);
+            }
+        };
+        input.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter') { e.preventDefault(); void finish(true); }
+            else if (e.key === 'Escape') { e.preventDefault(); void finish(false); }
+        });
+        input.addEventListener('blur', () => { void finish(true); });
+    }
+
+    /** Inline-create row for a folder. Mirrors startInlineCreate's
+     *  shape: same edit row UX, same Enter-to-commit / Escape-to-
+     *  cancel. Creates the directory via workspace.mkdir and triggers
+     *  a re-render so the new folder appears in place. */
+    async function startInlineFolderCreate(parentFolder?: string) {
+        inlineCreateRow?.remove();
+        inlineCreateRow = null;
+
+        const allPaths = new Set(await workspace.list());
+        // Also exclude existing directory paths so a name collision
+        // with another folder is caught. workspace.listEntries is the
+        // authoritative source for both.
+        const allEntries = await workspace.listEntries();
+        const dirPaths = new Set(allEntries.filter((e) => e.kind === 'directory').map((e) => e.path));
+        const inFolder = (n: string) => parentFolder ? `${parentFolder}/${n}` : n;
+        const exists = (n: string) => allPaths.has(inFolder(n)) || dirPaths.has(inFolder(n));
+
+        const base = 'new-folder';
+        let candidate = base;
+        let n = 1;
+        while (exists(candidate)) candidate = `${base}${++n}`;
+
+        const li = document.createElement('li');
+        li.className = 'file-edit-row';
+        if (parentFolder) {
+            const depth = parentFolder.split('/').length;
+            li.style.paddingLeft = `calc(1rem + ${depth * 14}px)`;
+        }
+        const input = document.createElement('input');
+        input.type = 'text';
+        input.spellcheck = false;
+        input.autocomplete = 'off';
+        input.value = candidate;
+        input.placeholder = 'folder name';
+        li.append(input);
+        fileListEl.prepend(li);
+        inlineCreateRow = li;
+        input.focus();
+        input.select();
+
+        let settled = false;
+        const finish = async (commit: boolean) => {
+            if (settled) return;
+            settled = true;
+            const name = input.value.trim();
+            li.remove();
+            inlineCreateRow = null;
+            if (!commit) return;
+            if (!name) return;
+            if (!/^[\w.\-]+$/.test(name)) return;
+            const fullPath = inFolder(name);
+            if (exists(name)) return;
+            try {
+                await workspace.mkdir(fullPath);
+                if (parentFolder) collapsedFolders.delete(parentFolder);
+                await renderFileList(workspace);
+            } catch (e) {
+                console.error('[fade] new-folder failed:', e);
             }
         };
         input.addEventListener('keydown', (e) => {
@@ -6903,6 +7482,21 @@ async function bootstrap() {
     newFileBtn.addEventListener('click', (e) => {
         const r = (e.currentTarget as HTMLElement).getBoundingClientRect();
         showNewFileMenu(r.left, r.bottom + 2);
+    });
+    // New-folder button: prompt for a path (slashes allowed → nested
+    // creation), validate per-segment, call workspace.mkdir via the
+    // projectOps surface. Folders auto-expand once created (default
+    // state for any folder not in `collapsedFolders`).
+    newFolderBtn.addEventListener('click', () => {
+        if (!projectOps) return;
+        const raw = window.prompt(
+            'New folder name (use / for nested):',
+            'assets',
+        );
+        if (!raw) return;
+        const path = raw.trim().replace(/^\/+|\/+$/g, '');
+        if (!path) return;
+        void projectOps.createFolder(path);
     });
     // Right-click on the workspace pane's empty area (file rows handle
     // their own contextmenu and stop propagation via preventDefault +

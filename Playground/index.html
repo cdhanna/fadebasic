@@ -155,7 +155,6 @@
             0%, 100% { opacity: 0.4; }
             50% { opacity: 0.85; }
         }
-        header h1 { font-size: 0.85rem; font-weight: 500; margin: 0; }
         #status { color: var(--fg-muted); font-size: 0.78rem; }
         .project-name {
             color: var(--fg);
@@ -218,7 +217,10 @@
         .view-menu {
             position: absolute;
             top: calc(100% + 4px);
-            right: 0;
+            /* Anchor to the left edge of the View button — the button
+               itself now sits on the left side of the header, so a
+               right-anchored dropdown would extend off-screen. */
+            left: 0;
             z-index: 1000;
             min-width: 220px;
             background: var(--bg-3);
@@ -381,11 +383,42 @@
             align-items: center;
             gap: 0.35rem;
         }
-        #file-list li > span:first-child { flex: 1; overflow: hidden; text-overflow: ellipsis; }
+        #file-list li > .file-label { flex: 1; overflow: hidden; text-overflow: ellipsis; }
         #file-list li:hover { background: var(--hover-bg); }
         #file-list li.active { background: #37373d; }
-        #file-list li.manifest > span:first-child { color: var(--fg); font-style: italic; }
+        #file-list li.manifest > .file-label { color: var(--fg); font-style: italic; }
         #file-list .file-lock { color: var(--fg-muted); font-size: 0.8rem; }
+        /* Tree rendering — folders have a clickable chevron; files have
+           an empty spacer at the same width so labels line up across
+           depths. Indent is driven by inline padding-left set per row
+           based on depth × 14px. */
+        #file-list li.folder-row { user-select: none; }
+        #file-list li.folder-row > .folder-chevron {
+            display: inline-block;
+            width: 12px;
+            text-align: center;
+            font-size: 9px;
+            color: var(--fg-muted);
+            flex-shrink: 0;
+        }
+        #file-list li.folder-row > .codicon-folder,
+        #file-list li.folder-row > .codicon-folder-opened {
+            font-size: 14px;
+            color: #dcb67a; /* yellow-ish folder color, vs default fg */
+            flex-shrink: 0;
+        }
+        #file-list li.file-row > .file-indent {
+            display: inline-block;
+            width: 12px;
+            flex-shrink: 0;
+        }
+        /* Drop-target highlight while dragging a file over a folder
+           (used in phase 4). Defined here so the styles are ready when
+           drag-drop lands. */
+        #file-list li.drop-target {
+            background: rgba(77, 166, 255, 0.18);
+            box-shadow: inset 0 0 0 1px rgba(77, 166, 255, 0.5);
+        }
         /* Inline-create row: appears at the top of the file list when the
            user picks an extension from the New File dropdown. Auto-focus
            the input; Enter commits, Escape/blur cancels. */
@@ -456,6 +489,18 @@
             height: 1px;
             background: var(--border-2);
             margin: 0.2rem 0;
+        }
+        /* Context-header above the items, used when the menu was
+           opened against a specific folder so the user can see WHERE
+           the new item will land. */
+        .source-badge-sep-label {
+            padding: 4px 12px 2px;
+            font-size: 0.65rem;
+            text-transform: uppercase;
+            letter-spacing: 0.06em;
+            color: var(--fg-muted);
+            font-family: ui-monospace, monospace;
+            user-select: none;
         }
 
         /* File tabs (top of editor panel) */
@@ -2326,20 +2371,12 @@
 <body>
     <div id="app">
         <header>
-            <h1>Fade Playground</h1>
-            <vscode-button id="open-projects" icon="folder-library" secondary="true" title="Switch / create project (⌘P)"></vscode-button>
+            <!-- Left-to-right: active project name (the most identifying
+                 information), project picker, View menu, GitHub status
+                 icon + chips. Run/Stop/Debug/Export get pushed to the
+                 right by the .grow spacer below. -->
             <span id="project-name" class="project-name" title="Active project (fade.json) — click to switch" hidden></span>
-            <button id="sharing-status-icon"
-                    class="sharing-status-icon"
-                    type="button"
-                    title="GitHub: loading…"
-                    aria-label="Open Collaboration panel">
-                <span class="codicon codicon-source-control"></span>
-                <span id="sharing-status-badge" class="sharing-status-badge sharing-status-badge-loading"></span>
-            </button>
-            <div id="sharing-chips" class="sharing-chips"></div>
-            <span class="grow"></span>
-            <!-- View menu -->
+            <vscode-button id="open-projects" icon="folder-library" secondary="true" title="Switch / create project (⌘P)"></vscode-button>
             <div class="view-menu-wrap" id="view-menu-wrap">
                 <vscode-button id="view-menu-btn" icon="layout" secondary="true" title="View — open panels, manage layouts">View</vscode-button>
                 <div id="view-menu" class="view-menu" hidden>
@@ -2360,6 +2397,16 @@
                     </button>
                 </div>
             </div>
+            <button id="sharing-status-icon"
+                    class="sharing-status-icon"
+                    type="button"
+                    title="GitHub: loading…"
+                    aria-label="Open Collaboration panel">
+                <span class="codicon codicon-source-control"></span>
+                <span id="sharing-status-badge" class="sharing-status-badge sharing-status-badge-loading"></span>
+            </button>
+            <div id="sharing-chips" class="sharing-chips"></div>
+            <span class="grow"></span>
             <vscode-button id="run" disabled icon="play">Run (⌘R)</vscode-button>
             <vscode-button id="stop" disabled icon="debug-stop" secondary="true">Stop</vscode-button>
             <vscode-button id="debug" disabled icon="debug-alt" secondary="true">Debug (⌘D)</vscode-button>
@@ -2399,6 +2446,7 @@
                 <div class="sidebar-header">
                     <span>Workspace</span>
                     <span class="grow"></span>
+                    <button class="icon-btn" id="new-folder" title="New folder"><span class="codicon codicon-new-folder"></span></button>
                     <button class="icon-btn" id="new-file" title="New file">+</button>
                 </div>
                 <ul id="file-list"></ul>
