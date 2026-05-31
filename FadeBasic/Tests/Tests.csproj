@@ -42,6 +42,7 @@
       <ProjectReference Include="..\FadeBasic\FadeBasic.csproj" />
       <ProjectReference Include="..\FadeBasic.Testing\FadeBasic.Testing.csproj" />
       <ProjectReference Include="..\FadeBasic.TestAdapter\FadeBasic.TestAdapter.csproj" />
+      <ProjectReference Include="..\LSP.Core\FadeBasic.LSP.Core.csproj" />
 
     </ItemGroup>
     <ItemGroup>

@@ -1,0 +1,570 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8" />
+    <title>Fade — WebRTC Connectivity Probe</title>
+    <!-- Standalone diagnostic for the live-session feature. Doesn't import
+         anything from the playground bundle — pure RTCPeerConnection +
+         the same ICE server config that trystero-transport.ts ships,
+         so we can verify whether STUN / TURN actually reach the peer
+         from THIS browser on THIS network without dragging the rest of
+         the app's bootstrap into the picture.
+
+         Open at /webrtc-probe.html on the dev server (or paste this file
+         anywhere — it has no other dependencies). Click "Run probe" and
+         it'll:
+           1. Gather ICE candidates against the configured servers and
+              show you which categories arrived. The categories tell you
+              what works:
+                - host: this machine's local network IPs
+                - srflx: STUN discovered our public IP — STUN works
+                - relay: TURN issued a relay address — TURN works
+              If "relay" is missing, the TURN server's credentials are
+              wrong or the server is unreachable from this browser.
+           2. Try a self-loopback (two RTCPeerConnections in this same
+              page exchanging SDP via a JS variable) to confirm the
+              gathered candidates can actually establish a connection.
+              If gathering works but the loopback fails, the issue is
+              browser policy (Firefox's mDNS handling is the usual
+              suspect), not your network. -->
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+            background: #1e1e1e;
+            color: #d4d4d4;
+            max-width: 980px;
+            margin: 0 auto;
+            padding: 24px;
+            line-height: 1.5;
+        }
+        h1 { margin-top: 0; }
+        button {
+            background: #0e639c;
+            color: white;
+            border: 0;
+            padding: 8px 16px;
+            border-radius: 3px;
+            cursor: pointer;
+            font: inherit;
+            font-size: 0.9rem;
+            margin-right: 8px;
+        }
+        button:hover:not(:disabled) { background: #1177bb; }
+        button:disabled { opacity: 0.5; cursor: default; }
+        button.secondary { background: #2d2d2d; border: 1px solid #555; }
+        section {
+            background: #252526;
+            border: 1px solid #333;
+            border-radius: 4px;
+            padding: 16px;
+            margin: 16px 0;
+        }
+        section h2 { margin-top: 0; font-size: 1rem; color: #cccccc; }
+        .grid {
+            display: grid;
+            grid-template-columns: max-content 1fr;
+            gap: 4px 16px;
+            font-family: ui-monospace, 'SF Mono', Menlo, monospace;
+            font-size: 0.78rem;
+        }
+        .grid .label { color: #8a8a8a; }
+        .grid .value { color: #d4d4d4; word-break: break-all; }
+        .pill {
+            display: inline-block;
+            padding: 1px 8px;
+            border-radius: 9px;
+            font-size: 0.7rem;
+            margin-right: 4px;
+        }
+        .pill-host       { background: rgba(76,175,80,0.18);  color: #6fd178; border: 1px solid rgba(76,175,80,0.45); }
+        .pill-srflx      { background: rgba(77,166,255,0.18); color: #4da6ff; border: 1px solid rgba(77,166,255,0.45); }
+        .pill-prflx      { background: rgba(255,183,77,0.18); color: #ffb74d; border: 1px solid rgba(255,183,77,0.45); }
+        .pill-relay      { background: rgba(184,138,255,0.18); color: #b88aff; border: 1px solid rgba(184,138,255,0.45); }
+        .pill-fail       { background: rgba(244,67,54,0.18); color: #f88; border: 1px solid rgba(244,67,54,0.45); }
+        .pill-pending    { background: rgba(255,255,255,0.06); color: #8a8a8a; border: 1px solid #555; }
+        .pill-pass       { background: rgba(76,175,80,0.22); color: #6fd178; border: 1px solid rgba(76,175,80,0.55); }
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            font-family: ui-monospace, 'SF Mono', Menlo, monospace;
+            font-size: 0.74rem;
+        }
+        th, td {
+            text-align: left;
+            padding: 4px 8px;
+            border-bottom: 1px solid #333;
+            vertical-align: top;
+        }
+        th { color: #8a8a8a; font-weight: normal; text-transform: uppercase; font-size: 0.66rem; }
+        pre {
+            background: #1a1a1a;
+            border: 1px solid #333;
+            padding: 8px 12px;
+            border-radius: 3px;
+            overflow-x: auto;
+            font-size: 0.74rem;
+            color: #d4d4d4;
+        }
+        .verdict {
+            font-size: 1.05rem;
+            font-weight: 600;
+            padding: 10px 14px;
+            border-radius: 4px;
+            margin: 12px 0;
+        }
+        .verdict-good { background: rgba(76,175,80,0.15); border: 1px solid rgba(76,175,80,0.45); color: #6fd178; }
+        .verdict-bad  { background: rgba(244,67,54,0.15); border: 1px solid rgba(244,67,54,0.45); color: #f88; }
+        .verdict-mixed { background: rgba(255,183,77,0.15); border: 1px solid rgba(255,183,77,0.45); color: #ffb74d; }
+        .mini { color: #8a8a8a; font-size: 0.78rem; }
+    </style>
+</head>
+<body>
+    <h1>WebRTC Connectivity Probe</h1>
+    <p class="mini">
+        Verifies whether STUN and TURN actually work for this browser on
+        this network. Same ICE server config as the playground's live-session
+        feature. If you're seeing "Ice connection failed" errors, run this
+        first.
+    </p>
+
+    <section>
+        <button id="run">Run probe</button>
+        <button id="copy" class="secondary" disabled>Copy results</button>
+    </section>
+
+    <section>
+        <h2>Environment</h2>
+        <div class="grid" id="env"></div>
+    </section>
+
+    <section>
+        <h2>ICE candidate gathering</h2>
+        <div id="gather-status" class="mini">Click "Run probe" to start.</div>
+        <table id="candidates" hidden>
+            <thead>
+                <tr>
+                    <th>#</th>
+                    <th>Type</th>
+                    <th>Protocol</th>
+                    <th>Address</th>
+                    <th>Source URL</th>
+                </tr>
+            </thead>
+            <tbody></tbody>
+        </table>
+        <div id="categories" style="margin-top:12px"></div>
+    </section>
+
+    <section>
+        <h2>Loopback connection</h2>
+        <div id="loop-status" class="mini">
+            After candidate gathering completes, the probe will try to establish
+            a peer-to-peer connection between two RTCPeerConnection objects
+            in this same page using only the gathered candidates. This tells
+            you whether the candidates can ACTUALLY connect or just
+            theoretically reachable.
+        </div>
+        <div id="loop-result"></div>
+    </section>
+
+    <section>
+        <h2>Verdict</h2>
+        <div id="verdict"></div>
+    </section>
+
+    <section>
+        <h2>Raw report</h2>
+        <pre id="report">(empty)</pre>
+    </section>
+
+    <script>
+        // Two configs mirroring ice-probe.ts:
+        //   FULL    — STUN + TURN, what the playground would prefer to use
+        //   MINIMAL — just one STUN, what it falls back to when the full
+        //             config trips Firefox's gather path
+        // The probe tries the full config first; if it gathers zero
+        // candidates, it auto-retries with minimal and reports both.
+        const FULL_ICE = [
+            { urls: 'stun:stun.l.google.com:19302' },
+            { urls: 'stun:stun1.l.google.com:19302' },
+            { urls: 'stun:stun.relay.metered.ca:80' },
+            { urls: 'turn:global.relay.metered.ca:80', username: 'openrelayproject', credential: 'openrelayproject' },
+            { urls: 'turn:global.relay.metered.ca:80?transport=tcp', username: 'openrelayproject', credential: 'openrelayproject' },
+            { urls: 'turn:global.relay.metered.ca:443', username: 'openrelayproject', credential: 'openrelayproject' },
+            { urls: 'turns:global.relay.metered.ca:443?transport=tcp', username: 'openrelayproject', credential: 'openrelayproject' },
+        ];
+        const MINIMAL_ICE = [
+            { urls: 'stun:stun.l.google.com:19302' },
+        ];
+        // What we actively probe with — swapped when we fall back.
+        let ICE_SERVERS = FULL_ICE;
+        let activeConfigName = 'FULL';
+
+        const $ = (id) => document.getElementById(id);
+        const candidates = [];
+        const iceErrors = [];
+
+        function renderEnv() {
+            const env = $('env');
+            env.innerHTML = '';
+            const ua = navigator.userAgent;
+            const browser = /Firefox\/([\d.]+)/.exec(ua)?.[0]
+                ?? /Chrome\/([\d.]+)/.exec(ua)?.[0]
+                ?? /Safari\/([\d.]+)/.exec(ua)?.[0]
+                ?? 'unknown';
+            const rows = [
+                ['URL',     location.href],
+                ['Browser', browser],
+                ['User-agent', ua],
+                ['RTCPeerConnection', typeof RTCPeerConnection !== 'undefined' ? 'available' : 'MISSING'],
+                ['Insecure context', window.isSecureContext ? 'no (good)' : 'YES — restricted'],
+            ];
+            for (const [k, v] of rows) {
+                const a = document.createElement('div'); a.className = 'label'; a.textContent = k;
+                const b = document.createElement('div'); b.className = 'value'; b.textContent = v;
+                env.append(a, b);
+            }
+        }
+
+        function addCandidate(cand, sdpMid) {
+            const idx = candidates.length;
+            candidates.push(cand);
+            const tr = document.createElement('tr');
+            const fields = [
+                String(idx + 1),
+                cand.type ?? '?',
+                cand.protocol ?? '?',
+                `${cand.address ?? '?'}:${cand.port ?? '?'}`,
+                cand.url ?? cand.relatedAddress ? `via ${cand.url ?? cand.relatedAddress}` : '',
+            ];
+            for (const f of fields) {
+                const td = document.createElement('td');
+                if (fields.indexOf(f) === 1) {
+                    const span = document.createElement('span');
+                    span.className = 'pill pill-' + (cand.type ?? 'pending');
+                    span.textContent = f;
+                    td.appendChild(span);
+                } else {
+                    td.textContent = f;
+                }
+                tr.appendChild(td);
+            }
+            $('candidates').hidden = false;
+            $('candidates').querySelector('tbody').appendChild(tr);
+        }
+
+        function renderCategories() {
+            const counts = {};
+            for (const c of candidates) {
+                const k = c.type ?? 'unknown';
+                counts[k] = (counts[k] || 0) + 1;
+            }
+            const wrap = $('categories');
+            wrap.innerHTML = '';
+            for (const [k, n] of Object.entries(counts)) {
+                const pill = document.createElement('span');
+                pill.className = 'pill pill-' + k;
+                pill.textContent = `${k}: ${n}`;
+                wrap.appendChild(pill);
+            }
+            // Highlight what's missing — the user cares about whether
+            // each category arrived, not just what did.
+            const expected = ['host', 'srflx', 'relay'];
+            for (const k of expected) {
+                if (!(k in counts)) {
+                    const pill = document.createElement('span');
+                    pill.className = 'pill pill-fail';
+                    pill.textContent = `${k}: 0 ✕`;
+                    wrap.appendChild(pill);
+                }
+            }
+        }
+
+        async function runProbe() {
+            $('run').disabled = true;
+            $('copy').disabled = true;
+            $('verdict').innerHTML = '';
+            $('loop-result').innerHTML = '';
+            $('candidates').querySelector('tbody').innerHTML = '';
+            $('categories').innerHTML = '';
+            $('report').textContent = '(running…)';
+            candidates.length = 0;
+            iceErrors.length = 0;
+            ICE_SERVERS = FULL_ICE;
+            activeConfigName = 'FULL';
+
+            // ── Phase 1: gather candidates ─────────────────────────────
+            $('gather-status').textContent = 'Probing FULL config (Google STUN + metered.ca TURN)…';
+            const pc = new RTCPeerConnection({ iceServers: ICE_SERVERS });
+            // A data channel forces ICE gathering even though we're not
+            // sending media. Without this, setLocalDescription won't
+            // produce any candidates.
+            pc.createDataChannel('probe');
+
+            pc.addEventListener('icecandidate', (ev) => {
+                if (!ev.candidate) {
+                    // Retry with MINIMAL not only on zero candidates but
+                    // also when the FULL config produced only host
+                    // candidates — those are mDNS hostnames on Firefox
+                    // and can't reach off-LAN peers, so they don't tell
+                    // us anything about whether full config actually
+                    // works for real connections. Matches the gating in
+                    // ice-probe.ts (require srflx/relay).
+                    const routable = candidates.filter(c => c.type === 'srflx' || c.type === 'relay').length;
+                    if (routable === 0 && activeConfigName === 'FULL') {
+                        $('gather-status').textContent = `FULL config gathered ${candidates.length} candidate(s) but none routable — retrying with MINIMAL (just Google STUN)…`;
+                        try { pc.close(); } catch {}
+                        retryWithMinimal();
+                        return;
+                    }
+                    $('gather-status').textContent = `Gathering complete (${activeConfigName} config).`;
+                    renderCategories();
+                    finalize(pc);
+                    return;
+                }
+                addCandidate(ev.candidate, ev.candidate.sdpMid);
+            });
+            pc.addEventListener('icecandidateerror', (ev) => {
+                // Firefox + Chrome both fire this when a STUN/TURN server
+                // can't be reached or rejects the credentials. Captured
+                // and shown in the raw report so the user can paste it.
+                iceErrors.push({
+                    address: ev.address,
+                    port: ev.port,
+                    url: ev.url,
+                    errorCode: ev.errorCode,
+                    errorText: ev.errorText,
+                });
+            });
+
+            try {
+                const offer = await pc.createOffer({ offerToReceiveAudio: false, offerToReceiveVideo: false });
+                await pc.setLocalDescription(offer);
+            } catch (e) {
+                $('gather-status').textContent = 'createOffer/setLocalDescription failed: ' + e.message;
+                $('run').disabled = false;
+                return;
+            }
+
+            // Backstop in case the 'icecandidate' end-of-gathering event
+            // never fires (some Firefox-on-VPN bugs). 5s is enough to know
+            // that gathering's stuck; gives time to fall back to MINIMAL.
+            setTimeout(() => {
+                const status = $('gather-status').textContent;
+                if (status.startsWith('Probing') || status.startsWith('Creating')) {
+                    if (candidates.length === 0 && activeConfigName === 'FULL') {
+                        $('gather-status').textContent = 'FULL config timed out with zero candidates — retrying with MINIMAL…';
+                        try { pc.close(); } catch {}
+                        retryWithMinimal();
+                        return;
+                    }
+                    $('gather-status').textContent = `Gathering timed out (${activeConfigName} config) — taking what we have.`;
+                    renderCategories();
+                    finalize(pc);
+                }
+            }, 5000);
+        }
+
+        /** Re-run candidate gathering with just one Google STUN server. If
+         *  this works where the full config didn't, the user is hitting
+         *  the Firefox-bails-on-complex-iceServers issue and the playground
+         *  itself will auto-fall-back to this config too. */
+        function retryWithMinimal() {
+            ICE_SERVERS = MINIMAL_ICE;
+            activeConfigName = 'MINIMAL';
+            // Fresh slate.
+            candidates.length = 0;
+            $('candidates').querySelector('tbody').innerHTML = '';
+            $('categories').innerHTML = '';
+
+            const pc = new RTCPeerConnection({ iceServers: ICE_SERVERS });
+            pc.createDataChannel('probe');
+            pc.addEventListener('icecandidate', (ev) => {
+                if (!ev.candidate) {
+                    $('gather-status').textContent = candidates.length === 0
+                        ? 'MINIMAL config ALSO gathered zero candidates. WebRTC may be blocked at the browser/OS level.'
+                        : `Gathering complete (MINIMAL config — ${candidates.length} candidate(s)).`;
+                    renderCategories();
+                    finalize(pc);
+                    return;
+                }
+                addCandidate(ev.candidate, ev.candidate.sdpMid);
+            });
+            pc.addEventListener('icecandidateerror', (ev) => {
+                iceErrors.push({ address: ev.address, port: ev.port, url: ev.url,
+                    errorCode: ev.errorCode, errorText: ev.errorText });
+            });
+            pc.createOffer({ offerToReceiveAudio: false, offerToReceiveVideo: false })
+                .then(offer => pc.setLocalDescription(offer))
+                .catch((e) => {
+                    $('gather-status').textContent = 'MINIMAL setLocalDescription failed: ' + e.message;
+                    $('run').disabled = false;
+                });
+
+            setTimeout(() => {
+                const status = $('gather-status').textContent;
+                if (status.startsWith('FULL config') || status.includes('retrying with MINIMAL')) {
+                    $('gather-status').textContent = candidates.length === 0
+                        ? 'MINIMAL config also timed out with zero candidates. WebRTC is non-functional on this browser/network.'
+                        : `MINIMAL gathering timed out — ${candidates.length} candidate(s) collected.`;
+                    renderCategories();
+                    finalize(pc);
+                }
+            }, 5000);
+        }
+
+        async function finalize(pcA) {
+            // ── Phase 2: loopback connect ──────────────────────────────
+            $('loop-status').textContent = 'Trying loopback: two RTCPeerConnections in this page exchange SDP and try to connect…';
+
+            const pcB = new RTCPeerConnection({ iceServers: ICE_SERVERS });
+            const loopErrors = [];
+            let loopChannelOpened = false;
+
+            pcA.addEventListener('icecandidate', (ev) => {
+                if (ev.candidate) pcB.addIceCandidate(ev.candidate).catch(e => loopErrors.push('B addIce: ' + e.message));
+            });
+            pcB.addEventListener('icecandidate', (ev) => {
+                if (ev.candidate) pcA.addIceCandidate(ev.candidate).catch(e => loopErrors.push('A addIce: ' + e.message));
+            });
+            pcA.addEventListener('iceconnectionstatechange', () => {
+                if (pcA.iceConnectionState === 'failed') loopErrors.push('A ICE failed');
+            });
+            pcB.addEventListener('iceconnectionstatechange', () => {
+                if (pcB.iceConnectionState === 'failed') loopErrors.push('B ICE failed');
+            });
+
+            // pcA already has a data channel from the gather phase. Wire
+            // pcB's incoming data channel to flip the flag on open.
+            pcB.addEventListener('datachannel', (ev) => {
+                ev.channel.addEventListener('open', () => { loopChannelOpened = true; });
+            });
+
+            try {
+                // pcA already has a local description (offer) from Phase 1.
+                await pcB.setRemoteDescription(pcA.localDescription);
+                const answer = await pcB.createAnswer();
+                await pcB.setLocalDescription(answer);
+                await pcA.setRemoteDescription(pcB.localDescription);
+            } catch (e) {
+                loopErrors.push('SDP exchange: ' + e.message);
+            }
+
+            // Wait up to 10s for the data channel to open.
+            const t0 = Date.now();
+            while (!loopChannelOpened && Date.now() - t0 < 10_000) {
+                await new Promise((r) => setTimeout(r, 100));
+            }
+
+            renderLoopResult(loopChannelOpened, loopErrors, pcA, pcB);
+            await renderVerdict();
+
+            try { pcA.close(); pcB.close(); } catch {}
+            $('run').disabled = false;
+            $('copy').disabled = false;
+        }
+
+        function renderLoopResult(opened, errors, pcA, pcB) {
+            const wrap = $('loop-result');
+            wrap.innerHTML = '';
+            const pill = document.createElement('span');
+            pill.className = 'pill ' + (opened ? 'pill-pass' : 'pill-fail');
+            pill.textContent = opened ? 'PASS — channel opened' : 'FAIL — channel never opened';
+            wrap.appendChild(pill);
+
+            const detail = document.createElement('div');
+            detail.className = 'grid';
+            detail.style.marginTop = '8px';
+            const rows = [
+                ['pcA ICE state',  pcA.iceConnectionState],
+                ['pcB ICE state',  pcB.iceConnectionState],
+                ['pcA conn state', pcA.connectionState],
+                ['pcB conn state', pcB.connectionState],
+            ];
+            for (const [k, v] of rows) {
+                const a = document.createElement('div'); a.className = 'label'; a.textContent = k;
+                const b = document.createElement('div'); b.className = 'value'; b.textContent = v;
+                detail.append(a, b);
+            }
+            wrap.appendChild(detail);
+
+            if (errors.length) {
+                const pre = document.createElement('pre');
+                pre.textContent = errors.join('\n');
+                wrap.appendChild(pre);
+            }
+        }
+
+        async function renderVerdict() {
+            const hasHost  = candidates.some(c => c.type === 'host');
+            const hasSrflx = candidates.some(c => c.type === 'srflx');
+            const hasRelay = candidates.some(c => c.type === 'relay');
+
+            let verdict;
+            let cls;
+            const usedFallback = activeConfigName === 'MINIMAL';
+            if (hasRelay && hasSrflx) {
+                verdict = `TURN and STUN both work (${activeConfigName} config). WebRTC should connect reliably from this network, including for peers behind symmetric NATs / strict firewalls.`;
+                cls = 'verdict-good';
+            } else if (hasSrflx && !hasRelay) {
+                if (usedFallback) {
+                    verdict = 'FULL config failed to gather ANY candidates on this browser, but MINIMAL config worked with STUN. This is the Firefox-on-VPN-confuses-the-route-table issue; the playground auto-falls-back to this minimal config so sessions WILL work for ~85% of peers (anyone not behind a symmetric NAT). Peers on cellular networks / corporate firewalls may not connect.';
+                    cls = 'verdict-mixed';
+                } else {
+                    verdict = 'STUN works but TURN does not. You will connect on networks with permissive NATs (most home networks) but fail on symmetric NATs, strict corporate firewalls, and some mobile carriers. Most likely cause: the TURN server credentials are rejected (check the icecandidateerror entries in the raw report). Get fresh credentials at https://www.metered.ca/tools/openrelay/ or use a different TURN provider.';
+                    cls = 'verdict-mixed';
+                }
+            } else if (!hasSrflx && !hasRelay && hasHost) {
+                verdict = 'Neither STUN nor TURN reach. You will only connect to peers on the same local network. Network or browser is blocking outbound STUN/TURN traffic.';
+                cls = 'verdict-bad';
+            } else if (!hasHost && !hasSrflx && !hasRelay) {
+                verdict = 'No candidates gathered at all — even with the MINIMAL fallback config. Browser is refusing to do WebRTC: usually a VPN client confusing the route table (Cloudflare WARP, Tailscale, iCloud Private Relay, corporate VPN), a privacy extension, or strict about:config flags. Test in a different browser to confirm.';
+                cls = 'verdict-bad';
+            } else {
+                verdict = 'Mixed results — see the candidate table and raw report.';
+                cls = 'verdict-mixed';
+            }
+
+            const v = $('verdict');
+            v.className = 'verdict ' + cls;
+            v.textContent = verdict;
+
+            // Build the raw text report for copy-paste sharing.
+            const lines = [
+                '# Fade WebRTC Probe — ' + new Date().toISOString(),
+                '',
+                '## Environment',
+                'URL:        ' + location.href,
+                'User-agent: ' + navigator.userAgent,
+                'Active config: ' + activeConfigName,
+                '',
+                '## Candidate categories',
+                'host:  ' + candidates.filter(c => c.type === 'host').length,
+                'srflx: ' + candidates.filter(c => c.type === 'srflx').length,
+                'prflx: ' + candidates.filter(c => c.type === 'prflx').length,
+                'relay: ' + candidates.filter(c => c.type === 'relay').length,
+                '',
+                '## All candidates',
+                ...candidates.map((c, i) => `${i+1}. type=${c.type} protocol=${c.protocol} addr=${c.address}:${c.port} url=${c.url ?? '-'}`),
+                '',
+                '## ICE errors',
+                ...(iceErrors.length ? iceErrors.map((e) => `  ${e.url ?? '?'} → code=${e.errorCode} text=${e.errorText}`) : ['  (none)']),
+                '',
+                '## Verdict',
+                verdict,
+            ];
+            $('report').textContent = lines.join('\n');
+        }
+
+        $('run').addEventListener('click', runProbe);
+        $('copy').addEventListener('click', async () => {
+            try { await navigator.clipboard.writeText($('report').textContent); }
+            catch { /* may not be allowed */ }
+            $('copy').textContent = 'Copied!';
+            setTimeout(() => { $('copy').textContent = 'Copy results'; }, 1500);
+        });
+
+        renderEnv();
+    </script>
+</body>
+</html>

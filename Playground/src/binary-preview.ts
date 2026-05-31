@@ -8,6 +8,8 @@
 //                          → <audio>)
 //   .png/.jpg/.gif/...   → <img src=blob:>
 //   .wav/.mp3/.ogg       → <audio src=blob:>
+//   .ttf/.otf            → live FontFace registration + editable sample text
+//                          rendered with the loaded font
 //   anything else        → label-only fallback so future formats fail soft.
 //
 // Lifecycle: init() reads the bytes once, renders, retains blob URLs;
@@ -47,7 +49,8 @@ export const LEGACY_BINARY_PREVIEW_ID_PREFIX = 'binary-preview:';
 export const BINARY_FILE_EXTENSIONS = new Set<string>([
     'xnb',
     'png', 'jpg', 'jpeg', 'gif', 'webp', 'bmp',
-    'wav', 'mp3', 'ogg',
+    'wav', 'mp3', 'ogg', 'flac', 'm4a', 'aac',
+    'ttf', 'otf',
 ]);
 
 export function isBinaryFileName(name: string): boolean {
@@ -142,7 +145,12 @@ export function createBinaryPreview(
                 case 'bmp':   return renderImage(bytes, ext);
                 case 'wav':
                 case 'mp3':
-                case 'ogg':   return renderAudio(bytes, ext);
+                case 'ogg':
+                case 'flac':
+                case 'm4a':
+                case 'aac':   return renderAudio(bytes, ext);
+                case 'ttf':
+                case 'otf':   return renderFont(bytes, ext, token);
                 default:      return renderFallback(bytes);
             }
         } catch (e: any) {
@@ -280,6 +288,114 @@ export function createBinaryPreview(
         audio.src = url;
         audio.className = 'binary-preview-audio';
         body.append(audio);
+    }
+
+    function renderFont(bytes: Uint8Array, ext: string, token: number) {
+        clear();
+        const mime = ext === 'otf' ? 'font/otf' : 'font/ttf';
+
+        // Register the bytes as a CSS @font-face under a name unique to
+        // this preview panel + this filename, so swapping which file the
+        // preview is showing doesn't collide with the in-document font
+        // registry used by the compiled SpriteFont path. The font-rasterizer
+        // also registers fonts but with a different name scheme; the two
+        // registries coexist cleanly.
+        const faceName = `fade-preview__${filename.replace(/[^A-Za-z0-9_-]/g, '_')}`;
+        // Copy to a fresh ArrayBuffer — FontFace's constructor detaches
+        // the buffer it receives, and the caller (the binary preview)
+        // may want to keep using `bytes` for the metadata section.
+        const ab = new ArrayBuffer(bytes.byteLength);
+        new Uint8Array(ab).set(bytes);
+        const face = new (window as any).FontFace(faceName, ab) as FontFace;
+
+        const meta = document.createElement('div');
+        meta.className = 'binary-preview-meta';
+        meta.append(
+            metaRow('Type', mime),
+            metaRow('Size', formatBytes(bytes.length)),
+        );
+        body.append(meta);
+
+        // Build the editable preview UI optimistically. If the font fails
+        // to load we'll swap in an error note; otherwise the controls go
+        // live as soon as the face has loaded.
+        const controls = document.createElement('div');
+        controls.className = 'binary-preview-font-controls';
+
+        const sizeWrap = document.createElement('label');
+        sizeWrap.className = 'binary-preview-font-size';
+        sizeWrap.textContent = 'Size ';
+        const sizeRange = document.createElement('input');
+        sizeRange.type = 'range';
+        sizeRange.min = '8';
+        sizeRange.max = '128';
+        sizeRange.value = '36';
+        sizeRange.step = '1';
+        const sizeLabel = document.createElement('span');
+        sizeLabel.className = 'binary-preview-font-size-label';
+        sizeLabel.textContent = `${sizeRange.value}px`;
+        sizeWrap.append(sizeRange, sizeLabel);
+        controls.append(sizeWrap);
+
+        body.append(controls);
+
+        const editor = document.createElement('textarea');
+        editor.className = 'binary-preview-font-editor';
+        editor.rows = 3;
+        editor.placeholder = 'Type to preview…';
+        editor.value =
+            'The quick brown fox jumps over the lazy dog\n' +
+            '0123456789  !@#$%^&*()  AaBbCcDdEeFf';
+        body.append(editor);
+
+        const sample = document.createElement('div');
+        sample.className = 'binary-preview-font-sample';
+        sample.style.fontFamily = `'${faceName}', system-ui, sans-serif`;
+        sample.style.fontSize = `${sizeRange.value}px`;
+        sample.style.lineHeight = '1.25';
+        sample.textContent = editor.value;
+        body.append(sample);
+
+        // Render `editor.value` into `sample` while preserving newlines
+        // (textarea content uses `\n`; HTML collapses unless we render
+        // each line as its own element).
+        const refresh = () => {
+            sample.textContent = '';
+            const lines = editor.value.split(/\r?\n/);
+            for (let i = 0; i < lines.length; i++) {
+                if (i > 0) sample.append(document.createElement('br'));
+                sample.append(document.createTextNode(lines[i]));
+            }
+        };
+        editor.addEventListener('input', refresh);
+        sizeRange.addEventListener('input', () => {
+            sizeLabel.textContent = `${sizeRange.value}px`;
+            sample.style.fontSize = `${sizeRange.value}px`;
+        });
+        refresh();
+
+        // Try to add the face to the document's font registry. On
+        // success, the sample re-renders with the actual font; on
+        // failure (corrupt TTF, unsupported variant), surface a note
+        // and leave the CSS fallback in place so the user at least
+        // sees their sample text.
+        face.load().then(
+            () => {
+                if (token !== loadToken) return;
+                (document as any).fonts.add(face);
+                // Nudge: setting the same font-family triggers a
+                // re-layout in browsers that didn't notice the new
+                // face was added mid-render.
+                sample.style.fontFamily = `'${faceName}', system-ui, sans-serif`;
+            },
+            (err: any) => {
+                if (token !== loadToken) return;
+                const note = buildEmptyNote(
+                    `Font failed to load: ${err?.message ?? err}. The text below renders in the fallback system font.`,
+                );
+                body.insertBefore(note, controls);
+            },
+        );
     }
 
     function renderFallback(bytes: Uint8Array) {

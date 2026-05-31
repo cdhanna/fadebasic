@@ -60,10 +60,30 @@ import {
 // file into this when it's opened so the editor service can resolve it.
 const virtualFs = new RegisteredFileSystemProvider(false);
 registerFileSystemOverlay(1, virtualFs);
-// virtualFs.registerFile() throws if called twice for the same URI. We
-// track registered URIs so reopening a previously-closed tab no-ops the
-// registration step instead of crashing with "file already exists".
-const registeredVirtualFsUris = new Set<string>();
+// virtualFs.registerFile() throws if called twice for the same URI.
+// `registerFile` returns an IDisposable; storing it lets us properly
+// unregister later (rename → new URI, project switch → drop old URIs,
+// live-session leave → wipe the transient project's URIs). Without
+// this, disposing a Monaco model leaves the registration orphaned in
+// virtualFs and the next openFile for the same URI throws
+// "file already exists".
+const registeredVirtualFsUris = new Map<string, { dispose: () => void }>();
+function registerVirtualFile(uri: monaco.Uri, text: string): void {
+    const key = uri.toString();
+    const prior = registeredVirtualFsUris.get(key);
+    if (prior) {
+        try { prior.dispose(); } catch { /* ignore */ }
+    }
+    const disp = virtualFs.registerFile(new RegisteredMemoryFile(uri, text));
+    registeredVirtualFsUris.set(key, disp);
+}
+function unregisterVirtualFile(uri: monaco.Uri): void {
+    const key = uri.toString();
+    const disp = registeredVirtualFsUris.get(key);
+    if (!disp) return;
+    try { disp.dispose(); } catch { /* ignore */ }
+    registeredVirtualFsUris.delete(key);
+}
 
 import EditorWorker from '@codingame/monaco-vscode-api/workers/editor.worker?worker';
 import { languageForExtra, registerExtraLanguages, extraThemeRules } from './languages';
@@ -74,13 +94,42 @@ import {
     LEGACY_BINARY_PREVIEW_ID_PREFIX,
     isBinaryFileName,
 } from './binary-preview';
+import { CatalogClient } from './catalog/catalog-client';
+import { createCatalogPanel } from './catalog/catalog-panel';
 import { patchXnbForKni } from './xnb/xnb-previews';
+import {
+    compileImageAssetsWithPlan,
+    compileFontAssetsWithPlan,
+    garbageCollectAssetCache,
+} from './assets/compile-assets';
+import { sha256Hex } from './assets/asset-cache';
+import {
+    ENCODER_VERSION,
+    assetNameForSourcePath,
+    isImageSourcePath,
+    isAudioSourcePath,
+    isFontSourcePath,
+} from './assets/types';
+import type { MonoGameContentPlan } from './monogame-host';
+
+const EMPTY_CONTENT_PLAN: MonoGameContentPlan = {
+    defaultCompression: 'auto',
+    entries: [],
+};
 import { mountHelpPanel } from './help';
 import { monoGameHost } from './monogame-host';
+import { createLocalDebugAdapter } from './debug/local-adapter';
+import type { DebugAdapter } from './debug/adapter';
 import { mountAiChat, mountAiModels } from './ai-chat';
 import { monacoDiagnosticsProvider } from './ai/adapters/monaco-diagnostics';
 import { PLAYGROUND_VERSION } from './changelog';
 import { maybeShowChangelogPopup, showFullChangelog } from './version-popup';
+import {
+    extractInsIndex,
+    hideCrashOverlay,
+    showCrashOverlay,
+    summarizeCrash,
+} from './crash-overlay';
 import type { CommandDocEntry as HelpCommandDocEntry, HelpSnippetToken } from './help';
 import {
     mountCollaboration,
@@ -94,6 +143,11 @@ import {
     type CollaborationController,
     type GutterHandle,
 } from './sharing';
+import {
+    bootstrapLiveSession,
+    type LiveSessionHandle,
+    type SessionHost as CollabSessionHost,
+} from './sharing/collab';
 import { mountLogsPanel } from './logs-panel';
 import { mountSearchPanel } from './search-panel';
 import { mountSettingsPanel } from './settings-panel';
@@ -550,9 +604,50 @@ interface Tab {
     gutterHandle?: GutterHandle;
 }
 
+// ── Live-session transient project helpers ───────────────────────────────
+// Guests join a session into a sandboxed OPFS project so the host's workspace
+// can be mirrored without polluting any of the guest's real projects. The
+// prefix is reserved — `cleanupLiveSessionProjects` wipes anything matching
+// it on app boot to recover from a mid-session reload.
+const LIVE_SESSION_PROJECT_PREFIX = '__live_session_';
+function liveSessionProjectName(roomId: string): string {
+    return `${LIVE_SESSION_PROJECT_PREFIX}${roomId}__`;
+}
+function isLiveSessionProjectName(name: string): boolean {
+    return name.startsWith(LIVE_SESSION_PROJECT_PREFIX);
+}
+/** Remove a project directory from OPFS by reaching into navigator.storage
+ *  directly — OpfsWorkspace doesn't expose deleteProject. Used on guest
+ *  leave (clean exit) and on app startup (crash recovery for any
+ *  `__live_session_*` projects left behind by a previous reload). */
+async function deleteOpfsProject(name: string): Promise<void> {
+    const opfs = await navigator.storage.getDirectory();
+    const workspaceRoot = await opfs.getDirectoryHandle('workspace');
+    try {
+        await workspaceRoot.removeEntry(name, { recursive: true });
+    } catch (e) {
+        // NotFoundError is fine — the project might already be gone.
+        if ((e as any)?.name !== 'NotFoundError') throw e;
+    }
+}
+
 const tabs = new Map<string, Tab>();
 let activeName: string | null = null;
 let editor: monaco.editor.IStandaloneCodeEditor | null = null;
+
+// Active-file change listeners — fire whenever `activeName` is mutated.
+// Used by the live-session feature so its Y.Doc/MonacoBinding can follow
+// the currently-edited tab. All updates to `activeName` should go through
+// `setActiveName` so the listeners stay in sync.
+const activeFileListeners = new Set<(name: string | null) => void>();
+function setActiveName(name: string | null) {
+    if (activeName === name) return;
+    activeName = name;
+    for (const cb of activeFileListeners) {
+        try { cb(name); } catch (e) { console.warn('[fade] activeFile listener threw', e); }
+    }
+}
+let liveSessionHandle: LiveSessionHandle | null = null;
 
 /**
  * Force every pending 600ms-debounced autosave to land *now*. Used by the
@@ -660,8 +755,7 @@ async function openFile(workspace: OpfsWorkspace, name: string) {
         // if we've already registered this file in a previous open.
         const uriKey = uri.toString();
         if (!registeredVirtualFsUris.has(uriKey)) {
-            virtualFs.registerFile(new RegisteredMemoryFile(uri, text));
-            registeredVirtualFsUris.add(uriKey);
+            registerVirtualFile(uri, text);
         }
         let model = monaco.editor.getModel(uri);
         if (!model) {
@@ -720,8 +814,12 @@ async function openFile(workspace: OpfsWorkspace, name: string) {
             renderTabs();
         });
         tabs.set(name, tab);
+        // Notify the live-session (if hosting) that a new file is open so
+        // it can add a Y.Text for this path. Safe to call when no session
+        // is running — the session method is a no-op for guests and idle.
+        liveSessionHandle?.getSession()?.notifyFileOpened(name);
     }
-    activeName = name;
+    setActiveName(name);
     if (editor) {
         editor.setModel(tab.model);
         editor.focus();
@@ -745,14 +843,17 @@ function closeTab(name: string) {
     // If saveTimer is pending, flush via the existing timer logic on next event;
     // we just remove from open list (model stays alive in monaco's model registry).
     tabs.delete(name);
+    // Mirror the open path: tell the live-session this file is gone so
+    // hosts can drop the Y.Text and guests stop seeing it.
+    liveSessionHandle?.getSession()?.notifyFileClosed(name);
     if (activeName === name) {
         // Switch to another tab or empty state
         const next = tabs.keys().next().value;
         if (next) {
-            activeName = next;
+            setActiveName(next);
             if (editor) editor.setModel(tabs.get(next)!.model);
         } else {
-            activeName = null;
+            setActiveName(null);
             if (editor) editor.setModel(null);
             editorContainer.style.display = 'none';
             editorPlaceholder.style.display = 'flex';
@@ -775,7 +876,7 @@ function renderTabs() {
         label.textContent = (tab.dirty ? '● ' : '') + basename;
         label.title = name;
         label.onclick = () => {
-            activeName = name;
+            setActiveName(name);
             if (editor) editor.setModel(tab.model);
             renderTabs();
             renderFileListSelection();
@@ -825,25 +926,47 @@ function openMarkdownPreview(filename: string) {
     });
 }
 
+// Catalog panel is a singleton — one tab, persistent across opens. The
+// CatalogClient holds the manifest + IDB cache in module scope so reopening
+// the panel after closing it is instant (no refetch). Panel id matches the
+// component name so the View menu's openPanelById flow works uniformly.
+const CATALOG_PANEL_ID = 'catalog';
+const sharedCatalogClient = new CatalogClient();
+
+function openCatalogPanel() {
+    const api = (window as any).__fadeDockview;
+    if (!api) return;
+    const existing = api.getPanel?.(CATALOG_PANEL_ID);
+    if (existing) { existing.api.setActive(); return; }
+    api.addPanel({
+        id: CATALOG_PANEL_ID,
+        component: 'catalog',
+        title: 'Catalog',
+        position: { referencePanel: 'editor', direction: 'within' },
+    });
+}
+
 // Binary-file preview lives in ONE shared "Asset Preview" tab — clicking
 // a different .xnb / image / sound swaps the contents of that single tab
 // rather than spawning one panel per file. Mirrors VSCode preview-tab
-// behavior. The component handles the actual content swap via update();
-// see createBinaryPreview's update() in binary-preview.ts.
+// behavior. The tab title is intentionally static ("Asset Preview") so it
+// reads as "this slot is the preview" rather than "this is a tab per file";
+// the actual filename is shown inside the panel's own toolbar.
+const ASSET_PREVIEW_TAB_TITLE = 'Asset Preview';
 function openBinaryPreview(filename: string) {
     const api = (window as any).__fadeDockview;
     if (!api) return;
     const existing = api.getPanel?.(BINARY_PREVIEW_PANEL_ID);
     if (existing) {
         existing.api.updateParameters({ filename });
-        existing.api.setTitle?.(filename);
+        existing.api.setTitle?.(ASSET_PREVIEW_TAB_TITLE);
         existing.api.setActive();
         return;
     }
     api.addPanel({
         id: BINARY_PREVIEW_PANEL_ID,
         component: 'binary-preview',
-        title: filename,
+        title: ASSET_PREVIEW_TAB_TITLE,
         params: { filename },
         position: { referencePanel: 'editor', direction: 'within' },
     });
@@ -1024,6 +1147,10 @@ async function renderFileList(workspace: OpfsWorkspace) {
     const sources = currentProjectRef?.sources ?? [];
     for (const entry of entries) {
         const { path, kind } = entry;
+        // Hide the asset cache from the file tree. It's a managed
+        // implementation detail of compileImageAssets — surfacing it would
+        // tempt users to edit/delete blobs by hand and confuse the GC.
+        if (path === '.fade-cache' || path.startsWith('.fade-cache/')) continue;
         // Skip rows whose parent folder is collapsed. The folder itself
         // still renders (its row IS what the user expands/collapses).
         if (isHiddenByCollapsedAncestor(path)) continue;
@@ -1546,6 +1673,7 @@ class FadeRunner {
             this.resolvePending(msg.id, true); return;
         }
         if (msg.type === 'debug-stack-frames-result') { this.resolvePending(msg.id, msg.frames); return; }
+        if (msg.type === 'debug-resolve-instruction-result') { this.resolvePending(msg.id, msg.result); return; }
         if (msg.type === 'debug-scopes-result'
             || msg.type === 'debug-variable-expansion-result') {
             this.resolvePending(msg.id, msg.scopes); return;
@@ -1931,6 +2059,26 @@ class FadeRunner {
                 catch { resolve(null); }
             });
             this.lspWorker.postMessage({ type: 'get-version-info', id });
+        });
+    }
+
+    // Resolve a VM instruction index to a joined-source location via the
+    // active debug session's IndexCollection. Used by the crash overlay:
+    // REV_REQUEST_EXPLODE messages carry `ins=[N]` in their formatted
+    // text, but the line/char lives in DebugData on the iframe side. Round
+    // trip is cheap (one C# binary search). Returns null when no session
+    // is active or the index falls outside the program's statement tokens.
+    async resolveInstruction(insIndex: number): Promise<{ insIndex: number; lineNumber: number; charNumber: number } | null> {
+        if (!this.vmTarget) return null;
+        const id = ++this.nextId;
+        return new Promise((resolve) => {
+            this.pending.set(id, (json: string) => {
+                try {
+                    const parsed = JSON.parse(json);
+                    resolve(parsed === null ? null : parsed);
+                } catch { resolve(null); }
+            });
+            this.postVm({ type: 'debug-resolve-instruction', id, insIndex });
         });
     }
 
@@ -2397,6 +2545,36 @@ async function bootstrap() {
         aliases: ['Fade', 'FadeBasic'],
     });
 
+    // Language configuration mirrors VsCode/basicscript/language.configuration.json
+    // so editor.action.commentLine (Cmd+/) and editor.action.blockComment
+    // (Shift+Alt+A) toggle the right delimiters when the user hits those
+    // hotkeys. Without this Monaco has no idea how to comment Fade source
+    // and the commands no-op silently. The other fields (brackets,
+    // autoClosingPairs, etc.) are bonus quality-of-life — they make Monaco
+    // auto-close parens/quotes the same way VSCode does for `.fbasic` files.
+    monaco.languages.setLanguageConfiguration('fade', {
+        comments: {
+            lineComment: '`',
+            blockComment: ['remstart', 'remend'],
+        },
+        wordPattern: /[a-zA-Z_][a-zA-Z0-9_$#.()]*/,
+        brackets: [['(', ')']],
+        autoClosingPairs: [
+            { open: '(', close: ')' },
+            { open: '"', close: '"', notIn: ['string'] },
+        ],
+        surroundingPairs: [
+            { open: '(', close: ')' },
+            { open: '"', close: '"' },
+        ],
+        onEnterRules: [
+            {
+                beforeText: /^\s*(?:for|if).*?:\s*$/,
+                action: { indentAction: monaco.languages.IndentAction.Indent },
+            },
+        ],
+    });
+
     // Pin our formatter as the default for fade — otherwise VSCode shows
     // "There are multiple formatters for 'Fade' files. One of them should be
     // configured as default formatter." whenever Format Document is invoked.
@@ -2677,6 +2855,12 @@ async function bootstrap() {
             return;
         }
         const tokens = await lsp.getTokens(uri);
+        // The model param was captured before the await above. By the
+        // time getTokens resolves, the user may have closed the file or
+        // reloaded the project — calling deltaDecorations on a disposed
+        // model throws "Model is disposed!" and breaks the rest of
+        // boot. Bail silently; the next refresh will retokenize.
+        if (model.isDisposed()) return;
         const newDecorations: monaco.editor.IModelDeltaDecoration[] = [];
         let line = 0;
         let ch = 0;
@@ -2737,7 +2921,12 @@ async function bootstrap() {
         for (const r of map.ranges) {
             const fileUri = monaco.Uri.file(`/workspace/${r.name}`);
             const model = monaco.editor.getModel(fileUri);
-            if (!model) continue;
+            // getModel can return a model that's mid-dispose (race between
+            // workspace teardown and the LSP getTokens we just awaited).
+            // isDisposed() catches that case; without this check Monaco
+            // throws BugIndicatingError("Model is disposed!") and the
+            // bootstrap promise rejects.
+            if (!model || model.isDisposed()) continue;
             const uriKey = fileUri.toString();
             const next = model.deltaDecorations(decorationsByUri.get(uriKey) ?? [], byFile.get(r.name) ?? []);
             decorationsByUri.set(uriKey, next);
@@ -2816,13 +3005,65 @@ async function bootstrap() {
         triggerCharacters: [' ', '.', '(', '=', '+', '*', '-', '/'],
         provideCompletionItems: async (model, position) => {
             const uri = model.uri.toString();
+            // Force a synchronous flush of the current model's text to the
+            // LSP before we ask for completions. The 250ms polling loop
+            // means the LSP can be one keystroke behind by the time
+            // Monaco's auto-trigger fires (especially with a space-trigger
+            // right after a command word) — completions then run against
+            // a stale AST that doesn't yet contain the token the user
+            // just typed, and the right items don't surface until the
+            // user pauses long enough for the poll to catch up.
+            // Worker postMessage is FIFO, so the setDocument below lands
+            // in the worker queue ahead of getCompletions and the
+            // computation sees fresh source.
+            if (model.getLanguageId() === 'fade') {
+                if (projectFileNameFromUri(uri)) {
+                    rebuildAndPushProjectDoc();
+                } else {
+                    const value = model.getValue();
+                    if (lastPushedByUri.get(uri) !== value) {
+                        lastPushedByUri.set(uri, value);
+                        runner.setDocument(uri, value);
+                    }
+                }
+            }
             const mapped = toLspPosition(uri, position.lineNumber - 1, position.column - 1);
             const items = await runner.getCompletions(lspUriFor(uri), mapped.line, mapped.character);
             const word = model.getWordUntilPosition(position);
-            const range = new monaco.Range(
+            // Default insertion range — the current word at the cursor.
+            const wordRange = new monaco.Range(
                 position.lineNumber, word.startColumn,
                 position.lineNumber, word.endColumn,
             );
+            // For multi-word command completions (label contains a space),
+            // accepting the suggestion must replace the ENTIRE typed
+            // prefix, not just the last word. Otherwise `set sprite|` +
+            // accepting `set sprite render target` yields `set set sprite
+            // render target`. Compute the longest suffix of the line text
+            // before the cursor that's a case-insensitive prefix of the
+            // label and extend the range start back over it.
+            const lineText = model.getLineContent(position.lineNumber);
+            const cursorCol = position.column;             // 1-based
+            const textBeforeCursor = lineText.slice(0, cursorCol - 1);
+            const rangeForLabel = (label: string): monaco.IRange => {
+                if (!label.includes(' ')) return wordRange;
+                const lowerLabel = label.toLowerCase();
+                const lowerText = textBeforeCursor.toLowerCase();
+                // Try the longest suffix first, walking inward. Stop on
+                // the first match — that's the user-typed prefix we want
+                // to replace.
+                for (let start = 0; start < lowerText.length; start++) {
+                    if (lowerLabel.startsWith(lowerText.slice(start))) {
+                        const matchLen = lowerText.length - start;
+                        if (matchLen <= 0) break;
+                        return new monaco.Range(
+                            position.lineNumber, start + 1,
+                            position.lineNumber, cursorCol,
+                        );
+                    }
+                }
+                return wordRange;
+            };
             return {
                 suggestions: items.map((it) => ({
                     label: it.label,
@@ -2833,11 +3074,19 @@ async function bootstrap() {
                         ? { value: it.documentation, isTrusted: false }
                         : undefined,
                     sortText: it.sortText,
-                    filterText: it.filterText,
+                    // LSPUtil's GetSymbolCompletions hardcodes FilterText
+                    // to the empty string. OmniSharp/VSCode treats that
+                    // as "no filter text, fall back to label"; Monaco
+                    // treats it as "I have no filterable text, hide this
+                    // item." Coalesce the empty string back to undefined
+                    // so Monaco's matcher uses `label` instead, which
+                    // restores all the variable/function suggestions
+                    // that were silently disappearing.
+                    filterText: it.filterText ? it.filterText : undefined,
                     insertTextRules: it.insertTextFormat === 2
                         ? monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet
                         : monaco.languages.CompletionItemInsertTextRule.None,
-                    range,
+                    range: rangeForLabel(it.label),
                     command: it.triggerParameterHints
                         ? { id: 'editor.action.triggerParameterHints', title: '' }
                         : undefined,
@@ -3396,6 +3645,28 @@ async function bootstrap() {
         editor.focus();
     }
 
+    // Test discovery and failure frames carry positions in JOINED-doc
+    // coordinates because runner.listTests / runner.runTests compile the
+    // project's source through getProjectSource (the same joined buffer
+    // the LSP sees). Click-to-jump callers need to reverse-map that into
+    // (file, localLine) and tab-switch when the test or frame lives in a
+    // file other than the one currently open. Falls back to plain
+    // jumpEditorTo for single-file projects (projectSourceMap is null).
+    async function jumpEditorToJoined(lineOneBased: number, columnOneBased: number = 1): Promise<void> {
+        if (projectSourceMap) {
+            const m = projectSourceMap.fromProject(lineOneBased - 1, columnOneBased - 1);
+            if (m) {
+                if (m.name !== activeName) {
+                    try { await openFile(workspace, m.name); }
+                    catch { /* fall through and jump on whatever's active */ }
+                }
+                jumpEditorTo(m.line + 1, m.character + 1);
+                return;
+            }
+        }
+        jumpEditorTo(lineOneBased, columnOneBased);
+    }
+
     // Test-run output streams directly into the Output panel now. Lines
     // tagged with a frame become click-to-jump links to the offending
     // source location, same as the failure-row link in the Tests panel.
@@ -3408,7 +3679,7 @@ async function bootstrap() {
         if (frame) {
             const ln = (frame.lineNumber | 0) + 1;
             const col = ((frame.charNumber | 0) + 1) || 1;
-            appendOutputLine(text, kind, () => jumpEditorTo(ln, col));
+            appendOutputLine(text, kind, () => { void jumpEditorToJoined(ln, col); });
         } else {
             appendOutputLine(text, kind);
         }
@@ -3873,8 +4144,17 @@ async function bootstrap() {
                 alert('fade.json is the project manifest and cannot be renamed.');
                 return;
             }
-            const newName = prompt(`Rename "${oldName}" to:`, oldName);
-            if (!newName || newName === oldName) return;
+            // Pre-fill the prompt with just the basename so a rename inside a
+            // folder doesn't accidentally move the file to root. If the user
+            // wants to move while renaming, they can still type a full
+            // slashed path — that takes precedence.
+            const lastSlash = oldName.lastIndexOf('/');
+            const dirPrefix = lastSlash >= 0 ? oldName.slice(0, lastSlash + 1) : '';
+            const oldBase = lastSlash >= 0 ? oldName.slice(lastSlash + 1) : oldName;
+            const input = prompt(`Rename "${oldName}" to:`, oldBase);
+            if (!input || input === oldBase) return;
+            const newName = input.includes('/') ? input : dirPrefix + input;
+            if (newName === oldName) return;
             try {
                 await workspace.rename(oldName, newName);
             } catch (e: any) {
@@ -3893,7 +4173,7 @@ async function bootstrap() {
             const wasInEditor = editor?.getModel() === oldModel;
             // Drop old model + virtualFs registration.
             if (oldModel) oldModel.dispose();
-            registeredVirtualFsUris.delete(oldUri.toString());
+            unregisterVirtualFile(oldUri);
             // Recreate at new URI.
             const newModel = monaco.editor.createModel(text, languageFor(newName), newUri);
             // Move tab entry if open.
@@ -3949,7 +4229,7 @@ async function bootstrap() {
             const uri = monaco.Uri.file(`/workspace/${name}`);
             const model = monaco.editor.getModel(uri);
             if (model) model.dispose();
-            registeredVirtualFsUris.delete(uri.toString());
+            unregisterVirtualFile(uri);
             try {
                 await workspace.delete(name);
             } catch (e: any) {
@@ -4265,7 +4545,7 @@ async function bootstrap() {
             name.textContent = t.name + (t.isAbstract ? ' (abstract)' : '');
             // Click the name to jump to the test definition.
             name.style.cursor = 'pointer';
-            name.onclick = () => jumpEditorTo((t.sourceLine | 0) + 1, ((t.sourceChar | 0) + 1) || 1);
+            name.onclick = () => { void jumpEditorToJoined((t.sourceLine | 0) + 1, ((t.sourceChar | 0) + 1) || 1); };
             li.append(name);
 
             const dur = document.createElement('span');
@@ -4304,11 +4584,17 @@ async function bootstrap() {
                 if (frame) {
                     const loc = document.createElement('span');
                     loc.className = 'test-failure-loc test-failure-link';
-                    const ln = (frame.lineNumber | 0) + 1;
+                    const joinedLn = (frame.lineNumber | 0) + 1;
+                    const joinedCol = ((frame.charNumber | 0) + 1) || 1;
+                    // Reverse-map for display so the label shows the file +
+                    // local line the user expects, not the joined-doc line.
+                    const mapped = projectSourceMap?.fromProject(joinedLn - 1, joinedCol - 1);
+                    const displayLn = mapped ? mapped.line + 1 : joinedLn;
                     const fn = frame.functionName ? frame.functionName + '() ' : '';
-                    loc.textContent = `↳ ${fn}line ${ln}`;
-                    const col = ((frame.charNumber | 0) + 1) || 1;
-                    loc.onclick = (e) => { e.stopPropagation(); jumpEditorTo(ln, col); };
+                    const where = mapped && mapped.name !== activeName
+                        ? `${mapped.name}:${displayLn}` : `line ${displayLn}`;
+                    loc.textContent = `↳ ${fn}${where}`;
+                    loc.onclick = (e) => { e.stopPropagation(); void jumpEditorToJoined(joinedLn, joinedCol); };
                     fail.append(loc);
                 }
             }
@@ -4370,6 +4656,14 @@ async function bootstrap() {
         testsRunAllBtn.disabled = busy;
         testsRefreshBtn.disabled = busy;
         refreshStopButton();
+        // Mirror run/debug — broadcast the test-running state to peers.
+        // refreshRunButtons isn't called here because tests don't gate
+        // the Run/Debug buttons, so we call the activity broadcaster
+        // directly. Guarded against the live-session helper not being
+        // defined yet (early-boot test panels can run before bootstrap
+        // finishes mounting the live-session UI).
+        try { broadcastLiveActivity(); }
+        catch { /* helper not in scope yet during early boot */ }
     }
 
     // Adapt the canvas-side test-run envelope to the worker-side shape
@@ -4687,6 +4981,36 @@ async function bootstrap() {
     }
 
     const workspace = new OpfsWorkspace();
+    // Wipe any stale live-session sandboxes from a previous reload BEFORE
+    // workspace.init() picks an active project — otherwise we could end
+    // up "active" on a `__live_session_*` folder that's about to be deleted.
+    try {
+        const opfs = await navigator.storage.getDirectory();
+        const workspaceRoot = await opfs.getDirectoryHandle('workspace', { create: true });
+        const stale: string[] = [];
+        for await (const entry of (workspaceRoot as any).values()) {
+            if (entry.kind === 'directory' && isLiveSessionProjectName(entry.name)) {
+                stale.push(entry.name);
+            }
+        }
+        if (stale.length) {
+            // If the previously-active project was a stale live-session,
+            // drop the localStorage pointer so workspace.init() picks a
+            // real project. (workspace.init falls back to the first
+            // project alphabetically if the stored name isn't present.)
+            const prevActive = localStorage.getItem(ACTIVE_PROJECT_KEY);
+            if (prevActive && isLiveSessionProjectName(prevActive)) {
+                localStorage.removeItem(ACTIVE_PROJECT_KEY);
+            }
+            for (const name of stale) {
+                try { await workspaceRoot.removeEntry(name, { recursive: true }); }
+                catch (e) { console.warn('[fade-collab] failed to clean stale live-session project', name, e); }
+            }
+            console.info(`[fade-collab] cleaned ${stale.length} stale live-session project(s)`);
+        }
+    } catch (e) {
+        console.warn('[fade-collab] live-session startup cleanup failed', e);
+    }
     const hadExistingProject = await workspace.init();
     if (!hadExistingProject) {
         // Brand-new install (or post-reset). Hide the splash, show the
@@ -4775,6 +5099,25 @@ async function bootstrap() {
                     // init() picks up the real params and calls setFilename.
                     return createBinaryPreview('', {
                         readBytes: (n) => workspace.readBytes(n),
+                    });
+                }
+                if (name === 'catalog') {
+                    // Singleton dockview panel. The shared CatalogClient holds
+                    // the manifest + IDB-backed indices in module scope, so
+                    // reopening the panel after a close is instant. Imports
+                    // land under catalog-imports/ and trigger the same
+                    // syncAssetsToRuntime path that Run/Test use, so the
+                    // imported file is registered immediately.
+                    return createCatalogPanel({
+                        client: sharedCatalogClient,
+                        writeBytes: (p, b) => workspace.writeBytes(p, b),
+                        exists: (p) => workspace.exists(p),
+                        onImported: async () => {
+                            await renderFileList(workspace);
+                            try { await syncAssetsToRuntime(); } catch (e) {
+                                console.error('[fade] catalog import: syncAssetsToRuntime failed', e);
+                            }
+                        },
                     });
                 }
                 if (name === 'diff-viewer') {
@@ -4929,6 +5272,7 @@ async function bootstrap() {
         'collaboration',
         'logs',
         'history',
+        'live-session',
         // Dynamic — one per conflict file; created when the collaboration
         // panel's "Resolve in editor →" button opens a file.
         'conflict-editor',
@@ -5332,6 +5676,402 @@ async function bootstrap() {
                 controller: sharingController,
             });
         }
+
+        // ── Live Session panel ──────────────────────────────────────────
+        // Mount last so the session adapter can see the fully-wired editor
+        // + sharing setup. The adapter is a thin shim that exposes the
+        // editor's tab system + the OPFS workspace through one interface;
+        // the session itself owns Y.Doc / awareness / MonacoBinding.
+        const liveSessionHost = document.getElementById('live-session-host');
+        if (liveSessionHost) {
+            const sessionAdapter: CollabSessionHost = {
+                get editor() {
+                    if (!editor) throw new Error('[fade-collab] editor not ready');
+                    return editor;
+                },
+                getActiveFileName: () => activeName,
+                onActiveFileChange: (cb) => {
+                    activeFileListeners.add(cb);
+                    return () => activeFileListeners.delete(cb);
+                },
+                getModelForFile: (name) => tabs.get(name)?.model ?? null,
+                openFile: async (name) => {
+                    // Re-uses the existing module-scope openFile which
+                    // reads from OPFS, creates the Monaco model, wires
+                    // autosave, etc. By the time guests call this, their
+                    // workspace has been switched to the transient
+                    // project + the file's bytes have already been
+                    // written there by writeWorkspaceText/Bytes.
+                    await openFile(workspace, name);
+                },
+                closeFile: async (name) => { closeTab(name); },
+                listWorkspaceFiles: () => workspace.list(),
+                isBinaryPath: (path) => isBinaryFileName(path),
+                readWorkspaceText: (path) => workspace.read(path),
+                readWorkspaceBytes: (path) => workspace.readBytes(path),
+                writeWorkspaceText: async (path, content) => {
+                    await workspace.write(path, content);
+                    sharingController?.invalidateHashFor(path);
+                },
+                writeWorkspaceBytes: async (path, bytes) => {
+                    await workspace.writeBytes(path, bytes);
+                    sharingController?.invalidateHashFor(path);
+                },
+                deleteWorkspaceFile: async (path) => {
+                    try { await workspace.delete(path); } catch { /* may not exist */ }
+                },
+                refreshFileList: async () => {
+                    await renderFileList(workspace);
+                },
+                refreshProjectConfig: async () => {
+                    // Bring Monaco's model registry in sync with the new
+                    // project's files. The bootstrap path does this once
+                    // by listing workspace files + creating models; we
+                    // mirror that here so the LSP push loop sees real,
+                    // current content for every file in the active project.
+                    const names = await workspace.list();
+                    const expected = new Set(names);
+                    // Drop models for files that no longer exist in this
+                    // project — leaving them around makes the LSP see
+                    // ghost source content from the previous project.
+                    for (const m of monaco.editor.getModels()) {
+                        const path = m.uri.path; // /workspace/<name>
+                        const match = /^\/workspace\/(.+)$/.exec(path);
+                        if (!match) continue;
+                        if (!expected.has(match[1])) {
+                            try { m.dispose(); } catch { /* ignore */ }
+                            unregisterVirtualFile(m.uri);
+                        }
+                    }
+                    // Ensure every file in the new project has a model
+                    // with current OPFS content. openFile path normally
+                    // creates these; this catches files that haven't been
+                    // tabbed open yet (LSP still needs them for the
+                    // joined project doc).
+                    for (const name of names) {
+                        const uri = monaco.Uri.file(`/workspace/${name}`);
+                        const existing = monaco.editor.getModel(uri);
+                        const text = await workspace.read(name);
+                        if (!existing) {
+                            const m = monaco.editor.createModel(text, languageFor(name), uri);
+                            const eff = currentSettings().effective;
+                            m.updateOptions({
+                                tabSize: Number(eff['editor.tabSize'] ?? 2),
+                                insertSpaces: Boolean(eff['editor.insertSpaces'] ?? true),
+                            });
+                            if (!registeredVirtualFsUris.has(uri.toString())) {
+                                registerVirtualFile(uri, text);
+                            }
+                        } else if (existing.getValue() !== text) {
+                            // Same URI but stale content from a prior
+                            // project — refresh.
+                            existing.setValue(text);
+                        }
+                    }
+                    // Re-parse fade.json + push the joined project doc
+                    // to the LSP. This is the actual fix for the
+                    // "joiner sees parser errors" symptom — without this
+                    // call, the LSP keeps the previous project's source
+                    // map and parses against stale state.
+                    try { await refreshFadeProject(); }
+                    catch (e) { console.warn('[fade-collab] refreshFadeProject failed', e); }
+                },
+            };
+
+            liveSessionHandle = bootstrapLiveSession({
+                container: liveSessionHost,
+                sessionHost: sessionAdapter,
+                getProjectName: () => workspace.currentProject(),
+                getGithubLogin: () => null,
+                guestLifecycle: {
+                    onGuestJoinStart: async (roomId) => {
+                        // Snapshot the current project so we can swap
+                        // back on disconnect, then create + activate a
+                        // sandboxed project for the session. Guests
+                        // never see their host's files in their normal
+                        // workspace — only inside this temporary folder
+                        // that gets nuked when they leave.
+                        const previousProjectName = workspace.currentProject() || null;
+                        const transientProjectName = liveSessionProjectName(roomId);
+                        // createProject is idempotent if the dir already
+                        // exists (e.g. a stale run for the same roomId).
+                        await workspace.createProject(transientProjectName);
+                        // Wipe any leftover bytes so the mirror starts
+                        // from a clean slate.
+                        try {
+                            await workspace.setActiveProject(transientProjectName);
+                            const existing = await workspace.list();
+                            for (const p of existing) {
+                                try { await workspace.delete(p); } catch { /* ignore */ }
+                            }
+                        } catch (e) {
+                            console.warn('[fade-collab] failed to clean transient project', e);
+                        }
+                        // Close any tabs that were open against the
+                        // previous project — their models point at
+                        // file:///workspace/<name> which is shared with
+                        // the transient project's namespace, so leaving
+                        // them open would let stale text from a
+                        // different project leak into the session.
+                        for (const name of Array.from(tabs.keys())) {
+                            closeTab(name);
+                        }
+                        // Also dispose every Monaco model whose URI is
+                        // under /workspace/. The previous project's
+                        // models share that namespace with the transient
+                        // project; without this, the LSP push loop and
+                        // refreshFadeProject see leftover models with
+                        // stale content from the previous project and
+                        // emit a flood of cross-file parser errors.
+                        for (const m of monaco.editor.getModels()) {
+                            if (m.uri.scheme === 'file' && m.uri.path.startsWith('/workspace/')) {
+                                try { m.dispose(); } catch { /* ignore */ }
+                                unregisterVirtualFile(m.uri);
+                            }
+                        }
+                        await renderFileList(workspace);
+                        renderLiveSessionChip();
+                        return { transientProjectName, previousProjectName };
+                    },
+                    onGuestLeaveEnd: async ({ transientProjectName, previousProjectName }) => {
+                        // Close any tabs that were open in the transient
+                        // project so their Monaco models don't keep
+                        // pointing at deleted OPFS files.
+                        for (const name of Array.from(tabs.keys())) {
+                            closeTab(name);
+                        }
+                        // Dispose every Monaco model under /workspace/ —
+                        // their content is the transient project's
+                        // files, which are about to be deleted. Without
+                        // this, openFile in the previous project sees
+                        // existing models with stale transient content
+                        // and reuses them. refreshProjectConfig below
+                        // will recreate models for the previous project
+                        // from OPFS.
+                        for (const m of monaco.editor.getModels()) {
+                            if (m.uri.scheme === 'file' && m.uri.path.startsWith('/workspace/')) {
+                                try { m.dispose(); } catch { /* ignore */ }
+                                unregisterVirtualFile(m.uri);
+                            }
+                        }
+                        // Switch back to the previous project (or the
+                        // default if there wasn't one — shouldn't
+                        // happen, but guard against it).
+                        try {
+                            if (previousProjectName) {
+                                await workspace.setActiveProject(previousProjectName);
+                            }
+                        } catch (e) {
+                            console.warn('[fade-collab] failed to restore previous project', e);
+                        }
+                        // Rebuild Monaco models + re-pump the LSP for the
+                        // previous project. Mirrors what bootstrap does
+                        // on cold start; without it the user's regular
+                        // editor would come back with no models and the
+                        // LSP would still be configured for the transient
+                        // project that no longer exists.
+                        try { await sessionAdapter.refreshProjectConfig?.(); }
+                        catch (e) { console.warn('[fade-collab] refreshProjectConfig on leave failed', e); }
+                        // Nuke the transient project off disk.
+                        try {
+                            await deleteOpfsProject(transientProjectName);
+                        } catch (e) {
+                            console.warn('[fade-collab] failed to delete transient project', e);
+                        }
+                        await renderFileList(workspace);
+                        renderLiveSessionChip();
+                    },
+                },
+            });
+
+            liveSessionHandle.onSessionChange(() => renderLiveSessionChip());
+            // Per-session listeners for game frame streaming + debug
+            // state replication. Re-subscribed on every session change
+            // because the previous session's handlers got disposed.
+            liveSessionHandle.onSessionChange((session) => {
+                installCollabRuntimeListeners(session);
+            });
+        }
+    }
+
+    // ── Phase 2A / 2B: per-session runtime listeners ─────────────────────
+    // Track current unsubscribe functions so the next session change can
+    // tear them down before installing the new set.
+    let collabRuntimeUnsubs: Array<() => void> = [];
+
+    function installCollabRuntimeListeners(session: ReturnType<NonNullable<typeof liveSessionHandle>['getSession']>): void {
+        for (const u of collabRuntimeUnsubs) { try { u(); } catch { /* ignore */ } }
+        collabRuntimeUnsubs = [];
+        if (!session) {
+            // Session ended — hide observer overlays and stop streaming.
+            stopGameFrameStreaming();
+            hideGameStreamOverlay();
+            updateDebugObserverBanner(null);
+            return;
+        }
+
+        // Game frames from any other peer.
+        collabRuntimeUnsubs.push(session.onGameFrame((peerId, bytes) => {
+            // Skip our own echo — sendGameFrame goes to everyone including
+            // ourselves on some transports. Identify by selfId.
+            const self = (liveSessionHandle?.getSession()?.awareness)?.clientID;
+            void self;
+            if (peerId === (session as any).room?.selfId) return;
+            void renderGameFrame(bytes);
+        }));
+
+        // Debug state: when host writes pause info, render the observer
+        // banner on guest panels. Cleared when the initiator drops the
+        // session or ends debugging.
+        const dbgObserver = () => updateDebugObserverBanner(snapshotDebugState(session));
+        session.debugState.observe(dbgObserver);
+        collabRuntimeUnsubs.push(() => session.debugState.unobserve(dbgObserver));
+        // Initial render in case state was already populated.
+        dbgObserver();
+
+        // Phase 2C smoke test: register a ping handler so the host can
+        // be probed from a guest. Returns `{ pong: payload }` so the
+        // round-trip is verifiable. Real debug command handlers will
+        // sit alongside this once the debug-control surface is wired.
+        const offPing = session.onRequest('ping', (_peerId, payload) => ({ pong: payload }));
+        collabRuntimeUnsubs.push(offPing);
+
+        // Show / hide the observer game overlay based on whether any
+        // OTHER peer is currently running or debugging. Driven by
+        // awareness state, not by frame arrival, so the "watching Alice
+        // run" banner appears even if frames haven't started flowing yet
+        // (e.g. she's on monogame and frames are unavailable).
+        const onState = session.onStateChange((st) => {
+            const activeRunner = st.peers.find((p) => !p.isSelf
+                && (p.activity === 'running' || p.activity === 'debugging'));
+            if (activeRunner) {
+                showGameStreamOverlay(activeRunner.identity.displayName, activeRunner.activity);
+            } else {
+                hideGameStreamOverlay();
+            }
+        });
+        collabRuntimeUnsubs.push(onState);
+    }
+
+    function snapshotDebugState(session: NonNullable<ReturnType<NonNullable<typeof liveSessionHandle>['getSession']>>): {
+        initiatorClientId: number;
+        initiatorName: string;
+        paused: boolean;
+        currentFile: string | null;
+        currentLine: number | null;
+    } | null {
+        const initiatorClientId = session.debugState.get('initiatorClientId');
+        if (typeof initiatorClientId !== 'number') return null;
+        // Resolve initiator name from awareness — falls back to 'Someone'
+        // if their state hasn't propagated yet.
+        const peers = session.getState().peers;
+        const initiator = peers.find((p) => p.clientId === initiatorClientId);
+        return {
+            initiatorClientId,
+            initiatorName: initiator?.identity.displayName ?? 'Someone',
+            paused: Boolean(session.debugState.get('paused')),
+            currentFile: (session.debugState.get('currentFile') as string | null) ?? null,
+            currentLine: (session.debugState.get('currentLine') as number | null) ?? null,
+        };
+    }
+
+    // ── Phase 2A overlay rendering (observer side) ────────────────────────
+    // The overlay is a div in index.html (#game-stream-overlay) with a
+    // banner + canvas. We draw incoming JPEG frames into the canvas via
+    // an off-DOM <img> as the decoder. Frame URL strings are kept in a
+    // throwaway scope so the GC handles cleanup; no manual revoke needed.
+    function showGameStreamOverlay(initiatorName: string, activity: string): void {
+        const overlay = document.getElementById('game-stream-overlay');
+        const banner = document.getElementById('game-stream-banner');
+        if (!overlay || !banner) return;
+        overlay.hidden = false;
+        const verb = activity === 'debugging' ? 'is debugging' : 'is running the program';
+        banner.textContent = `${initiatorName} ${verb}. Your view is a low-FPS stream — input control stays with them.`;
+    }
+
+    function hideGameStreamOverlay(): void {
+        const overlay = document.getElementById('game-stream-overlay');
+        if (!overlay) return;
+        overlay.hidden = true;
+        // Clear the canvas so the last frame doesn't linger if a new
+        // session starts later.
+        const canvas = document.getElementById('game-stream-canvas') as HTMLCanvasElement | null;
+        if (canvas) {
+            const ctx = canvas.getContext('2d');
+            if (ctx) ctx.clearRect(0, 0, canvas.width, canvas.height);
+        }
+    }
+
+    async function renderGameFrame(bytes: Uint8Array): Promise<void> {
+        const canvas = document.getElementById('game-stream-canvas') as HTMLCanvasElement | null;
+        if (!canvas) return;
+        // Build a Blob → object URL → <img>. We could decode directly via
+        // createImageBitmap for speed; sticking with <img> for now because
+        // it's universally supported and we're at 5 fps either way.
+        const blob = new Blob([bytes as BlobPart], { type: 'image/jpeg' });
+        const url = URL.createObjectURL(blob);
+        try {
+            const img = new Image();
+            await new Promise<void>((resolve, reject) => {
+                img.onload = () => resolve();
+                img.onerror = () => reject(new Error('frame decode failed'));
+                img.src = url;
+            });
+            // Resize the canvas's bitmap to match the source so we don't
+            // double-scale (CSS scales the display, the bitmap stays
+            // 1:1 with the source). Avoid re-sizing on every frame if
+            // the dimensions match.
+            if (canvas.width !== img.naturalWidth || canvas.height !== img.naturalHeight) {
+                canvas.width = img.naturalWidth;
+                canvas.height = img.naturalHeight;
+            }
+            const ctx = canvas.getContext('2d');
+            if (ctx) ctx.drawImage(img, 0, 0);
+        } catch { /* drop frame */ }
+        finally {
+            URL.revokeObjectURL(url);
+        }
+    }
+
+    // ── Phase 2B: host writes debug state ────────────────────────────────
+    /** Idempotently push a partial debug-state update over the live
+     *  session. Only the active initiator should call this (the local
+     *  debug paths). Safely no-op when no session is in flight. */
+    function broadcastDebugState(patch: Record<string, unknown>): void {
+        const session = liveSessionHandle?.getSession();
+        if (!session) return;
+        try { session.setDebugState(patch); }
+        catch (e) { console.warn('[fade-collab] setDebugState failed', e); }
+    }
+
+    /** Wipe shared debug state on session end. Called from the debug
+     *  exit path. */
+    function clearBroadcastDebugState(): void {
+        const session = liveSessionHandle?.getSession();
+        if (!session) return;
+        try { session.clearDebugState(); }
+        catch (e) { console.warn('[fade-collab] clearDebugState failed', e); }
+    }
+
+    // ── Phase 2B observer banner ─────────────────────────────────────────
+    // For now we just surface "Alice is paused at foo.fbasic:42" in the
+    // game-stream banner (when there's an active observer overlay) and
+    // in the chip. A future iteration will replicate the call stack +
+    // locals into the actual Debug panel; that's a bigger refactor of
+    // the existing debug-render code path.
+    function updateDebugObserverBanner(snapshot: ReturnType<typeof snapshotDebugState>): void {
+        const banner = document.getElementById('game-stream-banner');
+        if (!banner) return;
+        if (!snapshot) return;
+        // If the local peer initiated the debug session, the banner
+        // shouldn't talk in the third person — leave it alone.
+        const session = liveSessionHandle?.getSession();
+        if (!session || snapshot.initiatorClientId === session.awareness.clientID) return;
+        const loc = snapshot.currentFile
+            ? ` at ${snapshot.currentFile}${snapshot.currentLine ? `:${snapshot.currentLine}` : ''}`
+            : '';
+        const state = snapshot.paused ? `paused${loc}` : `running`;
+        banner.textContent = `${snapshot.initiatorName} is debugging — ${state}. (You're observing; debugger controls are read-only for now.)`;
     }
 
     /** Open (or re-focus) a read-only Monaco diff editor in its own
@@ -5361,6 +6101,259 @@ async function bootstrap() {
         } catch (e) {
             console.warn('[fade] openDiffViewer failed', e);
         }
+    }
+
+    /** Paint the live-session pill into the header: hidden when no
+     *  session is running, otherwise shows one dot per peer (your own
+     *  ring-highlighted) + the peer count. Clicking opens the Live
+     *  Session panel. Subscribes to both the session-start hook and the
+     *  session-state hook so the chip updates as peers join/leave. */
+    let liveSessionStateUnsub: (() => void) | null = null;
+    // Coalesce rapid render requests into the next animation frame. State
+    // events fire frequently (every cursor move, every meta change) and
+    // each chip render writes ~10 DOM nodes — without this, typing in a
+    // session pegs the main thread on chip rebuilds.
+    let liveSessionChipScheduled = false;
+    function renderLiveSessionChip() {
+        if (liveSessionChipScheduled) return;
+        liveSessionChipScheduled = true;
+        requestAnimationFrame(() => {
+            liveSessionChipScheduled = false;
+            renderLiveSessionChipNow();
+        });
+    }
+    function renderLiveSessionChipNow() {
+        const host = document.getElementById('live-session-chip');
+        if (!host) return;
+        const session = liveSessionHandle?.getSession() ?? null;
+        if (!session) {
+            host.replaceChildren();
+            host.setAttribute('hidden', '');
+            host.onclick = null;
+            // Drop the per-peer cursor stylesheet too.
+            updatePeerCursorStyles([]);
+            if (liveSessionStateUnsub) { liveSessionStateUnsub(); liveSessionStateUnsub = null; }
+            return;
+        }
+        // Subscribe once per session (the listener is replaced whenever
+        // the session changes via the onSessionChange hook below).
+        if (!liveSessionStateUnsub) {
+            liveSessionStateUnsub = session.onStateChange(() => renderLiveSessionChip());
+        }
+        const state = session.getState();
+        host.removeAttribute('hidden');
+        host.replaceChildren();
+        host.onclick = focusLiveSessionPanel;
+        // Visually swap the chip into a "syncing" variant when meta.sync
+        // is non-null — same width, different palette, progress text in
+        // place of the per-peer dots.
+        host.classList.toggle('live-session-chip-syncing', state.sync != null);
+        host.classList.toggle('live-session-chip-warning', state.connectionWarning != null);
+
+        // Connection warning takes visual priority over normal "hosting/
+        // joined" state — without surfacing it here, users who close the
+        // Live Session panel after starting have no idea something's
+        // gone wrong.
+        if (state.connectionWarning && !state.sync) {
+            const label = document.createElement('span');
+            label.className = 'live-session-chip-role';
+            label.textContent = '⚠ connection';
+            const detail = document.createElement('span');
+            detail.className = 'live-session-chip-count';
+            detail.textContent = state.role === 'host' ? 'no peers' : 'unreachable';
+            host.append(label, detail);
+            host.title = state.connectionWarning;
+            updatePeerCursorStyles(state.peers);
+            return;
+        }
+
+        if (state.sync) {
+            const pct = state.sync.total > 0
+                ? Math.min(100, Math.round((state.sync.completed / state.sync.total) * 100))
+                : 0;
+            const label = document.createElement('span');
+            label.className = 'live-session-chip-role';
+            label.textContent = 'syncing';
+            const detail = document.createElement('span');
+            detail.className = 'live-session-chip-count';
+            detail.textContent = `${state.sync.completed}/${state.sync.total} · ${pct}%`;
+            host.append(label, detail);
+            host.title = state.sync.currentFile
+                ? `Syncing ${state.sync.currentFile}`
+                : 'Workspace sync in progress';
+            updatePeerCursorStyles(state.peers);
+            return;
+        }
+
+        host.title = '';
+        const role = document.createElement('span');
+        role.className = 'live-session-chip-role';
+        role.textContent = state.role === 'host' ? 'hosting' : 'joined';
+        host.appendChild(role);
+
+        // Peer pills — one per non-self peer, showing color + name +
+        // activity badge. Drawn into the same chip container so the
+        // existing layout / theming applies. Self isn't shown because
+        // the user already knows who they are.
+        const pills = document.createElement('span');
+        pills.className = 'live-session-chip-pills';
+        const sorted = [...state.peers].sort((a, b) => {
+            // Self last so others are read left-to-right first.
+            if (a.isSelf !== b.isSelf) return a.isSelf ? 1 : -1;
+            return a.identity.displayName.localeCompare(b.identity.displayName);
+        });
+        for (const peer of sorted) {
+            if (peer.isSelf) continue;
+            pills.appendChild(renderPeerPill(peer));
+        }
+        host.appendChild(pills);
+
+        // Total count (including self) at the right — gives at-a-glance
+        // "how many of us are here" without scanning the pill list.
+        const count = document.createElement('span');
+        count.className = 'live-session-chip-count';
+        count.textContent = String(state.peers.length);
+        host.appendChild(count);
+
+        // Refresh the per-peer cursor color stylesheet — the awareness
+        // states (which carry user color + clientID) are what y-monaco's
+        // decoration CSS class names key on.
+        updatePeerCursorStyles(state.peers);
+    }
+
+    /** One peer pill in the header: colored swatch + name + optional
+     *  activity badge (`▶ run`, `🐞 debug`, etc.). Tooltip carries the
+     *  active file. Clicking opens the Live Session panel for the full
+     *  collaborator list / actions. */
+    function renderPeerPill(peer: { identity: { displayName: string; color: string }; activeFile: string | null; activity?: string }): HTMLElement {
+        const pill = document.createElement('span');
+        pill.className = 'live-session-chip-pill';
+        pill.style.setProperty('--peer-color', peer.identity.color);
+        // Use a tinted background of the peer's color via CSS variable;
+        // the actual rule lives in index.html so a single class can be
+        // styled per-peer without re-emitting CSS for each pill.
+
+        const swatch = document.createElement('span');
+        swatch.className = 'live-session-chip-pill-swatch';
+        swatch.style.backgroundColor = peer.identity.color;
+        pill.appendChild(swatch);
+
+        const name = document.createElement('span');
+        name.className = 'live-session-chip-pill-name';
+        name.textContent = peer.identity.displayName;
+        pill.appendChild(name);
+
+        // Activity badge — only when the peer is doing something
+        // noteworthy. Idle is the default and isn't worth a glyph.
+        const a = peer.activity ?? 'idle';
+        if (a !== 'idle') {
+            const badge = document.createElement('span');
+            badge.className = `live-session-chip-pill-activity activity-${a}`;
+            badge.textContent = activityLabel(a);
+            pill.appendChild(badge);
+        }
+
+        pill.title = `${peer.identity.displayName}${peer.activeFile ? ` — ${peer.activeFile}` : ''}${a !== 'idle' ? ` (${a})` : ''}`;
+        return pill;
+    }
+
+    function activityLabel(activity: string): string {
+        switch (activity) {
+            case 'running':   return '▶ run';
+            case 'debugging': return '🐞 debug';
+            case 'testing':   return '✓ tests';
+            case 'syncing':   return '↻ sync';
+            default:          return activity;
+        }
+    }
+
+    function focusLiveSessionPanel() {
+        try {
+            let panel = dockApi.getPanel('live-session');
+            if (!panel) {
+                const ref = dockApi.getPanel('editor')?.id;
+                dockApi.addPanel({
+                    id: 'live-session',
+                    component: 'live-session',
+                    title: 'Live Session',
+                    renderer: 'always',
+                    position: ref ? { referencePanel: ref, direction: 'within' } : undefined,
+                });
+                panel = dockApi.getPanel('live-session');
+            }
+            panel?.api.setActive();
+        } catch (e) {
+            console.warn('[fade-collab] focus live-session failed', e);
+        }
+    }
+
+    /** Inject a per-peer cursor-color stylesheet into <head>. y-monaco
+     *  decorates remote selections with class names like
+     *  `yRemoteSelection-<clientID>` and `yRemoteSelectionHead-<clientID>`,
+     *  so we write one CSS rule per active peer with their color. Also
+     *  attaches a `::after` pseudo-element to the head with the peer's
+     *  display name so cursors are self-labelling. */
+    function updatePeerCursorStyles(peers: ReadonlyArray<{ clientId: number; isSelf: boolean; identity: { color: string; displayName: string } }>) {
+        const STYLE_ID = 'fade-collab-peer-cursors';
+        let style = document.getElementById(STYLE_ID) as HTMLStyleElement | null;
+        if (peers.length === 0) {
+            if (style) style.remove();
+            return;
+        }
+        if (!style) {
+            style = document.createElement('style');
+            style.id = STYLE_ID;
+            document.head.appendChild(style);
+        }
+        const escape = (s: string) => s.replace(/[\\"]/g, '\\$&');
+        const lines: string[] = [];
+        // Background palette for the floating name labels: a softened
+        // version of the user's color (RGBA with alpha) so when the
+        // decoration is in its quiet state the label doesn't shout. Done
+        // via a wrapping div in CSS — we can't change the alpha on the
+        // peer's color string at runtime, so we use opacity on the
+        // pseudo-element instead.
+        for (const peer of peers) {
+            if (peer.isSelf) continue;  // we don't render our own cursor decorations
+            const id = peer.clientId;
+            const color = peer.identity.color;
+            // Selection background. Quiet by default (alpha-ish via
+            // opacity), brighter when the user explicitly hovers the
+            // editor line containing it.
+            lines.push(`.yRemoteSelection-${id} { background-color: ${color}; opacity: 0.10; transition: opacity 120ms ease; }`);
+            // Caret line. Reasonably visible but thinner — full opacity
+            // would draw the eye every time a remote peer twitches their
+            // cursor. The transition makes the hover brighten subtle.
+            lines.push(`.yRemoteSelectionHead-${id} { border-left: 2px solid ${color}; position: relative; height: 100%; opacity: 0.45; transition: opacity 120ms ease; }`);
+            // Floating name label attached to the head. Same quiet
+            // baseline as the caret so the labels don't dominate the
+            // editor when many peers are present.
+            lines.push(
+                `.yRemoteSelectionHead-${id}::after {`
+                + ` content: "${escape(peer.identity.displayName)}";`
+                + ` position: absolute; top: -1.2em; left: -2px;`
+                + ` background: ${color}; color: white;`
+                + ` font-size: 10px; padding: 0 4px;`
+                + ` border-radius: 3px 3px 3px 0;`
+                + ` white-space: nowrap;`
+                + ` font-family: -apple-system, sans-serif;`
+                + ` pointer-events: none;`
+                + ` z-index: 10;`
+                + ` opacity: 0.40;`
+                + ` transition: opacity 120ms ease;`
+                + ` }`
+            );
+            // Hover: bring everything to full visibility. Monaco lines
+            // are inside `.view-line`; hovering a line surfaces every
+            // remote decoration on it. Using the parent line as the
+            // hover trigger (rather than the decoration itself) means
+            // the small caret line doesn't have to be the target — the
+            // whole row works.
+            lines.push(`.view-line:hover .yRemoteSelection-${id} { opacity: 0.25; }`);
+            lines.push(`.view-line:hover .yRemoteSelectionHead-${id} { opacity: 1; }`);
+            lines.push(`.view-line:hover .yRemoteSelectionHead-${id}::after { opacity: 1; }`);
+        }
+        style.textContent = lines.join('\n');
     }
 
     /** Paint the four sharing-status pills into the app header. Counts
@@ -5604,6 +6597,7 @@ async function bootstrap() {
         { id: 'collaboration', label: 'Collaboration' },
         { id: 'logs',          label: 'Logs' },
         { id: 'history',       label: 'History' },
+        { id: 'live-session',  label: 'Live Session' },
         { id: 'debug',         label: 'Debug' },
         { id: 'output',        label: 'Output' },
         { id: 'problems',      label: 'Problems' },
@@ -5614,6 +6608,7 @@ async function bootstrap() {
         { id: 'diagnostics',   label: 'Diagnostics' },
         { id: 'ai-chat',       label: 'AI Chat' },
         { id: 'ai-models',     label: 'AI Models' },
+        { id: 'catalog',       label: 'Catalog' },
     ];
     const SAVED_LAYOUTS_KEY = 'fade.dockview.savedLayouts';
 
@@ -5802,14 +6797,19 @@ async function bootstrap() {
                 dockApi.getPanel('search')?.api?.setActive();
                 searchPanelHandle?.focus();
             } catch (e) { console.warn('[fade] failed to open search panel', e); }
-        } else if (id === 'collaboration' || id === 'history' || id === 'logs') {
+        } else if (id === 'catalog') {
+            // Catalog is a singleton tab. openCatalogPanel handles the
+            // "already-open → just activate" path; View menu just re-uses it.
+            openCatalogPanel();
+        } else if (id === 'collaboration' || id === 'history' || id === 'logs' || id === 'live-session') {
             // These panels aren't part of the default tab strip — opening
             // them via the View menu drops them into the editor tab group
             // so they share screen space with code rather than crowding
             // the bottom panel or splitting the workspace column.
             const ref = dockApi.getPanel('editor')?.id;
             const titleFor = (k: string) => k === 'collaboration' ? 'Collaboration'
-                : k === 'history' ? 'History' : 'Logs';
+                : k === 'history' ? 'History'
+                : k === 'live-session' ? 'Live Session' : 'Logs';
             try {
                 dockApi.addPanel({
                     id,
@@ -6003,6 +7003,26 @@ async function bootstrap() {
             localStorage.removeItem(ACTIVE_PROJECT_KEY);
         } catch { /* ignore */ }
         console.warn('[fade] forceHardReset complete — reloading');
+        location.reload();
+    };
+
+    // Targeted asset-cache wipe — deletes the active project's
+    // `.fade-cache/` (compiled XNB blobs + index.json) without touching
+    // user source files or other projects. ENCODER_VERSION bumps already
+    // invalidate the cache automatically; this is the escape hatch for
+    // cases where the browser is serving a stale JS bundle and the
+    // version bump hasn't actually taken effect, or for manually testing
+    // a clean encode. Call from devtools: `forceAssetCacheClear()`.
+    (window as any).forceAssetCacheClear = async () => {
+        try {
+            await workspace.delete('.fade-cache');
+            console.warn('[fade] asset cache cleared for project', workspace.currentProject());
+        } catch (e: any) {
+            // Most likely "directory not found" — cache wasn't populated
+            // yet. Either way the cache is now in the state the caller
+            // wanted, so log + move on.
+            console.warn('[fade] asset cache wipe:', e?.message ?? e);
+        }
         location.reload();
     };
 
@@ -6484,33 +7504,241 @@ async function bootstrap() {
     // boots with the buttons in the correct disabled state.
     refreshRunButtons();
 
-    // Walk the active project's OPFS folder for `.xnb` files and push their
-    // bytes into the MonoGame runtime's BrowserContentManager. Called before
+    // Walk the active project's OPFS folder for assets and push them
+    // into the MonoGame runtime's BrowserContentManager. Called before
     // each loadProgram/debugStart so any `texture`/`load sfx clip`/`font`
     // commands fbasic runs can resolve via stock Content.Load<T>(name).
     //
-    // Asset name = filename minus the `.xnb` extension. So `Catfish.xnb`
-    // registers under "Catfish" — matching what fbasic code passes to
-    // `texture 1, "Catfish"`. Pre-clears the runtime dict so deletions in
-    // OPFS take effect on the next Run.
+    // Two source kinds feed in:
+    //   • Pre-built `.xnb` files (user uploads, or the dev's old assets) —
+    //     read raw + routed through patchXnbForKni so SoundEffects get a
+    //     loopLength fix for KNI Blazor, and Effects get their MGFX
+    //     version downgraded from v11 to v10 (see xnb-previews.ts).
+    //   • Image source files (.png / .jpg / .gif / .webp / .bmp) — passed
+    //     through compileImageAssets, which decodes them in the browser
+    //     and serialises a Texture2D XNB into an OPFS-backed cache keyed
+    //     by content hash + format. Lets users drop a PNG into the file
+    //     tree and reference it from `texture 1, "MyPic"` without having
+    //     to run a desktop content build first.
     //
-    // Each XNB is routed through patchXnbForKni — SoundEffects get a loopLength
-    // fix for a KNI Blazor bug; Effects get their MGFX version downgraded from
-    // v11 to v10 so KNI 4.2.9001 accepts them. See xnb-previews.ts for details.
-    async function syncAssetsToRuntime(): Promise<void> {
-        await monoGameHost.clearAssets();
-        const names = await workspace.list();
-        for (const name of names) {
-            if (!/\.xnb$/i.test(name)) continue;
+    // Asset name = relative path minus extension. So `images/Catfish.png`
+    // registers as "images/Catfish" — matching what fbasic code passes
+    // to `texture 1, ...`. clearAssets() pre-empties the runtime dict so
+    // deletions in OPFS take effect on the next Run.
+    // Diff-based sync state. Persists across Runs within a single page
+    // load: the iframe's window.fadeAudio keeps decoded AudioBuffers,
+    // BrowserContentManager keeps cached Texture2D/SpriteFonts, and
+    // this map tells us what's already there. A Run that doesn't change
+    // any asset bytes touches nothing on the iframe side — no decode,
+    // no postMessage, no GPU upload. Wiped if the user calls
+    // forceAssetCacheClear() or switches projects (page reload).
+    type SyncedAssetKind = 'image' | 'audio' | 'font' | 'xnb';
+    interface SyncedAssetState { kind: SyncedAssetKind; hash: string; }
+    const lastSyncedAssets = new Map<string, SyncedAssetState>();
+
+    async function syncAssetsToRuntime(
+        plan: MonoGameContentPlan = EMPTY_CONTENT_PLAN,
+    ): Promise<void> {
+        const allNames = await workspace.list();
+        // Exclude the asset cache from registration — its blobs are XNB
+        // files keyed by hash, not user-addressable assets. The cache is
+        // managed by the compile passes + the shared GC below.
+        const names = allNames.filter((n) => !n.startsWith('.fade-cache/'));
+
+        // Phase 1a: compile image sources via the asset cache, then push.
+        // We swallow errors at the per-asset level so one bad PNG doesn't
+        // take down the rest of the project's assets. The plan tells us
+        // per-asset compression overrides from the macro pass; an empty
+        // plan (the default) means "use default compression for every
+        // source we find" — useful for test/debug paths where the macro
+        // pass hasn't run yet.
+        const imageSources = names.filter(isImageSourcePath);
+        const audioSources = names.filter(isAudioSourcePath);
+
+        // All per-asset compilation diagnostics flow through the Logs
+        // panel ('asset' channel). The Output panel only sees errors —
+        // surface those there too so a broken upload is visible even if
+        // the user doesn't have the Logs tab open. The Logs panel is the
+        // canonical place to inspect every cache hit / encode pick / etc.
+        const assetLog = getLogger('asset');
+        const reportDiagnostic = (d: { severity: 'info' | 'warn' | 'error'; assetName?: string; sourcePath?: string; message: string }) => {
+            const label = d.assetName ?? d.sourcePath ?? '<asset>';
+            const line = `${label}: ${d.message}`;
+            if (d.severity === 'error') {
+                assetLog.error(line);
+                appendOutputLine(`[asset ${label}] ${d.message}`, 'error');
+            } else if (d.severity === 'warn') {
+                assetLog.warn(line);
+            } else {
+                assetLog.info(line);
+            }
+        };
+
+        const fontSources = names.filter(isFontSourcePath);
+        const xnbSources = names.filter(
+            (n) => /\.xnb$/i.test(n) && !n.startsWith('.fade-cache/'),
+        );
+
+        // Build the target asset set first — collect bytes + a content
+        // hash for every asset that should be loaded after this sync.
+        // Then diff against lastSyncedAssets and only push the changes.
+        // This makes repeat Runs essentially free for unchanged audio
+        // (no `decodeAudioData`) and textures (no GPU re-upload).
+        interface PendingAsset {
+            name: string;
+            kind: SyncedAssetKind;
+            hash: string;
+            bytes: Uint8Array;
+        }
+        const target = new Map<string, PendingAsset>();
+
+        // Phase 1a: images — compile via the OPFS-backed cache then
+        // hash the resulting XNB bytes. Cache hits avoid the
+        // decode+encode entirely; the hash gate then skips re-sending
+        // bytes to the iframe when the XNB is identical to last Run.
+        if (imageSources.length > 0) {
+            try {
+                const { assets, diagnostics } =
+                    await compileImageAssetsWithPlan(workspace, imageSources, plan);
+                for (const d of diagnostics) reportDiagnostic(d);
+                for (const a of assets) {
+                    const hash = await sha256Hex(a.bytes);
+                    target.set(a.assetName, {
+                        name: a.assetName, kind: 'image', hash, bytes: a.bytes,
+                    });
+                }
+            } catch (e) {
+                assetLog.error(`image-asset compile pass failed: ${(e as any)?.message ?? e}`);
+            }
+        }
+
+        // Phase 1b: audio — the iframe's Web Audio host decodes raw
+        // source bytes (MP3/OGG/WAV/FLAC/AAC). Hash is computed over
+        // the raw source bytes: if they're unchanged from last Run, the
+        // diff below skips the `register-audio` postMessage and the
+        // previously-decoded AudioBuffer stays cached in JS memory.
+        if (audioSources.length > 0) {
+            for (const path of audioSources) {
+                const assetName = assetNameForSourcePath(path);
+                try {
+                    const bytes = await workspace.readBytes(path);
+                    const hash = await sha256Hex(bytes);
+                    target.set(assetName, {
+                        name: assetName, kind: 'audio', hash, bytes,
+                    });
+                } catch (e: any) {
+                    assetLog.error(`${assetName}: read failed: ${e?.message ?? e}`);
+                }
+            }
+        }
+
+        // Phase 1c: fonts — TTF/OTF compiled to SpriteFont XNBs via
+        // the same OPFS cache as images. Hash is the XNB output.
+        if (fontSources.length > 0) {
+            try {
+                const { assets, diagnostics } =
+                    await compileFontAssetsWithPlan(workspace, fontSources, plan);
+                for (const d of diagnostics) reportDiagnostic(d);
+                for (const a of assets) {
+                    const hash = await sha256Hex(a.bytes);
+                    target.set(a.assetName, {
+                        name: a.assetName, kind: 'font', hash, bytes: a.bytes,
+                    });
+                }
+            } catch (e) {
+                assetLog.error(`font compile pass failed: ${(e as any)?.message ?? e}`);
+            }
+        }
+
+        // Phase 1d: pre-built `.xnb` uploads (legacy assets the user
+        // brought in directly). Run through the KNI patcher then hash.
+        for (const name of xnbSources) {
             try {
                 const raw = await workspace.readBytes(name);
                 const bytes = patchXnbForKni(raw);
                 const assetName = name.replace(/\.xnb$/i, '');
-                await monoGameHost.registerAsset(assetName, bytes);
+                const hash = await sha256Hex(bytes);
+                target.set(assetName, {
+                    name: assetName, kind: 'xnb', hash, bytes,
+                });
             } catch (e) {
                 console.error('[fade] asset push failed for', name, e);
             }
         }
+
+        // ─── Diff vs last Run ────────────────────────────────────────
+        // For each tracked asset, decide one of: skip (hash match),
+        // re-register (hash changed), unregister (no longer present).
+        // Audio routes through unregisterAudio + registerAudio; the
+        // other kinds share the unregisterAsset / registerAsset path.
+        const toUnregister: SyncedAssetState[] = [];
+        const toRegister: PendingAsset[] = [];
+        let skipped = 0;
+
+        for (const [name, last] of lastSyncedAssets) {
+            const next = target.get(name);
+            if (!next) {
+                toUnregister.push({ kind: last.kind, hash: last.hash });
+                // recorded with name in the iteration above
+                (toUnregister[toUnregister.length - 1] as any).name = name;
+            } else if (next.hash !== last.hash) {
+                toUnregister.push({ kind: last.kind, hash: last.hash });
+                (toUnregister[toUnregister.length - 1] as any).name = name;
+                toRegister.push(next);
+            } else {
+                skipped++;
+            }
+        }
+        for (const [name, next] of target) {
+            if (!lastSyncedAssets.has(name)) toRegister.push(next);
+        }
+
+        for (const old of toUnregister as Array<SyncedAssetState & { name: string }>) {
+            if (old.kind === 'audio') await monoGameHost.unregisterAudio(old.name);
+            else await monoGameHost.unregisterAsset(old.name);
+        }
+        for (const a of toRegister) {
+            try {
+                if (a.kind === 'audio') {
+                    const ok = await monoGameHost.registerAudio(a.name, a.bytes);
+                    if (!ok) {
+                        appendOutputLine(
+                            `[asset ${a.name}] audio decode failed — browser couldn't decode ` +
+                            `this source (unsupported codec, corrupt file, or Safari + OGG)`,
+                            'error',
+                        );
+                    } else {
+                        assetLog.info(
+                            `${a.name}: decoded (${(a.bytes.length / 1024).toFixed(1)} KB)`,
+                        );
+                    }
+                } else {
+                    await monoGameHost.registerAsset(a.name, a.bytes);
+                    assetLog.info(
+                        `${a.name}: registered ${a.kind} (${(a.bytes.length / 1024).toFixed(1)} KB) enc=${ENCODER_VERSION}`,
+                    );
+                }
+            } catch (e) {
+                assetLog.error(`${a.name}: register failed: ${(e as any)?.message ?? e}`);
+            }
+        }
+        if (skipped > 0) {
+            assetLog.info(`${skipped} asset${skipped === 1 ? '' : 's'} unchanged — kept from previous Run`);
+        }
+
+        // Commit the new state.
+        lastSyncedAssets.clear();
+        for (const [name, p] of target) {
+            lastSyncedAssets.set(name, { kind: p.kind, hash: p.hash });
+        }
+
+        // Shared cache GC — runs once all compile passes have populated
+        // liveSourcePaths so neither kind's entries get wrongly evicted.
+        const liveSources = new Set<string>([
+            ...imageSources, ...audioSources, ...fontSources,
+        ]);
+        try { await garbageCollectAssetCache(workspace, liveSources); }
+        catch (e) { console.warn('[fade] asset cache GC failed', e); }
     }
 
     // Build the list of command-DLL entries for the active project.
@@ -6628,6 +7856,9 @@ async function bootstrap() {
     };
 
     const runOnce = async () => {
+        // Clear any crash overlay from a previous run before we kick a
+        // new one off — the red decoration shouldn't bleed across runs.
+        hideCrashOverlay();
         const source = await getProjectSource();
         if (!source) {
             clearOutput();
@@ -6658,9 +7889,38 @@ async function bootstrap() {
                 revealPanel('game');
                 appendOutputLine('Booting MonoGame runtime…', 'dim');
                 updateGameStatus('booting');
-                await syncAssetsToRuntime();
-                const ok = await monoGameHost.loadProgram(source);
-                if (ok) {
+
+                // Two-phase compile/run:
+                //   1. compileForRun runs the macro pass and stashes a
+                //      pending FadeRuntimeContext on the iframe side, but
+                //      does NOT start ticking. The returned plan reflects
+                //      whatever `# push asset` / `# texture compression`
+                //      calls did during the macro VM.
+                //   2. syncAssetsToRuntime executes the plan: each
+                //      referenced PNG/JPG is decoded + encoded into an
+                //      XNB (cache-hits on second run) and registered with
+                //      Game1.BrowserContentManager. Pre-built `.xnb`
+                //      files in OPFS are also pushed during this step.
+                //   3. beginPendingProgram unblocks the stashed context
+                //      so the next tick runs the user's program — with
+                //      every `texture`/`load sfx clip` call already able
+                //      to resolve.
+                const compile = await monoGameHost.compileForRun(source);
+                if (!compile.ok) {
+                    appendOutputLine(
+                        compile.error ?? 'Compile failed. See Problems panel.',
+                        'error',
+                    );
+                    revealPanel('problems');
+                    runActive = false;
+                    updateGameStatus('stopped');
+                    refreshRunButtons();
+                    refreshStopButton();
+                    return;
+                }
+                await syncAssetsToRuntime(compile.plan);
+                const started = await monoGameHost.beginPendingProgram();
+                if (started) {
                     // No "Running…" message — user `print` output now
                     // streams into the Output panel directly. The first
                     // few lines (or the game canvas itself) tell them
@@ -6670,8 +7930,10 @@ async function bootstrap() {
                     updateGameStatus('running');
                     refreshStopButton();
                 } else {
-                    appendOutputLine('Compile failed. See Problems panel.', 'error');
-                    revealPanel('problems');
+                    appendOutputLine(
+                        'MonoGame: program ready, but the runtime refused to start it.',
+                        'error',
+                    );
                     runActive = false;
                     updateGameStatus('stopped');
                     refreshRunButtons();
@@ -6790,13 +8052,85 @@ async function bootstrap() {
                 });
                 const assetResults = await Promise.all(assetFetches);
 
-                // Pull the user's XNB assets from OPFS, applying the same
-                // KNI patches we apply at runtime so the deployed bundle
-                // doesn't re-patch on every boot.
+                // Gather assets the same way syncAssetsToRuntime does:
+                // run the macro pass to get a plan, then compile image
+                // and audio sources through it. This produces XNBs with
+                // proper asset names (e.g. "Pufferfish") instead of the
+                // cache blob filenames (".fade-cache/blobs/<hash>.color.v12")
+                // that an OPFS-wide `*.xnb` filter used to scoop up.
+                //
+                // The standalone export's BrowserContentManager registers
+                // each `game/<name>.xnb` under `<name>` — matching what
+                // fbasic passes to `texture` at runtime.
                 const wsNames = await workspace.list();
-                const xnbNames = wsNames.filter((n) => /\.xnb$/i.test(n));
                 const xnbEntries: { name: string; bytes: Uint8Array }[] = [];
-                for (const name of xnbNames) {
+
+                // 1a. Compile image sources (PNG/JPG/...) via the same
+                //     plan-driven pipeline syncAssetsToRuntime uses.
+                let compilePlan: MonoGameContentPlan = EMPTY_CONTENT_PLAN;
+                try {
+                    const compile = await monoGameHost.compileForRun(source);
+                    if (compile.ok) compilePlan = compile.plan;
+                    else appendOutputLine(`[warn] export compile-for-plan: ${compile.error}`, 'dim');
+                } catch (e: any) {
+                    appendOutputLine(`[warn] export compile-for-plan failed: ${e?.message ?? e}`, 'dim');
+                }
+                const imageSources = wsNames.filter(isImageSourcePath);
+                const audioSources = wsNames.filter(isAudioSourcePath);
+                const fontSources = wsNames.filter(isFontSourcePath);
+                if (imageSources.length > 0) {
+                    try {
+                        const { assets, diagnostics } =
+                            await compileImageAssetsWithPlan(workspace, imageSources, compilePlan);
+                        for (const d of diagnostics) {
+                            if (d.severity === 'error') appendOutputLine(`[export ${d.assetName ?? ''}] ${d.message}`, 'error');
+                        }
+                        for (const a of assets) xnbEntries.push({ name: a.assetName, bytes: a.bytes });
+                    } catch (e: any) {
+                        appendOutputLine(`[warn] export image compile failed: ${e?.message ?? e}`, 'dim');
+                    }
+                }
+                if (fontSources.length > 0) {
+                    try {
+                        const { assets, diagnostics } =
+                            await compileFontAssetsWithPlan(workspace, fontSources, compilePlan);
+                        for (const d of diagnostics) {
+                            if (d.severity === 'error') appendOutputLine(`[export ${d.assetName ?? ''}] ${d.message}`, 'error');
+                        }
+                        for (const a of assets) xnbEntries.push({ name: a.assetName, bytes: a.bytes });
+                    } catch (e: any) {
+                        appendOutputLine(`[warn] export font compile failed: ${e?.message ?? e}`, 'dim');
+                    }
+                }
+                // Audio assets ship as raw source bytes — the
+                // standalone export's window.fadeAudio decodes them at
+                // runtime via Web Audio (matching the playground's
+                // monogame iframe). No XNB encoding, just preserve the
+                // original extension so KNI's audio path knows what it's
+                // decoding. The audio files end up under `audio/<name>.<ext>`
+                // in the zip; the standalone bootstrap script reads them
+                // and pushes via fadeAudio.register.
+                const audioEntries: { name: string; ext: string; bytes: Uint8Array }[] = [];
+                for (const path of audioSources) {
+                    try {
+                        const bytes = await workspace.readBytes(path);
+                        const assetName = assetNameForSourcePath(path);
+                        const dot = path.lastIndexOf('.');
+                        const ext = dot >= 0 ? path.slice(dot).toLowerCase() : '.wav';
+                        audioEntries.push({ name: assetName, ext, bytes });
+                    } catch (e: any) {
+                        appendOutputLine(`[warn] export audio read failed: ${path}: ${e?.message ?? e}`, 'dim');
+                    }
+                }
+
+                // 1b. Pre-built `.xnb` files the user uploaded directly
+                //     (e.g. legacy assets). Skip the asset cache — its
+                //     blobs are stored under `.fade-cache/blobs/<hash>...`
+                //     and aren't user-addressable assets.
+                const prebuiltXnbs = wsNames.filter(
+                    (n) => /\.xnb$/i.test(n) && !n.startsWith('.fade-cache/'),
+                );
+                for (const name of prebuiltXnbs) {
                     try {
                         const raw = await workspace.readBytes(name);
                         const bytes = patchXnbForKni(raw);
@@ -6814,6 +8148,14 @@ async function bootstrap() {
                 for (const a of xnbEntries) {
                     files[`game/${a.name}.xnb`] = a.bytes;
                 }
+                // Audio source bytes go into a separate audio/ subdir
+                // with their original extensions preserved. The
+                // standalone runtime knows to load them via Web Audio
+                // (see fadeAudio.register) rather than the content
+                // pipeline.
+                for (const a of audioEntries) {
+                    files[`audio/${a.name}${a.ext}`] = a.bytes;
+                }
 
                 const fadeManifest = {
                     fadeBasic: 'playground-export',
@@ -6821,6 +8163,7 @@ async function bootstrap() {
                     type: 'monogame',
                     source: 'program.fbasic',
                     assets: xnbEntries.map((a) => a.name),
+                    audio: audioEntries.map((a) => ({ name: a.name, file: `${a.name}${a.ext}` })),
                 };
                 files['fade-manifest.json'] = strToU8(JSON.stringify(fadeManifest, null, 2));
 
@@ -7062,8 +8405,97 @@ async function bootstrap() {
             if (!body) return;
             const collapsed = body.classList.toggle('collapsed');
             toggle.classList.toggle('collapsed', collapsed);
+            // Leave existing inline flex sizes alone — wiping them here
+            // made user-resized sections "pop" back to equal thirds the
+            // moment any *other* section was collapsed. The collapsed
+            // section's own `:has(.collapsed)` rule already shrinks it
+            // to header height via `flex: 0 0 auto !important`; sized
+            // siblings keep their drag-set size; un-sized siblings keep
+            // their `flex: 1 1 0` distribution and naturally absorb the
+            // freed space.
+            refreshDebugSplitters();
         });
     }
+
+    // ─── Resizable section splitters ──────────────────────────────────────
+    // Insert a drag handle between each pair of consecutive *expanded*
+    // sections. The handle stretches the section above by however many
+    // pixels the user drags it, taking those pixels from the section
+    // below. Collapsing a section drops all splitters and re-flexes the
+    // rest (see the toggle handler above).
+    function debugSections(): HTMLElement[] {
+        return Array.from(document.querySelectorAll<HTMLElement>('.debug-pane-host .debug-section'));
+    }
+
+    function refreshDebugSplitters() {
+        const host = document.querySelector<HTMLElement>('.debug-pane-host');
+        if (!host) return;
+        for (const s of Array.from(host.querySelectorAll('.debug-splitter'))) s.remove();
+        // Pair consecutive *expanded* sections, ignoring any collapsed
+        // ones between them. The previous algorithm paired DOM-adjacent
+        // sections and skipped if either was collapsed — which left no
+        // splitter between Variables and CallStack when Watch was
+        // collapsed in the middle, even though they had become visual
+        // neighbors.
+        const expanded = debugSections().filter((sec) => {
+            const body = sec.querySelector('.debug-section-body');
+            return !body?.classList.contains('collapsed');
+        });
+        for (let i = 0; i < expanded.length - 1; i++) {
+            const above = expanded[i];
+            const below = expanded[i + 1];
+            // Insert right *after* `above` so the splitter sits at the
+            // bottom edge of the upper section's body. With any collapsed
+            // sections in between, this lands the handle visually above
+            // the first collapsed header — which is where the user's
+            // muscle memory expects it to be, since the handle was there
+            // before the section was collapsed.
+            host.insertBefore(makeSplitter(above, below, host), above.nextSibling);
+        }
+    }
+
+    const MIN_SECTION_PX = 32;
+
+    function makeSplitter(above: HTMLElement, below: HTMLElement, host: HTMLElement): HTMLElement {
+        const split = document.createElement('div');
+        split.className = 'debug-splitter';
+        split.setAttribute('role', 'separator');
+        split.setAttribute('aria-orientation', 'horizontal');
+        split.addEventListener('pointerdown', (e) => {
+            e.preventDefault();
+            split.classList.add('dragging');
+            host.classList.add('debug-resizing');
+            split.setPointerCapture(e.pointerId);
+            const aRect = above.getBoundingClientRect();
+            const bRect = below.getBoundingClientRect();
+            const startY = e.clientY;
+            const combined = aRect.height + bRect.height;
+
+            const onMove = (ev: PointerEvent) => {
+                const delta = ev.clientY - startY;
+                let newA = aRect.height + delta;
+                let newB = bRect.height - delta;
+                if (newA < MIN_SECTION_PX) { newA = MIN_SECTION_PX; newB = combined - newA; }
+                if (newB < MIN_SECTION_PX) { newB = MIN_SECTION_PX; newA = combined - newB; }
+                above.style.flex = `0 0 ${newA}px`;
+                below.style.flex = `0 0 ${newB}px`;
+            };
+            const onUp = (ev: PointerEvent) => {
+                split.classList.remove('dragging');
+                host.classList.remove('debug-resizing');
+                try { split.releasePointerCapture(ev.pointerId); } catch { /* ignore */ }
+                split.removeEventListener('pointermove', onMove);
+                split.removeEventListener('pointerup', onUp);
+                split.removeEventListener('pointercancel', onUp);
+            };
+            split.addEventListener('pointermove', onMove);
+            split.addEventListener('pointerup', onUp);
+            split.addEventListener('pointercancel', onUp);
+        });
+        return split;
+    }
+
+    refreshDebugSplitters();
 
     // Status string → CSS class on the status pill (drives color).
     function setDebugStatus(text: string, kind: 'idle' | 'running' | 'paused' | 'error' = 'idle') {
@@ -7138,6 +8570,105 @@ async function bootstrap() {
         debugBtn.disabled = hasErr || debugSessionActive || runActive;
         exportBtn.disabled = exportBusy || hasErr;
         lastBlockedByErrors = hasErr;
+        // Broadcast this peer's current runtime activity to the live
+        // session so others' top-bar pills can show "Alice is running"
+        // / "Bob is debugging" without waiting on actual frame/debug
+        // data streaming (which is the Phase 2 work). Order matters —
+        // debug wins over run wins over tests, matching how the local
+        // UI itself disables the conflicting buttons.
+        broadcastLiveActivity();
+    }
+    /** Map the local run/debug/test flags onto the awareness `activity`
+     *  field. No-op if there's no live session in flight. Called
+     *  whenever any of the flags change (refreshRunButtons covers
+     *  run/debug; setTestsBusy and the debug start/stop paths fold in
+     *  via the same call). Also drives the Phase-2A game-frame
+     *  streaming: starts captureLoop when this peer is the one running
+     *  the program (or debugging) and a live session exists; stops it
+     *  otherwise. */
+    function broadcastLiveActivity(): void {
+        const session = liveSessionHandle?.getSession();
+        if (!session) return;
+        // Priority: debug > run > test > idle. Run+test typically don't
+        // co-occur (run uses the same runtime), so the ordering only
+        // matters for the edge cases.
+        const activity: 'idle' | 'running' | 'debugging' | 'testing' =
+            debugSessionActive ? 'debugging'
+            : runActive ? 'running'
+            : testsBusy ? 'testing'
+            : 'idle';
+        try { session.setActivity(activity); }
+        catch (e) { console.warn('[fade-collab] setActivity failed', e); }
+        // Frame streaming follows the activity: capture only while this
+        // peer is actually running or debugging something. The capture
+        // function tolerates a missing iframe (monogame, splash) so we
+        // can flip it on unconditionally for running/debugging activity.
+        if (activity === 'running' || activity === 'debugging') {
+            startGameFrameStreaming(session);
+        } else {
+            stopGameFrameStreaming();
+        }
+    }
+
+    // ── Phase 2A: game-frame streaming ────────────────────────────────────
+    // Capture loop runs at ~5 FPS — fast enough to feel live, slow enough
+    // that JPEG encoding + WebRTC throughput aren't a concern. Each frame
+    // ends up around 5-30 KB depending on canvas content; at 5 fps that's
+    // well under the ~10 Mbps the data channel can sustain.
+    const GAME_FRAME_FPS = 5;
+    const GAME_FRAME_QUALITY = 0.55;
+    let gameFrameInterval: ReturnType<typeof setInterval> | null = null;
+
+    function startGameFrameStreaming(session: ReturnType<NonNullable<typeof liveSessionHandle>['getSession']>): void {
+        if (gameFrameInterval) return;
+        if (!session) return;
+        gameFrameInterval = setInterval(() => {
+            // The session reference can become stale if the user leaves
+            // the session while a run is in flight. Re-resolve every tick.
+            const live = liveSessionHandle?.getSession();
+            if (!live) { stopGameFrameStreaming(); return; }
+            void captureAndSendFrame(live);
+        }, Math.floor(1000 / GAME_FRAME_FPS));
+    }
+
+    function stopGameFrameStreaming(): void {
+        if (gameFrameInterval) {
+            clearInterval(gameFrameInterval);
+            gameFrameInterval = null;
+        }
+    }
+
+    /** Grab the current contents of the web-preview iframe's canvas (or
+     *  the standalone web canvas if the runtime ever moves out of the
+     *  iframe) and broadcast it as a JPEG. No-op when no canvas is
+     *  reachable — monogame's Blazor iframe is currently sandboxed and
+     *  out of reach from here; that's a Phase 2A follow-up. */
+    async function captureAndSendFrame(session: NonNullable<ReturnType<NonNullable<typeof liveSessionHandle>['getSession']>>): Promise<void> {
+        const iframe = document.getElementById('web-preview-frame') as HTMLIFrameElement | null;
+        // Reach into the iframe's DOM — both the playground and the
+        // runtime are served from the same origin, so this just works.
+        // contentDocument is null for cross-origin frames; that's the
+        // signal we're on a path we can't capture (monogame iframe).
+        let canvas: HTMLCanvasElement | null = null;
+        try {
+            canvas = iframe?.contentDocument?.querySelector('canvas') ?? null;
+        } catch {
+            // SecurityError when cross-origin — treat as "no canvas".
+            return;
+        }
+        if (!canvas) return;
+        try {
+            const blob: Blob | null = await new Promise((resolve) =>
+                canvas!.toBlob(resolve, 'image/jpeg', GAME_FRAME_QUALITY),
+            );
+            if (!blob) return;
+            const buf = await blob.arrayBuffer();
+            session.sendGameFrame(new Uint8Array(buf));
+        } catch (e) {
+            // Tainted canvas, OOM, etc. Best-effort — drop this frame and
+            // try again on the next tick.
+            console.debug('[fade-collab] game frame capture skipped', e);
+        }
     }
     let activeFrameId: number | null = null;
     // Decoration IDs the editor uses to draw breakpoint glyphs + the
@@ -7279,7 +8810,77 @@ async function bootstrap() {
         refreshBreakpointDecorations();
         renderBreakpoints();
         if (debugSessionActive) syncBreakpointsToWorker();
+        // The line we just toggled now has the opposite breakpoint state,
+        // which means the phantom-vs-not-allowed cursor signal should
+        // flip too. Recompute the preview against the new state.
+        updateBreakpointPreview(line);
     });
+
+    // Hover preview for breakpoints. Two effects fold into one mousemove
+    // handler:
+    //   1. A faded-red phantom .cgmr decoration on the hovered gutter row
+    //      (when no real breakpoint is set there yet) — visual "click here
+    //      to add a breakpoint" affordance.
+    //   2. A class on the editor's outer DOM flagging glyph-margin hover
+    //      so CSS can flip cursor between `pointer` (would-add) and
+    //      `not-allowed` (would-remove). The phantom .cgmr already
+    //      naturally carries `cursor: pointer` from the .cgmr rule, but
+    //      this covers the brief gap between mouse-enter and the
+    //      decoration landing AND the fallback path when monaco draws
+    //      the line overlay above the widgets layer.
+    let previewBpDecorations: string[] = [];
+    let previewBpLine: number | null = null;
+
+    function clearBreakpointPreview() {
+        previewBpLine = null;
+        const m = editor?.getModel();
+        if (m && previewBpDecorations.length > 0) {
+            previewBpDecorations = m.deltaDecorations(previewBpDecorations, []);
+        }
+        const dom = editor?.getDomNode();
+        dom?.classList.remove('fade-gutter-hover', 'fade-gutter-hover-bp');
+    }
+
+    function updateBreakpointPreview(line: number | null) {
+        const dom = editor?.getDomNode();
+        const model = editor?.getModel();
+        if (!dom || !model || line == null) {
+            clearBreakpointPreview();
+            return;
+        }
+        const uri = model.uri.toString();
+        const hasReal = breakpointsByUri.get(uri)?.has(line) ?? false;
+        dom.classList.add('fade-gutter-hover');
+        dom.classList.toggle('fade-gutter-hover-bp', hasReal);
+        // Only draw the phantom on rows that DON'T already have a real
+        // breakpoint — otherwise we'd stack two glyphs on the same line.
+        if (hasReal) {
+            if (previewBpDecorations.length > 0) {
+                previewBpDecorations = model.deltaDecorations(previewBpDecorations, []);
+                previewBpLine = null;
+            }
+            return;
+        }
+        if (previewBpLine === line) return;
+        previewBpLine = line;
+        previewBpDecorations = model.deltaDecorations(previewBpDecorations, [{
+            range: new monaco.Range(line, 1, line, 1),
+            options: {
+                isWholeLine: false,
+                glyphMarginClassName: 'fade-breakpoint-preview codicon codicon-circle-filled',
+                glyphMarginHoverMessage: { value: 'Click to add a breakpoint' },
+            },
+        }]);
+    }
+
+    editor.onMouseMove((e) => {
+        if (e.target.type !== monaco.editor.MouseTargetType.GUTTER_GLYPH_MARGIN) {
+            clearBreakpointPreview();
+            return;
+        }
+        updateBreakpointPreview(e.target.position?.lineNumber ?? null);
+    });
+    editor.onMouseLeave(() => clearBreakpointPreview());
 
     // ─── Breakpoints section ────────────────────────────────────────────
     function uriBasename(uri: string): string {
@@ -7456,12 +9057,20 @@ async function bootstrap() {
     // Treat that index as the id we surface to the rest of this UI.
     async function refreshDebugView() {
         const frames = await dbg.stackFrames();
+        // Guard against the teardown race: if the user clicked Stop
+        // while we were awaiting stackFrames, stopAll has already
+        // cleared the panels and flipped debugSessionActive. Bail
+        // before we re-render stale frames on top of the cleared state.
+        if (!debugSessionActive) return;
         renderFrames(frames);
         if (frames.length > 0) {
             activeFrameId = 0;
             await focusJoinedDebugLine(frames[0].lineNumber);
+            if (!debugSessionActive) return;
             await refreshScopes(0);
+            if (!debugSessionActive) return;
             await refreshWatches();
+            if (!debugSessionActive) return;
             setDebugEmptyStates(false);
         } else {
             activeFrameId = null;
@@ -7499,6 +9108,9 @@ async function bootstrap() {
 
     async function refreshScopes(frameId: number) {
         const result = await dbg.scopes(frameId);
+        // Same teardown-race guard as refreshDebugView: if Stop landed
+        // while dbg.scopes was in flight, the panels are already gone.
+        if (!debugSessionActive) return;
         // [DEBUG-LOGGING — remove once scope-after-step issue is resolved]
         try {
             const summary = (result?.scopes ?? []).map((s: any) => ({
@@ -7710,11 +9322,14 @@ async function bootstrap() {
         } catch { /* dockview may not be ready yet */ }
     }
 
-    // Same handler runs for both backends — events from the canvas-side
-    // monogame DebugSession come through monoGameHost's rAF drain rather
-    // than the worker postMessage path, but the event shape is identical.
-    monoGameHost.onDebugEvent = (event) => { void onAnyDebugEvent(event); };
-    runner.onDebugEvent = (event) => { void onAnyDebugEvent(event); };
+    // Debug-event subscription used to assign `runner.onDebugEvent` and
+    // `monoGameHost.onDebugEvent` directly here. Both slots are now owned
+    // by the DebugAdapter (created further down once
+    // ensureWebVmReadyForDebug + syncAssetsToRuntime are in scope); the
+    // adapter forwards every event to all subscribers, and we subscribe
+    // `onAnyDebugEvent` to it via `dbg.onDebugEvent(...)` right after
+    // construction. Keep this block as a marker so the search for "where
+    // are debug events wired up" still lands somewhere sensible.
 
     // Fatal monogame tick errors. The iframe's rAF loop has already
     // halted before this fires — we log the full message to the Output
@@ -7765,6 +9380,14 @@ async function bootstrap() {
                 await refreshDebugView();
                 // eslint-disable-next-line no-console
                 console.log('[DBG-EV] BREAKPOINT refreshDebugView done');
+                // Tell observers we paused at this file:line. Phase 2B
+                // — fancier replication (call stack, locals) goes
+                // through this same broadcastDebugState path once the
+                // observer Debug panel is wired to render from it.
+                broadcastDebugState({
+                    paused: true,
+                    currentFile: activeName,
+                });
                 break;
             case 'REV_REQUEST_EXITED':
             case 'complete':
@@ -7775,7 +9398,15 @@ async function bootstrap() {
                 if (currentDebugTestName) {
                     const finishedName = currentDebugTestName;
                     currentDebugTestName = null;
-                    const result = await runner.debugGetTestResult();
+                    // For monogame, the test-result fetch goes through
+                    // monoGameHost; for web, through the LSP/VM iframe via
+                    // runner. The pre-multi-source code only called runner,
+                    // which silently hangs for monogame (no vmTarget) and
+                    // is the reason debug-tests never finalized their rows.
+                    const result = currentProject?.type === 'monogame'
+                        ? await monoGameHost.debugGetTestResult()
+                        : await runner.debugGetTestResult();
+                    console.log('[DBG-EV] complete → test result for', finishedName, result);
                     const e = testEntries.find((t) => t.name === finishedName);
                     if (e && result) {
                         e.status = result.passed ? 'pass' : 'fail';
@@ -7785,6 +9416,14 @@ async function bootstrap() {
                             : (result.failureMessage || result.failureReason || 'Failed');
                         e.failureFrames = result.passed ? undefined : (result.failureFrames || []);
                         renderTests();
+                    } else if (e) {
+                        // No result came back but the session exited — flag
+                        // the row as 'stopped' rather than leaving it stuck
+                        // on 'running' forever.
+                        if (e.status === 'running' || e.status === 'queued') {
+                            e.status = 'stopped';
+                            renderTests();
+                        }
                     }
                 }
                 debugSessionActive = false;
@@ -7795,10 +9434,11 @@ async function bootstrap() {
                 setDebugEmptyStates(true);
                 setDebugButtons();
                 restorePreDebugLayoutIfUnchanged();
+                // Live session: tell observers the debug session is
+                // over. They drop back to "Alice is idle" in the chip.
+                clearBroadcastDebugState();
                 break;
             case 'REV_REQUEST_EXPLODE': {
-                debugSessionActive = false;
-                debugPaused = false;
                 // Filter the synthetic "explode" the bridge throws when
                 // the user clicks Stop mid-`wait ms`: the VM's exception
                 // catch wraps our OperationCanceledException as a runtime
@@ -7807,34 +9447,104 @@ async function bootstrap() {
                 const expMsg = (event.json ?? event.message ?? '') as string;
                 const isTerminateUnwind = /interrupted by terminate/i.test(expMsg);
                 if (isTerminateUnwind) {
+                    // Treat as terminal stop (existing teardown path).
+                    debugSessionActive = false;
+                    debugPaused = false;
                     setDebugStatus('stopped', 'idle');
-                } else {
-                    setDebugStatus('runtime error', 'error');
-                    appendReplLine(expMsg || 'runtime error', 'err');
-                    revealPanel('debug-console');
+                    if (currentDebugTestName) {
+                        const finishedName = currentDebugTestName;
+                        currentDebugTestName = null;
+                        const e = testEntries.find((t) => t.name === finishedName);
+                        if (e) {
+                            e.status = 'stopped';
+                            renderTests();
+                        }
+                    }
+                    setCurrentLine(null);
+                    clearDebugInspectionPanels();
+                    setDebugEmptyStates(true);
+                    setDebugButtons();
+                    restorePreDebugLayoutIfUnchanged();
+                    break;
                 }
-                // Debug-test session exploded: flag the test row.
-                // Terminate-unwind → stopped (purple); a real runtime
-                // error → fail (red) with the explosion message.
+
+                // Real runtime error. The C# DebugSession already flips
+                // pauseRequestedByMessageId before sending this event
+                // (DebugSession.cs:1919 + 2106), so the VM is paused at
+                // the failing instruction with frame/stack intact. Keep
+                // the session alive in a paused state so the user can
+                // poke around locals + call stack before deciding to
+                // abort. Abort tears down via stopAll() on the zone
+                // widget's button.
+                debugPaused = true;
+                setDebugStatus('runtime error', 'error');
+
+                // expMsg arrives as the full debug-envelope JSON (e.g.
+                // `{"id":-2,"type":6,"message":"invalid-address. ins=[240]
+                // …"}`). summarizeCrash parses it, picks out the inner
+                // message, classifies the error kind, and returns a
+                // human-readable title + structured detail. The REPL,
+                // test-row failure text, and crash overlay all share
+                // the cleaned-up view — no caller ever has to look at
+                // the raw envelope.
+                const summary = summarizeCrash(expMsg);
+                const replText = summary.detail
+                    ? `${summary.title} — ${summary.detail}`
+                    : summary.title;
+                appendReplLine(replText, 'err');
+                revealPanel('debug-console');
+
+                // Finalize a debug-test row immediately — the test has
+                // failed regardless of whether the user lingers in the
+                // paused session for inspection. Clear the name so the
+                // eventual stopAll/terminate doesn't double-process it.
                 if (currentDebugTestName) {
                     const finishedName = currentDebugTestName;
                     currentDebugTestName = null;
                     const e = testEntries.find((t) => t.name === finishedName);
                     if (e) {
-                        if (isTerminateUnwind) {
-                            e.status = 'stopped';
-                        } else {
-                            e.status = 'fail';
-                            e.failure = expMsg || 'runtime error';
-                        }
+                        e.status = 'fail';
+                        e.failure = replText;
                         renderTests();
                     }
                 }
-                setCurrentLine(null);
-                clearDebugInspectionPanels();
-                setDebugEmptyStates(true);
+
                 setDebugButtons();
-                restorePreDebugLayoutIfUnchanged();
+
+                // Hydrate frames/scopes/watches just like a breakpoint
+                // hit, then paint the red crash overlay on the failing
+                // line. refreshDebugView calls focusJoinedDebugLine,
+                // which paints the yellow .fade-current decoration — we
+                // clear it right before the crash overlay's red one so
+                // the two don't visually overlap on the same line.
+                await refreshDebugView();
+
+                const insIndex = extractInsIndex(summary.inner);
+                if (insIndex !== null && editor) {
+                    const resolved = await dbg.resolveInstruction(insIndex);
+                    if (resolved) {
+                        const target = projectSourceMap
+                            ? projectSourceMap.fromProject(resolved.lineNumber, resolved.charNumber)
+                            : { name: activeName, line: resolved.lineNumber, character: resolved.charNumber };
+                        if (target) {
+                            if (target.name && target.name !== activeName) {
+                                try { await openFile(workspace, target.name); }
+                                catch { /* leave overlay on whatever's active */ }
+                            }
+                            setCurrentLine(null);
+                            if (editor) {
+                                showCrashOverlay({
+                                    editor,
+                                    line: target.line + 1,
+                                    kind: summary.kind,
+                                    title: summary.title,
+                                    detail: summary.detail,
+                                    onAbort: () => { void stopAll(); },
+                                });
+                            }
+                        }
+                    }
+                }
                 break;
             }
             case 'PROTO_ACK': {
@@ -7900,77 +9610,31 @@ async function bootstrap() {
         }
     };
 
-    const dbg = {
-        start: async (source: string): Promise<any> => {
-            if (currentProject?.type === 'monogame') {
-                // Push assets first; the canvas runtime needs the dict
-                // populated *before* the user program's `texture`/`sfx`
-                // commands run inside Game1.LoadProgram (the very next call).
-                await syncAssetsToRuntime();
-                const s = await monoGameHost.debugStart(source);
-                return JSON.parse(s);
-            }
-            await ensureWebVmReadyForDebug();
-            return runner.debugStart(source);
-        },
-        startTest: async (source: string, testName: string): Promise<any> => {
-            if (currentProject?.type === 'monogame') {
-                // Test debug on the canvas needs Game1 not actively
-                // running the user program — sync assets, then ask the
-                // canvas runtime to swap in a fresh test-VM. See
-                // Index.Debug.cs's DebugStartTest.
-                await syncAssetsToRuntime();
-                const s = await monoGameHost.debugStartTest(source, testName);
-                return JSON.parse(s);
-            }
-            await ensureWebVmReadyForDebug();
-            return runner.debugStartTest(source, testName);
-        },
-        continue: (): Promise<any> =>
-            currentProject?.type === 'monogame'
-                ? monoGameHost.debugContinue()
-                : runner.debugContinue(),
-        pause: (): Promise<any> =>
-            currentProject?.type === 'monogame'
-                ? monoGameHost.debugPause()
-                : runner.debugPause(),
-        step: (kind: 'over' | 'in' | 'out'): Promise<any> =>
-            currentProject?.type === 'monogame'
-                ? monoGameHost.debugStep(kind)
-                : runner.debugStep(kind),
-        terminate: (): Promise<any> =>
-            currentProject?.type === 'monogame'
-                ? monoGameHost.debugTerminate()
-                : runner.debugTerminate(),
-        setBreakpoints: (payload: any): Promise<any> =>
-            currentProject?.type === 'monogame'
-                ? monoGameHost.debugSetBreakpoints(JSON.stringify(payload))
-                : runner.debugSetBreakpoints(payload),
-        stackFrames: (): Promise<any> =>
-            currentProject?.type === 'monogame'
-                ? monoGameHost.debugStackFrames().then((s) => JSON.parse(s))
-                : runner.debugStackFrames(),
-        scopes: (frameId: number): Promise<any> =>
-            currentProject?.type === 'monogame'
-                ? monoGameHost.debugScopes(frameId).then((s) => JSON.parse(s))
-                : runner.debugScopes(frameId),
-        expandVariable: (variableId: number): Promise<any> =>
-            currentProject?.type === 'monogame'
-                ? monoGameHost.debugVariableExpansion(variableId).then((s) => JSON.parse(s))
-                : runner.debugExpandVariable(variableId),
-        eval: (frameId: number, expression: string): Promise<any> =>
-            currentProject?.type === 'monogame'
-                ? monoGameHost.debugEval(frameId, expression).then((s) => JSON.parse(s))
-                : runner.debugEval(frameId, expression),
-        repl: (frameId: number, code: string): Promise<any> =>
-            currentProject?.type === 'monogame'
-                ? monoGameHost.debugRepl(frameId, code).then((s) => JSON.parse(s))
-                : runner.debugRepl(frameId, code),
-        setVariable: (frameId: number, variableId: number, rhs: string): Promise<any> =>
-            currentProject?.type === 'monogame'
-                ? monoGameHost.debugSetVariable(frameId, variableId, rhs).then((s) => JSON.parse(s))
-                : runner.debugSetVariable(frameId, variableId, rhs),
-    };
+    // ── Debug adapter ────────────────────────────────────────────────────
+    // The active debug surface. Currently always the local adapter (web
+    // runner + monogame iframe dispatch). Phase B will swap this for a
+    // RemoteDebugAdapter when another peer in a live session starts
+    // debugging — the rest of the code path (commands, event handlers)
+    // doesn't need to know which variant is active.
+    //
+    // Kept under the `dbg` name so existing call sites (~30 sites
+    // throughout the bootstrap) don't churn. `localDebugAdapter` is
+    // exposed alongside so the future adapter swap can fall back to
+    // it for host-side RPC handlers that always execute locally.
+    const localDebugAdapter: DebugAdapter = createLocalDebugAdapter({
+        runner,
+        monoGameHost,
+        getProjectType: () => (currentProject?.type as 'web' | 'monogame' | null) ?? null,
+        ensureWebVmReady: ensureWebVmReadyForDebug,
+        syncMonoGameAssets: syncAssetsToRuntime,
+    });
+    const dbg: DebugAdapter = localDebugAdapter;
+    // Single subscription point: the adapter forwards events from both
+    // the web runner and the monogame iframe through this handler. Used
+    // to be two direct assignments to `runner.onDebugEvent` /
+    // `monoGameHost.onDebugEvent` earlier in the bootstrap; those have
+    // been removed because the adapter now owns those slots.
+    dbg.onDebugEvent((event) => { void onAnyDebugEvent(event); });
 
     const startDebug = async () => {
         const source = await getProjectSource();
@@ -7992,6 +9656,9 @@ async function bootstrap() {
     // per-test Debug share the same "prep UI → start → sync bps → continue"
     // sequence.
     async function beginDebugSession(starter: () => Promise<DebugStartResult>): Promise<boolean> {
+        // Clear any crash overlay from a previous run before booting a
+        // fresh session.
+        hideCrashOverlay();
         // Debug Mode semantic layout: focus Debug, Game, and Debug Console
         // (or apply the user's saved Debug Mode override). Called once per
         // session start so a per-test debug also opts into Debug Mode —
@@ -8023,11 +9690,19 @@ async function bootstrap() {
         debugPaused = true;
         setDebugStatus('starting', 'paused');
         setDebugButtons();
+        // Live-session: mark this peer as the debug initiator. Observers
+        // will see "Alice is debugging" via the banner; their step / eval
+        // / inspect actions are still routed to the local debug runtime
+        // for now (Phase 2C RPC plumbing is in place but the host-side
+        // command handlers aren't wired yet — see the docs at the end of
+        // the Live Session panel).
+        broadcastDebugState({ initiatorClientId: liveSessionHandle?.getSession()?.awareness.clientID ?? null, paused: true });
         syncBreakpointsToWorker();
         await dbg.continue();
         debugPaused = false;
         setDebugStatus('running', 'running');
         setDebugButtons();
+        broadcastDebugState({ paused: false });
         return true;
     }
 
@@ -8156,7 +9831,22 @@ async function bootstrap() {
     // debug session AND pauses any running monogame canvas. Both Stop
     // buttons (header + floating debug toolbar) call this.
     async function stopAll() {
-        if (debugSessionActive) {
+        // Tear down any active crash overlay first — both the Abort
+        // button (which calls stopAll) and external Stop clicks should
+        // clear the red line decoration + content widget before the
+        // session goes away.
+        hideCrashOverlay();
+        // Snapshot whether a debug session was running BEFORE we flip
+        // the flag, so the conditional teardown still runs. We flip
+        // debugSessionActive synchronously (rather than after awaiting
+        // dbg.terminate) so any in-flight refreshDebugView / refresh-
+        // Scopes calls see the session as gone when their dbg.* await
+        // resolves and bail out — otherwise they'd re-render stale
+        // frames/vars on top of the panels we're about to clear.
+        const wasDebugActive = debugSessionActive;
+        debugSessionActive = false;
+        debugPaused = false;
+        if (wasDebugActive) {
             // If a debug-test session is in flight, flag the test row
             // as 'stopped' BEFORE we tear down (the explosion handler
             // will also catch this if the unwind comes through that
@@ -8171,8 +9861,6 @@ async function bootstrap() {
                 currentDebugTestName = null;
             }
             await dbg.terminate();
-            debugSessionActive = false;
-            debugPaused = false;
             setDebugStatus('stopped', 'idle');
             setCurrentLine(null);
             clearDebugInspectionPanels();
@@ -8281,6 +9969,17 @@ async function bootstrap() {
             triggerUploadPicker();
         };
         menu.append(upload);
+
+        const browseCatalog = document.createElement('button');
+        browseCatalog.className = 'source-badge-item';
+        browseCatalog.type = 'button';
+        browseCatalog.textContent = 'Browse catalog…';
+        browseCatalog.onclick = (e) => {
+            e.stopPropagation();
+            closeAnyFileMenu();
+            openCatalogPanel();
+        };
+        menu.append(browseCatalog);
         document.body.append(menu);
         menu.style.left = `${x}px`;
         menu.style.top = `${y}px`;
@@ -8643,12 +10342,13 @@ async function bootstrap() {
     };
 
     // Tests inspect the last debug event by polling `window.__debugLastEvent`.
-    // Chain into our existing onDebugEvent so the UI keeps working.
-    const _origOnDebugEvent = runner.onDebugEvent;
-    runner.onDebugEvent = (event) => {
+    // Subscribe via the adapter so the adapter remains the sole owner
+    // of `runner.onDebugEvent` / `monoGameHost.onDebugEvent` — a direct
+    // assignment here would silently shadow the adapter's forwarder and
+    // break the main UI's event handler.
+    dbg.onDebugEvent((event) => {
         (window as any).__debugLastEvent = event;
-        if (_origOnDebugEvent) _origOnDebugEvent(event);
-    };
+    });
 
     (window as any).__fadeBootstrapDone = true;
 }

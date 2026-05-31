@@ -26,6 +26,52 @@ export interface ChangelogEntry {
 }
 
 export const CHANGELOG: ChangelogEntry[] = [
+    // {
+    //     version: '0.1.0',
+    //     date: '2026-05-29',
+    //     notes: [
+    //         'Initial Release! ',
+    //     ],
+    // },
+    {
+        version: '0.3.1',
+        date: '2026-06-01',
+        fixed: [
+            'Live collaboration works when workspace already exists.',
+        ],
+    },
+     {
+        version: '0.3.0',
+        date: '2026-06-01',
+        added: [
+            'Texture support with limited compression options.',
+            'Audio support with limited compression options.',
+            'Limited Live collaboration support (no Firefox)',
+            'Asset catalog'
+        ],
+        changed: [
+            'When fatal error occurs, program halts on exception line.'
+        ],
+        fixed: [
+            'Block comment hotkey works.',
+            'Large arrays in Debug window do not overflow view.',
+            'Improved type-aheads.'
+        ],
+    },
+    {
+        version: '0.2.0',
+        date: '2026-05-29',
+        fixed: [
+            'Chrome no longer reports security issues on monogame.',
+            'Internal links in the Language help docs jump to the right spot.',
+            'Debugging tests now show test resolution.'
+        ],
+        changed: [
+            'Clicking on a test header jumps focus to the test',
+            'Breakpoint gutter is visually distinct and has a cursor pointer.',
+            'Site title changed to `Fade Land` and added favicon. '
+        ]
+    },
     {
         version: '0.1.0',
         date: '2026-05-29',

@@ -1,11 +1,14 @@
 // Compute completion items at a position. Builds a CompletionContext for the
 // existing FadeBasic.Lsp.LSPUtil.GetCompletions which does the real work.
 
+using System;
 using System.Collections.Generic;
 using System.Linq;
 using FadeBasic;
 using FadeBasic.Ast;
 using FadeBasic.Lsp;
+using FadeBasic.SourceGenerators; // FadeBasicCommandUsage
+using FadeBasic.Virtual;          // TypeCodes
 using LspCompletionContext = FadeBasic.Lsp.CompletionContext;
 
 namespace FadeBasic.LSP.Core.Handlers
@@ -83,7 +86,284 @@ namespace FadeBasic.LSP.Core.Handlers
             };
 
             var portable = LSPUtil.GetCompletions(context);
+
+            // Command-argument rescue. When the leftToken is a fully-
+            // resolved CommandWord but the cursor sits past its end
+            // (typical case: trailing whitespace right after the command
+            // name, e.g. `sprite |`), Visit() returns false on the
+            // CommandStatement node — the cursor isn't strictly inside
+            // [StartToken, EndToken] because EndToken's position is its
+            // *start* char, not its end char. The switch above then sees
+            // ProgramNode + a CommandWord leftToken, which matches none
+            // of its cases, and returns empty.
+            //
+            // Three distinct cursor positions around a CommandWord need
+            // different completion sets — and the AST switch above can't
+            // tell them apart because Visit() uses StartToken/EndToken
+            // (which are TOKEN positions, not span endpoints):
+            //
+            //   1. cursor INSIDE or AT END of the CommandWord (`sprit|`,
+            //      `sprite|`): the user is still typing or has just
+            //      finished typing a command name. Show the command list
+            //      so they can refine / pick a different one. Variables
+            //      are NOT relevant yet — they haven't moved to the arg
+            //      slot.
+            //
+            //   2. cursor PAST CommandWord on the same line (`sprite |`):
+            //      the user is in the first-arg slot. Show variables /
+            //      symbols matching the first parameter's type. Variables
+            //      should dominate; the command list adds noise here.
+            //
+            //   3. cursor on a different line entirely: leftToken happens
+            //      to be a CommandWord just because it was the most-recent
+            //      token, but it's no longer relevant. Don't fire anything.
+            //
+            // (1) is handled below as `cursorAtCommandEnd`; (2) as
+            // `cursorPastCommandEnd`. The cursor-inside-the-word case
+            // (`sprit|`) doesn't hit either branch because the lexer can't
+            // produce a CommandWord for a partial name — leftToken there
+            // is VariableGeneral, and Monaco's cached completion list
+            // from when the user last typed a trigger character handles
+            // filtering.
+            var isOnCommandLine =
+                leftToken.type == LexemType.CommandWord
+                && leftToken.lineNumber == line;
+            var cursorPastCommandEnd =
+                isOnCommandLine && leftToken.EndCharNumber < character;
+            var cursorAtCommandEnd =
+                isOnCommandLine && leftToken.EndCharNumber == character;
+
+            if (cursorPastCommandEnd)
+            {
+                // Case 2: arg-slot rescue. Surface first-parameter
+                // symbols/functions/commands for the command word the
+                // user just finished typing.
+                var cmdName = leftToken.caseInsensitiveRaw
+                              ?? leftToken.raw?.ToLowerInvariant();
+                if (!string.IsNullOrEmpty(cmdName))
+                {
+                    var found = false;
+                    var cmd = default(CommandInfo);
+                    foreach (var c in doc.Commands.Commands)
+                    {
+                        if (c.name != null
+                            && c.name.Equals(cmdName, StringComparison.OrdinalIgnoreCase))
+                        {
+                            cmd = c;
+                            found = true;
+                            break;
+                        }
+                    }
+                    if (found && cmd.args != null && cmd.args.Length > 0)
+                    {
+                        var paramItems = LSPUtil.GetCommandParameterCompletions(
+                            cmd,
+                            new List<int>(),
+                            new List<IExpressionNode>(),
+                            context);
+                        var seen = new HashSet<string>(
+                            portable.Select(p => p.Label ?? string.Empty));
+                        foreach (var p in paramItems)
+                        {
+                            var label = p.Label ?? string.Empty;
+                            if (seen.Contains(label)) continue;
+                            seen.Add(label);
+                            portable.Add(p);
+                        }
+                    }
+                }
+            }
+            else if (cursorAtCommandEnd)
+            {
+                // Case 1: cursor at end of CommandWord. Surface every
+                // command + function so Monaco can filter by the typed
+                // word and the user sees `sprite` / `sprite height` /
+                // etc. We bypass GetStatementCompletions because it
+                // hardcodes TypeInfo.Void as the wanted return type and
+                // therefore filters out every non-void-returning command
+                // (`screen width` returns int, etc.) — exactly the items
+                // a user mid-typing a command name needs to see. Using
+                // TypeInfo.Unset opens the filter completely; type-
+                // checking happens when the command is actually used.
+                AddAllCommandsAndFunctions(portable, context);
+            }
+
+            // Multi-word command rescue. The lexer only collapses a token
+            // span into a CommandWord when the FULL command name has been
+            // typed (HandleCommandNames in Lexer.cs only rewrites at
+            // isValidCommand=true leaves). Halfway through `set sprite
+            // render target` the lexer sees `set` + `sprite` as two plain
+            // identifiers, the parser routes the AST through Assignment or
+            // a fresh expression node, and LSPUtil.GetCompletions's switch
+            // ends up in a case that returns symbol/expression completions
+            // — not the command list. Result: the user types `set sprite`
+            // and the rest of the command name disappears from the
+            // dropdown until they backspace.
+            //
+            // Sniff the line text from the cursor backwards for a
+            // contiguous identifier+spaces run; if it spans more than one
+            // word, treat it as a partial multi-word command prefix and
+            // union in commands whose name starts with it. The Monaco /
+            // VSCode side then sees these alongside whatever the AST
+            // walk yielded.
+            var prefix = ReadMultiWordCommandPrefix(doc, line, character);
+            // When the leftToken is a complete CommandWord AND the cursor
+            // is sitting in the trailing whitespace right after it (no
+            // character of the next word typed yet), suppress the multi-
+            // word continuation rescue. The command-arg rescue above has
+            // already populated variable / parameter completions for the
+            // first arg slot, and those are what the user wants to see
+            // first. Monaco's fuzzy scorer would otherwise rank command
+            // continuations (whose filterText starts with the typed
+            // prefix) above the variables — score outranks sortText.
+            // The user can type the first character of the next word to
+            // bring continuations back.
+            var suppressMultiWord =
+                leftToken.type == LexemType.CommandWord
+                && !string.IsNullOrEmpty(prefix)
+                && prefix.EndsWith(" ");
+            if (!string.IsNullOrEmpty(prefix) && !suppressMultiWord)
+            {
+                var seenLabels = new HashSet<string>(
+                    portable.Select(p => p.Label ?? string.Empty));
+                foreach (var cmd in doc.Commands.Commands)
+                {
+                    // Mirror GetCommandCallCompletions's usage filter so
+                    // we don't surface runtime commands inside a `#`
+                    // macro block (or vice versa).
+                    if (isMacro && !cmd.usage.HasFlag(FadeBasicCommandUsage.Macro)) continue;
+                    if (!isMacro && !cmd.usage.HasFlag(FadeBasicCommandUsage.Runtime)) continue;
+                    if (cmd.name == null) continue;
+                    if (cmd.name.Length <= prefix.Length) continue;
+                    if (!cmd.name.StartsWith(prefix, StringComparison.OrdinalIgnoreCase)) continue;
+                    // Skip if the same command already came back through
+                    // the switch — avoids stacking duplicates when the
+                    // AST happened to route correctly.
+                    if (seenLabels.Contains(cmd.name)) continue;
+                    var hasReturn = cmd.returnType != TypeCodes.VOID;
+                    portable.Add(new PortableCompletionItem
+                    {
+                        InsertTextFormat = PortableInsertTextFormat.Snippet,
+                        Kind = PortableCompletionKind.Interface,
+                        Label = cmd.name,
+                        // FilterText carries the typed prefix so Monaco's
+                        // matcher scores these as exact-prefix hits even
+                        // though the cursor's "current word" is just the
+                        // last partial token. Without this, "set spr" →
+                        // "set sprite render target" would score as a
+                        // mid-substring match and rank below noise.
+                        FilterText = cmd.name,
+                        InsertText = cmd.name + (hasReturn ? "($0)" : ""),
+                        // Sort just above the other command-call entries
+                        // so the partial-prefix match floats to the top.
+                        SortText = "b",
+                        TriggerParameterHints = true,
+                    });
+                }
+            }
+
+            // Statement-leading-identifier safety net. When the user has
+            // typed something like a single letter `s` at the start of a
+            // line, the parser interprets it as the LHS of an unfinished
+            // assignment. LSPUtil.GetCompletions routes that AST shape to
+            // GetAssignmentCompletions, which early-returns empty because
+            // LeftToken isn't `=`. None of the rescues above match either
+            // (leftToken is VariableGeneral, not CommandWord; no spaces
+            // in the prefix). Result: zero completions, even though the
+            // user obviously wants to see `sprite`, `sin`, etc.
+            //
+            // If nothing else has populated `portable` and the leftToken
+            // sits on the current line at the start of a statement-leading
+            // position, fall back to the full command + function list so
+            // Monaco can filter by what was typed. Same reasoning as the
+            // cursorAtCommandEnd branch — using GetStatementCompletions
+            // here would drop every non-void command.
+            if (portable.Count == 0
+                && leftToken.lineNumber == line
+                && leftToken.EndCharNumber <= character)
+            {
+                AddAllCommandsAndFunctions(portable, context);
+            }
+
             return portable.Select(ToLspCompletionItem).ToList();
+        }
+
+        // Shared helper for the cursorAtCommandEnd branch + the safety-
+        // net fallback: load every command + function (filtered by the
+        // doc's macro/runtime usage flags) regardless of return type,
+        // dedup by label, and append to `portable`. Using TypeInfo.Unset
+        // on both LSPUtil helpers disables the return-type filter that
+        // GetStatementCompletions's hardcoded TypeInfo.Void imposes —
+        // statement-level positions should still see int/string-returning
+        // commands for filtering, even if calling them as a bare
+        // statement would discard the return value.
+        private static void AddAllCommandsAndFunctions(
+            List<PortableCompletionItem> portable,
+            LspCompletionContext context)
+        {
+            var seen = new HashSet<string>(
+                portable.Select(p => p.Label ?? string.Empty));
+            foreach (var pair in LSPUtil.GetCommandCallCompletions(TypeInfo.Unset, context))
+            {
+                var label = pair.item.Label ?? string.Empty;
+                if (seen.Contains(label)) continue;
+                seen.Add(label);
+                portable.Add(pair.item);
+            }
+            foreach (var pair in LSPUtil.GetFunctionCallCompletions(TypeInfo.Unset, context.Scope))
+            {
+                var label = pair.item.Label ?? string.Empty;
+                if (seen.Contains(label)) continue;
+                seen.Add(label);
+                portable.Add(pair.item);
+            }
+        }
+
+        // Scan the line text backwards from the cursor for a contiguous
+        // run of identifier characters and single spaces. Returns the
+        // prefix only when it contains at least one space (multi-word) —
+        // single-word prefixes are already handled by the existing switch
+        // path. Returns null/empty when the prefix isn't a plausible
+        // command-name fragment (e.g. starts with a digit, contains an
+        // operator, or has no spaces).
+        private static string ReadMultiWordCommandPrefix(FadeDocument doc, int line, int character)
+        {
+            if (doc?.Text == null) return string.Empty;
+            // Carve out just the current line so we don't accidentally walk
+            // over a newline boundary on documents with very long single
+            // lines (split is fine — we only need a few chars at the end).
+            var lines = doc.Text.Split('\n');
+            if (line < 0 || line >= lines.Length) return string.Empty;
+            var lineText = lines[line];
+            var endCol = character < lineText.Length ? character : lineText.Length;
+            if (endCol <= 0) return string.Empty;
+
+            int start = endCol;
+            while (start > 0)
+            {
+                var c = lineText[start - 1];
+                // Allow identifier chars + single spaces. Stop on anything
+                // else (operators, parens, punctuation) — that's a strong
+                // signal we're not in a command-name context anymore.
+                if (char.IsLetterOrDigit(c) || c == '_' || c == ' ')
+                {
+                    start--;
+                    continue;
+                }
+                break;
+            }
+            // Trim only the LEFT side; trailing/internal spaces are part of
+            // the user's typed prefix and matter for the StartsWith check.
+            var prefix = lineText.Substring(start, endCol - start).TrimStart();
+            if (prefix.Length == 0) return string.Empty;
+            // The first character must be a letter (or underscore) —
+            // commands always start with a letter; bailing here avoids
+            // matching purely-numeric runs like " 12 34" at the cursor.
+            var head = prefix[0];
+            if (!char.IsLetter(head) && head != '_') return string.Empty;
+            // Multi-word only — single-word fragments are already covered
+            // by the normal switch path's GetCommandCallCompletions.
+            return prefix.Contains(' ') ? prefix : string.Empty;
         }
 
         private static LspCompletionItem ToLspCompletionItem(PortableCompletionItem p)

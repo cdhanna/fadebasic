@@ -614,7 +614,7 @@ export function mountCollaboration(opts: CollaborationOptions): CollaborationCon
         }
 
         if (!user) {
-            body.append(p('Sign in with a GitHub Personal Access Token to publish this project, sync with collaborators, and back up your work.'));
+            body.append(p('Connect your GitHub account.'));
         } else if (!isConnected(index)) {
             body.append(renderNotConnected());
         } else {

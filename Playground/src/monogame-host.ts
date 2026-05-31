@@ -35,7 +35,14 @@
 //   debug-eval { frameId, expression, id }  debug-eval-result { id, result }
 //   debug-repl { frameId, code, id }        debug-repl-result { id, result }
 //   debug-set-variable { frameId, variableId, rhs, id } debug-set-variable-result { id, result }
+//   get-debug-test-result { id }            get-debug-test-result-result { id, result }
+//   compile-for-run { source, id }          compile-for-run-result { id, result }
+//   begin-pending-program { id }            begin-pending-program-result { id, result }
+//   get-content-build-plan { id }           get-content-build-plan-result { id, result }
 //   register-asset { name, bytes }          (no reply)
+//   register-audio { name, bytes, id }      register-audio-result { id, result }
+//   unregister-asset { name }               (no reply)
+//   unregister-audio { name }               (no reply)
 //   clear-assets                            (no reply)
 //
 // Streaming events the iframe pushes unprompted:
@@ -68,6 +75,76 @@ export interface MonoGameTestResult {
     failureMessage: string | null;
     failureReason: string | null;
     failureSourceText: string | null;
+    // Source-located failure frames (DebugData-resolved call-stack at the
+    // point the test failed). Optional because run-tests batches don't
+    // include them today — only the debug-test result fetch via
+    // GetDebugTestResult on the monogame side does.
+    failureFrames?: Array<{
+        functionName: string;
+        lineNumber: number;
+        charNumber: number;
+        instructionIndex: number;
+    }>;
+}
+
+// Snapshot of ContentSystem returned by CompileForRun / GetContentBuildPlan.
+// Mirrors the C# ContentEntry struct verbatim so callers can interpret
+// per-content-kind parameters the same way the desktop content builder
+// does (e.g. parameters['Compression'] for textures).
+export interface MonoGameContentEntry {
+    path: string;
+    name: string;
+    importer: string;
+    processor: string;
+    parameters: Record<string, string>;
+}
+
+export interface MonoGameContentPlan {
+    defaultCompression: string;
+    entries: MonoGameContentEntry[];
+}
+
+export interface MonoGameContentPlanResult {
+    ok: boolean;
+    error: string | null;
+    plan: MonoGameContentPlan;
+}
+
+function normalizePlan(raw: any): MonoGameContentPlan {
+    return {
+        defaultCompression:
+            typeof raw?.defaultCompression === 'string' ? raw.defaultCompression : 'auto',
+        entries: Array.isArray(raw?.entries)
+            ? raw.entries.map((e: any) => ({
+                path: String(e?.path ?? ''),
+                name: String(e?.name ?? ''),
+                importer: String(e?.importer ?? 'Auto'),
+                processor: String(e?.processor ?? 'Auto'),
+                parameters: (e?.parameters && typeof e.parameters === 'object')
+                    ? Object.fromEntries(
+                        Object.entries(e.parameters).map(([k, v]) => [String(k), String(v ?? '')]),
+                    )
+                    : {},
+            }))
+            : [],
+    };
+}
+
+function parsePlanResult(resultJson: string): MonoGameContentPlanResult {
+    try {
+        const parsed = JSON.parse(resultJson);
+        return {
+            ok: !!parsed?.ok,
+            error: typeof parsed?.error === 'string' ? parsed.error : null,
+            plan: normalizePlan(parsed?.plan),
+        };
+    } catch (e) {
+        return {
+            ok: false,
+            error: 'CompileForRun reply was not valid JSON: ' + (e as Error).message,
+            plan: { defaultCompression: 'auto', entries: [] },
+        };
+    }
 }
 
 export interface MonoGameRunTestsResult {
@@ -161,16 +238,27 @@ class MonoGameHost {
             frame.style.width = '100%';
             frame.style.height = '100%';
             frame.style.display = 'block';
-            // sandbox without allow-same-origin gives the iframe a null/opaque
-            // origin. Chrome's Site Isolation puts null-origin frames in a
-            // separate renderer process, so the MonoGame game loop (TickDotNet +
-            // KNI GL rendering) no longer competes with Monaco on the main thread.
-            // postMessage still works across the boundary — monogame-host.ts
+            // Sandbox intent: keep top-navigation / popups / modals off-limits
+            // so the monogame template can't escape into the host page. We
+            // include allow-same-origin because Blazor's dotnet.js reads
+            // `Window.caches` (and `sessionStorage`) during boot — a null-origin
+            // iframe throws a SecurityError on either access and aborts with
+            // "Failed to start platform". (The previous version of this code
+            // tried to omit allow-same-origin for Chrome Site-Isolation, but
+            // that path also breaks Blazor; if/when we want process isolation
+            // back, the route is COOP/COEP headers on a real origin, not the
+            // null-origin sandbox trick.)
+            // postMessage still works across the sandbox — monogame-host.ts
             // already uses '*' as the target origin throughout.
-            // allow-same-origin is intentionally omitted; that's what triggers
-            // process isolation. In production the runtime loads standalone (no
-            // parent Playground page), so no sandbox is needed there.
-            frame.setAttribute('sandbox', 'allow-scripts allow-pointer-lock allow-fullscreen allow-autoplay');
+            frame.setAttribute('sandbox', 'allow-scripts allow-pointer-lock allow-same-origin');
+            // Fullscreen + autoplay aren't sandbox tokens; they're
+            // Permissions-Policy features granted via `allow=`. Chrome
+            // (and the spec) reject them as sandbox values with a parse
+            // error in the console. Express them on the right attribute.
+            frame.setAttribute('allow', 'fullscreen; autoplay');
+            // Legacy fullscreen attribute too — some older Chromium builds
+            // honor `allowfullscreen` separately from Permissions Policy.
+            frame.setAttribute('allowfullscreen', '');
             // Append to the content wrapper (below the game toolbar) so the
             // iframe fills #mg-game-content rather than the full #mg-blazor-root.
             const content = document.getElementById('mg-game-content') ?? root;
@@ -331,6 +419,54 @@ class MonoGameHost {
         }
     }
 
+    // Two-phase run for the asset pipeline. The playground calls these
+    // in sequence:
+    //
+    //   const plan = await mg.compileForRun(source);
+    //   await registerAssetsForPlan(plan);   // PNG → XNB + registerAsset
+    //   await mg.beginPendingProgram();
+    //
+    // CompileForRun on the C# side resets ContentSystem.entries, runs the
+    // macro pass, and stashes the FadeRuntimeContext so BeginPendingProgram
+    // can hand it to Game1 once assets are in place. Compile errors and an
+    // empty plan are both surfaced through the returned envelope.
+    async compileForRun(source: string): Promise<MonoGameContentPlanResult> {
+        await this.ensureBooted();
+        const resultJson = await this.call<string>({ type: 'compile-for-run', source });
+        return parsePlanResult(resultJson);
+    }
+
+    /** Read the most recent post-compile plan without re-running the
+     *  compile. Useful when the editor needs to retry asset registration
+     *  after a transient failure. Returns the empty plan when no compile
+     *  is pending. */
+    async getContentBuildPlan(): Promise<MonoGameContentPlan> {
+        if (!this.isReady()) return { defaultCompression: 'auto', entries: [] };
+        const resultJson = await this.call<string>({ type: 'get-content-build-plan' });
+        try {
+            const parsed = JSON.parse(resultJson);
+            return normalizePlan(parsed);
+        } catch {
+            return { defaultCompression: 'auto', entries: [] };
+        }
+    }
+
+    async beginPendingProgram(): Promise<boolean> {
+        await this.ensureBooted();
+        // BeginPendingProgram is declared `public bool` on the C# side.
+        // Blazor's JSInterop hands primitive bool returns back as a JS
+        // boolean — NOT a JSON string. Earlier code here treated the
+        // reply as a string and called .trim() on it, which threw
+        // "(intermediate value).trim is not a function" and prevented
+        // every monogame Run from actually starting (the assets got
+        // registered but the iframe's _pendingContext was never swapped
+        // into Game1). Tolerate both shapes defensively in case a future
+        // refactor routes through JSON.
+        const result = await this.call<boolean | string>({ type: 'begin-pending-program' });
+        if (typeof result === 'boolean') return result;
+        return String(result ?? '').trim().toLowerCase() === 'true';
+    }
+
     // Push a single asset (bare name, no extension) + its XNB bytes into the
     // runtime's BrowserContentManager. Page-side glue (main.ts pushAssets)
     // calls this once per `.xnb` in the project before LoadProgram so any
@@ -351,6 +487,46 @@ class MonoGameHost {
     async clearAssets(): Promise<void> {
         if (!this.isReady()) return;
         this.post({ type: 'clear-assets' });
+    }
+
+    /** Evict a single texture/font asset from the iframe's
+     *  BrowserContentManager — both the registered bytes and any
+     *  cached Texture2D/SpriteFont. Use after the source bytes have
+     *  changed (or the asset was deleted) so a follow-up
+     *  registerAsset is picked up by `Content.Load`. Fire-and-forget;
+     *  the runtime side handles missing names gracefully. */
+    async unregisterAsset(name: string): Promise<void> {
+        if (!this.isReady()) return;
+        this.post({ type: 'unregister-asset', name });
+    }
+
+    /** Same idea for audio — drop the decoded AudioBuffer keyed by
+     *  `name`. Unchanged audio assets stay cached across Runs so we
+     *  don't re-run `decodeAudioData` on every Run. */
+    async unregisterAudio(name: string): Promise<void> {
+        if (!this.isReady()) return;
+        this.post({ type: 'unregister-audio', name });
+    }
+
+    /** Push raw audio source bytes (MP3/OGG/WAV/FLAC/AAC) to the
+     *  iframe's Web Audio host. The iframe decodes via Web Audio's
+     *  decodeAudioData and stores the AudioBuffer keyed by `name` — the
+     *  same name fbasic later passes to `load sfx clip`. The decode is
+     *  async, so this returns a Promise the caller awaits before
+     *  unblocking BeginPendingProgram. Replaces the previous XNB-wrapped
+     *  audio path entirely; the iframe's window.fadeAudio is the new
+     *  audio backend on browser builds. */
+    async registerAudio(name: string, bytes: Uint8Array): Promise<boolean> {
+        await this.ensureBooted();
+        const copy = bytes.slice();
+        const result = await this.call<unknown>(
+            { type: 'register-audio', name, bytes: copy },
+            [copy.buffer],
+        );
+        // The iframe replies with a JS boolean (Blazor-style primitive
+        // return) — tolerate both shapes defensively.
+        if (typeof result === 'boolean') return result;
+        return String(result ?? '').trim().toLowerCase() === 'true';
     }
 
     /** Pauses the game tick (no VM work) but keeps KNI + Game1 warm so the
@@ -430,6 +606,17 @@ class MonoGameHost {
         if (!this.isReady()) return '[]';
         return await this.call<string>({ type: 'debug-stack-frames' });
     }
+    // Map a VM instruction index → joined-source location, via the
+    // canvas DebugSession's IndexCollection. Used by the crash overlay
+    // to translate `ins=[N]` in REV_REQUEST_EXPLODE messages.
+    async resolveInstruction(insIndex: number): Promise<{ insIndex: number; lineNumber: number; charNumber: number } | null> {
+        if (!this.isReady()) return null;
+        try {
+            const json = await this.call<string>({ type: 'debug-resolve-instruction', insIndex });
+            if (!json || json === 'null') return null;
+            return JSON.parse(json);
+        } catch { return null; }
+    }
     async debugScopes(frameId: number): Promise<string> {
         if (!this.isReady()) return '{"scopes":[]}';
         return await this.call<string>({ type: 'debug-scopes', frameId });
@@ -449,6 +636,24 @@ class MonoGameHost {
     async debugSetVariable(frameId: number, variableId: number, rhs: string): Promise<string> {
         if (!this.isReady()) return 'null';
         return await this.call<string>({ type: 'debug-set-variable', frameId, variableId, rhs });
+    }
+
+    /** Snapshot the most recent debug-test outcome. Index.Debug.cs's
+     *  QueueTestForDebugAsync stashes the FadeTestResult before sending
+     *  REV_REQUEST_EXITED, so by the time the editor's 'complete' handler
+     *  calls this on the back of that event the result is available.
+     *  Returns null when no debug-test has completed since the last
+     *  DebugStartTest — the caller treats that as the safety branch
+     *  (row stays 'stopped' rather than flipping to a guessed status). */
+    async debugGetTestResult(): Promise<MonoGameTestResult | null> {
+        if (!this.isReady()) return null;
+        const json = await this.call<string>({ type: 'get-debug-test-result' });
+        if (!json || json === 'null') return null;
+        try { return JSON.parse(json) as MonoGameTestResult; }
+        catch (e) {
+            console.error('[monogame-host] debugGetTestResult parse failed:', e, json);
+            return null;
+        }
     }
 
     async listTests(source: string): Promise<MonoGameTestEntry[]> {

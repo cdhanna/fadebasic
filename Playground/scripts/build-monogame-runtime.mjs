@@ -29,7 +29,7 @@ const targetDir = resolve(playgroundDir, 'public', 'runtime', 'monogame');
 const legacyTargetDir = resolve(playgroundDir, 'public', 'monogame-runtime');
 
 console.log('[build:monogame-runtime] dotnet publish', runtimeProject);
-execSync(`dotnet publish "${runtimeProject}" -c Release`, {
+execSync(`dotnet publish "${runtimeProject}" -c Release /p:FadeMonoGamePlatform=Web`, {
     stdio: 'inherit',
 });
 

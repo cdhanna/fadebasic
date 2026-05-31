@@ -1145,6 +1145,28 @@ public static partial class FadeBridge
         return JsonSerializer.Serialize(frames, _jsonOpts);
     }
 
+    // Resolve a VM instruction index to its originating source location in
+    // joined-source coordinates (0-based line + char). Used by the crash
+    // overlay on REV_REQUEST_EXPLODE: the runtime-error message embeds the
+    // failing `insIndex`, but the line/char only live in the DebugData this
+    // session built at compile time. Wraps IndexCollection's binary search;
+    // the caller translates joined coords to per-file via ProjectSourceMap.
+    // Returns "null" when no session is active or the index is past the
+    // last statement token.
+    [JSExport]
+    public static string DebugResolveInstruction(int insIndex)
+    {
+        if (_debugSession?.instructionMap == null) return "null";
+        if (!_debugSession.instructionMap.TryFindClosestTokenBeforeIndex(insIndex, out var debugToken)) return "null";
+        if (debugToken?.token == null) return "null";
+        return JsonSerializer.Serialize(new
+        {
+            insIndex,
+            lineNumber = debugToken.token.lineNumber,
+            charNumber = debugToken.token.charNumber,
+        }, _jsonOpts);
+    }
+
     [JSExport]
     public static string DebugScopes(int frameId)
     {

@@ -454,6 +454,11 @@ function handle(msg) {
         try { json = FB.DebugStackFrames(); }
         catch (e) { log('stack-frames failed: ' + e); }
         emit({ type: 'debug-stack-frames-result', id: msg.id, frames: json });
+    } else if (msg.type === 'debug-resolve-instruction') {
+        let json = 'null';
+        try { json = FB.DebugResolveInstruction(msg.insIndex | 0); }
+        catch (e) { log('resolve-instruction failed: ' + e); }
+        emit({ type: 'debug-resolve-instruction-result', id: msg.id, result: json });
     } else if (msg.type === 'debug-scopes') {
         let json = '{}';
         try { json = FB.DebugScopes(msg.frameId); }

@@ -230,6 +230,12 @@ export interface DocSection {
      *  level, H2+ when H1 is). Rendered as indented TOC entries when the
      *  section is active. */
     subs: DocSubheading[];
+    /** The heading level used to slice this doc into sections (1 or 2).
+     *  Carried on the section so injectSubAnchors can skip the section's
+     *  own boundary heading at the start of `body` — otherwise the boundary
+     *  H consumes `subs[0]`'s slug and every in-section anchor link
+     *  resolves to the section heading instead of the targeted sub. */
+    boundaryLevel: number;
 }
 
 interface StaticDocState {
@@ -515,7 +521,7 @@ export function mountHelpPanel(services: HelpServices = {}): HelpController {
         // Tag <h3>/<h4> with the slugs we computed during parseDocSections
         // so the TOC's sub-items can scroll to them via plain offsetTop
         // arithmetic (no scrollIntoView — that one bubbled).
-        const withAnchors = injectSubAnchors(scrubHtml(html), target.subs);
+        const withAnchors = injectSubAnchors(scrubHtml(html), target.subs, target.boundaryLevel);
         m.body.innerHTML = withAnchors;
         // Then run syntax highlighting on any ```fade``` (or unspecified-
         // language) code blocks, async — `marked` runs synchronously so
@@ -527,10 +533,19 @@ export function mountHelpPanel(services: HelpServices = {}): HelpController {
         // Default: top of the section. If a sub-anchor is active, scroll
         // to it manually — never call scrollIntoView (which can bubble up
         // and move the panel's outer scroller past its content).
+        //
+        // Use rect-delta math so the result is invariant to where the
+        // anchor's offsetParent lives in the panel chain (offsetTop on
+        // its own measures from the nearest positioned ancestor, which
+        // isn't guaranteed to be m.body).
         m.body.scrollTop = 0;
         if (state.selectedSubSlug) {
             const anchor = m.body.querySelector<HTMLElement>(`[data-sub-slug="${state.selectedSubSlug.replace(/"/g, '\\"')}"]`);
-            if (anchor) m.body.scrollTop = Math.max(0, anchor.offsetTop - 8);
+            if (anchor) {
+                const bodyTop = m.body.getBoundingClientRect().top;
+                const anchorTop = anchor.getBoundingClientRect().top;
+                m.body.scrollTop = Math.max(0, anchorTop - bodyTop + m.body.scrollTop - 8);
+            }
         }
         // Reflect selection in the TOC — sub-active state wins when set,
         // otherwise the section row itself.
@@ -729,17 +744,55 @@ export function mountHelpPanel(services: HelpServices = {}): HelpController {
     // instead of letting the browser navigate. `#…` URLs are same-page-only
     // so a missed-intercept fallback (middle-click, ctrl-click) just lands
     // on the index with a stray hash, never a 404.
+    //
+    // Static docs (Language.md, Playground.md) also use plain `#slug` links
+    // for in-page TOC navigation (e.g. `[Variables](#variables)`). Those
+    // get routed through selectDocSection / selectDocSubheading so the
+    // help panel swaps to the right page + scrolls to the right anchor,
+    // instead of the browser writing `#variables` onto the URL bar and
+    // doing nothing visible.
     m.body.addEventListener('click', (ev) => {
         const target = ev.target as HTMLElement | null;
         if (!target) return;
         const link = target.closest('a') as HTMLAnchorElement | null;
         if (!link) return;
         const href = link.getAttribute('href') ?? '';
-        const prefix = '#fade-cmd:';
-        if (!href.startsWith(prefix)) return;
-        ev.preventDefault();
-        const name = decodeURIComponent(href.slice(prefix.length));
-        selectCommand(name, /*scrollIntoView*/ true);
+        const cmdPrefix = '#fade-cmd:';
+        if (href.startsWith(cmdPrefix)) {
+            ev.preventDefault();
+            const name = decodeURIComponent(href.slice(cmdPrefix.length));
+            selectCommand(name, /*scrollIntoView*/ true);
+            return;
+        }
+        // In-page anchor inside a static-doc body. We only intercept when
+        // the active tab is one of the static-doc tabs AND the slug
+        // resolves to a known section or subheading; everything else
+        // (commands tab, unknown slug, fully-qualified URL) falls through
+        // to the browser's default behavior.
+        if (activeTab === 'commands') return;
+        if (!href.startsWith('#') || href.startsWith('#fade-')) return;
+        const slug = decodeURIComponent(href.slice(1));
+        if (!slug) return;
+        const tab = activeTab;
+        const state = docs[tab];
+        if (!state.sections) return;
+        // Section match wins over sub match — if a doc has both a section
+        // and a sub with the same slug, the section is the more visible
+        // landing point.
+        const section = state.sections.find((s) => s.slug === slug);
+        if (section) {
+            ev.preventDefault();
+            selectDocSection(tab, section.slug);
+            return;
+        }
+        for (const s of state.sections) {
+            const sub = s.subs.find((x) => x.slug === slug);
+            if (sub) {
+                ev.preventDefault();
+                selectDocSubheading(tab, s.slug, sub.slug);
+                return;
+            }
+        }
     });
 
     // Tabs row at the top of the panel switches between Commands (the
@@ -989,21 +1042,29 @@ export function buildSnippet(source: string, matchIdx: number, matchLen: number)
 // data-sub-slug. We track the IN-section ordinal: marked emits headings
 // in source order, so the Nth deeper-than-boundary heading in the
 // rendered HTML maps to subs[N].
-function injectSubAnchors(html: string, subs: DocSubheading[]): string {
+//
+// boundaryLevel: the heading level used to slice this doc into sections
+// (1 or 2). A regular section's body starts with its own boundary heading
+// (e.g. "## Variables" when boundaryLevel=2), and that heading is NOT in
+// `subs` — so we skip the first H of that level so it doesn't consume
+// subs[0]. The pre-body intro section's body doesn't start with a boundary
+// H, so the skip is gated to "only the first time and only at boundary
+// level", which is a no-op there.
+function injectSubAnchors(html: string, subs: DocSubheading[], boundaryLevel: number): string {
     if (subs.length === 0) return html;
     let i = 0;
-    return html.replace(/<h([2-6])\b([^>]*)>/g, (full, lvl, attrs) => {
-        // Skip the boundary heading itself (H1 or H2 depending on the doc).
-        // We can't know the boundary level inside this helper, but the
-        // subs list only contains depth >= 1 entries, so we just consume
-        // the next slug whenever we see a level deep enough to plausibly
-        // match. False positives are harmless because we only stop when
-        // we've consumed all subs.
+    let boundarySkipped = false;
+    return html.replace(/<h([2-6])\b([^>]*)>/g, (full, lvlStr, attrs) => {
+        const lvl = parseInt(lvlStr, 10);
+        // Skip the section's own boundary heading at the start of the body
+        // — subs[] doesn't include it, so otherwise it'd steal subs[0]'s
+        // slug and every in-section anchor would resolve to the section
+        // heading instead of its actual sub.
+        if (!boundarySkipped && lvl === boundaryLevel) {
+            boundarySkipped = true;
+            return full;
+        }
         if (i >= subs.length) return full;
-        // Heuristic: if subs[i].depth == 1, it's the next-deeper-than-boundary
-        // level. The boundary level isn't passed in but is the level
-        // immediately above; we just consume in source order which matches
-        // how parseDocSections walked the markdown.
         const slug = subs[i++].slug;
         return /\bdata-sub-slug\s*=/.test(attrs)
             ? `<h${lvl}${attrs}>`
@@ -1147,7 +1208,7 @@ export function parseDocSections(md: string): DocSection[] {
     if (headings.length === 0) {
         const body = md.trimEnd();
         if (!body) return [];
-        return [{ slug: 'overview', title: 'Overview', body, subs: [] }];
+        return [{ slug: 'overview', title: 'Overview', body, subs: [], boundaryLevel: 2 }];
     }
 
     // If any H2 exists, that's the boundary; otherwise H1. Sub-headings are
@@ -1186,6 +1247,7 @@ export function parseDocSections(md: string): DocSection[] {
                 title,
                 body: preBody,
                 subs: subsFor(0, firstBoundaryLine),
+                boundaryLevel,
             });
         }
     }
@@ -1201,6 +1263,7 @@ export function parseDocSections(md: string): DocSection[] {
             // Skip the boundary line itself; nest everything between it
             // (exclusive) and the next boundary.
             subs: subsFor(start + 1, end),
+            boundaryLevel,
         });
     }
     return sections;

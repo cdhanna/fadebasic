@@ -57,7 +57,18 @@
 
 <script type="module">
 import { openSignInDialog } from '/src/sharing/auth-ui.ts';
-import { validateToken, GitHubAdapter, Repo, MemoryWorkingTree, LocalStorageTokenStore } from '/src/sharing/index.ts';
+import { validateToken, GitHubAdapter, Repo, MemoryWorkingTree, SessionTokenStore } from '/src/sharing/index.ts';
+
+// Compat shim: this scaffold predates the SessionTokenStore refactor whose
+// .save() takes a StoredTokenSet ({accessToken, ...}) instead of a raw PAT
+// string. Wrap it back to the old "save/load a string" shape so the rest of
+// this file doesn't need touching.
+class LocalStorageTokenStore {
+  #inner = new SessionTokenStore();
+  load() { return this.#inner.load()?.accessToken ?? null; }
+  save(token) { this.#inner.save({ accessToken: token }); }
+  clear() { this.#inner.clear(); }
+}
 
 const $ = (id) => document.getElementById(id);
 const logEl = $('log');

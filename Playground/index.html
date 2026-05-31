@@ -3,7 +3,13 @@
 
 <head>
     <meta charset="UTF-8" />
-    <title>Fade Playground</title>
+    <title>Fade Land</title>
+    <!-- Favicon: Lee the ghost, the FadeBasic mascot. The 128px PNG
+         scales cleanly to the 16/32/48px sizes browsers actually render
+         in tabs; the full-res variant doubles as the iOS home-screen
+         icon (Safari pulls apple-touch-icon.png from the public dir). -->
+    <link rel="icon" type="image/png" href="/favicon.png" />
+    <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
     <style>
         :root {
             --bg: #1e1e1e;
@@ -385,6 +391,18 @@
         html[data-theme="dbp"] .tab:not(.active):hover {
             background: linear-gradient(to bottom, #F4F4F4 0%, #D0D0D0 100%) !important;
         }
+        /* Cap dockview tab labels at ~20ch with ellipsis. Without this, a
+           tab with a long filename pushes the close button off-screen and
+           crowds adjacent tabs out of view. Full title remains in the
+           browser tooltip (dockview sets title= on the label element). */
+        .dv-default-tab-content {
+            max-width: 20ch;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+            display: inline-block;
+            vertical-align: middle;
+        }
         /* High Contrast — accessibility / vision-impaired palette. Stark
            blacks/whites with cyan focus, in line with VSCode HC. */
         html[data-theme="high-contrast"] {
@@ -542,6 +560,152 @@
             background:   var(--chip-conflict-bg, rgba(244, 67, 54, 0.22));
             color:        var(--chip-conflict-fg, #f88);
             border-color: var(--chip-conflict-border, rgba(244,67,54,0.4));
+        }
+        /* Live-session pill — sits next to sharing chips. Visible only
+           when a session is in flight; clicking opens the Live Session
+           panel. Shows one dot per peer, color-coded by their identity. */
+        .live-session-chip {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            padding: 2px 9px;
+            border-radius: 999px;
+            background: rgba(76, 175, 80, 0.18);
+            border: 1px solid rgba(76, 175, 80, 0.45);
+            color: #6fd178;
+            font-size: 11px;
+            line-height: 16px;
+            cursor: pointer;
+            user-select: none;
+        }
+        .live-session-chip[hidden] { display: none !important; }
+        .live-session-chip:hover { filter: brightness(1.1); }
+        .live-session-chip-role {
+            font-size: 9px;
+            text-transform: uppercase;
+            letter-spacing: 0.06em;
+            opacity: 0.75;
+        }
+        .live-session-chip-dots {
+            display: inline-flex;
+            align-items: center;
+            gap: 3px;
+        }
+        .live-session-chip-dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            display: inline-block;
+            box-shadow: 0 0 0 1px rgba(255,255,255,0.2);
+        }
+        .live-session-chip-dot[data-self="true"] {
+            box-shadow: 0 0 0 1.5px var(--fg);
+        }
+        .live-session-chip-count { font-weight: 600; }
+        /* Peer pills — one per non-self peer in the chip strip. Each
+           gets a tinted background based on the peer's color (set via
+           --peer-color CSS variable on the pill element) so several
+           peers remain visually distinct without each pill being a
+           giant saturated bar. */
+        .live-session-chip-pills {
+            display: inline-flex;
+            align-items: center;
+            gap: 4px;
+            flex-wrap: nowrap;
+            overflow: hidden;
+            max-width: 360px;
+        }
+        .live-session-chip-pill {
+            display: inline-flex;
+            align-items: center;
+            gap: 4px;
+            padding: 1px 6px 1px 4px;
+            border-radius: 999px;
+            font-size: 11px;
+            line-height: 14px;
+            background: color-mix(in srgb, var(--peer-color) 22%, transparent);
+            border: 1px solid color-mix(in srgb, var(--peer-color) 50%, transparent);
+            color: var(--fg);
+            white-space: nowrap;
+            user-select: none;
+        }
+        .live-session-chip-pill-swatch {
+            width: 7px;
+            height: 7px;
+            border-radius: 50%;
+            display: inline-block;
+            flex-shrink: 0;
+        }
+        .live-session-chip-pill-name {
+            max-width: 110px;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+        .live-session-chip-pill-activity {
+            font-size: 9px;
+            font-weight: 600;
+            padding: 0 4px;
+            border-radius: 6px;
+            background: rgba(255, 255, 255, 0.10);
+            white-space: nowrap;
+            text-transform: uppercase;
+            letter-spacing: 0.04em;
+        }
+        .live-session-chip-pill-activity.activity-running   { color: #6fd178; }
+        .live-session-chip-pill-activity.activity-debugging { color: #ffb74d; }
+        .live-session-chip-pill-activity.activity-testing   { color: #4da6ff; }
+        .live-session-chip-pill-activity.activity-syncing   { color: #b88aff; }
+
+        /* Live-session game stream overlay. The selector specifically
+           uses :not([hidden]) so the UA stylesheet's display:none for
+           the [hidden] attribute isn't overridden by author CSS — a
+           plain `.game-stream-overlay { display: flex }` would win the
+           cascade against `[hidden] { display: none }` (UA), keeping
+           the overlay visible permanently and covering the real game
+           surface underneath. With :not(), this rule simply doesn't
+           apply while the element is hidden. */
+        .game-stream-overlay:not([hidden]) {
+            position: absolute;
+            inset: 0;
+            background: #0a0a0a;
+            display: flex;
+            flex-direction: column;
+            align-items: stretch;
+            justify-content: flex-start;
+            z-index: 50;
+        }
+        .game-stream-banner {
+            background: rgba(255, 183, 77, 0.18);
+            border-bottom: 1px solid rgba(255, 183, 77, 0.4);
+            color: #ffb74d;
+            padding: 4px 10px;
+            font-size: 0.74rem;
+            line-height: 1.3;
+            user-select: none;
+        }
+        .game-stream-canvas {
+            flex: 1;
+            min-height: 0;
+            width: 100%;
+            object-fit: contain;
+            background: #111;
+            display: block;
+        }
+        .live-session-chip.live-session-chip-syncing {
+            background: rgba(77, 166, 255, 0.20);
+            border-color: rgba(77, 166, 255, 0.55);
+            color: #4da6ff;
+            animation: live-session-chip-pulse 1.4s ease-in-out infinite;
+        }
+        .live-session-chip.live-session-chip-warning {
+            background: rgba(244, 67, 54, 0.20);
+            border-color: rgba(244, 67, 54, 0.55);
+            color: #f88;
+            animation: live-session-chip-pulse 1.4s ease-in-out infinite;
+        }
+        @keyframes live-session-chip-pulse {
+            0%, 100% { opacity: 1; }
+            50%      { opacity: 0.65; }
         }
         /* Persistent git-status icon. Always visible in the header so
            there's a clear answer to "am I connected?" even when the
@@ -1538,6 +1702,502 @@
             white-space: pre-wrap;
             font-size: 0.82rem;
         }
+        .binary-preview-font-controls {
+            display: flex;
+            align-items: center;
+            gap: 0.75rem;
+            flex-wrap: wrap;
+        }
+        .binary-preview-font-size {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.5rem;
+            color: var(--fg-muted);
+            font-size: 0.82rem;
+        }
+        .binary-preview-font-size input[type="range"] {
+            width: 160px;
+        }
+        .binary-preview-font-size-label {
+            color: var(--fg-1);
+            font-variant-numeric: tabular-nums;
+            min-width: 3.5ch;
+            text-align: right;
+        }
+        .binary-preview-font-editor {
+            width: 100%;
+            min-height: 4.5rem;
+            resize: vertical;
+            background: var(--bg-2);
+            color: var(--fg-1);
+            border: 1px solid var(--border-2);
+            border-radius: 4px;
+            padding: 0.5rem 0.6rem;
+            font-family: ui-monospace, 'SF Mono', Menlo, monospace;
+            font-size: 0.85rem;
+            line-height: 1.4;
+        }
+        .binary-preview-font-editor:focus {
+            outline: none;
+            border-color: var(--accent, #4a9eff);
+        }
+        .binary-preview-font-sample {
+            width: 100%;
+            min-height: 4rem;
+            padding: 0.75rem 0.9rem;
+            background: var(--bg-2);
+            color: var(--fg-1);
+            border: 1px solid var(--border-2);
+            border-radius: 4px;
+            white-space: pre-wrap;
+            word-break: break-word;
+            overflow-wrap: anywhere;
+        }
+
+        /* Catalog tab — browse pre-approved hosted assets. */
+        .catalog-host {
+            display: flex;
+            flex-direction: column;
+            height: 100%;
+            background: var(--bg-1);
+        }
+        .catalog-toolbar {
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            padding: 0.35rem 0.75rem;
+            background: var(--bg-2);
+            border-bottom: 1px solid var(--border-2);
+            font-size: 0.74rem;
+            text-transform: uppercase;
+            letter-spacing: 0.04em;
+            color: var(--fg-muted);
+            user-select: none;
+        }
+        .catalog-title { color: var(--fg); font-weight: 600; }
+        .catalog-version { color: var(--fg-muted); font-weight: 400; text-transform: none; letter-spacing: 0; }
+        .catalog-refresh-btn {
+            background: transparent;
+            border: 1px solid var(--border-2);
+            color: var(--fg-muted);
+            padding: 0.18rem 0.55rem;
+            border-radius: 3px;
+            cursor: pointer;
+            font-size: 0.72rem;
+            text-transform: uppercase;
+            letter-spacing: 0.04em;
+        }
+        .catalog-refresh-btn:hover { color: var(--fg); border-color: var(--accent); }
+        .catalog-search-input {
+            background: var(--bg-1);
+            color: var(--fg);
+            border: 1px solid var(--border-2);
+            border-radius: 3px;
+            padding: 0.2rem 0.45rem;
+            font-size: 0.78rem;
+            min-width: 160px;
+            text-transform: none;
+            letter-spacing: 0;
+            font-family: inherit;
+        }
+        .catalog-search-input:focus { outline: none; border-color: var(--accent); }
+        .catalog-tagbar {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 0.3rem;
+            padding: 0.4rem 0.75rem;
+            background: var(--bg-1);
+            border-bottom: 1px solid var(--border-2);
+            min-height: 1.6rem;
+            align-items: center;
+        }
+        .catalog-tagbar-empty {
+            color: var(--fg-muted);
+            font-size: 0.7rem;
+            font-style: italic;
+        }
+        .catalog-tag-chip {
+            background: var(--bg-2);
+            border: 1px solid var(--border-2);
+            color: var(--fg-muted);
+            padding: 0.12rem 0.5rem;
+            border-radius: 999px;
+            font-size: 0.7rem;
+            cursor: pointer;
+            letter-spacing: 0;
+        }
+        .catalog-tag-chip:hover { color: var(--fg); border-color: var(--accent); }
+        .catalog-tag-chip.active {
+            background: var(--accent);
+            color: white;
+            border-color: var(--accent);
+        }
+        .catalog-tag-clear {
+            background: transparent;
+            border: 1px dashed var(--border-2);
+            color: var(--fg-muted);
+            padding: 0.12rem 0.5rem;
+            border-radius: 999px;
+            font-size: 0.7rem;
+            cursor: pointer;
+            margin-left: 0.25rem;
+        }
+        .catalog-tag-clear:hover { color: var(--fg); border-color: var(--accent); }
+        .catalog-body {
+            flex: 1;
+            overflow-y: auto;
+            padding: 0.75rem;
+        }
+        .catalog-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+            gap: 0.6rem;
+        }
+        .catalog-status {
+            grid-column: 1 / -1;
+            text-align: center;
+            color: var(--fg-muted);
+            padding: 2rem;
+            font-size: 0.85rem;
+        }
+        .catalog-status.error { color: #f14c4c; }
+        .catalog-tile {
+            position: relative;
+            display: flex;
+            flex-direction: column;
+            background: var(--bg-2);
+            border: 1px solid var(--border-2);
+            border-radius: 4px;
+            overflow: hidden;
+            cursor: pointer;
+            transition: border-color 80ms, transform 80ms;
+        }
+        .catalog-tile:hover { border-color: var(--accent); }
+        .catalog-tile-thumb {
+            aspect-ratio: 1 / 1;
+            background:
+                linear-gradient(45deg, var(--bg-1) 25%, transparent 25%) 0 0 / 12px 12px,
+                linear-gradient(-45deg, var(--bg-1) 25%, transparent 25%) 0 6px / 12px 12px,
+                linear-gradient(45deg, transparent 75%, var(--bg-1) 75%) 6px -6px / 12px 12px,
+                linear-gradient(-45deg, transparent 75%, var(--bg-1) 75%) -6px 0 / 12px 12px;
+            background-color: #444;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            overflow: hidden;
+        }
+        .catalog-tile-thumb img {
+            max-width: 100%;
+            max-height: 100%;
+            object-fit: contain;
+            image-rendering: pixelated;
+        }
+        .catalog-tile-placeholder {
+            color: var(--fg-muted);
+            font-size: 2rem;
+            user-select: none;
+        }
+        .catalog-tile-meta {
+            padding: 0.4rem 0.55rem;
+            border-top: 1px solid var(--border-2);
+        }
+        .catalog-tile-name {
+            font-size: 0.82rem;
+            color: var(--fg);
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+        .catalog-tile-sub {
+            font-size: 0.7rem;
+            color: var(--fg-muted);
+            margin-top: 0.15rem;
+        }
+        .catalog-tile-badge {
+            position: absolute;
+            top: 4px;
+            right: 4px;
+            background: rgba(14, 99, 156, 0.85);
+            color: white;
+            font-size: 0.6rem;
+            padding: 0.1rem 0.35rem;
+            border-radius: 2px;
+            letter-spacing: 0.04em;
+        }
+        .catalog-detail {
+            grid-column: 1 / -1;
+            background: var(--bg-2);
+            border: 1px solid var(--accent);
+            border-radius: 4px;
+            padding: 0.85rem 1rem;
+            margin-top: 0.4rem;
+        }
+        .catalog-detail-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            margin-bottom: 0.4rem;
+        }
+        .catalog-detail-header h3 {
+            margin: 0;
+            font-size: 1rem;
+            color: var(--fg);
+        }
+        .catalog-detail-close {
+            background: transparent;
+            border: none;
+            color: var(--fg-muted);
+            cursor: pointer;
+            font-size: 1rem;
+            padding: 0.1rem 0.4rem;
+        }
+        .catalog-detail-close:hover { color: var(--fg); }
+        .catalog-detail-desc {
+            margin: 0 0 0.6rem;
+            color: var(--fg-muted);
+            font-size: 0.85rem;
+            line-height: 1.4;
+        }
+        .catalog-detail-preview {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            background: rgba(0,0,0,0.18);
+            border-radius: 3px;
+            padding: 0.6rem;
+            min-height: 100px;
+            margin-bottom: 0.6rem;
+        }
+        .catalog-detail-image {
+            max-width: 100%;
+            max-height: 400px;
+            image-rendering: pixelated;
+        }
+        /* Editable font preview — an <input> styled as big display text.
+           Click to edit; pre-filled with "fadeland" so first-load shows
+           something useful. Dashed border + focus accent make editability
+           discoverable without being loud. */
+        .catalog-font-sample {
+            display: block;
+            width: 100%;
+            box-sizing: border-box;
+            font-size: 4.2rem;
+            line-height: 1.15;
+            color: var(--fg);
+            text-align: center;
+            padding: 0.6rem 0.8rem;
+            font-family: system-ui, sans-serif;
+            letter-spacing: -0.02em;
+            transition: font-family 60ms, border-color 80ms;
+            background: transparent;
+            border: 1px dashed var(--border-2);
+            border-radius: 4px;
+            outline: none;
+        }
+        .catalog-font-sample:hover  { border-color: var(--fg-muted); }
+        .catalog-font-sample:focus  { border-color: var(--accent); border-style: solid; }
+        .catalog-font-sample.loading {
+            color: var(--fg-muted);
+            opacity: 0.5;
+        }
+        .catalog-font-sample.error {
+            color: #f14c4c;
+            font-size: 0.85rem;
+            font-family: ui-monospace, monospace;
+            line-height: 1.4;
+            text-align: left;
+            border-color: #f14c4c;
+            border-style: solid;
+        }
+        .catalog-font-sample:disabled { cursor: not-allowed; }
+        .catalog-pack-summary {
+            display: flex;
+            gap: 0.8rem;
+            align-items: center;
+            width: 100%;
+        }
+        .catalog-pack-summary img {
+            max-width: 120px;
+            max-height: 120px;
+            image-rendering: pixelated;
+        }
+        .catalog-pack-counts {
+            color: var(--fg);
+            font-size: 0.85rem;
+            line-height: 1.5;
+        }
+        .catalog-detail-actions {
+            display: flex;
+            align-items: center;
+            gap: 0.6rem;
+            margin-bottom: 0.4rem;
+        }
+        .catalog-import-btn {
+            background: var(--accent);
+            color: white;
+            border: none;
+            padding: 0.45rem 1rem;
+            border-radius: 3px;
+            cursor: pointer;
+            font-size: 0.85rem;
+        }
+        .catalog-import-btn:disabled {
+            background: var(--bg-1);
+            color: var(--fg-muted);
+            cursor: not-allowed;
+        }
+        .catalog-import-btn:hover:not(:disabled) { filter: brightness(1.15); }
+        .catalog-detail-link {
+            color: var(--accent);
+            text-decoration: none;
+            font-size: 0.82rem;
+        }
+        .catalog-detail-link:hover { text-decoration: underline; }
+        .catalog-detail-attribution {
+            color: var(--fg-muted);
+            font-size: 0.75rem;
+            border-top: 1px solid var(--border-2);
+            padding-top: 0.4rem;
+        }
+        .catalog-pack-files {
+            margin: 0.5rem 0 0.6rem;
+            background: rgba(0,0,0,0.18);
+            border-radius: 3px;
+            padding: 0.5rem 0.6rem;
+            color: var(--fg-muted);
+            font-size: 0.78rem;
+        }
+        .catalog-pack-files-toolbar {
+            display: flex;
+            align-items: center;
+            gap: 0.25rem;
+            padding-bottom: 0.4rem;
+            border-bottom: 1px solid var(--border-2);
+            margin-bottom: 0.4rem;
+            font-size: 0.74rem;
+        }
+        .catalog-pack-files-count { color: var(--fg); }
+        .catalog-pack-files-action {
+            background: transparent;
+            border: none;
+            color: var(--accent);
+            cursor: pointer;
+            font-size: 0.74rem;
+            padding: 0;
+        }
+        .catalog-pack-files-action:hover { text-decoration: underline; }
+        .catalog-pack-files-list {
+            max-height: 320px;
+            overflow-y: auto;
+            font-family: ui-monospace, 'SF Mono', Menlo, monospace;
+            font-size: 0.72rem;
+        }
+        .catalog-pack-file-row {
+            display: flex;
+            align-items: center;
+            gap: 0.45rem;
+            padding: 0.18rem 0.2rem;
+            border-radius: 2px;
+            cursor: pointer;
+        }
+        .catalog-pack-file-row:hover { background: rgba(255,255,255,0.04); }
+        .catalog-pack-file-row input[type=checkbox] {
+            margin: 0;
+            cursor: pointer;
+            flex-shrink: 0;
+        }
+        .catalog-pack-file-thumb {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            flex-shrink: 0;
+            width: 32px;
+            height: 32px;
+            background: rgba(0,0,0,0.25);
+            border-radius: 2px;
+            color: var(--fg-muted);
+            font-size: 1rem;
+            overflow: hidden;
+        }
+        .catalog-pack-file-thumb img {
+            width: 100%;
+            height: 100%;
+            object-fit: contain;
+            image-rendering: pixelated;
+            display: block;
+        }
+        .catalog-pack-file-thumb-pending {
+            background:
+                repeating-linear-gradient(
+                    45deg,
+                    rgba(255,255,255,0.04),
+                    rgba(255,255,255,0.04) 4px,
+                    rgba(255,255,255,0.08) 4px,
+                    rgba(255,255,255,0.08) 8px
+                );
+        }
+        .catalog-pack-file-thumb-audio { color: var(--accent); }
+        .catalog-pack-file-thumb-font {
+            font-family: Georgia, 'Times New Roman', serif;
+            font-weight: 600;
+            font-size: 0.85rem;
+            color: var(--fg);
+            letter-spacing: -0.5px;
+        }
+        .catalog-pack-audio-play {
+            width: 100%;
+            height: 100%;
+            background: transparent;
+            border: none;
+            color: var(--accent);
+            cursor: pointer;
+            font-size: 0.95rem;
+            line-height: 1;
+            padding: 0;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+        .catalog-pack-audio-play:disabled {
+            color: var(--fg-muted);
+            cursor: wait;
+        }
+        .catalog-pack-audio-play:hover:not(:disabled) {
+            background: rgba(14, 99, 156, 0.18);
+        }
+        .catalog-pack-files-preview-status {
+            color: var(--fg-muted);
+            font-style: italic;
+        }
+        .catalog-pack-file-path {
+            flex: 1 1 0;
+            min-width: 0;
+            display: flex;
+            align-items: baseline;
+            overflow: hidden;
+        }
+        .catalog-pack-file-dir {
+            flex-shrink: 1000;
+            min-width: 0;
+            overflow: hidden;
+            white-space: nowrap;
+            text-overflow: ellipsis;
+            color: var(--fg-muted);
+            opacity: 0.65;
+        }
+        .catalog-pack-file-base {
+            flex-shrink: 1;
+            min-width: 0;
+            overflow: hidden;
+            white-space: nowrap;
+            text-overflow: ellipsis;
+            color: var(--fg);
+        }
+        .catalog-pack-file-meta {
+            color: var(--fg-muted);
+            font-size: 0.7rem;
+            flex-shrink: 0;
+        }
 
         /* Drag-drop highlight on the workspace file list. Applied while
            the user is dragging files over the list; cleared on drop or
@@ -1963,6 +2623,18 @@
             color: var(--fg-muted);
             user-select: none;
         }
+        /* Wrap the status text in an inline-flex so it's vertically
+           centered without forcing line-height on every toolbar child.
+           Earlier the toolbar used a global line-height: 1, which in
+           some font-fallback paths crushed the line-box and the
+           "Booting…" / "Running" label disappeared. inline-flex puts
+           the text in its own line context unaffected by the
+           toolbar's line-height. */
+        #mg-game-status {
+            display: inline-flex;
+            align-items: center;
+            height: 100%;
+        }
         .mg-tb-grow { flex: 1; }
         .mg-status-dot {
             width: 7px; height: 7px;
@@ -2106,6 +2778,16 @@
             padding: 0.35rem 0.7rem;
             border-bottom: 1px solid var(--border-2);
             background: var(--bg-2);
+        }
+        .tests-status-row {
+            padding: 0.3rem 0.7rem;
+            border-bottom: 1px solid var(--border-2);
+            background: var(--bg-2);
+        }
+        /* Collapse the row entirely when there's no status text so the
+           panel doesn't show a blank slot between toolbar and search. */
+        .tests-status-row:has(.tests-status:empty) {
+            display: none;
         }
         .tests-status {
             font-size: 0.74rem;
@@ -2357,9 +3039,30 @@
             height: 100%;
             background: var(--bg);
             font-size: 0.78rem;
-            overflow: auto;
+            /* Was `overflow: auto`. With outer scroll, expanding a giant
+               array in Variables made the section grow tall enough to
+               push Watch / Call Stack / Breakpoints off-screen entirely.
+               Now each expanded section gets a bounded share of the pane
+               and scrolls *internally* — the VSCode behavior. */
+            overflow: hidden;
         }
-        .debug-section { display: flex; flex-direction: column; min-height: 0; }
+        /* Sections distribute the available height like a VSCode-style
+           accordion: each *expanded* section flex-grows, each collapsed
+           one takes only its header. `:has()` checks the body so the
+           single source of truth — the body's `.collapsed` class — drives
+           the layout. */
+        .debug-section {
+            display: flex;
+            flex-direction: column;
+            min-height: 0;
+            flex: 1 1 0;
+        }
+        .debug-section:has(.debug-section-body.collapsed) {
+            /* !important so a stray inline `flex: 0 0 <px>` from a prior
+               splitter drag can't pin a collapsed section to the dragged
+               size — collapse always wins. */
+            flex: 0 0 auto !important;
+        }
         .debug-section-toggle {
             display: flex;
             align-items: center;
@@ -2398,8 +3101,43 @@
             background: var(--hover-bg);
             color: var(--fg);
         }
-        .debug-section-body { display: block; }
+        /* Body fills its section and scrolls internally. min-height:0 is
+           the magic that lets a flex child shrink below its content size
+           — without it the body would still grow to fit the tree and we'd
+           be back to the overflow problem. */
+        .debug-section-body {
+            display: block;
+            flex: 1 1 0;
+            min-height: 0;
+            overflow: auto;
+        }
         .debug-section-body.collapsed { display: none; }
+
+        /* Splitters between consecutive expanded debug sections. Injected
+           by JS (debug-section toggle handler), one per gap. 4px tall,
+           visually subtle, but the hit-target extends a couple px past
+           the visible bar via the ::before pseudo-element so dragging
+           feels reliable without bloating the strip. */
+        .debug-splitter {
+            position: relative;
+            height: 4px;
+            flex: 0 0 4px;
+            cursor: row-resize;
+            background: transparent;
+            transition: background 80ms ease;
+        }
+        .debug-splitter:hover,
+        .debug-splitter.dragging { background: var(--accent); }
+        .debug-splitter::before {
+            /* Generous hit-target — overlaps the section borders above
+               and below so the cursor "snaps" without pixel-precision. */
+            content: '';
+            position: absolute;
+            inset: -3px 0;
+        }
+        /* When dragging, suppress text selection on the whole pane so
+           the cursor doesn't double as a selection gesture. */
+        .debug-pane-host.debug-resizing { user-select: none; cursor: row-resize; }
 
         /* Watch */
         #watch-list {
@@ -2659,12 +3397,179 @@
             font-size: 14px !important;
             line-height: 1 !important;
         }
+        /* Phantom breakpoint shown while the user hovers a gutter row
+           without a real breakpoint. Same shape/size as the real one
+           but at low opacity so it reads as "this is where the
+           breakpoint would land if you click here". */
+        .fade-breakpoint-preview,
+        .fade-breakpoint-preview::before {
+            color: rgba(229, 20, 0, 0.38) !important;
+            font-size: 14px !important;
+            line-height: 1 !important;
+        }
+        /* Make the breakpoint gutter visually distinct from the regular
+           editor background so users can see it's a clickable target.
+           Monaco's glyph margin sits flush with the editor by default,
+           which makes it invisible until a breakpoint is set — once you
+           know it's there it's fine, but discoverability suffers.
+           A subtle inset shade (with a slightly stronger tint on hover)
+           gives a clear "click here" affordance without competing with
+           the source code for attention. */
+        .monaco-editor .glyph-margin {
+            background-color: rgba(127, 127, 127, 0.07);
+        }
+        .monaco-editor .glyph-margin:hover {
+            background-color: rgba(127, 127, 127, 0.14);
+        }
+        /* Monaco renders breakpoint glyphs in `.glyph-margin-widgets >
+           .cgmr` (a sibling of `.glyph-margin`, NOT a descendant — see
+           vscode's viewParts/glyphMargin/glyphMargin.js). Cover both
+           the background column and the widgets layer so the pointer
+           cursor shows whether the user hovers an empty row or an
+           existing breakpoint marker. The phantom-preview class is
+           also a .cgmr (rendered via Monaco decoration on hover), so it
+           inherits this rule without an extra entry. */
+        .monaco-editor .glyph-margin,
+        .monaco-editor .glyph-margin-widgets,
+        .monaco-editor .glyph-margin-widgets .cgmr {
+            cursor: pointer !important;
+        }
+        /* Hovering an EXISTING breakpoint: clicking will remove it, so
+           the cursor flips to a "no-drop" affordance. Visually opposite
+           the pointing hand — a click here un-does state rather than
+           creating it. */
+        .monaco-editor .glyph-margin-widgets .cgmr.fade-breakpoint {
+            cursor: not-allowed !important;
+        }
+        /* Fallback for empty gutter rows when a phantom decoration
+           hasn't been added yet (or in the brief gap between mousemove
+           updates). The JS mouse-tracker toggles `.fade-gutter-hover`
+           on the editor's outer div whenever the pointer is over the
+           glyph margin column; the inner descendants pick up the
+           cursor via inheritance. */
+        .monaco-editor.fade-gutter-hover .margin,
+        .monaco-editor.fade-gutter-hover .margin * {
+            cursor: pointer;
+        }
+        .monaco-editor.fade-gutter-hover-bp .margin,
+        .monaco-editor.fade-gutter-hover-bp .margin * {
+            cursor: not-allowed;
+        }
+        /* Light themes need a slightly darker shade to register; the
+           generic gray tint is too washed-out on a white canvas. */
+        html[data-theme="dbp"] .monaco-editor .glyph-margin,
+        html[data-theme="light"] .monaco-editor .glyph-margin {
+            background-color: rgba(0, 0, 0, 0.06);
+        }
+        html[data-theme="dbp"] .monaco-editor .glyph-margin:hover,
+        html[data-theme="light"] .monaco-editor .glyph-margin:hover {
+            background-color: rgba(0, 0, 0, 0.12);
+        }
         .fade-current {
             background: rgba(255, 220, 0, 0.18);
         }
         .fade-current::before {
             color: #ffcc00 !important;
         }
+        /* When the paused line ALSO has a breakpoint, Monaco renders both
+           glyphs into the same gutter slot and the yellow arrow ends up
+           fully covering the red dot — leaving no visual hint that the
+           breakpoint is still removable. Nudge the arrow right + shrink
+           it slightly so the red dot peeks out on the left. A drop-shadow
+           keeps the arrow readable against the red. */
+        .monaco-editor .glyph-margin-widgets .cgmr.fade-current,
+        .monaco-editor .glyph-margin-widgets .cgmr.fade-current::before {
+            transform: translateX(3px) scale(0.85);
+            transform-origin: left center;
+            filter: drop-shadow(0 0 1px rgba(0,0,0,0.5));
+        }
+
+        /* ── Crash overlay ───────────────────────────────────────────────
+           Painted by src/crash-overlay.ts on a fatal VM error. The line
+           decoration (.fade-crashed) is the red sibling of .fade-current;
+           the view zone (.fade-crash-zone) sits below the failing line
+           with the error message + an Abort button. */
+        .fade-crashed {
+            background: rgba(229, 20, 0, 0.18);
+        }
+        .fade-crashed::before {
+            color: #e51400 !important;
+        }
+        /* Rendered as a monaco IContentWidget anchored to the failing
+           line. ContentWidgets live in the editor's contentWidgets
+           overlay layer (the same one hover popups and IntelliSense
+           use) and are fully interactive — clicks on the Abort button
+           reach our listener. We don't need pointer-events overrides,
+           but keep the explicit value for safety in themed contexts. */
+        .fade-crash-zone {
+            background: var(--bg-1, #1e1e1e);
+            border: 1px solid rgba(229, 20, 0, 0.85);
+            border-radius: 4px;
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.5);
+            color: var(--fg);
+            box-sizing: border-box;
+            overflow: hidden;
+            min-width: 360px;
+            max-width: 640px;
+            pointer-events: auto;
+            /* The widget container Monaco wraps us in has its own
+               margin-top; nudge ours so the red border doesn't touch
+               the failing line's red background. */
+            margin-top: 4px;
+        }
+        .fade-crash-zone-inner {
+            display: flex;
+            align-items: center;
+            gap: 0.7rem;
+            padding: 0.5rem 0.9rem;
+            box-sizing: border-box;
+        }
+        .fade-crash-icon {
+            color: #e51400;
+            font-size: 1rem;
+            flex-shrink: 0;
+        }
+        .fade-crash-text {
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            gap: 1px;
+            flex: 1;
+            min-width: 0;
+        }
+        .fade-crash-title {
+            color: var(--fg);
+            font-weight: 600;
+            font-size: 0.82rem;
+            line-height: 1.25;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+        .fade-crash-detail {
+            color: var(--fg-muted);
+            font-size: 0.72rem;
+            font-family: ui-monospace, 'SF Mono', Menlo, monospace;
+            line-height: 1.3;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+        .fade-crash-abort {
+            background: #c12010;
+            color: #fff;
+            border: 1px solid #e51400;
+            padding: 0.3rem 0.95rem;
+            border-radius: 3px;
+            cursor: pointer;
+            font: inherit;
+            font-size: 0.78rem;
+            font-weight: 600;
+            flex-shrink: 0;
+            pointer-events: auto;
+        }
+        .fade-crash-abort:hover { background: #e51400; border-color: #ff3018; }
+        .fade-crash-abort:active { background: #a01a0c; }
 
         /* ── Project viewer overlay ──────────────────────────────────────
            Modal that lists projects under OPFS and lets the user switch
@@ -3805,6 +4710,7 @@
                 <span id="sharing-status-badge" class="sharing-status-badge sharing-status-badge-loading"></span>
             </button>
             <div id="sharing-chips" class="sharing-chips"></div>
+            <div id="live-session-chip" class="live-session-chip" hidden></div>
             <span class="grow"></span>
             <vscode-button id="run" disabled icon="play">Run (⌘R)</vscode-button>
             <vscode-button id="stop" disabled icon="debug-stop" secondary="true">Stop</vscode-button>
@@ -3870,6 +4776,10 @@
 
         <div class="panel-cell" data-panel="history">
             <div id="history-host" style="flex: 1 1 auto; min-height: 0;"></div>
+        </div>
+
+        <div class="panel-cell" data-panel="live-session">
+            <div id="live-session-host" style="flex: 1 1 auto; min-height: 0;"></div>
         </div>
 
         <div class="panel-cell" data-panel="editor">
@@ -3989,12 +4899,30 @@
              experience as a deployed export — `print` lands in its own
              <div id="output">, `prompt$` shows window.prompt, etc. —
              without the Playground having to simulate it. -->
-        <div class="panel-cell" data-panel="game">
+        <div class="panel-cell" data-panel="game" style="position: relative;">
             <div id="web-preview-host" style="display: none; position: relative; width: 100%; height: 100%; background: #111;">
                 <iframe id="web-preview-frame"
                         title="Web preview"
                         src="about:blank"
                         style="border: 0; width: 100%; height: 100%;"></iframe>
+            </div>
+            <!-- Remote game-stream overlay. Hidden by default; shown
+                 when another peer in a live session is running the
+                 program. The <canvas> inside receives JPEG frames
+                 broadcast by the running peer. Positioned absolute so
+                 it covers whichever surface (web/monogame) the panel is
+                 currently showing.
+                 Important: layout styles (display: flex on the overlay,
+                 flex/object-fit on its children) live in the .game-stream
+                 CSS classes — NOT inline — because the [hidden]
+                 attribute uses `display: none` from the UA stylesheet,
+                 and inline `display: flex` would shadow that and keep
+                 the overlay visible permanently, blocking the real
+                 game canvas underneath. (That regression actually
+                 shipped once. Don't bring it back.) -->
+            <div id="game-stream-overlay" class="game-stream-overlay" hidden>
+                <div id="game-stream-banner" class="game-stream-banner"></div>
+                <canvas id="game-stream-canvas" class="game-stream-canvas"></canvas>
             </div>
             <div id="mg-blazor-root" style="width: 100%; height: 100%; background: #000;">
                 <div id="mg-game-toolbar">
@@ -4019,7 +4947,8 @@
                 <div class="tests-toolbar">
                     <vscode-button id="tests-run-all" icon="run-all">Run all</vscode-button>
                     <vscode-button id="tests-refresh" secondary="true" icon="refresh">Refresh</vscode-button>
-                    <span class="grow"></span>
+                </div>
+                <div class="tests-status-row">
                     <span id="tests-status" class="tests-status"></span>
                 </div>
                 <div class="tests-search-row">
@@ -4230,7 +5159,7 @@
             </div>
             <div class="splash-ghost"></div>
         </div>
-        <div class="splash-status" id="pg-splash-status">Loading Fade Playground…</div>
+        <div class="splash-status" id="pg-splash-status">Loading FadeLand…</div>
     </div>
     <script>
         window.__pgSplash = (function () {
