@@ -42,6 +42,12 @@ import {
 } from './audio-encoder';
 import { rasterizeFont } from './font-rasterizer';
 import { encodeSpriteFontXnb } from './sprite-font-writer';
+import {
+    compileFxToXnb,
+    CompileFxError,
+    type CompileFxDiagnostic,
+} from '../shader/compile-fx';
+import { ShaderCompilerNotAvailableError } from '../shader/shader-compiler';
 import type { MonoGameContentPlan } from '../monogame-host';
 
 export interface CompileAssetsResult {
@@ -68,6 +74,19 @@ export interface CompiledFontAsset {
 
 export interface CompileFontAssetsResult {
     assets: CompiledFontAsset[];
+    diagnostics: AssetDiagnostic[];
+}
+
+export interface CompiledShaderAsset {
+    assetName: string;
+    sourcePath: string;
+    /** MGFX-v10 XNB bytes ready for monoGameHost.registerAsset. */
+    bytes: Uint8Array;
+    cached: boolean;
+}
+
+export interface CompileShaderAssetsResult {
+    assets: CompiledShaderAsset[];
     diagnostics: AssetDiagnostic[];
 }
 
@@ -549,4 +568,105 @@ export async function compileFontAssetsWithPlan(
     }
 
     return { assets, diagnostics };
+}
+
+// ─── Shader path ─────────────────────────────────────────────────────
+
+/** Compile every `.fx` source into a MGFX-v10 effect XNB. Same plan-driven
+ *  story as fonts: cache keyed on (sourceHash, ENCODER_VERSION) so unchanged
+ *  shader files don't re-invoke the WASM compiler on every Run.
+ *
+ *  Diagnostics from the underlying shader compiler — both diagnostic messages
+ *  and the catchable error types ShaderCompilerNotAvailableError and
+ *  CompileFxError — get surfaced as per-asset diagnostics so the user sees
+ *  exactly which `.fx` failed and why in the Logs panel. */
+export async function compileShaderAssetsWithPlan(
+    workspace: CacheWorkspaceLike,
+    shaderSources: string[],
+    _plan: MonoGameContentPlan,
+): Promise<CompileShaderAssetsResult> {
+    const cache = new AssetCache(workspace);
+    const diagnostics: AssetDiagnostic[] = [];
+    const assets: CompiledShaderAsset[] = [];
+
+    for (const path of shaderSources) {
+        const assetName = assetNameForSourcePath(path);
+        // Single shader format key for now — when we plumb compile flags
+        // (debug-vs-optimize, target-profile) through the macro pass this
+        // is where the variant tag goes, like the font path's `spritefont-<size>`.
+        const formatKey = 'shader-mgfx-v10';
+
+        try {
+            const sourceBytes = await workspace.readBytes(path);
+            const sourceHash = await sha256Hex(sourceBytes);
+
+            const hit = await cache.lookup(assetName, sourceHash, formatKey, ENCODER_VERSION);
+            if (hit) {
+                assets.push({
+                    assetName,
+                    sourcePath: path,
+                    bytes: hit.bytes,
+                    cached: true,
+                });
+                continue;
+            }
+
+            const source = new TextDecoder('utf-8', { fatal: false }).decode(sourceBytes);
+            const result = await compileFxToXnb({ source, assetName });
+
+            for (const d of result.diagnostics) {
+                diagnostics.push(mapShaderDiagnostic(d, assetName, path));
+            }
+
+            await cache.store(
+                assetName, path, sourceHash, formatKey,
+                ENCODER_VERSION, result.xnb,
+                /*width*/ 0, /*height*/ 0,
+                { techniqueCount: result.fx.techniques.length },
+            );
+            assets.push({ assetName, sourcePath: path, bytes: result.xnb, cached: false });
+        } catch (e: any) {
+            if (e instanceof ShaderCompilerNotAvailableError) {
+                diagnostics.push({
+                    severity: 'error',
+                    assetName,
+                    sourcePath: path,
+                    message: e.message,
+                });
+                continue;
+            }
+            if (e instanceof CompileFxError) {
+                if (e.diagnostics) {
+                    for (const d of e.diagnostics) {
+                        diagnostics.push(mapShaderDiagnostic(d, assetName, path));
+                    }
+                }
+                diagnostics.push({
+                    severity: 'error', assetName, sourcePath: path,
+                    message: `shader compile failed: ${e.message}`,
+                });
+                continue;
+            }
+            diagnostics.push({
+                severity: 'error', assetName, sourcePath: path,
+                message: `shader compile failed: ${e?.message ?? e}`,
+            });
+        }
+    }
+
+    return { assets, diagnostics };
+}
+
+function mapShaderDiagnostic(
+    d: CompileFxDiagnostic,
+    assetName: string,
+    sourcePath: string,
+): AssetDiagnostic {
+    const where = d.line ? ` [${d.line}${d.column ? ':' + d.column : ''}]` : '';
+    return {
+        severity: d.severity === 'error' ? 'error' : d.severity === 'warning' ? 'warn' : 'info',
+        assetName,
+        sourcePath,
+        message: `${d.message}${where}`,
+    };
 }

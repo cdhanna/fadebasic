@@ -377,12 +377,13 @@ namespace FadeBasic.Launch
             outboundMessages.Enqueue(message);
         }
 
-        protected void SendRuntimeErrorMessage(string message)
+        protected void SendRuntimeErrorMessage(string message, bool isSystem = false)
         {
             outboundMessages.Enqueue(new ExplodedMessage()
             {
                 id = GetNextMessageId(),
                 message = message,
+                isSystem = isSystem,
                 type = DebugMessageType.REV_REQUEST_EXPLODE
             });
         }
@@ -1923,9 +1924,17 @@ namespace FadeBasic.Launch
             }
             catch (Exception ex)
             {
-                logger.Error($"Unhandled VM exception during step: {ex.Message}");
+                // Log the full ToString() (type + message + stack) so the host can find
+                // the offending op handler. The Message alone hides where the cast
+                // (or other system-level fault) actually originated.
+                logger.Error($"Unhandled VM exception during step: {ex}");
                 pauseRequestedByMessageId = resumeRequestedByMessageId + 1;
-                SendRuntimeErrorMessage(ex.Message);
+                // Tag with the current ins= so the Playground can resolve a source
+                // line, and mark isSystem=true so the UI renders it as an internal
+                // fault rather than a "normal" Fade runtime error.
+                SendRuntimeErrorMessage(
+                    $"system-error. ins=[{_vm.instructionIndex}] {ex.Message}",
+                    isSystem: true);
                 activeStepMessage = null;
             }
         }
@@ -2093,9 +2102,17 @@ namespace FadeBasic.Launch
                     }
                     catch (Exception ex)
                     {
-                        logger.Error($"Unhandled VM exception during execution: {ex.Message}");
+                        // Full ToString() so the type + stack trace survive — the
+                        // bare Message (e.g. "Specified cast is not valid.") hides
+                        // which op handler actually faulted.
+                        logger.Error($"Unhandled VM exception during execution: {ex}");
                         pauseRequestedByMessageId = resumeRequestedByMessageId + 1;
-                        SendRuntimeErrorMessage(ex.Message);
+                        // Tag with the failing ins= so the Playground can paint a
+                        // line preview, and flag isSystem so the UI distinguishes
+                        // this from a structured Fade runtime error.
+                        SendRuntimeErrorMessage(
+                            $"system-error. ins=[{_vm.instructionIndex}] {ex.Message}",
+                            isSystem: true);
                         spent = 0;
                     }
                     budget -= spent;
@@ -2295,10 +2312,17 @@ namespace FadeBasic.Launch
     public class ExplodedMessage : DebugMessage
     {
         public string message;
+        // True when this error originated from an unhandled .NET exception
+        // (e.g. InvalidCastException) rather than a VM-structured runtime
+        // error like divide-by-zero. The Playground renders these with a
+        // distinct chip so the user knows it's an internal/system fault,
+        // not an "expected" Fade runtime error they wrote.
+        public bool isSystem;
         public override void ProcessJson<T>(ref T op)
         {
             base.ProcessJson(ref op);
             op.IncludeField(nameof(message), ref message);
+            op.IncludeField(nameof(isSystem), ref isSystem);
         }
     }
 

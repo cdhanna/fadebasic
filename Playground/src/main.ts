@@ -100,6 +100,7 @@ import { patchXnbForKni } from './xnb/xnb-previews';
 import {
     compileImageAssetsWithPlan,
     compileFontAssetsWithPlan,
+    compileShaderAssetsWithPlan,
     garbageCollectAssetCache,
 } from './assets/compile-assets';
 import { sha256Hex } from './assets/asset-cache';
@@ -109,8 +110,15 @@ import {
     isImageSourcePath,
     isAudioSourcePath,
     isFontSourcePath,
+    isShaderSourcePath,
 } from './assets/types';
 import type { MonoGameContentPlan } from './monogame-host';
+import {
+    captureShaderErrorLine,
+    clearShaderMarkers,
+    flushPending as flushShaderMarkers,
+} from './shader/shader-markers';
+import { attachShaderValidator } from './shader/shader-validator';
 
 const EMPTY_CONTENT_PLAN: MonoGameContentPlan = {
     defaultCompression: 'auto',
@@ -150,6 +158,7 @@ import {
 } from './sharing/collab';
 import { mountLogsPanel } from './logs-panel';
 import { mountSearchPanel } from './search-panel';
+import { mountDebugUiPanel } from './debug-ui-panel';
 import { mountSettingsPanel } from './settings-panel';
 import {
     initSettings,
@@ -767,6 +776,19 @@ async function openFile(workspace: OpfsWorkspace, name: string) {
                 tabSize: Number(eff['editor.tabSize'] ?? 2),
                 insertSpaces: Boolean(eff['editor.insertSpaces'] ?? true),
             });
+        }
+        // .fx-specific live validator — runs the FX parser + HLSL
+        // translator + glslang on each model change (debounced) and
+        // surfaces anything they complain about as Monaco markers.
+        // Hook runs unconditionally per openFile call: a previously-open
+        // model that was created BEFORE the validator existed needs to
+        // get hooked the next time the file's opened, otherwise editing
+        // it would produce no markers. attachShaderValidator is
+        // idempotent — multiple calls on the same model just trigger an
+        // immediate validation pass.
+        if (model.getLanguageId() === 'fadefx') {
+            console.log('[shader-validator] attaching to', name, 'uri=', uri.toString());
+            attachShaderValidator(model);
         }
         // Hook this model for LSP push + decoration (if available)
         (window as any).__fadeHookModel?.(model);
@@ -3507,6 +3529,27 @@ async function bootstrap() {
         if (bottomTabs && 'selectedIndex' in bottomTabs) bottomTabs.selectedIndex = 1;
     }
 
+    // Shader diagnostics arrive via monaco.editor.setModelMarkers (not via
+    // the FBasic LSP path that drives diagnosticsByUri), so renderProblems
+    // doesn't see them without an explicit nudge. Subscribe to Monaco's
+    // global marker-change event and re-render whenever a .fx file's
+    // markers move. Debounced via microtask so a batch of setModelMarkers
+    // calls in the same tick coalesces into a single re-render.
+    let problemsRenderQueued = false;
+    monaco.editor.onDidChangeMarkers((uris) => {
+        const touched = uris.some(u => {
+            const s = u.toString();
+            return s.endsWith('.fx');
+        });
+        if (!touched) return;
+        if (problemsRenderQueued) return;
+        problemsRenderQueued = true;
+        queueMicrotask(() => {
+            problemsRenderQueued = false;
+            renderProblems();
+        });
+    });
+
     function renderProblems() {
         problemsList.innerHTML = '';
         let total = 0;
@@ -3594,6 +3637,64 @@ async function bootstrap() {
                 problemsList.append(li);
             }
         }
+
+        // Shader diagnostics: the .fx validator (shader-validator.ts) and the
+        // runtime KNI error marker (shader-markers.ts) publish via
+        // monaco.editor.setModelMarkers under their own owner strings.
+        // diagnosticsByUri only tracks FBasic LSP diagnostics, so without
+        // this loop the Problems panel stays empty for .fx errors even
+        // though squiggles appear in the editor. Read markers directly by
+        // owner so we don't need a parallel state mirror.
+        const SHADER_OWNERS = ['shader-static', 'shader-runtime'] as const;
+        for (const model of monaco.editor.getModels()) {
+            for (const owner of SHADER_OWNERS) {
+                const markers = monaco.editor.getModelMarkers({ resource: model.uri, owner });
+                for (const mk of markers) {
+                    total++;
+                    const li = document.createElement('li');
+                    li.className = 'problem-item';
+
+                    const sevName =
+                        mk.severity === monaco.MarkerSeverity.Error   ? 'error'
+                      : mk.severity === monaco.MarkerSeverity.Warning ? 'warning'
+                      : 'info';
+                    const icon = document.createElement('vscode-icon');
+                    icon.setAttribute('name', sevName);
+                    icon.className = sevName;
+
+                    const msg = document.createElement('span');
+                    msg.className = 'problem-message';
+                    msg.textContent = mk.message;
+                    if (mk.source) {
+                        const code = document.createElement('span');
+                        code.className = 'code';
+                        code.textContent = mk.source;
+                        msg.append(code);
+                    }
+
+                    const loc = document.createElement('span');
+                    loc.className = 'problem-location';
+                    loc.textContent = `${uriToName(model.uri.toString())}:${mk.startLineNumber}:${mk.startColumn}`;
+
+                    li.append(icon, msg, loc);
+                    li.onclick = () => {
+                        const name = uriToName(model.uri.toString());
+                        const tab = tabs.get(name);
+                        if (tab && editor) {
+                            editor.setModel(tab.model);
+                            activeName = name;
+                            renderTabs();
+                            renderFileListSelection();
+                            editor.revealPositionInCenter({ lineNumber: mk.startLineNumber, column: mk.startColumn });
+                            editor.setPosition({ lineNumber: mk.startLineNumber, column: mk.startColumn });
+                            editor.focus();
+                        }
+                    };
+                    problemsList.append(li);
+                }
+            }
+        }
+
         setPanelTitle('problems', total > 0 ? `Problems (${total})` : 'Problems');
         problemsEmpty.style.display = total === 0 ? '' : 'none';
 
@@ -5065,7 +5166,25 @@ async function bootstrap() {
     // v8 moved Tests from the bottom tab group into the Workspace tab
     // group (so the left column tabs are Workspace / Debug / Tests).
     // Bump again so existing v7 users get the rebuild.
-    const LAYOUT_STORAGE_KEY = 'fade.dockview.layout.v8';
+    // v9 added the Debug UI panel (Tweakpane-driven counterpart to the
+    // desktop ImGui dev UI) to the right-column tab group beside Game
+    // and Help. Existing v8 users don't have it; bumping the key forces
+    // a clean rebuild so the new tab appears.
+    // v10 added the Inspector panel (provider-driven live state browser)
+    // next to Debug UI. Existing v9 users would have a missing tab
+    // without this bump — healLayout's addMissing would patch it but
+    // the explicit version bump is cleaner.
+    // v11 removed the standalone Debug UI tab — Inspector now subsumes
+    // its fbasic-widgets functionality. v10 layouts with a Debug UI
+    // tab still present would be patched by healLayout (which drops
+    // unknown components), but the explicit version bump avoids the
+    // intermediate state.
+    // v13: collapsed everything back into a single "Debug UI" tab.
+    // Each fbasic `begin debug window` is a top-level folder; the
+    // Inspector becomes a top-level "Inspector" folder gated on
+    // `enable debug inspector`. The separate inspector tab and the
+    // per-window fbasic-window:* tabs from v12 are removed.
+    const LAYOUT_STORAGE_KEY = 'fade.dockview.layout.v13';
 
     function setupDockview(): DockviewApi {
         const dockRoot = document.getElementById('dock-root')!;
@@ -5273,6 +5392,11 @@ async function bootstrap() {
         'logs',
         'history',
         'live-session',
+        // Unified browser debug UI. Single tab "Debug UI" that hosts:
+        //   - One folder per fbasic-emitted `begin debug window` block
+        //   - An optional "Inspector" folder (gated on `enable debug
+        //     inspector`) with Metadata + IDebugProvider entity browsers
+        'debug-ui',
         // Dynamic — one per conflict file; created when the collaboration
         // panel's "Resolve in editor →" button opens a file.
         'conflict-editor',
@@ -5366,6 +5490,10 @@ async function bootstrap() {
             addMissing('help', {
                 position: { referencePanel: helpRef, direction: 'within' },
                 renderer: RENDER_ALWAYS, title: 'Help',
+            });
+            addMissing('debug-ui', {
+                position: { referencePanel: helpRef, direction: 'within' },
+                renderer: RENDER_ALWAYS, title: 'Debug UI',
             });
             // Collaboration / Logs / History are no longer part of the
             // default tab strip — they open into the editor tab group on
@@ -5486,6 +5614,16 @@ async function bootstrap() {
             position: { referencePanel: gamePanel.id, direction: 'within' },
             renderer: RENDER_ALWAYS,
         });
+        // Debug UI: unified Tweakpane panel — one folder per fbasic
+        // `begin debug window`, plus an optional Inspector folder
+        // when the program calls `enable debug inspector`.
+        dock.addPanel({
+            id: 'debug-ui',
+            component: 'debug-ui',
+            title: 'Debug UI',
+            position: { referencePanel: gamePanel.id, direction: 'within' },
+            renderer: RENDER_ALWAYS,
+        });
         // Default-focused tabs in each group: Workspace, Editor, Help, Problems.
         // setActive() on a panel activates it within its own group, so calling
         // it on one panel per group gives the user the intended startup view.
@@ -5532,6 +5670,26 @@ async function bootstrap() {
         const bootLog = getLogger('app');
         bootLog.info('Playground booted');
     }
+
+    // Unified Debug UI panel. One Tweakpane root contains both the
+    // user's custom debug windows (from fbasic `begin debug window`)
+    // as top-level folders + an "Inspector" folder when the program
+    // calls `enable debug inspector`.
+    const debugUiHost = document.getElementById('debug-ui-host');
+    const debugUiHandle = debugUiHost ? mountDebugUiPanel({
+        container: debugUiHost,
+        getSchema: (t) => monoGameHost.debugGetSchema(t),
+        getEntitySchema: (t, id) => monoGameHost.debugGetEntitySchema(t, id),
+        listEntities: (t) => monoGameHost.debugListEntities(t),
+        getEntity: (t, id) => monoGameHost.debugGetEntity(t, id),
+        setField: (t, id, p, v) => monoGameHost.debugSetField(t, id, p, v),
+        sendFbasicChange: (ctrlId, kind, value) => monoGameHost.sendDebugUiChange(ctrlId, kind, value),
+    }) : null;
+
+    monoGameHost.onDebugUiFrame = (env) => {
+        try { debugUiHandle?.applyFrameEnvelope(env); }
+        catch (e) { console.warn('[debug-ui] applyFrameEnvelope threw', e); }
+    };
 
     // Find-in-Files panel. Mounted once at boot into the offscreen
     // #search-host; dockview reparents the host into whichever tab group
@@ -5898,6 +6056,11 @@ async function bootstrap() {
     // Track current unsubscribe functions so the next session change can
     // tear them down before installing the new set.
     let collabRuntimeUnsubs: Array<() => void> = [];
+    // Receive-side game-frame diagnostics. Mirrors `gameFrameStats` on the
+    // capture/send side so we can correlate "host says it sent N frames"
+    // vs. "guest says it received M frames" when streaming misbehaves.
+    let gameFrameReceiveStats = { received: 0, rendered: 0, decodeErrors: 0, lastByteSize: 0 };
+    let lastGameFrameReceiveLog = 0;
 
     function installCollabRuntimeListeners(session: ReturnType<NonNullable<typeof liveSessionHandle>['getSession']>): void {
         for (const u of collabRuntimeUnsubs) { try { u(); } catch { /* ignore */ } }
@@ -5911,12 +6074,24 @@ async function bootstrap() {
         }
 
         // Game frames from any other peer.
+        gameFrameReceiveStats = { received: 0, rendered: 0, decodeErrors: 0, lastByteSize: 0 };
         collabRuntimeUnsubs.push(session.onGameFrame((peerId, bytes) => {
-            // Skip our own echo — sendGameFrame goes to everyone including
-            // ourselves on some transports. Identify by selfId.
-            const self = (liveSessionHandle?.getSession()?.awareness)?.clientID;
-            void self;
+            // Skip our own echo — sendGameFrame goes to everyone
+            // including ourselves on some transports. The transport's
+            // selfId matches our local awareness clientID via the
+            // adapter; checking room.selfId is the robust comparison.
             if (peerId === (session as any).room?.selfId) return;
+            gameFrameReceiveStats.received++;
+            gameFrameReceiveStats.lastByteSize = bytes.byteLength;
+            // Periodic log so the receive side is visible when frames
+            // aren't appearing — symmetric with the host's capture
+            // stats log. Fires on the first frame (lastReceiveLog === 0)
+            // and then ~every 2 sec.
+            const now = performance.now();
+            if (lastGameFrameReceiveLog === 0 || now - lastGameFrameReceiveLog > 2000) {
+                lastGameFrameReceiveLog = now;
+                console.log('[fade-collab] game frame receive stats', { ...gameFrameReceiveStats });
+            }
             void renderGameFrame(bytes);
         }));
 
@@ -6004,7 +6179,10 @@ async function bootstrap() {
 
     async function renderGameFrame(bytes: Uint8Array): Promise<void> {
         const canvas = document.getElementById('game-stream-canvas') as HTMLCanvasElement | null;
-        if (!canvas) return;
+        if (!canvas) {
+            console.debug('[fade-collab] renderGameFrame: no #game-stream-canvas — overlay maybe not mounted');
+            return;
+        }
         // Build a Blob → object URL → <img>. We could decode directly via
         // createImageBitmap for speed; sticking with <img> for now because
         // it's universally supported and we're at 5 fps either way.
@@ -6027,7 +6205,11 @@ async function bootstrap() {
             }
             const ctx = canvas.getContext('2d');
             if (ctx) ctx.drawImage(img, 0, 0);
-        } catch { /* drop frame */ }
+            gameFrameReceiveStats.rendered++;
+        } catch (e) {
+            gameFrameReceiveStats.decodeErrors++;
+            console.debug('[fade-collab] frame decode failed', e);
+        }
         finally {
             URL.revokeObjectURL(url);
         }
@@ -7532,7 +7714,7 @@ async function bootstrap() {
     // any asset bytes touches nothing on the iframe side — no decode,
     // no postMessage, no GPU upload. Wiped if the user calls
     // forceAssetCacheClear() or switches projects (page reload).
-    type SyncedAssetKind = 'image' | 'audio' | 'font' | 'xnb';
+    type SyncedAssetKind = 'image' | 'audio' | 'font' | 'shader' | 'xnb';
     interface SyncedAssetState { kind: SyncedAssetKind; hash: string; }
     const lastSyncedAssets = new Map<string, SyncedAssetState>();
 
@@ -7575,6 +7757,7 @@ async function bootstrap() {
         };
 
         const fontSources = names.filter(isFontSourcePath);
+        const shaderSources = names.filter(isShaderSourcePath);
         const xnbSources = names.filter(
             (n) => /\.xnb$/i.test(n) && !n.startsWith('.fade-cache/'),
         );
@@ -7650,7 +7833,43 @@ async function bootstrap() {
             }
         }
 
-        // Phase 1d: pre-built `.xnb` uploads (legacy assets the user
+        // Phase 1d: shaders — `.fx` source files compiled to MGFX v10
+        // effect XNBs via the FX framing parser + WASM shader compiler.
+        // Hash is computed over the XNB output so changing the source
+        // (or the compiler version) re-syncs; unchanged shaders skip
+        // re-registration entirely.
+        //
+        // Clear any KNI compile-error markers on .fx files before starting
+        // the new sync. If the new compile fails again, the stderr
+        // capture below will set fresh markers; if it succeeds we leave
+        // the editor clean.
+        if (shaderSources.length > 0) clearShaderMarkers();
+        if (shaderSources.length > 0) {
+            try {
+                const { assets, diagnostics } =
+                    await compileShaderAssetsWithPlan(workspace, shaderSources, plan);
+                for (const d of diagnostics) reportDiagnostic(d);
+                for (const a of assets) {
+                    const hash = await sha256Hex(a.bytes);
+                    // Audit trail in the Logs panel ('asset' channel) —
+                    // shader staleness was a real bug we had to chase, so
+                    // keep the hash visible. Comparing the xnbHash across
+                    // two Runs tells you whether the source edit actually
+                    // produced different compiled bytes.
+                    assetLog.info(
+                        `shader ${a.assetName}: ${a.cached ? 'cache-hit' : 'compiled'} ` +
+                        `(${a.bytes.length} B, xnbHash=${hash.slice(0, 8)})`,
+                    );
+                    target.set(a.assetName, {
+                        name: a.assetName, kind: 'shader', hash, bytes: a.bytes,
+                    });
+                }
+            } catch (e) {
+                assetLog.error(`shader compile pass failed: ${(e as any)?.message ?? e}`);
+            }
+        }
+
+        // Phase 1e: pre-built `.xnb` uploads (legacy assets the user
         // brought in directly). Run through the KNI patcher then hash.
         for (const name of xnbSources) {
             try {
@@ -7735,7 +7954,7 @@ async function bootstrap() {
         // Shared cache GC — runs once all compile passes have populated
         // liveSourcePaths so neither kind's entries get wrongly evicted.
         const liveSources = new Set<string>([
-            ...imageSources, ...audioSources, ...fontSources,
+            ...imageSources, ...audioSources, ...fontSources, ...shaderSources,
         ]);
         try { await garbageCollectAssetCache(workspace, liveSources); }
         catch (e) { console.warn('[fade] asset cache GC failed', e); }
@@ -8078,6 +8297,7 @@ async function bootstrap() {
                 const imageSources = wsNames.filter(isImageSourcePath);
                 const audioSources = wsNames.filter(isAudioSourcePath);
                 const fontSources = wsNames.filter(isFontSourcePath);
+                const shaderSources = wsNames.filter(isShaderSourcePath);
                 if (imageSources.length > 0) {
                     try {
                         const { assets, diagnostics } =
@@ -8100,6 +8320,18 @@ async function bootstrap() {
                         for (const a of assets) xnbEntries.push({ name: a.assetName, bytes: a.bytes });
                     } catch (e: any) {
                         appendOutputLine(`[warn] export font compile failed: ${e?.message ?? e}`, 'dim');
+                    }
+                }
+                if (shaderSources.length > 0) {
+                    try {
+                        const { assets, diagnostics } =
+                            await compileShaderAssetsWithPlan(workspace, shaderSources, compilePlan);
+                        for (const d of diagnostics) {
+                            if (d.severity === 'error') appendOutputLine(`[export ${d.assetName ?? ''}] ${d.message}`, 'error');
+                        }
+                        for (const a of assets) xnbEntries.push({ name: a.assetName, bytes: a.bytes });
+                    } catch (e: any) {
+                        appendOutputLine(`[warn] export shader compile failed: ${e?.message ?? e}`, 'dim');
                     }
                 }
                 // Audio assets ship as raw source bytes — the
@@ -8622,6 +8854,7 @@ async function bootstrap() {
     function startGameFrameStreaming(session: ReturnType<NonNullable<typeof liveSessionHandle>['getSession']>): void {
         if (gameFrameInterval) return;
         if (!session) return;
+        console.log('[fade-collab] starting game frame streaming @ ' + GAME_FRAME_FPS + ' FPS');
         gameFrameInterval = setInterval(() => {
             // The session reference can become stale if the user leaves
             // the session while a run is in flight. Re-resolve every tick.
@@ -8633,40 +8866,81 @@ async function bootstrap() {
 
     function stopGameFrameStreaming(): void {
         if (gameFrameInterval) {
+            console.log('[fade-collab] stopping game frame streaming');
             clearInterval(gameFrameInterval);
             gameFrameInterval = null;
         }
     }
 
-    /** Grab the current contents of the web-preview iframe's canvas (or
-     *  the standalone web canvas if the runtime ever moves out of the
-     *  iframe) and broadcast it as a JPEG. No-op when no canvas is
-     *  reachable — monogame's Blazor iframe is currently sandboxed and
-     *  out of reach from here; that's a Phase 2A follow-up. */
+    /** Grab the current contents of whichever game-surface canvas this
+     *  peer is rendering into and broadcast it as a JPEG. Both the web
+     *  iframe (#web-preview-frame) and the monogame iframe
+     *  (#mg-preview-frame) are same-origin with the playground; the
+     *  monogame iframe is sandboxed but with `allow-same-origin` set,
+     *  which keeps its document accessible to the parent.
+     *
+     *  Looks at both iframes every tick (whichever one has a canvas
+     *  wins) rather than gating on `currentProject?.type`. That gates
+     *  on a value that can be stale during runtime swaps, and just
+     *  checking both is no measurable cost — it's a single
+     *  querySelector each. The first iframe with both a canvas and a
+     *  non-zero drawing-buffer wins. */
+    let gameFrameStats = { captures: 0, sent: 0, skippedNoCanvas: 0, skippedEmpty: 0, skippedError: 0 };
+    let lastGameFrameStatsLog = 0;
     async function captureAndSendFrame(session: NonNullable<ReturnType<NonNullable<typeof liveSessionHandle>['getSession']>>): Promise<void> {
-        const iframe = document.getElementById('web-preview-frame') as HTMLIFrameElement | null;
-        // Reach into the iframe's DOM — both the playground and the
-        // runtime are served from the same origin, so this just works.
-        // contentDocument is null for cross-origin frames; that's the
-        // signal we're on a path we can't capture (monogame iframe).
+        gameFrameStats.captures++;
+        // Periodic capture-stats log so the user can see what's
+        // happening when frames aren't flowing. First log fires on the
+        // very first capture (lastGameFrameStatsLog === 0); subsequent
+        // ones every ~2 sec.
+        const now = performance.now();
+        if (lastGameFrameStatsLog === 0 || now - lastGameFrameStatsLog > 2000) {
+            lastGameFrameStatsLog = now;
+            console.log('[fade-collab] game frame stats', { ...gameFrameStats });
+        }
+
+        const iframeIds = ['mg-preview-frame', 'web-preview-frame'] as const;
         let canvas: HTMLCanvasElement | null = null;
-        try {
-            canvas = iframe?.contentDocument?.querySelector('canvas') ?? null;
-        } catch {
-            // SecurityError when cross-origin — treat as "no canvas".
+        let foundIframe: string | null = null;
+        for (const id of iframeIds) {
+            const iframe = document.getElementById(id) as HTMLIFrameElement | null;
+            if (!iframe) continue;
+            let doc: Document | null = null;
+            try { doc = iframe.contentDocument; }
+            catch { continue; }
+            if (!doc) continue;
+            // Some iframes mount multiple canvases (e.g. an offscreen
+            // worker canvas alongside the visible one). Prefer the
+            // monogame-specific id when present, then any canvas with
+            // non-zero size.
+            const tagged = doc.getElementById('theCanvas') as HTMLCanvasElement | null;
+            if (tagged && tagged.width > 0 && tagged.height > 0) {
+                canvas = tagged; foundIframe = id; break;
+            }
+            const generic = Array.from(doc.querySelectorAll('canvas'))
+                .find((c) => (c as HTMLCanvasElement).width > 0 && (c as HTMLCanvasElement).height > 0) as HTMLCanvasElement | undefined;
+            if (generic) { canvas = generic; foundIframe = id; break; }
+        }
+        if (!canvas) {
+            gameFrameStats.skippedNoCanvas++;
             return;
         }
-        if (!canvas) return;
+        void foundIframe; // captured for the stats log above if needed
         try {
             const blob: Blob | null = await new Promise((resolve) =>
                 canvas!.toBlob(resolve, 'image/jpeg', GAME_FRAME_QUALITY),
             );
-            if (!blob) return;
+            if (!blob || blob.size === 0) {
+                gameFrameStats.skippedEmpty++;
+                return;
+            }
             const buf = await blob.arrayBuffer();
             session.sendGameFrame(new Uint8Array(buf));
+            gameFrameStats.sent++;
         } catch (e) {
             // Tainted canvas, OOM, etc. Best-effort — drop this frame and
             // try again on the next tick.
+            gameFrameStats.skippedError++;
             console.debug('[fade-collab] game frame capture skipped', e);
         }
     }
@@ -8796,13 +9070,22 @@ async function bootstrap() {
     }
 
     // Click in the glyph margin toggles a breakpoint on that line.
+    // Only Fade source files (.fbasic, languageId='fade') can hold
+    // breakpoints — the debug runtime steps Fade VM instructions, so
+    // there's nothing to break on in shader (.fx) or config (.json)
+    // files. Centralized predicate so the click handler, the hover
+    // preview, and any future affordances stay consistent.
+    function modelSupportsBreakpoints(model: monaco.editor.ITextModel | null): boolean {
+        return model?.getLanguageId() === 'fade';
+    }
+
     editor.onMouseDown((e) => {
         if (e.target.type !== monaco.editor.MouseTargetType.GUTTER_GLYPH_MARGIN) return;
         const line = e.target.position?.lineNumber;
         if (line == null) return;
         const model = editor!.getModel();
-        if (!model) return;
-        const uri = model.uri.toString();
+        if (!modelSupportsBreakpoints(model)) return;
+        const uri = model!.uri.toString();
         let set = breakpointsByUri.get(uri);
         if (!set) { set = new Set(); breakpointsByUri.set(uri, set); }
         if (set.has(line)) set.delete(line);
@@ -8845,6 +9128,15 @@ async function bootstrap() {
         const dom = editor?.getDomNode();
         const model = editor?.getModel();
         if (!dom || !model || line == null) {
+            clearBreakpointPreview();
+            return;
+        }
+        // Non-Fade models (e.g. .fx shaders, .json config) can't hold
+        // breakpoints, so suppress the phantom affordance and cursor
+        // class on them entirely. Without this guard the user sees a
+        // pointer cursor + click-to-add hint over a .fx gutter and
+        // gets no response when they click.
+        if (!modelSupportsBreakpoints(model)) {
             clearBreakpointPreview();
             return;
         }
@@ -9353,7 +9645,22 @@ async function bootstrap() {
     // warnings all land here so the user doesn't have to crack the
     // browser dev console to see what their game is doing.
     monoGameHost.onStdout = (line) => appendOutputLine(line);
-    monoGameHost.onStderr = (line) => appendOutputLine(line, 'error');
+    monoGameHost.onStderr = (line) => {
+        appendOutputLine(line, 'error');
+        // KNI's `Console.Error.WriteLine` of a multi-line error message
+        // arrives here as ONE stderr event with embedded newlines (the
+        // iframe's console-forwarding bridge does join+post per call,
+        // not per logical line). Split before feeding into the shader-
+        // error capture so the header line and each subsequent `ERROR:`
+        // line are seen as separate inputs.
+        const subLines = line.split(/\r?\n/);
+        for (const sub of subLines) {
+            if (sub.trim().length > 0) captureShaderErrorLine(sub);
+        }
+        // Force-flush at end of message so the marker lands even when no
+        // non-ERROR line follows in this stderr block.
+        flushShaderMarkers();
+    };
 
     async function onAnyDebugEvent(event: any) {
         // [DEBUG-LOGGING — remove once scope-after-step issue is resolved]
@@ -9488,9 +9795,16 @@ async function bootstrap() {
                 // the cleaned-up view — no caller ever has to look at
                 // the raw envelope.
                 const summary = summarizeCrash(expMsg);
-                const replText = summary.detail
+                // Prefix system errors with "[Internal]" in the REPL so the
+                // user can immediately tell the fault was an unhandled .NET
+                // exception in the VM host rather than a normal Fade runtime
+                // error like divide-by-zero or out-of-bounds access.
+                const baseText = summary.detail
                     ? `${summary.title} — ${summary.detail}`
                     : summary.title;
+                const replText = summary.isSystem
+                    ? `[Internal] ${baseText}`
+                    : baseText;
                 appendReplLine(replText, 'err');
                 revealPanel('debug-console');
 
@@ -9539,6 +9853,10 @@ async function bootstrap() {
                                     kind: summary.kind,
                                     title: summary.title,
                                     detail: summary.detail,
+                                    // Carry the system flag through so the
+                                    // overlay switches to its internal-error
+                                    // chrome (bug icon, "Internal error" chip).
+                                    isSystem: summary.isSystem,
                                     onAbort: () => { void stopAll(); },
                                 });
                             }

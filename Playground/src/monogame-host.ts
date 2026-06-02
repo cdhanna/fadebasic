@@ -44,6 +44,13 @@
 //   unregister-asset { name }               (no reply)
 //   unregister-audio { name }               (no reply)
 //   clear-assets                            (no reply)
+//   debug-ui-change { ctrlId, kind, value } (no reply)
+//   debug-list-types { id }                 debug-list-types-result { id, result }
+//   debug-get-schema { typeName, id }       debug-get-schema-result { id, result }
+//   debug-list-entities { typeName, id }    debug-list-entities-result { id, result }
+//   debug-get-entity { typeName, entityId, id } debug-get-entity-result { id, result }
+//   debug-set-field { typeName, entityId, path, valueJson, id }
+//                                           debug-set-field-result { id, result }
 //
 // Streaming events the iframe pushes unprompted:
 //   debug-event { event: { id, type, json } } — drained from TickDotNet
@@ -64,6 +71,10 @@
 //   stderr { line }                         — console.warn / .error
 //                                              output. Forwarded via
 //                                              onStderr.
+//   debug-ui-frame { json }                 — one-per-frame command queue
+//                                              from DebugUISystem (browser).
+//                                              Forwarded via onDebugUiFrame
+//                                              for the Tweakpane panel.
 
 const IFRAME_SRC = '/runtime/monogame/index.html?preview=1';
 const IFRAME_ELEMENT_ID = 'mg-preview-frame';
@@ -350,6 +361,25 @@ class MonoGameHost {
             if (this.onStderr) {
                 try { this.onStderr(m.line ?? ''); }
                 catch (err) { console.error('[monogame-host] onStderr threw:', err); }
+            }
+            return;
+        }
+
+        // Debug UI per-frame envelope (browser DebugUISystem). The iframe
+        // ships `{type: 'debug-ui-frame', json: '<envelope>'}` once per
+        // frame. The envelope shape is:
+        //   { gen: int, queue: [...], autoInspector: bool,
+        //     metadata?: {...}, entities?: {typeName: number[]} }
+        // We parse here so each subscriber doesn't redo the work, and
+        // tolerate the legacy "just a queue array" shape in case an old
+        // runtime ships an unwrapped queue.
+        if (m.type === 'debug-ui-frame') {
+            if (this.onDebugUiFrame) {
+                try {
+                    const env = parseDebugUiEnvelope(typeof m.json === 'string' ? m.json : '');
+                    this.onDebugUiFrame(env);
+                }
+                catch (err) { console.error('[monogame-host] onDebugUiFrame threw:', err); }
             }
             return;
         }
@@ -694,6 +724,143 @@ class MonoGameHost {
     // Console.WriteLine output into the Playground's Output panel.
     onStdout?: (line: string) => void;
     onStderr?: (line: string) => void;
+
+    // Debug UI sink — receives the parsed per-frame envelope. Wired by
+    // main.ts to the Tweakpane debug-ui-panel. Optional; unset means
+    // the iframe's frames are simply dropped.
+    onDebugUiFrame?: (envelope: DebugUiFrameEnvelope) => void;
+
+    /** Push a user-driven change (slider move, button click, etc.)
+     *  back to the running game. `ctrlId` is the ControlId echoed
+     *  back from the most recent debug-ui-frame; `kind` is 0=bool,
+     *  1=int, 2=float, 3=string (DebugUISystem.KIND_*); `value` is
+     *  the stringified payload. No-op until the iframe is armed. */
+    sendDebugUiChange(ctrlId: number, kind: number, value: string): void {
+        if (!this.isReady()) return;
+        this.post({ type: 'debug-ui-change', ctrlId, kind, value });
+    }
+
+    // ─── Debug Inspector RPC ────────────────────────────────────────
+    // Generic provider-driven inspector surface — the Playground
+    // Tweakpane panel uses these to enumerate entities, snapshot
+    // their state, and write edits back. Each method round-trips
+    // through the iframe to a [JSInvokable] on Index.razor.cs that
+    // delegates to DebugRegistry on the C# side. JSON strings come
+    // back verbatim — the caller parses with JSON.parse.
+
+    /** Return all registered provider type names. */
+    async debugListTypes(): Promise<string[]> {
+        if (!this.isReady()) return [];
+        const json = await this.call<string>({ type: 'debug-list-types' });
+        try { return JSON.parse(json); } catch { return []; }
+    }
+
+    /** Return the field schema for one provider (drives Tweakpane
+     *  widget choice). */
+    async debugGetSchema(typeName: string): Promise<DebugFieldSchema[] | null> {
+        if (!this.isReady()) return null;
+        const json = await this.call<string>({ type: 'debug-get-schema', typeName });
+        if (!json || json === 'null') return null;
+        try { return JSON.parse(json) as DebugFieldSchema[]; } catch { return null; }
+    }
+
+    /** Per-entity schema. Used by the panel for provider types whose
+     *  field list varies per id (e.g. effects with shader parameters). */
+    async debugGetEntitySchema(typeName: string, entityId: number): Promise<DebugFieldSchema[] | null> {
+        if (!this.isReady()) return null;
+        const json = await this.call<string>({ type: 'debug-get-entity-schema', typeName, entityId });
+        if (!json || json === 'null') return null;
+        try { return JSON.parse(json) as DebugFieldSchema[]; } catch { return null; }
+    }
+
+    /** Return the live id list for one provider. */
+    async debugListEntities(typeName: string): Promise<number[]> {
+        if (!this.isReady()) return [];
+        const json = await this.call<string>({ type: 'debug-list-entities', typeName });
+        try { return JSON.parse(json); } catch { return []; }
+    }
+
+    /** Snapshot one entity's current state. Returns a plain JSON
+     *  object whose keys match the schema's Path values (top-level
+     *  for non-nested fields, dotted access for vec2/color). */
+    async debugGetEntity(typeName: string, entityId: number): Promise<Record<string, unknown> | null> {
+        if (!this.isReady()) return null;
+        const json = await this.call<string>({ type: 'debug-get-entity', typeName, entityId });
+        if (!json || json === 'null') return null;
+        try { return JSON.parse(json); } catch { return null; }
+    }
+
+    /** Apply one field change. valueJson must be a JSON-encoded leaf
+     *  value (number, bool, or string — never an object/array). */
+    async debugSetField(typeName: string, entityId: number, path: string, valueJson: string): Promise<boolean> {
+        if (!this.isReady()) return false;
+        const result = await this.call<boolean | string>({
+            type: 'debug-set-field', typeName, entityId, path, valueJson,
+        });
+        if (typeof result === 'boolean') return result;
+        return String(result ?? '').toLowerCase() === 'true';
+    }
+}
+
+/** One DebugUICommand as serialized by DebugUISystem.Browser.cs. */
+export interface DebugUiCommand {
+    id: number;
+    t: number;
+    l?: string | null;
+    s?: string | null;
+    i: number;
+    f: number | null;
+}
+
+/** Parsed per-frame envelope produced by DebugUISystem.Browser.cs.
+ *  `gen` increments on every NotifyProgramReset; subscribers wipe
+ *  their UI state when they see it change. `autoInspector` mirrors
+ *  the fbasic `enable debug inspector` flag — false on a fresh
+ *  program, true once the source opts in.
+ *
+ *  `metadata` and `entities` are present only when autoInspector is
+ *  true (the C# side gates the work behind the same flag). */
+export interface DebugUiFrameEnvelope {
+    gen: number;
+    queue: DebugUiCommand[];
+    autoInspector: boolean;
+    metadata?: Record<string, unknown> | null;
+    entities?: Record<string, number[]>;
+}
+
+function parseDebugUiEnvelope(json: string): DebugUiFrameEnvelope {
+    const empty: DebugUiFrameEnvelope = { gen: 0, queue: [], autoInspector: false };
+    if (!json) return empty;
+    let raw: any;
+    try { raw = JSON.parse(json); }
+    catch { return empty; }
+    // Tolerate the legacy "bare array of commands" wire shape in case
+    // an older runtime serializer is in play — wrap it as a gen-0
+    // envelope so downstream code only has to deal with one shape.
+    if (Array.isArray(raw)) return { gen: 0, queue: raw, autoInspector: false };
+    if (!raw || typeof raw !== 'object') return empty;
+    return {
+        gen: typeof raw.gen === 'number' ? raw.gen : 0,
+        queue: Array.isArray(raw.queue) ? raw.queue : [],
+        autoInspector: !!raw.autoInspector,
+        metadata: raw.metadata && typeof raw.metadata === 'object' ? raw.metadata : null,
+        entities: raw.entities && typeof raw.entities === 'object' ? raw.entities : undefined,
+    };
+}
+
+/** Mirrors C# DebugField — used by the panel to pick the right
+ *  Tweakpane widget per field. */
+export interface DebugFieldSchema {
+    path: string;
+    type: 'int' | 'float' | 'bool' | 'string' | 'vec2' | 'vec3' | 'color' | 'image' | string;
+    label: string;
+    min?: number | null;
+    max?: number | null;
+    readOnly?: boolean;
+    /** Set on int fields whose value is a foreign-key into another
+     *  provider's entity list. Panel renders these as a <select>
+     *  populated from listEntities(referenceType). */
+    referenceType?: string;
 }
 
 export const monoGameHost = new MonoGameHost();

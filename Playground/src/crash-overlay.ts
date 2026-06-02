@@ -19,6 +19,7 @@ export type CrashErrorKind =
     | 'invalid-power'
     | 'invalid-memory-copy'
     | 'assert-failed'
+    | 'system-error'
     | 'explode'
     | 'unknown';
 
@@ -35,6 +36,11 @@ export interface CrashOverlayArgs {
     // "Index 101 is outside the valid range 0…100." Null when there's
     // nothing useful to say beyond the title.
     detail: string | null;
+    // True when the error originated from an unhandled .NET exception
+    // in the VM host (as opposed to a structured Fade runtime error
+    // like divide-by-zero). Drives a distinct chip + label so the user
+    // can tell internal faults from "expected" Fade errors.
+    isSystem?: boolean;
     // Click handler for the Abort button. Caller is responsible for
     // calling hideCrashOverlay() afterwards (or letting stopAll() do it).
     onAbort: () => void;
@@ -50,17 +56,37 @@ export function summarizeCrash(rawMessage: string): {
     title: string;
     detail: string | null;
     inner: string;
+    isSystem: boolean;
 } {
     let inner = rawMessage ?? '';
+    let isSystem = false;
     try {
         const parsed = JSON.parse(inner);
         if (parsed && typeof parsed.message === 'string') {
             inner = parsed.message;
         }
+        // The C# side sets isSystem=true on the ExplodedMessage envelope
+        // when the error originated from an unhandled .NET exception (see
+        // DebugSession.SendRuntimeErrorMessage). Surface that as the
+        // authoritative flag — falls back to sniffing the kebab prefix
+        // below if the envelope didn't carry it.
+        if (parsed && typeof parsed.isSystem === 'boolean') {
+            isSystem = parsed.isSystem;
+        }
     } catch { /* not JSON, treat input as inner */ }
 
     const kind = detectCrashKind(inner);
+    if (kind === 'system-error') isSystem = true;
 
+    if (kind === 'system-error') {
+        return {
+            kind,
+            title: 'Internal runtime error',
+            detail: stripPrefix(inner, 'system-error'),
+            inner,
+            isSystem,
+        };
+    }
     if (kind === 'invalid-address') {
         // "invalid-address. ins=[240] index=[101] min=[0] max=[100]"
         const m = /index=\[(-?\d+)\][^\]]*?min=\[(-?\d+)\][^\]]*?max=\[(-?\d+)\]/.exec(inner);
@@ -70,24 +96,31 @@ export function summarizeCrash(rawMessage: string): {
                 title: 'Array index out of bounds',
                 detail: `Index ${m[1]} is outside the valid range ${m[2]}–${m[3]}.`,
                 inner,
+                isSystem,
             };
         }
-        return { kind, title: 'Invalid memory access', detail: inner, inner };
+        return { kind, title: 'Invalid memory access', detail: inner, inner, isSystem };
     }
     if (kind === 'divide-by-zero') {
-        return { kind, title: 'Divide by zero', detail: null, inner };
+        return { kind, title: 'Divide by zero', detail: null, inner, isSystem };
     }
     if (kind === 'invalid-power') {
-        return { kind, title: 'Invalid exponent', detail: stripPrefix(inner, 'invalid-power'), inner };
+        return { kind, title: 'Invalid exponent', detail: stripPrefix(inner, 'invalid-power'), inner, isSystem };
     }
     if (kind === 'invalid-memory-copy') {
-        return { kind, title: 'Invalid memory copy', detail: stripPrefix(inner, 'invalid-memory-copy'), inner };
+        return { kind, title: 'Invalid memory copy', detail: stripPrefix(inner, 'invalid-memory-copy'), inner, isSystem };
     }
     if (kind === 'assert-failed') {
         const detail = stripPrefix(inner, /assert(ion)?-?failed/i);
-        return { kind, title: 'Assertion failed', detail: detail || null, inner };
+        return { kind, title: 'Assertion failed', detail: detail || null, inner, isSystem };
     }
-    return { kind, title: 'Runtime error', detail: inner || null, inner };
+    // No kebab prefix matched. If the envelope flagged isSystem, treat it
+    // as an internal fault even though the inner string didn't say so —
+    // covers older messages or wrappers that strip the prefix.
+    if (isSystem) {
+        return { kind: 'system-error', title: 'Internal runtime error', detail: inner || null, inner, isSystem: true };
+    }
+    return { kind, title: 'Runtime error', detail: inner || null, inner, isSystem };
 }
 
 // Trim a kebab-case error prefix + trailing punctuation/whitespace
@@ -123,6 +156,7 @@ const KIND_LABELS: Record<CrashErrorKind, string> = {
     'invalid-power': 'Invalid power',
     'invalid-memory-copy': 'Invalid memory copy',
     'assert-failed': 'Assertion failed',
+    'system-error': 'Internal error',
     'explode': 'Runtime error',
     'unknown': 'Runtime error',
 };
@@ -139,6 +173,10 @@ export function detectCrashKind(message: string): CrashErrorKind {
     if (head.startsWith('invalid-power')) return 'invalid-power';
     if (head.startsWith('invalid-memory-copy')) return 'invalid-memory-copy';
     if (head.startsWith('assert-failed') || head.startsWith('assertion')) return 'assert-failed';
+    // Emitted by DebugSession's generic catch blocks for unhandled .NET
+    // exceptions — we surface these to the user as "Internal error" so
+    // it's clear the fault wasn't a normal Fade runtime condition.
+    if (head.startsWith('system-error')) return 'system-error';
     if (head.startsWith('explode')) return 'explode';
     return 'unknown';
 }
@@ -161,21 +199,29 @@ export function showCrashOverlay(args: CrashOverlayArgs): void {
     hideCrashOverlay();
 
     const { editor, line, kind, title, detail, onAbort } = args;
+    // Treat the kind 'system-error' as system as well — covers callers
+    // that pass kind alone without the explicit boolean.
+    const isSystem = args.isSystem === true || kind === 'system-error';
     const model = editor.getModel();
     if (!model) return;
 
     // Whole-line decoration: red background + red gutter glyph. Mirrors
     // the structure of setCurrentLine's .fade-current decoration so the
     // two can't visually collide (we clear .fade-current before painting).
+    // System errors get a "(internal)" qualifier in the hover tooltip so
+    // the user can tell at a glance that this isn't a normal Fade error.
+    const kindLabel = isSystem ? `${KIND_LABELS[kind]} (internal)` : KIND_LABELS[kind];
     const hoverMd = detail
-        ? `**${KIND_LABELS[kind]}** — ${title}\n\n${detail}`
-        : `**${KIND_LABELS[kind]}** — ${title}`;
+        ? `**${kindLabel}** — ${title}\n\n${detail}`
+        : `**${kindLabel}** — ${title}`;
     const decorationIds = model.deltaDecorations([], [{
         range: new monaco.Range(line, 1, line, 1),
         options: {
             isWholeLine: true,
-            className: 'fade-crashed',
-            glyphMarginClassName: 'codicon codicon-error fade-crashed',
+            className: isSystem ? 'fade-crashed fade-crashed-system' : 'fade-crashed',
+            glyphMarginClassName: isSystem
+                ? 'codicon codicon-bug fade-crashed fade-crashed-system'
+                : 'codicon codicon-error fade-crashed',
             glyphMarginHoverMessage: { value: hoverMd },
         },
     }]);
@@ -187,16 +233,28 @@ export function showCrashOverlay(args: CrashOverlayArgs): void {
     // intercept mousedown for cursor placement). We get clickable
     // buttons "for free" and Monaco handles repositioning on scroll.
     const domNode = document.createElement('div');
-    domNode.className = 'fade-crash-zone';
+    domNode.className = isSystem ? 'fade-crash-zone fade-crash-zone-system' : 'fade-crash-zone';
 
     const inner = document.createElement('div');
     inner.className = 'fade-crash-zone-inner';
 
     const icon = document.createElement('span');
-    icon.className = 'fade-crash-icon codicon codicon-error';
+    // Bug glyph for system errors visually separates internal faults
+    // from the standard red ! used for runtime errors the user caused.
+    icon.className = isSystem
+        ? 'fade-crash-icon codicon codicon-bug'
+        : 'fade-crash-icon codicon codicon-error';
 
     const textCol = document.createElement('div');
     textCol.className = 'fade-crash-text';
+    if (isSystem) {
+        // A small chip above the title makes the "this is an internal
+        // fault, not your code's fault" message unmistakable.
+        const chip = document.createElement('span');
+        chip.className = 'fade-crash-system-chip';
+        chip.textContent = 'Internal error';
+        textCol.appendChild(chip);
+    }
     const titleEl = document.createElement('div');
     titleEl.className = 'fade-crash-title';
     titleEl.textContent = title;

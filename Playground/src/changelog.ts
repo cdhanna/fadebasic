@@ -33,16 +33,30 @@ export const CHANGELOG: ChangelogEntry[] = [
     //         'Initial Release! ',
     //     ],
     // },
+        {
+        version: '0.4.0',
+        date: '2026-06-01',
+        added: [
+            'Audio support for `.mp3` and `.ogg` file formats.',
+            'Font support for the `.ttf` file format.',
+            'Shader support for the `.fx` file format.',
+            'Debug UI controls.',
+            'Gizmo controls.'
+        ],
+        changed: [
+            'Live collaboration supports debug workflows.',
+        ],
+    },
     {
         version: '0.3.1',
-        date: '2026-06-01',
+        date: '2026-05-31',
         fixed: [
             'Live collaboration works when workspace already exists.',
         ],
     },
      {
         version: '0.3.0',
-        date: '2026-06-01',
+        date: '2026-05-31',
         added: [
             'Texture support with limited compression options.',
             'Audio support with limited compression options.',

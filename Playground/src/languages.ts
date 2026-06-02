@@ -27,7 +27,19 @@ const themeContributions: ThemeRule[] = [
     // yaml
     { token: 'key.yaml',      foreground: '9CDCFE' },
     { token: 'anchor.yaml',   foreground: 'DCDCAA' },
-    // hlsl shares fade's keyword/type/number/string tokens — no extras.
+    // fadefx (.fx files): intrinsic functions + entry semantics get
+    // distinguishable colors. Without these, Monaco's default theme paints
+    // `predefined`/`attribute` tokens the same as identifiers, so `tex2D(…)`
+    // and `: TEXCOORD0` look like ordinary names.
+    //
+    // We use a custom language ID `fadefx` instead of the standard `hlsl`
+    // because @codingame/monaco-vscode-api registers VS Code's built-in
+    // HLSL TextMate grammar for the `hlsl` ID; our Monarch registration
+    // gets shadowed. A custom ID has no such conflict.
+    { token: 'predefined.fadefx', foreground: 'DCDCAA' },                        // function-yellow
+    { token: 'attribute.fadefx',  foreground: '4EC9B0', fontStyle: 'italic' },   // teal italic for semantics
+    { token: 'type.fadefx',       foreground: '4EC9B0' },
+    { token: 'macro.fadefx',      foreground: 'BD63C5' },                        // preprocessor purple
 ];
 
 // Light-theme counterparts. Same token set; colors chosen for contrast on a
@@ -45,6 +57,11 @@ const themeContributionsLight: ThemeRule[] = [
     { token: 'key.json',      foreground: '0451A5' },
     { token: 'key.yaml',      foreground: '0451A5' },
     { token: 'anchor.yaml',   foreground: '795E26' },
+    // fadefx light-theme colors (VSCode Light+ palette)
+    { token: 'predefined.fadefx', foreground: '795E26' },
+    { token: 'attribute.fadefx',  foreground: '267F99', fontStyle: 'italic' },
+    { token: 'type.fadefx',       foreground: '267F99' },
+    { token: 'macro.fadefx',      foreground: 'AF00DB' },
 ];
 
 // ─── markdown ───────────────────────────────────────────────────────────
@@ -146,7 +163,7 @@ const yamlLang: monaco.languages.IMonarchLanguage = {
 // ─── hlsl (.fx) ─────────────────────────────────────────────────────────
 const hlslLang: monaco.languages.IMonarchLanguage = {
     defaultToken: '',
-    tokenPostfix: '.hlsl',
+    tokenPostfix: '.fadefx',
     keywords: [
         'asm', 'asm_fragment', 'break', 'case', 'cbuffer', 'centroid', 'class',
         'column_major', 'compile', 'const', 'continue', 'default', 'discard',
@@ -154,11 +171,17 @@ const hlslLang: monaco.languages.IMonarchLanguage = {
         'goto', 'groupshared', 'if', 'in', 'inline', 'inout', 'interface',
         'line', 'lineadj', 'linear', 'namespace', 'nointerpolation', 'noperspective',
         'NULL', 'out', 'packoffset', 'pass', 'pixelfragment', 'point',
-        'precise', 'register', 'return', 'row_major', 'sample', 'sampler',
+        'precise', 'register', 'return', 'row_major',
         'shared', 'snorm', 'stateblock', 'stateblock_state', 'static', 'string',
         'struct', 'switch', 'tbuffer', 'technique', 'technique10', 'technique11',
         'texture', 'triangle', 'triangleadj', 'typedef', 'uniform', 'unorm',
         'unsigned', 'vertexfragment', 'void', 'volatile', 'while',
+        // Effect / sampler-state framing — these introduce nested literal
+        // blocks the user writes inside `sampler2D X = sampler_state {…};`,
+        // `BlendState X = blend_state {…};` etc.
+        'sampler_state', 'blend_state', 'depth_state', 'raster_state',
+        'BlendState', 'DepthStencilState', 'RasterizerState',
+        'true', 'false',
     ],
     typeKeywords: [
         'bool', 'int', 'uint', 'half', 'float', 'double', 'min10float',
@@ -168,10 +191,49 @@ const hlslLang: monaco.languages.IMonarchLanguage = {
         'uint1', 'uint2', 'uint3', 'uint4',
         'float1', 'float2', 'float3', 'float4',
         'float1x1', 'float2x2', 'float3x3', 'float4x4',
+        // DX10+ texture/sampler object types
         'Texture1D', 'Texture2D', 'Texture3D', 'TextureCube',
         'Texture2DArray', 'TextureCubeArray', 'SamplerState', 'SamplerComparisonState',
         'StructuredBuffer', 'RWStructuredBuffer', 'Buffer', 'RWBuffer',
         'ByteAddressBuffer', 'RWByteAddressBuffer',
+        // DX9-era sampler types (still emitted by MonoGame's stock SpriteEffect
+        // and friends). Used as `sampler2D X = sampler_state {…};`.
+        'sampler', 'sampler1D', 'sampler2D', 'sampler3D', 'samplerCUBE',
+        'sampler_state',
+    ],
+    // Intrinsic functions — get colored as `predefined` so they read as
+    // built-ins distinct from user-defined functions. Covers the standard
+    // HLSL/MonoGame surface plus the DX9 tex* family.
+    builtinFunctions: [
+        // Texture sampling
+        'tex2D', 'tex2Dlod', 'tex2Dproj', 'tex2Dgrad', 'tex2Dbias',
+        'tex3D', 'texCUBE', 'tex1D',
+        'Sample', 'SampleLevel', 'SampleGrad', 'SampleBias', 'Load', 'Gather',
+        // Linear algebra
+        'mul', 'dot', 'cross', 'normalize', 'length', 'distance',
+        'reflect', 'refract', 'transpose', 'determinant',
+        // Math
+        'abs', 'sign', 'floor', 'ceil', 'round', 'trunc', 'fmod', 'fwidth',
+        'sqrt', 'rsqrt', 'pow', 'exp', 'exp2', 'log', 'log2', 'log10',
+        'sin', 'cos', 'tan', 'asin', 'acos', 'atan', 'atan2',
+        'sinh', 'cosh', 'tanh',
+        'radians', 'degrees',
+        'min', 'max', 'clamp', 'lerp', 'mix', 'saturate', 'smoothstep', 'step',
+        'frac', 'modf', 'ddx', 'ddy', 'ddx_coarse', 'ddy_coarse', 'ddx_fine', 'ddy_fine',
+        'all', 'any', 'isnan', 'isinf', 'isfinite',
+        // Vector / matrix construction (these are types but also called like fns)
+    ],
+    // Output / input semantics. Get colored as `attribute` so they stand out
+    // from regular identifiers.
+    semantics: [
+        'SV_POSITION', 'SV_TARGET', 'SV_TARGET0', 'SV_TARGET1', 'SV_TARGET2', 'SV_TARGET3',
+        'SV_DEPTH', 'SV_VERTEXID', 'SV_INSTANCEID', 'SV_PRIMITIVEID', 'SV_ISFRONTFACE',
+        'POSITION', 'POSITION0', 'POSITION1',
+        'COLOR', 'COLOR0', 'COLOR1', 'COLOR2', 'COLOR3',
+        'NORMAL', 'NORMAL0', 'TANGENT', 'BINORMAL',
+        'TEXCOORD', 'TEXCOORD0', 'TEXCOORD1', 'TEXCOORD2', 'TEXCOORD3',
+        'TEXCOORD4', 'TEXCOORD5', 'TEXCOORD6', 'TEXCOORD7',
+        'BLENDWEIGHT', 'BLENDINDICES', 'PSIZE', 'FOG', 'DEPTH',
     ],
     operators: [
         '=', '+', '-', '*', '/', '%', '!', '~', '&', '|', '^', '<<', '>>',
@@ -181,11 +243,23 @@ const hlslLang: monaco.languages.IMonarchLanguage = {
     symbols: /[=><!~?:&|+\-*/^%]+/,
     tokenizer: {
         root: [
-            // Identifiers + keywords
+            // Function-call detection: a known intrinsic immediately followed
+            // by `(` colors as `predefined`. Distinguishes `tex2D(…)` from
+            // a user variable named `tex2D`.
+            [/[A-Za-z_]\w*(?=\s*\()/, {
+                cases: {
+                    '@builtinFunctions': 'predefined',
+                    '@keywords':         'keyword',
+                    '@typeKeywords':     'type',
+                    '@default':          'identifier',
+                },
+            }],
+            // Identifiers + keywords + types + semantics
             [/[A-Za-z_]\w*/, {
                 cases: {
                     '@typeKeywords': 'type',
                     '@keywords':     'keyword',
+                    '@semantics':    'attribute',
                     '@default':      'identifier',
                 },
             }],
@@ -239,7 +313,10 @@ const SPECS: LangSpec[] = [
     { id: 'markdown', extensions: ['.md', '.markdown'], aliases: ['Markdown', 'md'], monarch: markdownLang },
     { id: 'json',     extensions: ['.json'],            aliases: ['JSON'],            monarch: jsonLang },
     { id: 'yaml',     extensions: ['.yaml', '.yml'],    aliases: ['YAML'],            monarch: yamlLang },
-    { id: 'hlsl',     extensions: ['.fx', '.hlsl'],     aliases: ['HLSL', 'fx'],      monarch: hlslLang },
+    // `fadefx` (not `hlsl`) to avoid collision with @codingame/monaco-vscode-api's
+    // built-in HLSL TextMate grammar — using `hlsl` causes their tokenizer
+    // to shadow our Monarch grammar, losing the intrinsic + semantic coloring.
+    { id: 'fadefx',   extensions: ['.fx', '.hlsl'],     aliases: ['Fade FX', 'fx'],   monarch: hlslLang },
 ];
 
 // Map file basename → Monaco language id. Returns 'plaintext' for unknown.
@@ -262,6 +339,379 @@ export function registerExtraLanguages() {
         monaco.languages.register({ id: s.id, extensions: s.extensions, aliases: s.aliases });
         monaco.languages.setMonarchTokensProvider(s.id, s.monarch);
     }
+    configureHlslLanguage();
+    registerHlslCompletions();
+    registerHlslHovers();
+}
+
+// ── HLSL / .fx language configuration ──────────────────────────────────────
+//
+// Bracket matching, auto-indent, comment toggling — the things that make an
+// editor feel like an editor rather than a textarea. Without these, Ctrl+/
+// does nothing on `.fx` files, `{` auto-closing doesn't fire, and pressing
+// Enter after `{` doesn't indent the new line. These are all configured per
+// language, separate from the Monarch grammar that drives syntax colors.
+function configureHlslLanguage() {
+    monaco.languages.setLanguageConfiguration('fadefx', {
+        comments: {
+            lineComment: '//',
+            blockComment: ['/*', '*/'],
+        },
+        brackets: [
+            ['{', '}'],
+            ['[', ']'],
+            ['(', ')'],
+        ],
+        autoClosingPairs: [
+            { open: '{', close: '}' },
+            { open: '[', close: ']' },
+            { open: '(', close: ')' },
+            { open: '"', close: '"', notIn: ['string'] },
+            { open: '<', close: '>', notIn: ['string'] },
+        ],
+        surroundingPairs: [
+            { open: '{', close: '}' },
+            { open: '[', close: ']' },
+            { open: '(', close: ')' },
+            { open: '"', close: '"' },
+            { open: '<', close: '>' },
+        ],
+        indentationRules: {
+            // Indent after `{`-terminated lines; unindent on `}` lines.
+            increaseIndentPattern: /^.*\{[^}"']*$/,
+            decreaseIndentPattern: /^\s*\}/,
+        },
+        wordPattern: /[A-Za-z_]\w*/,
+    });
+}
+
+// ── HLSL completion provider — snippets for common .fx patterns ────────────
+//
+// Snippets trigger on the prefix you type then Tab to expand. Cursors land
+// on the next `${N:placeholder}` so you can fill in pieces without arrow-
+// keying. The catalog below covers the boilerplate that appears in every
+// MonoGame-style shader: cbuffer, sampler_state literal, struct VS_OUTPUT,
+// MainPS skeleton, technique/pass scaffold, sampling intrinsics.
+function registerHlslCompletions() {
+    monaco.languages.registerCompletionItemProvider('fadefx', {
+        provideCompletionItems(model, position) {
+            const word = model.getWordUntilPosition(position);
+            const range: monaco.IRange = {
+                startLineNumber: position.lineNumber,
+                endLineNumber: position.lineNumber,
+                startColumn: word.startColumn,
+                endColumn: word.endColumn,
+            };
+            const Kind = monaco.languages.CompletionItemKind;
+            const InsertAsSnippet = monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet;
+
+            const snippet = (label: string, insertText: string, doc: string) => ({
+                label,
+                kind: Kind.Snippet,
+                insertText,
+                insertTextRules: InsertAsSnippet,
+                documentation: doc,
+                range,
+            });
+
+            return {
+                suggestions: [
+                    snippet(
+                        'technique',
+                        [
+                            'technique ${1:TechniqueName}',
+                            '{',
+                            '\tpass P0',
+                            '\t{',
+                            '\t\tPixelShader = compile ps_4_0 ${2:MainPS}();',
+                            '\t}',
+                            '};',
+                        ].join('\n'),
+                        'A technique with one pass binding a pixel shader.',
+                    ),
+                    snippet(
+                        'technique-vsps',
+                        [
+                            'technique ${1:TechniqueName}',
+                            '{',
+                            '\tpass P0',
+                            '\t{',
+                            '\t\tVertexShader = compile vs_4_0 ${2:MainVS}();',
+                            '\t\tPixelShader  = compile ps_4_0 ${3:MainPS}();',
+                            '\t}',
+                            '};',
+                        ].join('\n'),
+                        'A technique with both vertex and pixel shaders.',
+                    ),
+                    snippet(
+                        'cbuffer',
+                        [
+                            'cbuffer ${1:ps_uniforms_vec4}',
+                            '{',
+                            '\tfloat4 ${2:Tint};',
+                            '};',
+                        ].join('\n'),
+                        'A constant buffer the runtime can write via `set effect param *`.',
+                    ),
+                    snippet(
+                        'sampler-state',
+                        [
+                            'Texture2D ${1:SpriteTexture};',
+                            'sampler2D ${2:SpriteTextureSampler} = sampler_state',
+                            '{',
+                            '\tTexture = <${1:SpriteTexture}>;',
+                            '};',
+                        ].join('\n'),
+                        'DX9-style texture + sampler_state literal pair. Sample with tex2D(SamplerName, uv).',
+                    ),
+                    snippet(
+                        'vsoutput',
+                        [
+                            'struct ${1:VertexShaderOutput}',
+                            '{',
+                            '\tfloat4 Position : SV_POSITION;',
+                            '\tfloat4 Color    : COLOR0;',
+                            '\tfloat2 TextureCoordinates : TEXCOORD0;',
+                            '};',
+                        ].join('\n'),
+                        'Standard SpriteBatch VS output struct (matches MonoGame stock layout).',
+                    ),
+                    snippet(
+                        'mainps',
+                        [
+                            'float4 ${1:MainPS}(${2:VertexShaderOutput} input) : SV_TARGET',
+                            '{',
+                            '\treturn ${3:tex2D(SpriteTextureSampler, input.TextureCoordinates) * input.Color};',
+                            '}',
+                        ].join('\n'),
+                        'Pixel shader skeleton taking a struct input + SV_TARGET output.',
+                    ),
+                    snippet(
+                        'mainvs',
+                        [
+                            '${1:VertexShaderOutput} ${2:MainVS}(${3:VertexShaderInput} input)',
+                            '{',
+                            '\t${1:VertexShaderOutput} output;',
+                            '\toutput.Position = mul(input.Position, MatrixTransform);',
+                            '\t$0',
+                            '\treturn output;',
+                            '}',
+                        ].join('\n'),
+                        'Vertex shader skeleton. Note: mul() is not yet translated to GLSL — use with caution.',
+                    ),
+                    snippet(
+                        'sprite-fx',
+                        [
+                            '#if OPENGL',
+                            '\t#define SV_POSITION POSITION',
+                            '\t#define VS_SHADERMODEL vs_3_0',
+                            '\t#define PS_SHADERMODEL ps_3_0',
+                            '#else',
+                            '\t#define VS_SHADERMODEL vs_4_0_level_9_1',
+                            '\t#define PS_SHADERMODEL ps_4_0_level_9_1',
+                            '#endif',
+                            '',
+                            'Texture2D SpriteTexture;',
+                            'sampler2D SpriteTextureSampler = sampler_state',
+                            '{',
+                            '\tTexture = <SpriteTexture>;',
+                            '};',
+                            '',
+                            'cbuffer Globals',
+                            '{',
+                            '\tfloat4x4 MatrixTransform;',
+                            '};',
+                            '',
+                            'struct VertexShaderInput',
+                            '{',
+                            '\tfloat4 Position : POSITION0;',
+                            '\tfloat4 Color    : COLOR0;',
+                            '\tfloat2 TextureCoordinates : TEXCOORD0;',
+                            '};',
+                            '',
+                            'struct VertexShaderOutput',
+                            '{',
+                            '\tfloat4 Position : SV_POSITION;',
+                            '\tfloat4 Color    : COLOR0;',
+                            '\tfloat2 TextureCoordinates : TEXCOORD0;',
+                            '};',
+                            '',
+                            'VertexShaderOutput ${1:MainVS}(VertexShaderInput input)',
+                            '{',
+                            '\tVertexShaderOutput output;',
+                            '\toutput.Position = mul(input.Position, MatrixTransform);',
+                            '\toutput.Color = input.Color;',
+                            '\toutput.TextureCoordinates = input.TextureCoordinates;',
+                            '\treturn output;',
+                            '}',
+                            '',
+                            'float4 ${2:MainPS}(VertexShaderOutput input) : COLOR',
+                            '{',
+                            '\treturn tex2D(SpriteTextureSampler, input.TextureCoordinates) * input.Color;',
+                            '}',
+                            '',
+                            'technique ${3:SpriteDrawing}',
+                            '{',
+                            '\tpass P0',
+                            '\t{',
+                            '\t\tVertexShader = compile VS_SHADERMODEL ${1:MainVS}();',
+                            '\t\tPixelShader  = compile PS_SHADERMODEL ${2:MainPS}();',
+                            '\t}',
+                            '};',
+                        ].join('\n'),
+                        'The complete stock MonoGame SpriteEffect.fx scaffold — drop-in compatible.',
+                    ),
+                    snippet(
+                        'tint-fx',
+                        [
+                            'cbuffer ps_uniforms_vec4',
+                            '{',
+                            '\tfloat4 ${1:Tint};',
+                            '};',
+                            '',
+                            'Texture2D ps_s0;',
+                            'SamplerState ps_s0_sampler;',
+                            '',
+                            'float4 ${2:MainPS}(float2 uv : TEXCOORD0) : SV_TARGET',
+                            '{',
+                            '\tfloat4 sampled = ps_s0.Sample(ps_s0_sampler, uv);',
+                            '\treturn sampled * ${1:Tint};',
+                            '}',
+                            '',
+                            'technique ${3:TintEffect}',
+                            '{',
+                            '\tpass P0',
+                            '\t{',
+                            '\t\tPixelShader = compile ps_4_0 ${2:MainPS}();',
+                            '\t}',
+                            '};',
+                        ].join('\n'),
+                        'Tint screen-effect scaffold (cbuffer-driven, DX10 sampler style).',
+                    ),
+                ],
+            };
+        },
+    });
+}
+
+// ── HLSL hover provider — quick docs on common intrinsics ──────────────────
+//
+// Showing a tooltip on hover for the standard intrinsics lets users learn
+// what's available without leaving the editor. Each entry includes the
+// signature, the GLSL equivalent (so users coming from web know what
+// translates to what), and a one-line description.
+function registerHlslHovers() {
+    interface HoverEntry { sig: string; doc: string; glsl?: string }
+    const HOVER_TABLE: Record<string, HoverEntry> = {
+        // Texture sampling
+        'tex2D': {
+            sig: 'float4 tex2D(sampler2D smp, float2 uv)',
+            glsl: 'texture2D(smp, uv)',
+            doc: 'DX9-era texture lookup. Returns the sampled RGBA at `uv`.',
+        },
+        'tex2Dlod': {
+            sig: 'float4 tex2Dlod(sampler2D smp, float4 uv_lod)',
+            glsl: 'texture2DLod(smp, uv, lod)',
+            doc: 'Texture lookup at an explicit mip level (in .w of the arg).',
+        },
+        'Sample': {
+            sig: 'TextureN.Sample(SamplerState smp, float2 uv)',
+            glsl: 'texture2D(tex, uv)',
+            doc: 'DX10+ texture sampling method. Translator drops the sampler arg.',
+        },
+        'SampleLevel': {
+            sig: 'TextureN.SampleLevel(SamplerState smp, float2 uv, float lod)',
+            glsl: 'texture2DLod(tex, uv, lod)',
+            doc: 'DX10+ sample at an explicit mip level.',
+        },
+        // Math
+        'saturate': {
+            sig: 'T saturate(T x)',
+            glsl: 'clamp(x, 0.0, 1.0)',
+            doc: 'Clamps each component into [0, 1].',
+        },
+        'lerp': {
+            sig: 'T lerp(T a, T b, T t)',
+            glsl: 'mix(a, b, t)',
+            doc: 'Linear interpolation: `a + (b - a) * t`.',
+        },
+        'frac': {
+            sig: 'T frac(T x)',
+            glsl: 'fract(x)',
+            doc: 'Returns the fractional part — i.e. `x - floor(x)`.',
+        },
+        'rsqrt': {
+            sig: 'T rsqrt(T x)',
+            glsl: 'inversesqrt(x)',
+            doc: 'Reciprocal square root: `1.0 / sqrt(x)`.',
+        },
+        'atan2': {
+            sig: 'T atan2(T y, T x)',
+            glsl: 'atan(y, x)',
+            doc: 'Angle of the vector (x, y) in radians, range [-π, π].',
+        },
+        'mul': {
+            sig: 'mul(M, V)  or  mul(V, M)',
+            doc: 'Matrix-vector / vector-matrix product. ⚠️ **Not yet translated** — HLSL is row-major, GLSL is column-major; use direct `M * V` syntax in HLSL and the translator handles it.',
+        },
+        'dot': {
+            sig: 'float dot(vec a, vec b)',
+            glsl: 'dot(a, b)',
+            doc: 'Inner product of two vectors.',
+        },
+        'cross': {
+            sig: 'float3 cross(float3 a, float3 b)',
+            glsl: 'cross(a, b)',
+            doc: 'Right-handed cross product of two 3-vectors.',
+        },
+        'normalize': {
+            sig: 'T normalize(T v)',
+            glsl: 'normalize(v)',
+            doc: 'Unit-length version of `v` (= `v / length(v)`).',
+        },
+        'length': {
+            sig: 'float length(T v)',
+            glsl: 'length(v)',
+            doc: 'Euclidean length / magnitude of `v`.',
+        },
+        'smoothstep': {
+            sig: 'T smoothstep(T edge0, T edge1, T x)',
+            glsl: 'smoothstep(edge0, edge1, x)',
+            doc: 'Smooth Hermite interpolation: 0 below edge0, 1 above edge1, smooth between.',
+        },
+        // Types
+        'float4': { sig: 'float4 = vec4', doc: '4-component float vector.' },
+        'float3': { sig: 'float3 = vec3', doc: '3-component float vector.' },
+        'float2': { sig: 'float2 = vec2', doc: '2-component float vector.' },
+        'float4x4': { sig: 'float4x4 = mat4', doc: '4×4 column-major matrix.' },
+        'matrix':  { sig: 'matrix = float4x4 = mat4', doc: '4×4 column-major matrix (HLSL shorthand).' },
+        // Semantics — common ones
+        'SV_POSITION': { sig: ': SV_POSITION', doc: 'Clip-space position output of the VS / position input to the PS (mapped to gl_Position / gl_FragCoord).' },
+        'SV_TARGET':   { sig: ': SV_TARGET',   doc: 'Color output of the PS (mapped to gl_FragColor).' },
+        'POSITION':    { sig: ': POSITION',    doc: 'DX9 alias for SV_POSITION.' },
+        'COLOR':       { sig: ': COLOR (PS return) or : COLORn (varying)', doc: 'DX9 alias for SV_TARGET when on a PS return; otherwise an interpolated varying.' },
+        'TEXCOORD0':   { sig: ': TEXCOORDn',   doc: 'Texture-coordinate varying — VS writes, PS reads.' },
+    };
+
+    monaco.languages.registerHoverProvider('fadefx', {
+        provideHover(model, position) {
+            const word = model.getWordAtPosition(position);
+            if (!word) return null;
+            const entry = HOVER_TABLE[word.word];
+            if (!entry) return null;
+            const lines = [`**\`${entry.sig}\`**`];
+            if (entry.glsl) lines.push(`GLSL: \`${entry.glsl}\``);
+            lines.push('');
+            lines.push(entry.doc);
+            return {
+                range: new monaco.Range(
+                    position.lineNumber, word.startColumn,
+                    position.lineNumber, word.endColumn,
+                ),
+                contents: [{ value: lines.join('\n') }],
+            };
+        },
+    });
 }
 
 // Theme rules to merge into the playground's fade-dark theme. Callers

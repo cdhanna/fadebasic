@@ -3571,6 +3571,43 @@
         .fade-crash-abort:hover { background: #e51400; border-color: #ff3018; }
         .fade-crash-abort:active { background: #a01a0c; }
 
+        /* System-error variant. Painted when DebugSession's generic catch
+           blocks forward an unhandled .NET exception (e.g. InvalidCast)
+           rather than a structured Fade runtime error. Amber instead of
+           red so the user can tell this is a host/internal fault, not a
+           "normal" Fade error they wrote. */
+        .fade-crashed-system {
+            background: rgba(245, 158, 11, 0.18) !important;
+        }
+        .fade-crashed-system::before {
+            color: #f59e0b !important;
+        }
+        .fade-crash-zone-system {
+            border-color: rgba(245, 158, 11, 0.85);
+        }
+        .fade-crash-zone-system .fade-crash-icon {
+            color: #f59e0b;
+        }
+        .fade-crash-zone-system .fade-crash-abort {
+            background: #b07009;
+            border-color: #f59e0b;
+        }
+        .fade-crash-zone-system .fade-crash-abort:hover { background: #f59e0b; border-color: #fbbf24; }
+        .fade-crash-zone-system .fade-crash-abort:active { background: #8a5807; }
+        .fade-crash-system-chip {
+            align-self: flex-start;
+            font-size: 0.62rem;
+            font-weight: 700;
+            letter-spacing: 0.05em;
+            text-transform: uppercase;
+            color: #f59e0b;
+            background: rgba(245, 158, 11, 0.15);
+            border: 1px solid rgba(245, 158, 11, 0.45);
+            padding: 1px 5px;
+            border-radius: 3px;
+            margin-bottom: 2px;
+        }
+
         /* ── Project viewer overlay ──────────────────────────────────────
            Modal that lists projects under OPFS and lets the user switch
            or create one. Lives outside the dockview tree so it can drape
@@ -4780,6 +4817,10 @@
 
         <div class="panel-cell" data-panel="live-session">
             <div id="live-session-host" style="flex: 1 1 auto; min-height: 0;"></div>
+        </div>
+
+        <div class="panel-cell" data-panel="debug-ui">
+            <div id="debug-ui-host" style="flex: 1 1 auto; min-height: 0;"></div>
         </div>
 
         <div class="panel-cell" data-panel="editor">
