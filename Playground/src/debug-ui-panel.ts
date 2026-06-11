@@ -115,6 +115,10 @@ export interface DebugUiPanelOptions {
     getSchema: (typeName: string) => Promise<DebugFieldSchema[] | null>;
     getEntitySchema?: (typeName: string, id: number) => Promise<DebugFieldSchema[] | null>;
     listEntities: (typeName: string) => Promise<number[]>;
+    /** Optional per-id display labels — e.g. the texture provider
+     *  returns asset paths like "Images/Player". Missing keys fall
+     *  back to the generic `<type> #<id>` form. */
+    getLabels?: (typeName: string) => Promise<Record<string, string>>;
     getEntity: (typeName: string, id: number) => Promise<Record<string, unknown> | null>;
     setField: (typeName: string, id: number, path: string, valueJson: string) => Promise<boolean>;
     // ── fbasic widget callback ────────────────────────────────────
@@ -603,6 +607,35 @@ export function mountDebugUiPanel(opts: DebugUiPanelOptions): DebugUiPanelHandle
             }
         }
 
+        // Fetch friendly labels once per sync — same getLabels endpoint
+        // the reference-type dropdowns use. Best-effort; if it hangs or
+        // rejects, new folder titles fall back to the numeric form.
+        let labels: Record<string, string> = {};
+        if (opts.getLabels) {
+            try {
+                labels = await Promise.race([
+                    opts.getLabels(typeName),
+                    new Promise<Record<string, string>>((_, reject) =>
+                        setTimeout(() => reject(new Error('getLabels timeout')), 1500)),
+                ]);
+            } catch { /* fall back to "<type> #<id>" */ }
+        }
+        const entityTitle = (id: number) => {
+            const named = labels[String(id)];
+            return named && named.length > 0 ? named : `${typeName} #${id}`;
+        };
+
+        // Refresh titles on EXISTING folders too — an asset path can
+        // change (texture re-registered, descriptor updated) without
+        // the id set changing, which wouldn't otherwise trigger a
+        // visible refresh.
+        for (const [id, ef] of existing) {
+            const desired = entityTitle(id);
+            if ((ef.folder as { title?: string }).title !== desired) {
+                (ef.folder as { title?: string }).title = desired;
+            }
+        }
+
         // Add new entities. Snapshot the first frame's data so the
         // folder doesn't render with stale placeholders. We hold an
         // entityAddPending guard across the awaits so concurrent
@@ -624,7 +657,7 @@ export function mountDebugUiPanel(opts: DebugUiPanelOptions): DebugUiPanelHandle
                 if (existing.has(id)) continue;
                 const entKey = `insp/type:${typeName}/ent:${id}`;
                 const entInitiallyExpanded = recallExpand(entKey, false);
-                const sub = parentNow.addFolder({ title: `${typeName} #${id}`, expanded: entInitiallyExpanded });
+                const sub = parentNow.addFolder({ title: entityTitle(id), expanded: entInitiallyExpanded });
                 const ef: EntityFolder = { folder: sub, fields: [], expanded: entInitiallyExpanded };
                 sub.on('fold', (ev: { expanded: boolean }) => {
                     ef.expanded = ev.expanded;
@@ -849,16 +882,44 @@ export function mountDebugUiPanel(opts: DebugUiPanelOptions): DebugUiPanelHandle
 
     async function refreshRefSelectOptions(sel: HTMLSelectElement, field: DebugFieldSchema, currentValue: number) {
         if (!field.referenceType) return;
-        const ids = await opts.listEntities(field.referenceType);
+        const refType = field.referenceType;
+        // listEntities IS the critical path — without an id list there's
+        // nothing to show. getLabels is best-effort: if the host hangs
+        // or rejects (older runtimes without the DebugGetLabels relay,
+        // for example, never reply), we still render numeric fallbacks
+        // so the dropdown remains usable.
+        let ids: number[] = [];
+        try { ids = await opts.listEntities(refType); }
+        catch (e) { console.warn('[debug-ui] listEntities failed', refType, e); }
+        let labels: Record<string, string> = {};
+        if (opts.getLabels) {
+            try {
+                labels = await Promise.race([
+                    opts.getLabels(refType),
+                    new Promise<Record<string, string>>((_, reject) =>
+                        setTimeout(() => reject(new Error('getLabels timeout')), 1500)),
+                ]);
+            } catch (e) { /* labels stays empty → fall back to "type #id" */ }
+        }
         const want = new Set<number>([0, currentValue, ...ids]);
         const sorted = Array.from(want).sort((a, b) => a - b);
-        const existing = Array.from(sel.options).map((o) => Number(o.value));
-        if (existing.length === sorted.length && existing.every((v, i) => v === sorted[i])) return;
+        // Signature includes both the id list and the visible label
+        // for each id — otherwise renaming an asset (or registering a
+        // new one with the same id) wouldn't refresh the dropdown
+        // text. Plain id-list equality misses label changes.
+        const labelText = (id: number) => {
+            if (id === 0) return '(none)';
+            const named = labels[String(id)];
+            return named && named.length > 0 ? named : `${refType} #${id}`;
+        };
+        const wantSignature = sorted.map((id) => `${id}|${labelText(id)}`).join(',');
+        const existingSignature = Array.from(sel.options).map((o) => `${o.value}|${o.textContent ?? ''}`).join(',');
+        if (existingSignature === wantSignature) return;
         sel.replaceChildren();
         for (const id of sorted) {
             const opt = document.createElement('option');
             opt.value = String(id);
-            opt.textContent = id === 0 ? `(none)` : `${field.referenceType} #${id}`;
+            opt.textContent = labelText(id);
             if (id === currentValue) opt.selected = true;
             sel.appendChild(opt);
         }

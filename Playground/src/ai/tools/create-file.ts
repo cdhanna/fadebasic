@@ -24,6 +24,27 @@ export const createFile = defineTool({
             /* expected — file does not exist */
         }
 
+        if (ctx.reviewEdit) {
+            if (ctx.abortSignal?.aborted) {
+                return { ok: false, result: { error: 'Cancelled' } };
+            }
+            ctx.onEditReviewStart?.();
+            try {
+                const review = await ctx.reviewEdit({ path, oldContent: '', newContent: content });
+                if (!review.approved) {
+                    return {
+                        ok: false,
+                        result: {
+                            error: 'Code review rejected the new file',
+                            review: review.feedback,
+                        },
+                    };
+                }
+            } finally {
+                ctx.onEditReviewEnd?.();
+            }
+        }
+
         if (ctx.confirmEdit) {
             const approved = await ctx.confirmEdit(path, '', content);
             if (!approved) {

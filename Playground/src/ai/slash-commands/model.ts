@@ -9,7 +9,7 @@ export const model: SlashCommand = {
 
         // ── Provider section ────────────────────────────────────────────────
         if (!ctx.provider) {
-            lines.push('No model loaded. Click "Load Model" in the chat header or open the AI Models tab.');
+            lines.push('No model loaded. Click "Load Model" in the chat header or open the AI Models tab (Qwen 3 4B).');
         } else {
             const p = ctx.provider;
             const cap = p.capabilities;

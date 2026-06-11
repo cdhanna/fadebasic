@@ -238,6 +238,14 @@ function handle(msg) {
             version: msg.version,
             diagnostics: diagnosticsJson,
         });
+    } else if (msg.type === 'lsp-check') {
+        let diagnosticsJson = '[]';
+        try {
+            diagnosticsJson = FB.LspSetDocument(msg.uri, msg.text);
+        } catch (e) {
+            log('lsp-check failed: ' + (e?.message ?? e));
+        }
+        emit({ type: 'lsp-check-result', id: msg.id, diagnostics: diagnosticsJson });
     } else if (msg.type === 'lsp-tokens') {
         let tokensJson = '[]';
         try { tokensJson = FB.LspGetSemanticTokens(msg.uri); }

@@ -36,6 +36,7 @@ export function mountLogsPanel(opts: LogsPanelOptions): LogsPanelHandle {
     // ─── filter state ──────────────────────────────────────────────────────
     const enabledChannels = new Set<string>();         // empty = all
     const enabledLevels = new Set<LogLevel>(ALL_LEVELS);
+    let searchQuery = '';                              // case-insensitive substring; empty = all
     if (opts.minLevel) {
         const i = ALL_LEVELS.indexOf(opts.minLevel);
         if (i >= 0) {
@@ -48,6 +49,21 @@ export function mountLogsPanel(opts: LogsPanelOptions): LogsPanelHandle {
     const toolbar = el('div', `${CSS_PREFIX}-toolbar`);
     const channelChips = el('div', `${CSS_PREFIX}-chips`);
     const levelChips = el('div', `${CSS_PREFIX}-chips ${CSS_PREFIX}-chips-levels`);
+    const searchInput = document.createElement('input');
+    searchInput.type = 'search';
+    searchInput.placeholder = 'Filter…';
+    searchInput.className = `${CSS_PREFIX}-search`;
+    searchInput.spellcheck = false;
+    // Debounce so typing fast doesn't re-render on every keystroke when
+    // the list is long.
+    let searchDebounce: ReturnType<typeof setTimeout> | null = null;
+    searchInput.addEventListener('input', () => {
+        if (searchDebounce) clearTimeout(searchDebounce);
+        searchDebounce = setTimeout(() => {
+            searchQuery = searchInput.value.toLowerCase();
+            refilter();
+        }, 80);
+    });
     const clearBtn = button('Clear', () => { bus.clear(); list.replaceChildren(); });
     const copyBtn  = button('Copy', () => {
         const text = bus.snapshot()
@@ -56,7 +72,7 @@ export function mountLogsPanel(opts: LogsPanelOptions): LogsPanelHandle {
             .join('\n');
         void navigator.clipboard?.writeText(text);
     });
-    toolbar.append(channelChips, sep(), levelChips, sep(), copyBtn, clearBtn);
+    toolbar.append(channelChips, sep(), levelChips, sep(), searchInput, sep(), copyBtn, clearBtn);
 
     const list = el('div', `${CSS_PREFIX}-list`);
     list.setAttribute('role', 'log');
@@ -74,6 +90,14 @@ export function mountLogsPanel(opts: LogsPanelOptions): LogsPanelHandle {
     function passesFilter(e: LogEntry): boolean {
         if (enabledChannels.size > 0 && !enabledChannels.has(e.channel)) return false;
         if (!enabledLevels.has(e.level)) return false;
+        if (searchQuery) {
+            // Match against channel + message so users can find a chip
+            // value or a substring of the message body without thinking
+            // about which field. Cheap toLowerCase — entries are short.
+            const msg = e.message ?? '';
+            if (!e.channel.toLowerCase().includes(searchQuery)
+                && !msg.toLowerCase().includes(searchQuery)) return false;
+        }
         return true;
     }
 
@@ -278,6 +302,15 @@ function injectStylesOnce(): void {
     font: inherit; font-size: 11px; cursor: pointer;
 }
 .${CSS_PREFIX}-btn:hover { background: var(--hover-bg); }
+.${CSS_PREFIX}-search {
+    appearance: none; border: 1px solid var(--border-2);
+    background: var(--bg); color: inherit;
+    padding: 2px 8px; border-radius: 4px;
+    font: inherit; font-size: 11px;
+    min-width: 140px; flex: 0 1 200px;
+}
+.${CSS_PREFIX}-search::placeholder { opacity: 0.55; }
+.${CSS_PREFIX}-search:focus { outline: 1px solid var(--accent); }
 .${CSS_PREFIX}-list {
     flex: 1 1 auto; overflow-y: auto;
     padding: 4px 0;

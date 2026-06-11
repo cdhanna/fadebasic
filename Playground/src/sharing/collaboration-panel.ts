@@ -1999,6 +1999,22 @@ export function mountCollaboration(opts: CollaborationOptions): CollaborationCon
             // returns the right answer the first time. Cheap when there's
             // nothing to upgrade (Promise.resolve()).
             await savesUpgrade;
+            // No remote linked AND no local saves → there's no useful
+            // baseline to diff against. Falling through would diff against
+            // an empty baseTree and mark every working-tree file "added",
+            // painting spurious A badges on a project the user hasn't
+            // opted into git or local saves for. Reset all the status
+            // surfaces and emit empty so renderFileList draws no badges.
+            if (!isConnected(index) && pendingSaves.length === 0) {
+                staged = [];
+                publishStaged = [];
+                conflictFiles = [];
+                textConflicts = new Set();
+                emitStatus();
+                emitConflicts();
+                render();
+                return;
+            }
             const wt = new OpfsWorkingTree(opts.workspace);
             staged = await computeStatus(wt, referenceTree(), hashCache);
             // Second pass: same working tree, but vs the *published* baseTree.

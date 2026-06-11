@@ -7,7 +7,7 @@
 // The session layer (session.ts) sits on top and is transport-agnostic —
 // it pumps Yjs sync + awareness messages through whatever room it's given.
 
-export type TransportId = 'mock' | 'trystero';
+export type TransportId = 'mock' | 'trystero' | 'manual';
 
 export type RoomStatus =
     | 'discovering'   // joining — looking for peers via signaling/tracker

@@ -151,6 +151,31 @@ describe('Agent (tool calling via in-prompt protocol)', () => {
         expect(result?.ok).toBe(false);
         expect((result?.result as { error: string }).error).toBe('Invalid arguments');
     });
+
+    it('retries after malformed tool_call JSON and eventually runs the tool', async () => {
+        const provider = new MockProvider([
+            mockTurn.streaming(['<tool_call>{not json}</tool_call>']),
+            mockTurn.streaming(['<tool_call>{"name":"list_files","args":{}}</tool_call>']),
+            mockTurn.text('Two files here.'),
+        ]);
+        const workspace = new InMemoryWorkspace({ 'a.fade': '', 'b.fade': '' });
+        const agent = new Agent({ provider, tools: createDefaultRegistry(), toolContext: { workspace }, retriever: null });
+
+        const collected = collectEvents(agent);
+        await agent.send('what files?');
+        await collected.until();
+
+        // Bad JSON → nudge → good tool_call → answer = 3 provider calls.
+        expect(provider.sentMessages).toHaveLength(3);
+        const retryNudge = provider.sentMessages[1].messages.find(m =>
+            m.role === 'user' && m.content.includes('Your tool_call was invalid'),
+        );
+        expect(retryNudge).toBeDefined();
+
+        const toolStarts = collected.events.filter(e => e.kind === 'tool_call_start');
+        expect(toolStarts).toHaveLength(1);
+        expect(toolStarts[0]).toMatchObject({ name: 'list_files' });
+    });
 });
 
 describe('Agent (plan phase)', () => {
@@ -412,7 +437,7 @@ describe('Agent (workspace context auto-injection)', () => {
         expect(sysMsg!.content).toContain('Files: (empty)');
     });
 
-    it('truncates large file lists', async () => {
+    it('truncates large file lists in workspace context', async () => {
         const provider = new MockProvider([mockTurn.text('ok')]);
         const files: Record<string, string> = {};
         for (let i = 0; i < 50; i++) files[`f${i}.fade`] = 'x';
@@ -539,7 +564,7 @@ describe('Agent (auto-retrieval)', () => {
         return values.map(v => v / n);
     }
 
-    it('runs retrieval on each user turn and emits docs_retrieved', async () => {
+    it('runs retrieval on conceptual turns and emits docs_retrieved', async () => {
         const provider = new MockProvider([mockTurn.text('answer')]);
         const workspace = new InMemoryWorkspace();
         const retriever = makeMockRetriever([
@@ -581,7 +606,7 @@ describe('Agent (auto-retrieval)', () => {
         });
 
         const collected = collectEvents(agent);
-        await agent.send('q');
+        await agent.send('how do I declare a function in Fade?');
         await collected.until();
 
         const sysMsg = provider.sentMessages[0].messages.find(m => m.role === 'system');
@@ -613,6 +638,59 @@ describe('Agent (auto-retrieval)', () => {
         expect(collected.events.at(-1)).toMatchObject({ kind: 'turn_complete', finishReason: 'stop' });
         const docsEvents = collected.events.filter(e => e.kind === 'docs_retrieved');
         expect(docsEvents).toHaveLength(0);
+    });
+
+    it('auto-runs list_files for project inventory questions', async () => {
+        const provider = new MockProvider([mockTurn.text('main.fbasic only')]);
+        const workspace = new InMemoryWorkspace({ 'main.fbasic': 'x', 'fade.json': '{}' });
+        const agent = new Agent({
+            provider,
+            tools: createDefaultRegistry(),
+            toolContext: { workspace },
+            retriever: null,
+        });
+        const collected = collectEvents(agent);
+        await agent.send('what is in this project');
+        await collected.until();
+
+        const toolStarts = collected.events.filter(
+            (e): e is Extract<AgentEvent, { kind: 'tool_call_start' }> => e.kind === 'tool_call_start',
+        );
+        expect(toolStarts.some(e => e.name === 'list_files')).toBe(true);
+
+        const sysMsg = provider.sentMessages[0].messages.find(m => m.role === 'system');
+        expect(sysMsg!.content).toContain('list_files was run automatically');
+
+        const toolResult = provider.sentMessages[0].messages.find(
+            m => m.role === 'user' && m.content.includes('<tool_result name="list_files">'),
+        );
+        expect(toolResult).toBeDefined();
+        expect(toolResult!.content).toContain('main.fbasic');
+    });
+
+    it('skips auto-retrieval for workspace inspection questions', async () => {
+        const provider = new MockProvider([mockTurn.text('here are the files')]);
+        const workspace = new InMemoryWorkspace();
+        const retriever = makeMockRetriever([
+            { id: 'A', source: 'doc.md', heading: 'A', text: 'should not appear', chars: 18, vector: normalize([1, 0, 0]) },
+        ]);
+
+        const agent = new Agent({
+            provider,
+            tools: createDefaultRegistry(),
+            toolContext: { workspace },
+            retriever,
+            autoRetrievalK: 1,
+        });
+
+        const collected = collectEvents(agent);
+        await agent.send('what files are in this project?');
+        await collected.until();
+
+        const docsEvents = collected.events.filter(e => e.kind === 'docs_retrieved');
+        expect(docsEvents).toHaveLength(0);
+        const sysMsg = provider.sentMessages[0].messages.find(m => m.role === 'system');
+        expect(sysMsg!.content).not.toContain('Relevant docs:');
     });
 });
 

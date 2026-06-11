@@ -126,6 +126,25 @@ export const SETTINGS_CATALOG: SettingSpec[] = [
         type: 'number', scope: 'user', section: 'Autosave',
         defaultValue: 600, min: 100, max: 5000, step: 50,
     },
+
+    // Live Session
+    {
+        key: 'collab.gameFrameFps', label: 'Game stream FPS',
+        description:
+            'Frames per second the host broadcasts of its game canvas to observers. '
+            + 'Higher is smoother but uses more bandwidth and CPU; lower is choppier '
+            + 'but cheap. Takes effect on the next Run.',
+        type: 'number', scope: 'user', section: 'Live Session',
+        defaultValue: 12, min: 1, max: 30, step: 1,
+    },
+    {
+        key: 'collab.gameFrameQuality', label: 'Game stream JPEG quality',
+        description:
+            'JPEG quality of broadcast game frames, 0.1-1.0. Lower compresses harder '
+            + '(smaller frames, blockier image). 0.55 is the historical default.',
+        type: 'number', scope: 'user', section: 'Live Session',
+        defaultValue: 0.55, min: 0.1, max: 1.0, step: 0.05,
+    },
 ];
 
 const BY_KEY = new Map(SETTINGS_CATALOG.map((s) => [s.key, s]));

@@ -14,6 +14,13 @@ export type {
 } from './transport';
 export { mockTransport } from './mock-transport';
 export { trysteroTransport } from './trystero-transport';
+export {
+    manualTransport,
+    startManualHost,
+    startManualJoin,
+    previewSignalingBlob,
+} from './manual-transport';
+export type { ManualHostHandle, ManualJoinHandle, SignalingBlobPreview } from './manual-transport';
 export type {
     SessionHost,
     SessionMeta,
@@ -28,6 +35,9 @@ export type {
     LiveSessionPanelHost,
     StartHostArgs,
     StartJoinArgs,
+    ManualHostFlow,
+    ManualJoinFlow,
+    ManualStartArgs,
 } from './live-session-panel';
 export { mountLiveSessionPanel } from './live-session-panel';
 export { cachedDisplayName, setCachedDisplayName, colorForName, makeIdentity } from './identity';

@@ -33,6 +33,16 @@
             --tab-border: #252526;
             --tab-active-border: #0e639c;
             --hover-bg: #2a2d2e;
+            /* Distinct button hover background. --hover-bg is calibrated
+               for subtle ROW hovers (file list, debug section toggles,
+               etc.) and ends up near-identical to --bg-3 on most themes
+               — so a button sitting on --bg-3 shows no feedback on
+               hover. Mixing 22% of the theme accent into --bg-3 gives a
+               clear "press me" tint that works against any backdrop.
+               Sits at :root so every theme inherits it automatically
+               (color-mix re-evaluates per theme since accent + bg-3 are
+               overridden per palette). */
+            --btn-hover-bg: color-mix(in srgb, var(--accent) 22%, var(--bg-3));
             /* List-row "selected" / active highlight — file tree active
                row, help TOC active item, etc. Distinct from --hover-bg
                since selected state should out-rank a hover. */
@@ -459,16 +469,31 @@
             font-size: 13px;
         }
         /* App = header on top, dockview filling the rest. Dockview manages
-           all internal sizing via its own grid + splitter primitives. */
+           all internal sizing via its own grid + splitter primitives.
+           `overflow: clip` is critical here: when Monaco (or the help
+           panel, or any other widget) calls element.scrollIntoView on a
+           target outside its viewport — e.g. ctrl-click "go to
+           definition" on a symbol below the fold — the browser walks UP
+           the DOM looking for a scroll container to bring the target
+           into view. Without `clip` set, the default `overflow: visible`
+           lets scrollIntoView treat #app / #dock-root / .editor-host as
+           scroll targets and the whole page shifts up by the target's
+           y-offset, leaving the header in an unreachable area above
+           viewport y=0. `overflow: clip` is strictly NOT a scroll
+           container (stronger than `hidden`, which is still
+           programmatically scrollable), so the walk passes right
+           through to Monaco's own internal scroller — where it belongs. */
         #app {
             display: flex;
             flex-direction: column;
             height: 100vh;
+            overflow: clip;
         }
         #dock-root {
             flex: 1;
             min-height: 0;
             position: relative;
+            overflow: clip;
         }
         /* Panel content cells start in an offscreen container; dockview
            reparents them into panel shells as needed. */
@@ -478,7 +503,7 @@
             display: flex;
             flex-direction: column;
             min-height: 0;
-            overflow: hidden;
+            overflow: clip;
         }
         .panel-cell .sidebar-host {
             display: flex;
@@ -492,6 +517,7 @@
             flex-direction: column;
             min-height: 0;
             height: 100%;
+            overflow: clip;
         }
         .panel-cell .editor-host > #editor {
             flex: 1;
@@ -513,6 +539,79 @@
             background: var(--bg-3);
             border-bottom: 1px solid var(--border-2);
             user-select: none;
+        }
+        /* Cluster wrapper around the git icon + transient chips + live
+           session strip. Tight 4px gap between siblings so the buttons
+           sit adjacent like one logical control group, instead of being
+           separated by the header's outer 1rem gap. */
+        .header-collab-cluster {
+            display: flex;
+            align-items: center;
+            gap: 4px;
+        }
+        /* Shared mouse cursor — one per remote peer, positioned via a
+           CSS transform on render. The arrow's fill is driven by the
+           --cursor-color custom property which mountSharedCursors sets
+           per peer. Pointer-events disabled so cursors never block
+           clicks on the canvas / editor underneath. */
+        .shared-cursor {
+            position: absolute;
+            left: 0; top: 0;
+            pointer-events: none;
+            display: flex;
+            align-items: flex-start;
+            gap: 2px;
+            /* Above #game-stream-overlay (z-index 50) so observers
+               watching a streamed game still see remote cursors. */
+            z-index: 60;
+            font: 11px/14px ui-sans-serif, system-ui, sans-serif;
+            user-select: none;
+        }
+        .shared-cursor-arrow {
+            display: block;
+            filter: drop-shadow(0 1px 1px rgba(0, 0, 0, 0.45));
+        }
+        .shared-cursor-name {
+            background: var(--cursor-color);
+            color: #fff;
+            padding: 1px 6px;
+            border-radius: 4px;
+            white-space: nowrap;
+            margin-top: 10px;
+            text-shadow: 0 1px 1px rgba(0, 0, 0, 0.4);
+            box-shadow: 0 1px 3px rgba(0, 0, 0, 0.35);
+        }
+        /* "Where is that peer?" pulse — triggered by clicking their
+           chip pill. Adds a halo that scales + fades out three times
+           around the arrow. */
+        .shared-cursor-pulse::before {
+            content: '';
+            position: absolute;
+            left: -10px;
+            top: -10px;
+            width: 32px;
+            height: 32px;
+            border-radius: 50%;
+            background: var(--cursor-color);
+            opacity: 0;
+            animation: shared-cursor-pulse-anim 0.45s ease-out 3;
+            pointer-events: none;
+        }
+        @keyframes shared-cursor-pulse-anim {
+            0%   { transform: scale(0.4); opacity: 0.7; }
+            100% { transform: scale(1.8); opacity: 0; }
+        }
+        /* Per-tab peer-presence dot: a small colored circle pinned to
+           the right side of the tab when a remote peer is editing that
+           file but it's not currently active on this peer's screen. */
+        .fade-tab-peer-dot {
+            display: inline-block;
+            width: 6px;
+            height: 6px;
+            margin-left: 5px;
+            border-radius: 50%;
+            box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.4);
+            vertical-align: middle;
         }
         /* Sharing status pills — sit between the "Ready" label and the
            right-hand action buttons. Each pill is a button: clicking
@@ -536,7 +635,17 @@
             background: rgba(255, 255, 255, 0.06);
             color: var(--fg);
         }
-        .sharing-chip:hover { filter: brightness(1.08); }
+        .sharing-chip {
+            transition: box-shadow 80ms ease;
+        }
+        .sharing-chip:hover {
+            /* `filter: brightness(1.08)` brightened pastel chips on dark
+               themes (mild) but washed them OUT against the workspace
+               background on light themes (their pastel bg moves toward
+               white). An outline ring uses the theme accent and stays
+               visible against any background hue. */
+            box-shadow: 0 0 0 2px var(--accent);
+        }
         /* Each chip threads through CSS variables so light themes can
            dial up contrast (darker fg + more opaque bg) without losing
            the semantic hue. Defaults below = the original pastel-on-dark
@@ -564,57 +673,44 @@
         /* Live-session pill — sits next to sharing chips. Visible only
            when a session is in flight; clicking opens the Live Session
            panel. Shows one dot per peer, color-coded by their identity. */
+        /* Live-session strip: a transparent flex row sitting in the top
+           bar. Holds the live-share icon button (always) and, when a
+           session is active, one peer pill per participant. The strip
+           itself has no border or background — each child carries its
+           own visual treatment so the icon matches the git button and
+           each peer pill stands on its own (no nested-chip look). */
         .live-session-chip {
             display: flex;
             align-items: center;
             gap: 6px;
-            padding: 2px 9px;
-            border-radius: 999px;
-            background: rgba(76, 175, 80, 0.18);
-            border: 1px solid rgba(76, 175, 80, 0.45);
-            color: #6fd178;
             font-size: 11px;
             line-height: 16px;
-            cursor: pointer;
             user-select: none;
         }
-        .live-session-chip[hidden] { display: none !important; }
-        .live-session-chip:hover { filter: brightness(1.1); }
-        .live-session-chip-role {
-            font-size: 9px;
-            text-transform: uppercase;
-            letter-spacing: 0.06em;
-            opacity: 0.75;
+        /* Sync state takes over the strip — replaces the pill row with
+           progress text so we don't visually compete with the active
+           peer pills. */
+        .live-session-chip.live-session-chip-syncing,
+        .live-session-chip.live-session-chip-warning {
+            font-weight: 600;
         }
-        .live-session-chip-dots {
-            display: inline-flex;
-            align-items: center;
-            gap: 3px;
-        }
-        .live-session-chip-dot {
-            width: 8px;
-            height: 8px;
-            border-radius: 50%;
-            display: inline-block;
-            box-shadow: 0 0 0 1px rgba(255,255,255,0.2);
-        }
-        .live-session-chip-dot[data-self="true"] {
-            box-shadow: 0 0 0 1.5px var(--fg);
-        }
-        .live-session-chip-count { font-weight: 600; }
+        .live-session-chip.live-session-chip-syncing { color: #b88aff; }
+        .live-session-chip.live-session-chip-warning { color: #ffb74d; }
+        /* live-session-chip-role / -dots / -dot / -count CSS removed —
+           after the chip flattened into a sibling strip, role label /
+           per-peer dots / count badge no longer render. Peer pills
+           carry the role context themselves via tooltip. */
         /* Peer pills — one per non-self peer in the chip strip. Each
            gets a tinted background based on the peer's color (set via
            --peer-color CSS variable on the pill element) so several
            peers remain visually distinct without each pill being a
            giant saturated bar. */
-        .live-session-chip-pills {
-            display: inline-flex;
-            align-items: center;
-            gap: 4px;
-            flex-wrap: nowrap;
-            overflow: hidden;
-            max-width: 360px;
-        }
+        /* Each participant (self + every other peer) renders as its own
+           top-level pill — siblings of the live-share icon button in the
+           strip, NOT children of an outer chip. This prevents the
+           "nested chip" look where peers sat inside a green-tinted host
+           container. The pill picks up the peer's color via the
+           --peer-color CSS var. */
         .live-session-chip-pill {
             display: inline-flex;
             align-items: center;
@@ -628,6 +724,22 @@
             color: var(--fg);
             white-space: nowrap;
             user-select: none;
+            cursor: pointer;
+        }
+        .live-session-chip-pill {
+            transition: background 80ms ease, box-shadow 80ms ease;
+        }
+        .live-session-chip-pill:hover {
+            /* Was 34% — only 12pp above the 22% default. Bumping the mix
+               + adding an accent-tinted outline gives an actually-visible
+               hover state across themes. */
+            background: color-mix(in srgb, var(--peer-color) 50%, transparent);
+            box-shadow: 0 0 0 1px color-mix(in srgb, var(--peer-color) 70%, transparent);
+        }
+        /* Self pill gets a slightly heavier outline to anchor "this is
+           you" without a separate label. */
+        .live-session-chip-pill[data-self="true"] {
+            border-width: 1.5px;
         }
         .live-session-chip-pill-swatch {
             width: 7px;
@@ -640,6 +752,14 @@
             max-width: 110px;
             overflow: hidden;
             text-overflow: ellipsis;
+        }
+        .live-session-chip-pill-focus {
+            font-size: 10px;
+            opacity: 0.7;
+            max-width: 120px;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
         }
         .live-session-chip-pill-activity {
             font-size: 9px;
@@ -691,16 +811,12 @@
             background: #111;
             display: block;
         }
-        .live-session-chip.live-session-chip-syncing {
-            background: rgba(77, 166, 255, 0.20);
-            border-color: rgba(77, 166, 255, 0.55);
-            color: #4da6ff;
-            animation: live-session-chip-pulse 1.4s ease-in-out infinite;
-        }
+        /* Sync / warning animations live on the strip's status text
+           span (rendered as a sibling of the icon button + peer pills).
+           Strip itself has no background; the pulse is just an opacity
+           cycle on the inner note. */
+        .live-session-chip.live-session-chip-syncing,
         .live-session-chip.live-session-chip-warning {
-            background: rgba(244, 67, 54, 0.20);
-            border-color: rgba(244, 67, 54, 0.55);
-            color: #f88;
             animation: live-session-chip-pulse 1.4s ease-in-out infinite;
         }
         @keyframes live-session-chip-pulse {
@@ -726,7 +842,10 @@
             line-height: 1;
         }
         .sharing-status-icon:hover {
-            background: rgba(255, 255, 255, 0.06);
+            /* Was `rgba(255,255,255,0.06)` — 6% white = effectively
+               invisible on any light theme. Use the theme's hover var
+               so the affordance shows on dark, light, and DBP alike. */
+            background: var(--hover-bg);
             border-color: var(--border-2);
         }
         .sharing-status-icon .codicon { font-size: 16px; }
@@ -760,6 +879,16 @@
             padding: 0.05rem 0.55rem;
             user-select: none;
             white-space: nowrap;
+            /* The title attribute already says "click to switch", but
+               nothing about the rendering signals it. Pointer cursor +
+               hover bg gives the visual affordance the click handler
+               needs (see main.ts ~8778). */
+            cursor: pointer;
+            transition: background 80ms ease, border-color 80ms ease;
+        }
+        .project-name:hover {
+            background: var(--hover-bg);
+            border-color: var(--accent);
         }
         .project-name[hidden] { display: none; }
         .grow { flex: 1; }
@@ -1296,7 +1425,10 @@
             --vscode-button-hoverBackground:            var(--accent-hover);
             --vscode-button-secondaryForeground:        var(--fg);
             --vscode-button-secondaryBackground:        var(--bg-3);
-            --vscode-button-secondaryHoverBackground:   var(--hover-bg);
+            /* Use the accent-tinted button hover, not the row-hover bg
+               (which is a near-twin of --bg-3 on every theme and made
+               secondary-button hover effectively invisible). */
+            --vscode-button-secondaryHoverBackground:   var(--btn-hover-bg);
             --vscode-button-border:                     var(--border-2);
             border-radius: var(--btn-radius);
         }
@@ -1440,6 +1572,12 @@
             cursor: pointer;
         }
         .source-badge-item:hover { background: rgba(255,255,255,0.06); }
+        .source-badge-item:disabled {
+            color: var(--fg-muted);
+            cursor: default;
+            opacity: 0.55;
+        }
+        .source-badge-item:disabled:hover { background: transparent; }
         .source-badge-sep {
             height: 1px;
             background: var(--border-2);
@@ -2266,6 +2404,11 @@
             flex-direction: column;
             min-height: 0;
             height: 100%;
+            /* Same reasoning as #app — clicking an anchor link or any
+               element that fires scrollIntoView in the help reader
+               would otherwise walk up to the page root and shift the
+               whole layout. `clip` stops the walk here. */
+            overflow: clip;
         }
         #help-tabs {
             display: flex;
@@ -2540,17 +2683,28 @@
            swap them without restating the selectors. Defaults mirror the
            editor's fade-dark theme rules in main.ts. */
         .help-tab-panel .fade-tok-comment,
-        #help-body .fade-tok-comment   { color: var(--tok-comment, #6A9955); font-style: italic; }
-        #help-body .fade-tok-keyword   { color: var(--tok-keyword, #C586C0); }
-        #help-body .fade-tok-function  { color: var(--tok-function, #DCDCAA); }
-        #help-body .fade-tok-method    { color: var(--tok-method, #DCDCAA); }
-        #help-body .fade-tok-macro     { color: var(--tok-macro, #C586C0); }
-        #help-body .fade-tok-parameter { color: var(--tok-parameter, #9CDCFE); }
-        #help-body .fade-tok-struct    { color: var(--tok-struct, #4EC9B0); }
-        #help-body .fade-tok-type      { color: var(--tok-type, #4EC9B0); }
-        #help-body .fade-tok-operator  { color: var(--tok-operator, #D4D4D4); }
-        #help-body .fade-tok-number    { color: var(--tok-number, #B5CEA8); }
-        #help-body .fade-tok-string    { color: var(--tok-string, #CE9178); }
+        #help-body .fade-tok-comment,
+        .ai-msg-markdown .fade-tok-comment   { color: var(--tok-comment, #6A9955); font-style: italic; }
+        #help-body .fade-tok-keyword,
+        .ai-msg-markdown .fade-tok-keyword   { color: var(--tok-keyword, #C586C0); }
+        #help-body .fade-tok-function,
+        .ai-msg-markdown .fade-tok-function  { color: var(--tok-function, #DCDCAA); }
+        #help-body .fade-tok-method,
+        .ai-msg-markdown .fade-tok-method    { color: var(--tok-method, #DCDCAA); }
+        #help-body .fade-tok-macro,
+        .ai-msg-markdown .fade-tok-macro     { color: var(--tok-macro, #C586C0); }
+        #help-body .fade-tok-parameter,
+        .ai-msg-markdown .fade-tok-parameter { color: var(--tok-parameter, #9CDCFE); }
+        #help-body .fade-tok-struct,
+        .ai-msg-markdown .fade-tok-struct    { color: var(--tok-struct, #4EC9B0); }
+        #help-body .fade-tok-type,
+        .ai-msg-markdown .fade-tok-type      { color: var(--tok-type, #4EC9B0); }
+        #help-body .fade-tok-operator,
+        .ai-msg-markdown .fade-tok-operator  { color: var(--tok-operator, #D4D4D4); }
+        #help-body .fade-tok-number,
+        .ai-msg-markdown .fade-tok-number    { color: var(--tok-number, #B5CEA8); }
+        #help-body .fade-tok-string,
+        .ai-msg-markdown .fade-tok-string    { color: var(--tok-string, #CE9178); }
         /* The first <h3> in a command body is the command name itself.
            Render it like a syntax-highlighted call: monospace, larger,
            no markdown-heading underline. The token spans inside pick up
@@ -3973,9 +4127,30 @@
             flex-shrink: 0;
         }
         .ai-progress-row[hidden] { display: none; }
-        .ai-progress-text { font-size: 0.72rem; color: var(--fg-muted); margin-bottom: 4px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+        .ai-progress-text {
+            font-size: 0.72rem;
+            color: var(--fg-muted);
+            margin-bottom: 4px;
+            display: flex;
+            align-items: baseline;
+            gap: 8px;
+            min-width: 0;
+        }
+        .ai-progress-pct {
+            font-variant-numeric: tabular-nums;
+            font-weight: 600;
+            color: var(--fg);
+            flex-shrink: 0;
+            min-width: 2.5em;
+        }
+        .ai-progress-detail {
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            min-width: 0;
+        }
         .ai-progress-bar { height: 4px; background: var(--bg-3); border-radius: 2px; overflow: hidden; }
-        .ai-progress-bar-fill { height: 100%; background: var(--accent); width: 0%; transition: width 200ms ease; border-radius: 2px; }
+        .ai-progress-bar-fill { height: 100%; background: var(--accent); width: 0%; border-radius: 2px; }
         .ai-messages {
             flex: 1;
             overflow-y: auto;
@@ -4007,6 +4182,38 @@
             align-self: flex-start;
             border-bottom-left-radius: 2px;
         }
+        .ai-msg-markdown {
+            max-width: 100%;
+            line-height: 1.45;
+            font-size: 0.82rem;
+        }
+        .ai-msg-markdown p { margin: 0.45em 0; }
+        .ai-msg-markdown p:first-child { margin-top: 0; }
+        .ai-msg-markdown p:last-child { margin-bottom: 0; }
+        .ai-msg-markdown ul, .ai-msg-markdown ol { margin: 0.4em 0; padding-left: 1.4em; }
+        .ai-msg-markdown li { margin: 0.15em 0; }
+        .ai-msg-markdown code {
+            font-family: ui-monospace, 'SF Mono', Menlo, monospace;
+            font-size: 0.9em;
+            background: rgba(255, 255, 255, 0.06);
+            padding: 0.1em 0.35em;
+            border-radius: 3px;
+        }
+        .ai-msg-markdown pre {
+            margin: 0.5em 0;
+            padding: 0.5rem 0.65rem;
+            background: var(--bg);
+            border: 1px solid var(--border-2);
+            border-radius: 4px;
+            overflow-x: auto;
+        }
+        .ai-msg-markdown pre code {
+            background: none;
+            padding: 0;
+            font-size: 0.78rem;
+            line-height: 1.5;
+        }
+        .ai-msg-markdown strong { font-weight: 600; }
         .ai-msg-error {
             background: rgba(241, 76, 76, 0.12);
             color: #f14c4c;
@@ -4109,6 +4316,19 @@
             font-size: 0.74rem;
             margin: 0.05rem 0;
         }
+        .ai-docs-link {
+            background: none;
+            border: none;
+            padding: 0;
+            color: #9b8cff;
+            font: inherit;
+            font-family: inherit;
+            cursor: pointer;
+            text-decoration: underline;
+            text-align: left;
+        }
+        .ai-docs-link:hover { color: #b8adff; }
+        .ai-docs-score { color: var(--fg-muted); text-decoration: none; }
         /* Eviction notice: surfaces when the agent trims context (elides
            tool results, summarizes old turns, or hard-drops). Quiet but
            informative — the user should know the conversation was compacted
@@ -4175,15 +4395,27 @@
             border-radius: 8px;
             border-bottom-left-radius: 2px;
         }
-        .ai-thinking span {
+        .ai-thinking-dots {
+            display: inline-flex;
+            align-items: center;
+            gap: 4px;
+            flex-shrink: 0;
+        }
+        .ai-thinking-dots span {
             width: 6px;
             height: 6px;
             border-radius: 50%;
             background: var(--fg-muted);
             animation: ai-pulse 1.2s ease-in-out infinite;
         }
-        .ai-thinking span:nth-child(2) { animation-delay: 0.2s; }
-        .ai-thinking span:nth-child(3) { animation-delay: 0.4s; }
+        .ai-thinking-dots span:nth-child(2) { animation-delay: 0.2s; }
+        .ai-thinking-dots span:nth-child(3) { animation-delay: 0.4s; }
+        .ai-thinking-label {
+            margin-left: 6px;
+            font-size: 0.72rem;
+            color: var(--fg-muted);
+            white-space: nowrap;
+        }
         @keyframes ai-pulse {
             0%, 80%, 100% { opacity: 0.2; transform: scale(0.85); }
             40%            { opacity: 1;   transform: scale(1); }
@@ -4282,15 +4514,44 @@
         .ai-diff-wrapper.ai-diff-accepted { border-color: #4caf50; }
         .ai-diff-wrapper.ai-diff-rejected { border-color: #f14c4c; opacity: 0.6; }
         .ai-diff-header {
+            display: flex;
+            align-items: center;
+            gap: 0.45rem;
+            width: 100%;
             padding: 0.4rem 0.7rem;
             background: rgba(14, 99, 156, 0.18);   /* matching blue tint */
+            border: none;
             border-bottom: 1px solid var(--border-2);
             font-size: 0.78rem;
             color: var(--fg);
             font-family: ui-monospace, 'SF Mono', Menlo, monospace;
             font-weight: 500;
             flex-shrink: 0;
+            text-align: left;
+            cursor: pointer;
         }
+        .ai-diff-header:hover { background: rgba(14, 99, 156, 0.28); }
+        .ai-diff-chevron {
+            flex-shrink: 0;
+            font-size: 0.6rem;
+            color: var(--fg-muted);
+        }
+        .ai-diff-header-text {
+            flex: 1;
+            min-width: 0;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+        .ai-diff-body {
+            display: flex;
+            flex-direction: column;
+            flex: 1 1 auto;
+            min-height: 0;
+            overflow: hidden;
+        }
+        .ai-diff-wrapper.ai-diff-collapsed .ai-diff-body { display: none; }
+        .ai-diff-wrapper.ai-diff-collapsed .ai-diff-header { border-bottom: none; }
         .ai-diff {
             margin: 0;
             padding: 0.4rem 0.6rem;
@@ -4577,7 +4838,14 @@
             flex-basis: 100%;
             margin-top: 2px;
         }
-        .ai-model-bar-fill { height: 100%; background: var(--accent); width: 0%; transition: width 200ms ease; }
+        .ai-model-bar-fill { height: 100%; background: var(--accent); width: 0%; }
+        .ai-model-bar-pct {
+            font-size: 0.68rem;
+            font-variant-numeric: tabular-nums;
+            color: var(--fg-muted);
+            margin-top: 2px;
+            text-align: right;
+        }
 
         /* ─── Playground boot splash ────────────────────────────────────────
            Shown from page-load until main.ts calls window.__pgSplash.hide()
@@ -4738,16 +5006,30 @@
                     </button>
                 </div>
             </div>
-            <button id="sharing-status-icon"
-                    class="sharing-status-icon"
-                    type="button"
-                    title="GitHub: loading…"
-                    aria-label="Open Collaboration panel">
-                <span class="codicon codicon-source-control"></span>
-                <span id="sharing-status-badge" class="sharing-status-badge sharing-status-badge-loading"></span>
-            </button>
-            <div id="sharing-chips" class="sharing-chips"></div>
-            <div id="live-session-chip" class="live-session-chip" hidden></div>
+            <!-- Collab cluster: git button + transient git chips + live
+                 session strip. Grouped in a sub-flex so the per-item gap
+                 is tight (4px) instead of the header's wider 1rem gap.
+                 Without this wrapper the empty #sharing-chips div sits
+                 between git and live as a zero-width flex item, but the
+                 surrounding 1rem gaps still apply on both sides — pushes
+                 git + live ~32px apart for no reason. -->
+            <div class="header-collab-cluster">
+                <button id="sharing-status-icon"
+                        class="sharing-status-icon"
+                        type="button"
+                        title="GitHub: loading…"
+                        aria-label="Open Collaboration panel">
+                    <span class="codicon codicon-source-control"></span>
+                    <span id="sharing-status-badge" class="sharing-status-badge sharing-status-badge-loading"></span>
+                </button>
+                <div id="sharing-chips" class="sharing-chips"></div>
+                <!-- Live Session "chip" is always present. When no session is
+                     active it renders as a compact icon button (mirroring the
+                     git #sharing-status-icon look). When a session starts the
+                     same element grows into a peer-pill strip — the icon stays
+                     at the leading edge throughout. -->
+                <div id="live-session-chip" class="live-session-chip live-session-chip-idle"></div>
+            </div>
             <span class="grow"></span>
             <vscode-button id="run" disabled icon="play">Run (⌘R)</vscode-button>
             <vscode-button id="stop" disabled icon="debug-stop" secondary="true">Stop</vscode-button>
@@ -5098,7 +5380,10 @@
                     <button class="ai-clear-btn" title="Clear conversation">Clear</button>
                 </div>
                 <div class="ai-progress-row" hidden>
-                    <div class="ai-progress-text"></div>
+                    <div class="ai-progress-text">
+                        <span class="ai-progress-pct">0%</span>
+                        <span class="ai-progress-detail">Loading…</span>
+                    </div>
                     <div class="ai-progress-bar"><div class="ai-progress-bar-fill"></div></div>
                 </div>
                 <div class="ai-messages"></div>
@@ -5200,7 +5485,7 @@
             </div>
             <div class="splash-ghost"></div>
         </div>
-        <div class="splash-status" id="pg-splash-status">Loading FadeLand…</div>
+        <div class="splash-status" id="pg-splash-status">Loading Fade Land…</div>
     </div>
     <script>
         window.__pgSplash = (function () {

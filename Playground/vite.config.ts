@@ -1,14 +1,29 @@
 import { defineConfig } from 'vite';
+import basicSsl from '@vitejs/plugin-basic-ssl';
 
 export default defineConfig({
     server: {
         port: 5311,
         strictPort: true,
+        // HTTPS in dev — required for Firefox WebRTC to actually gather
+        // ICE candidates on localhost. Firefox treats some pieces of the
+        // RTCPeerConnection stack as HTTPS-only even though `localhost`
+        // is officially a secure context, and silently leaves
+        // `iceGatheringState` at 'new' on HTTP-localhost. The certificate
+        // is self-signed via `basicSsl()` below; the browser will warn
+        // once and remember after you click through. Passing an empty
+        // ServerOptions ({}) is how Vite says "use HTTPS, take key/cert
+        // from a plugin"; `true` alone isn't a valid value for this slot.
+        https: {},
     },
     worker: {
         format: 'es',
     },
     plugins: [
+        // Generates a self-signed cert + key for the dev server. No
+        // system trust-store changes (unlike mkcert) — just a one-time
+        // browser warning that lets you proceed.
+        basicSsl(),
         // The sandboxed MonoGame preview iframe has a null/opaque origin.
         // Blazor's dotnet.js fetches with credentials: 'include', so the
         // browser rejects 'Access-Control-Allow-Origin: *' for those requests.

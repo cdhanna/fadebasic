@@ -20,6 +20,7 @@ import type {
     StreamEvent,
     StreamOptions,
 } from './types';
+import { ModelLoadProgressTracker } from './load-progress';
 
 const log = getLogger('ai/provider');
 
@@ -45,7 +46,7 @@ const DEFAULTS = {
     dtype: 'q4f16' as const,
     device: 'webgpu' as const,
     stopStrings: ['</tool_call>'],
-    maxNewTokens: 1024,
+    maxNewTokens: 2048,
     maxContext: 32_768,
 };
 
@@ -58,6 +59,9 @@ export class TransformersJSProvider implements ChatProvider {
     private generator: TextGenerationPipeline | null = null;
     private loadPromise: Promise<TextGenerationPipeline> | null = null;
     private progressListeners = new Set<(p: ProviderProgress) => void>();
+    private readonly loadProgress = new ModelLoadProgressTracker();
+    /** Whether this load pass hit the network (false = served from IndexedDB). */
+    private sawNetworkDownload = false;
 
     constructor(opts: TransformersJSProviderOptions) {
         this.opts = {
@@ -123,6 +127,8 @@ export class TransformersJSProvider implements ChatProvider {
         const stale = this.generator;
         this.generator = null;
         this.loadPromise = null;
+        this.loadProgress.reset();
+        this.sawNetworkDownload = false;
         this.capabilities.isCached = false;
         if (stale) {
             try {
@@ -144,22 +150,51 @@ export class TransformersJSProvider implements ChatProvider {
         if (this.loadPromise) return this.loadPromise;
 
         log.info(`loading ${this.opts.modelId} device=${this.opts.device} dtype=${this.opts.dtype}`);
+        this.loadProgress.reset();
+        this.sawNetworkDownload = false;
+
+        let lastFileEventAt = Date.now();
+        const warmupDetail = this.opts.device === 'webgpu'
+            ? 'initializing WebGPU session (this can take a minute)'
+            : 'compiling WASM runtime (this can take a minute)';
+
+        const warmupPoll = setInterval(() => {
+            if (this.generator) return;
+            const idleMs = Date.now() - lastFileEventAt;
+            if (idleMs < 1200) return;
+            const smoothed = idleMs < 4000
+                ? this.loadProgress.enterWarmup(warmupDetail)
+                : this.loadProgress.tickWarmup();
+            this.emitProgress({ text: smoothed.text, pct: smoothed.pct });
+        }, 1500);
+
+        const stopWarmupPoll = () => clearInterval(warmupPoll);
+
         this.loadPromise = pipeline('text-generation', this.opts.modelId, {
             dtype: this.opts.dtype,
             device: this.opts.device,
             progress_callback: (info: unknown) => {
-                const i = info as { status?: string; file?: string; progress?: number };
-                const pct = typeof i.progress === 'number' ? i.progress / 100 : 0;
-                const text = i.file ? `${i.status ?? 'loading'} ${i.file}` : (i.status ?? 'loading');
-                this.emitProgress({ text, pct });
+                lastFileEventAt = Date.now();
+                const raw = info as { status?: string };
+                if (raw.status === 'download') this.sawNetworkDownload = true;
+                const smoothed = this.loadProgress.update(
+                    info as Parameters<ModelLoadProgressTracker['update']>[0],
+                );
+                this.emitProgress({ text: smoothed.text, pct: smoothed.pct });
             },
         }).then((gen) => {
+            stopWarmupPoll();
             this.generator = gen as TextGenerationPipeline;
             this.capabilities.isCached = true;
-            this.emitProgress({ text: 'ready', pct: 1 });
-            log.info(`loaded ${this.opts.modelId}`);
+            const readyLabel = this.sawNetworkDownload
+                ? 'model ready'
+                : 'ready (loaded from cache)';
+            const done = this.loadProgress.complete(readyLabel);
+            this.emitProgress({ text: done.text, pct: done.pct });
+            log.info(`loaded ${this.opts.modelId} cached=${!this.sawNetworkDownload}`);
             return this.generator;
         }).catch((e) => {
+            stopWarmupPoll();
             this.loadPromise = null;
             log.error(`load failed: ${(e as Error).message ?? e}`);
             throw e;

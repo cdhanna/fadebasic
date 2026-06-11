@@ -508,10 +508,45 @@ namespace FadeBasic.Virtual
                             }
                             else
                             {
-                                _vm.heap.ReadSpan(VmPtr.FromRaw(variable.rawValue) + elementSize * i, elementSize,
-                                    out var fieldSpan);
+                                var elementPtr = VmPtr.FromRaw(variable.rawValue) + elementSize * i;
+                                _vm.heap.ReadSpan(elementPtr, elementSize, out var fieldSpan);
                                 subVariable.value =
                                     VmUtil.ConvertValueToDisplayString(elementTypeCode, _vm, ref fieldSpan);
+
+                                // Register the element so DebugSetVariable
+                                // can find and write to it. Without this,
+                                // editing a value in the Variables panel
+                                // for a terminal scalar array element
+                                // throws "no variable for given id".
+                                //
+                                // We attach a runtimeVariable that points
+                                // at the element's HEAP location (not the
+                                // array's register) so TrySetValue's
+                                // isTop=false branch fires and writes to
+                                // the heap. Putting the entry in
+                                // idToVariable (rather than
+                                // idToTopLevelVariable) ensures
+                                // isTop stays false — the
+                                // isTop=true register-write branch would
+                                // overwrite the array's register with the
+                                // scalar value and corrupt the array.
+                                var elementAlloc = new VmAllocation
+                                {
+                                    ptr = elementPtr,
+                                    length = elementSize,
+                                    format = new HeapTypeFormat
+                                    {
+                                        typeCode = elementTypeCode,
+                                        typeId = variable.allocation.format.typeId,
+                                    },
+                                };
+                                subVariable.runtimeVariable = new DebugRuntimeVariable(
+                                    _vm, $"{i}", elementTypeCode,
+                                    VmPtr.GetRaw(ref elementPtr),
+                                    ref elementAlloc,
+                                    variable.scopeIndex,
+                                    variable.regAddr);
+                                idToVariable[subVariable.id] = subVariable;
                             }
 
                             arrayScope.variables.Add(subVariable);
@@ -685,15 +720,19 @@ namespace FadeBasic.Virtual
         public bool TrySetValue(int variableId, DebugRuntimeVariable value, out string error)
         {
             error = "";
-            // the job here is to find the given variable id... 
-            if (!idToVariable.TryGetValue(variableId, out var debugVar))
+            // Look up the variable. Some ids only live in
+            // idToTopLevelVariable (e.g. synthetic eval results, the
+            // Expand result for non-struct nested-array elements that
+            // pre-register there) — don't bail just because the id is
+            // missing from idToVariable.
+            DebugRuntimeVariable runtimeVar = null;
+            var isTop = false;
+
+            if (idToVariable.TryGetValue(variableId, out var debugVar))
             {
-                throw new NotSupportedException("no variable for given id");
+                runtimeVar = debugVar.runtimeVariable;
             }
 
-            var runtimeVar = debugVar.runtimeVariable;
-            var isTop = false;
-            
             if (runtimeVar == null && idToTopLevelVariable.TryGetValue(variableId, out var tuple))
             {
                 runtimeVar = tuple.Item2;
@@ -702,7 +741,7 @@ namespace FadeBasic.Virtual
 
             if (runtimeVar == null)
             {
-                throw new NotSupportedException("no runtime variable for given id");
+                throw new NotSupportedException("no variable for given id");
             }
 
             if (runtimeVar.typeCode != value.typeCode)

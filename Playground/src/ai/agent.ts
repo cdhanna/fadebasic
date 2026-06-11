@@ -25,8 +25,29 @@ import {
     type ProtocolEvent,
     getFewShotTurns,
     renderToolProtocolPrompt,
+    renderToolCallRetryPrompt,
     renderToolResult,
 } from './tool-protocol';
+import {
+    ACCESS_DENIAL_NUDGE,
+    TOOLS_CAPABILITY_BLOCK,
+    buildToolRouteHint,
+    looksLikeAccessDenial,
+} from './tool-awareness';
+import { PLAN_SUGGESTION_BLOCK, shouldSuggestPlan } from './plan-suggest';
+import {
+    WORKSPACE_PREFETCHED_BLOCK,
+    WORKSPACE_TOOLS_BLOCK,
+    shouldRequireWorkspaceTools,
+} from './workspace-tool-hint';
+import { filterWorkspacePaths } from './tools/list-files';
+import { shouldAutoRetrieveDocs, shouldPrefetchDocs } from './rag/auto-retrieve';
+import {
+    EDIT_VIA_TOOLS_BLOCK,
+    EDIT_VIA_TOOLS_NUDGE,
+    looksLikePastedCodeEdit,
+    userRequestedCodeChange,
+} from './edit-via-tools';
 import { Retriever, formatHits, getRetriever } from './rag/retrieval';
 import type { SearchHit } from './rag/types';
 import { ContextEvictor, type EvictionResult } from './context';
@@ -64,6 +85,8 @@ export interface AgentOptions {
      *  (history grows unbounded until the provider rejects). Defaults
      *  load a ContextEvictor with sensible thresholds. */
     evictor?: ContextEvictor | null;
+    /** Loaded Fade command names — injected so the model does not hallucinate APIs. */
+    getCommandNames?: () => Promise<string[]>;
 }
 
 export type AgentEvent =
@@ -100,6 +123,8 @@ const DEFAULT_SYSTEM_PROMPT =
     + 'When you are done, reply with plain text and no <tool_call> block.';
 
 const MAX_ITERATIONS_DEFAULT = 8;
+/** How many times to nudge the model after a malformed tool_call parse. */
+const MAX_TOOL_PARSE_RETRIES = 2;
 /** How long to wait after a write tool before reading diagnostics back from
  *  the LSP. Most LSPs publish updated markers within a few hundred ms of a
  *  file change; this gives them time without making the user feel a delay. */
@@ -117,6 +142,7 @@ export class Agent {
     private readonly autoRetrievalK: number;
     private readonly getProjectType: (() => string | undefined) | null;
     private readonly evictor: ContextEvictor | null;
+    private readonly getCommandNames: (() => Promise<string[]>) | null;
     private listeners = new Set<AgentListener>();
     /** Persistent conversation history. Survives across sends. */
     private history: Msg[] = [];
@@ -139,6 +165,7 @@ export class Agent {
         this.evictor = opts.evictor === null
             ? null
             : (opts.evictor ?? new ContextEvictor({ provider: opts.provider }));
+        this.getCommandNames = opts.getCommandNames ?? null;
     }
 
     on(listener: AgentListener): () => void {
@@ -154,6 +181,10 @@ export class Agent {
 
     abort(): void {
         this.abortController?.abort();
+    }
+
+    getAbortSignal(): AbortSignal | undefined {
+        return this.abortController?.signal;
     }
 
     getHistory(): readonly Msg[] {
@@ -172,14 +203,28 @@ export class Agent {
     async send(userText: string): Promise<void> {
         this.abortController = new AbortController();
         const signal = this.abortController.signal;
+        this.toolContext.abortSignal = signal;
 
         await this.provider.ensureReady();
 
         this.history.push({ role: 'user', content: userText });
         log.agent.info(`turn started — provider=${this.provider.id} history=${this.history.length}`);
 
+        // Inventory questions ("what is in this project?") — run list_files
+        // before the model's first pass. Small models skip tool calls even
+        // with strong prompts; prefetching guarantees a visible tool row +
+        // fresh JSON in history.
+        const listFilesPrefetched = shouldRequireWorkspaceTools(userText)
+            ? await this.prefetchListFiles(signal)
+            : false;
+
+        const docsPrefetched = shouldPrefetchDocs(userText)
+            ? await this.prefetchSearchDocs(userText, signal)
+            : false;
+
         // Auto-retrieve docs relevant to the user's message.
         const docsBlock = await this.runAutoRetrieval(userText);
+        const commandCatalogBlock = await this.buildCommandCatalogBlock();
 
         // Snapshot the workspace state (project name, files, open file,
         // diagnostic count). Goes LAST in the system message so it's the
@@ -195,8 +240,19 @@ export class Agent {
         // closing directive) at the end. Reference docs come before it
         // so they describe the language without being the model's first
         // instinct for "what to answer from".
-        const sections = [this.systemPrompt, toolPrompt];
+        const sections = [this.systemPrompt, toolPrompt, TOOLS_CAPABILITY_BLOCK];
+        const toolRoute = buildToolRouteHint(userText);
+        if (toolRoute) sections.push(toolRoute);
+        if (shouldRequireWorkspaceTools(userText)) {
+            sections.push(listFilesPrefetched ? WORKSPACE_PREFETCHED_BLOCK : WORKSPACE_TOOLS_BLOCK);
+        }
+        if (shouldSuggestPlan(userText)) sections.push(PLAN_SUGGESTION_BLOCK);
+        if (userRequestedCodeChange(userText)) sections.push(EDIT_VIA_TOOLS_BLOCK);
+        if (commandCatalogBlock) sections.push(commandCatalogBlock);
         if (docsBlock) sections.push(docsBlock);
+        if (docsPrefetched) {
+            sections.push('Docs were prefetched via search_docs — use those results for command syntax.');
+        }
         if (workspaceBlock) sections.push(workspaceBlock);
         const systemMsg: Msg = {
             role: 'system',
@@ -215,6 +271,9 @@ export class Agent {
         // we feed it a synthetic prompt to continue. Capped so a broken
         // model can't loop forever.
         let planContinuationUsed = false;
+        let accessDenialNudgeUsed = false;
+        let editViaToolsNudgeUsed = false;
+        let toolParseRetries = 0;
 
         try {
             while (iteration < this.maxIterations) {
@@ -234,7 +293,7 @@ export class Agent {
                 }
 
                 const streamOpts: StreamOptions = { messages, signal };
-                const { text, toolCalls, finishReason, planEmitted } = await this.runStream(streamOpts);
+                const { text, toolCalls, finishReason, planEmitted, toolParseError } = await this.runStream(streamOpts);
                 lastFinishReason = finishReason;
 
                 // Record what the assistant said. Tool calls re-rendered so
@@ -249,8 +308,29 @@ export class Agent {
                 }
 
                 if (toolCalls.length > 0) {
+                    toolParseRetries = 0;
                     await this.executeToolCalls(toolCalls);
                     continue;
+                }
+
+                // Malformed tool_call JSON/tags — nudge the model to retry.
+                if (toolParseError && toolParseRetries < MAX_TOOL_PARSE_RETRIES) {
+                    toolParseRetries++;
+                    log.agent.warn(`tool_call parse failed — retry ${toolParseRetries}/${MAX_TOOL_PARSE_RETRIES}: ${toolParseError}`);
+                    this.history.push({
+                        role: 'user',
+                        content: renderToolCallRetryPrompt(toolParseError),
+                    });
+                    continue;
+                }
+
+                if (toolParseError) {
+                    log.agent.warn(`tool_call parse failed after ${MAX_TOOL_PARSE_RETRIES} retries: ${toolParseError}`);
+                    this.emit({
+                        kind: 'error',
+                        message: `Could not parse tool call: ${toolParseError}`,
+                    });
+                    break;
                 }
 
                 // No tool calls — usually we'd break and let the model's
@@ -276,6 +356,30 @@ export class Agent {
                     });
                 }
 
+                // Model claimed it can't see source without calling tools.
+                if (text.length > 0
+                    && toolCalls.length === 0
+                    && !accessDenialNudgeUsed
+                    && looksLikeAccessDenial(text)
+                    && buildToolRouteHint(userText)) {
+                    accessDenialNudgeUsed = true;
+                    log.agent.warn('access-denial hallucination — nudging to use tools');
+                    this.history.push({ role: 'user', content: ACCESS_DENIAL_NUDGE });
+                    continue;
+                }
+
+                // Model pasted code in markdown instead of apply_edit / create_file.
+                if (text.length > 0
+                    && toolCalls.length === 0
+                    && !editViaToolsNudgeUsed
+                    && userRequestedCodeChange(userText)
+                    && looksLikePastedCodeEdit(text)) {
+                    editViaToolsNudgeUsed = true;
+                    log.agent.warn('markdown code edit — nudging to use write tools');
+                    this.history.push({ role: 'user', content: EDIT_VIA_TOOLS_NUDGE });
+                    continue;
+                }
+
                 break;
             }
 
@@ -295,6 +399,7 @@ export class Agent {
             this.emit({ kind: 'error', message: msg });
             this.emit({ kind: 'turn_complete', finishReason: 'error' });
         } finally {
+            this.toolContext.abortSignal = undefined;
             this.abortController = null;
         }
     }
@@ -314,17 +419,9 @@ export class Agent {
         // tells the model what files exist before it needs to ask.
         try {
             const project = ws.currentProject();
-            const files = await ws.list();
+            const files = filterWorkspacePaths(await ws.list());
             lines.push(`Project: ${project}`);
-            if (files.length === 0) {
-                lines.push('Files: (empty)');
-            } else if (files.length <= 25) {
-                lines.push(`Files (${files.length}): ${files.join(', ')}`);
-            } else {
-                // Truncate aggressively at high file counts so we don't burn
-                // tokens on a list dump. Model can call list_files for more.
-                lines.push(`Files (${files.length}, first 25): ${files.slice(0, 25).join(', ')}, …`);
-            }
+            lines.push(formatWorkspaceFileList(files));
             captured = true;
         } catch (e) {
             log.context.debug(`workspace list failed: ${(e as Error).message}`);
@@ -373,12 +470,118 @@ export class Agent {
         lines.push('');
         lines.push(
             'If the user references "the main file", "my code", "the project", or any '
-            + 'file in the list above, call read_file on that file BEFORE answering. '
+            + 'file in the list above, call read_file on that path BEFORE answering. '
+            + 'For a full/authoritative listing, call list_files. '
             + 'The docs block describes Fade in general — it does NOT describe THIS project.',
         );
 
         log.context.debug(`workspace context: ${lines.length - 1} fields captured`);
         return lines.join('\n');
+    }
+
+    /** Run list_files before the model turn for inventory questions. */
+    private async prefetchListFiles(signal: AbortSignal): Promise<boolean> {
+        if (signal.aborted) return false;
+        const id = `auto-list-${Date.now()}`;
+        this.emit({ kind: 'tool_call_start', id, name: 'list_files', args: {} });
+        log.tool.info('prefetch list_files (workspace inventory question)');
+        try {
+            const r = await this.tools.run('list_files', {}, this.toolContext);
+            this.emit({ kind: 'tool_call_result', id, name: 'list_files', ok: r.ok, result: r.result });
+            this.history.push({
+                role: 'assistant',
+                content: '<tool_call>{"name":"list_files","args":{}}</tool_call>',
+            });
+            this.history.push({
+                role: 'user',
+                content: renderToolResult('list_files', r.ok ? r.result : r.result),
+            });
+            return r.ok;
+        } catch (e) {
+            const err = (e as Error).message;
+            log.tool.warn(`prefetch list_files failed: ${err}`);
+            const result = { error: err };
+            this.emit({
+                kind: 'tool_call_result',
+                id,
+                name: 'list_files',
+                ok: false,
+                result,
+            });
+            this.history.push({
+                role: 'assistant',
+                content: '<tool_call>{"name":"list_files","args":{}}</tool_call>',
+            });
+            this.history.push({
+                role: 'user',
+                content: renderToolResult('list_files', result),
+            });
+            return false;
+        }
+    }
+
+    /** Inject loaded command names so the model does not invent APIs. */
+    private async buildCommandCatalogBlock(): Promise<string | null> {
+        if (!this.getCommandNames) return null;
+        try {
+            const names = await this.getCommandNames();
+            if (names.length === 0) return null;
+            const sample = names.slice(0, 80).join(', ');
+            const more = names.length > 80 ? ` … +${names.length - 80} more` : '';
+            return (
+                `Loaded Fade commands (${names.length}): ${sample}${more}\n`
+                + 'Do NOT invent command names. Call search_docs before using any command not listed.'
+            );
+        } catch (e) {
+            log.context.debug(`command catalog failed: ${(e as Error).message}`);
+            return null;
+        }
+    }
+
+    /** Run search_docs before the model turn for command/API questions. */
+    private async prefetchSearchDocs(query: string, signal: AbortSignal): Promise<boolean> {
+        if (signal.aborted) return false;
+        const id = `auto-docs-${Date.now()}`;
+        const args = { query, k: this.autoRetrievalK };
+        this.emit({ kind: 'tool_call_start', id, name: 'search_docs', args });
+        log.tool.info(`prefetch search_docs: "${query.slice(0, 60)}"`);
+        try {
+            const r = await this.tools.run('search_docs', args, this.toolContext);
+            this.emit({ kind: 'tool_call_result', id, name: 'search_docs', ok: r.ok, result: r.result });
+            this.history.push({
+                role: 'assistant',
+                content: `<tool_call>{"name":"search_docs","args":${JSON.stringify(args)}}</tool_call>`,
+            });
+            this.history.push({
+                role: 'user',
+                content: renderToolResult('search_docs', r.ok ? r.result : r.result),
+            });
+            if (r.ok && r.result && typeof r.result === 'object' && 'hits' in (r.result as object)) {
+                const hits = (r.result as { hits?: SearchHit[] }).hits;
+                if (hits?.length) this.emit({ kind: 'docs_retrieved', query, hits });
+            }
+            return r.ok;
+        } catch (e) {
+            const err = (e as Error).message;
+            log.tool.warn(`prefetch search_docs failed: ${err}`);
+            const result = { error: err };
+            this.emit({
+                kind: 'tool_call_result',
+                id,
+                name: 'search_docs',
+                ok: false,
+                result,
+            });
+            this.history.push({
+                role: 'assistant',
+                content: `<tool_call>{"name":"search_docs","args":${JSON.stringify(args)}}</tool_call>`,
+            });
+            this.history.push({
+                role: 'user',
+                content: renderToolResult('search_docs', result),
+            });
+            return false;
+        }
     }
 
     /** Embed the user message, retrieve top-K chunks, format for the
@@ -387,6 +590,10 @@ export class Agent {
      *  thrown — the agent always proceeds. */
     private async runAutoRetrieval(query: string): Promise<string | null> {
         if (!this.retriever) return null;
+        if (!shouldAutoRetrieveDocs(query)) {
+            log.rag.debug(`auto-retrieval skipped for workspace-style query: "${query.slice(0, 60)}"`);
+            return null;
+        }
         try {
             const hits = await this.retriever.search(query, this.autoRetrievalK, {
                 projectType: this.getProjectType?.(),
@@ -537,12 +744,14 @@ export class Agent {
         toolCalls: Array<{ id: string; name: string; args: unknown }>;
         finishReason: FinishReason;
         planEmitted: boolean;
+        toolParseError: string | null;
     }> {
         const text: string[] = [];
         const toolCalls: Array<{ id: string; name: string; args: unknown }> = [];
         const rawOutput: string[] = [];
         let finishReason: FinishReason = 'stop';
         const planMarker = { emitted: false };
+        let toolParseError: string | null = null;
 
         const useNativeTools = this.provider.capabilities.supportsTools;
         const parser = useNativeTools ? null : new BlockStreamParser();
@@ -550,21 +759,21 @@ export class Agent {
         for await (const ev of this.provider.stream(opts)) {
             if (ev.kind === 'done') { finishReason = ev.finishReason; continue; }
             if (useNativeTools) {
-                this.handleEvent(ev, text, toolCalls, planMarker);
+                this.handleEvent(ev, text, toolCalls, planMarker, err => { toolParseError = err; });
                 continue;
             }
             if (ev.kind === 'text') {
                 rawOutput.push(ev.delta);
                 for (const out of parser!.feed(ev.delta)) {
-                    this.handleEvent(out, text, toolCalls, planMarker);
+                    this.handleEvent(out, text, toolCalls, planMarker, err => { toolParseError = err; });
                 }
             } else if (ev.kind === 'tool_call') {
-                this.handleEvent(ev, text, toolCalls, planMarker);
+                this.handleEvent(ev, text, toolCalls, planMarker, err => { toolParseError = err; });
             }
         }
         if (parser) {
             for (const out of parser.end()) {
-                this.handleEvent(out, text, toolCalls, planMarker);
+                this.handleEvent(out, text, toolCalls, planMarker, err => { toolParseError = err; });
             }
         }
 
@@ -576,6 +785,7 @@ export class Agent {
             toolCalls,
             finishReason,
             planEmitted: planMarker.emitted,
+            toolParseError,
         };
     }
 
@@ -584,18 +794,28 @@ export class Agent {
         text: string[],
         toolCalls: Array<{ id: string; name: string; args: unknown }>,
         planMarker: { emitted: boolean },
+        onParseError: (msg: string) => void,
     ): void {
         if (ev.kind === 'text') {
             text.push(ev.delta);
             this.emit({ kind: 'text_delta', delta: ev.delta });
         } else if (ev.kind === 'tool_call') {
             toolCalls.push({ id: ev.id, name: ev.name, args: ev.args });
+        } else if (ev.kind === 'tool_parse_error') {
+            onParseError(ev.error);
+            log.agent.debug(`tool_call parse error: ${ev.error} (raw ${truncateForLog(ev.raw, 200)})`);
         } else if (ev.kind === 'plan') {
             log.agent.info(`plan: ${ev.plan.goal} (${ev.plan.steps.length} steps)`);
             planMarker.emitted = true;
             this.emit({ kind: 'plan_emitted', plan: ev.plan });
         }
     }
+}
+
+function formatWorkspaceFileList(files: string[]): string {
+    if (files.length === 0) return 'Files: (empty)';
+    if (files.length <= 25) return `Files (${files.length}): ${files.join(', ')}`;
+    return `Files (${files.length}, first 25): ${files.slice(0, 25).join(', ')}, …`;
 }
 
 function truncateForLog(s: string, max: number = 1500): string {

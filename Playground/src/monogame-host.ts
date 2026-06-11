@@ -48,6 +48,7 @@
 //   debug-list-types { id }                 debug-list-types-result { id, result }
 //   debug-get-schema { typeName, id }       debug-get-schema-result { id, result }
 //   debug-list-entities { typeName, id }    debug-list-entities-result { id, result }
+//   debug-get-labels { typeName, id }       debug-get-labels-result { id, result }
 //   debug-get-entity { typeName, entityId, id } debug-get-entity-result { id, result }
 //   debug-set-field { typeName, entityId, path, valueJson, id }
 //                                           debug-set-field-result { id, result }
@@ -376,8 +377,13 @@ class MonoGameHost {
         if (m.type === 'debug-ui-frame') {
             if (this.onDebugUiFrame) {
                 try {
-                    const env = parseDebugUiEnvelope(typeof m.json === 'string' ? m.json : '');
-                    this.onDebugUiFrame(env);
+                    const rawJson = typeof m.json === 'string' ? m.json : '';
+                    const env = parseDebugUiEnvelope(rawJson);
+                    // Pass the raw json alongside the parsed env so the
+                    // collab relay can broadcast the original bytes
+                    // without re-serialising; observers reuse the same
+                    // parseDebugUiEnvelope path.
+                    this.onDebugUiFrame(env, rawJson);
                 }
                 catch (err) { console.error('[monogame-host] onDebugUiFrame threw:', err); }
             }
@@ -725,10 +731,12 @@ class MonoGameHost {
     onStdout?: (line: string) => void;
     onStderr?: (line: string) => void;
 
-    // Debug UI sink — receives the parsed per-frame envelope. Wired by
-    // main.ts to the Tweakpane debug-ui-panel. Optional; unset means
-    // the iframe's frames are simply dropped.
-    onDebugUiFrame?: (envelope: DebugUiFrameEnvelope) => void;
+    // Debug UI sink — receives the parsed per-frame envelope plus the
+    // raw JSON string the iframe shipped (so the collab relay can
+    // broadcast the original bytes without re-serialising the env).
+    // Wired by main.ts to the Tweakpane debug-ui-panel. Optional;
+    // unset means the iframe's frames are simply dropped.
+    onDebugUiFrame?: (envelope: DebugUiFrameEnvelope, rawJson: string) => void;
 
     /** Push a user-driven change (slider move, button click, etc.)
      *  back to the running game. `ctrlId` is the ControlId echoed
@@ -780,6 +788,19 @@ class MonoGameHost {
         try { return JSON.parse(json); } catch { return []; }
     }
 
+    /** Return per-id display labels for one provider — e.g. for
+     *  the texture picker, maps `1 → "Images/Player"`. Only entries
+     *  with non-empty labels are present; callers fall back to the
+     *  generic `<type> #<id>` form for missing keys. */
+    async debugGetLabels(typeName: string): Promise<Record<string, string>> {
+        if (!this.isReady()) return {};
+        const json = await this.call<string>({ type: 'debug-get-labels', typeName });
+        try {
+            const parsed = JSON.parse(json);
+            return parsed && typeof parsed === 'object' ? parsed as Record<string, string> : {};
+        } catch { return {}; }
+    }
+
     /** Snapshot one entity's current state. Returns a plain JSON
      *  object whose keys match the schema's Path values (top-level
      *  for non-nested fields, dotted access for vec2/color). */
@@ -828,7 +849,7 @@ export interface DebugUiFrameEnvelope {
     entities?: Record<string, number[]>;
 }
 
-function parseDebugUiEnvelope(json: string): DebugUiFrameEnvelope {
+export function parseDebugUiEnvelope(json: string): DebugUiFrameEnvelope {
     const empty: DebugUiFrameEnvelope = { gen: 0, queue: [], autoInspector: false };
     if (!json) return empty;
     let raw: any;

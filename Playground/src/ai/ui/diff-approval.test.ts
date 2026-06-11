@@ -154,6 +154,31 @@ describe('mountDiffApproval — DOM structure (the symptom in the screenshot)', 
         // "wrapper looks empty" bug in the screenshot.
         expect(container.querySelector('.ai-diff')).toBeNull();
     });
+
+    it('collapses the diff body when the header is clicked', () => {
+        mountDiffApproval({
+            container,
+            path: 'main.fbasic',
+            oldContent: 'a\nb\nc',
+            newContent: 'a\nNEW\nb\nc',
+            onApprove: () => {},
+            onReject: () => {},
+        });
+        const wrapper = container.querySelector<HTMLElement>('.ai-diff-wrapper')!;
+        const header = container.querySelector<HTMLButtonElement>('.ai-diff-header')!;
+        const body = wrapper.querySelector('.ai-diff-body');
+        const actions = wrapper.querySelector('.ai-diff-actions');
+        expect(body).not.toBeNull();
+        expect(actions).not.toBeNull();
+        expect(wrapper.classList.contains('ai-diff-collapsed')).toBe(false);
+
+        header.click();
+        expect(wrapper.classList.contains('ai-diff-collapsed')).toBe(true);
+        expect(actions).not.toBeNull();
+
+        header.click();
+        expect(wrapper.classList.contains('ai-diff-collapsed')).toBe(false);
+    });
 });
 
 describe('mountDiffApproval — button behavior', () => {

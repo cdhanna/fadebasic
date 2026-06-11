@@ -1052,7 +1052,15 @@ function synthesizeCbufferGlsl(cbuffers: FxCbufferDecl[]): string {
         lines.push(`uniform vec4 ${cb.name}[${slotCount}];`);
         for (const field of cb.fields) {
             const slot = Math.floor(field.offsetBytes / 16);
-            lines.push(buildFieldAlias(cb.name, slot, field));
+            // HLSL packs multiple scalars / short vectors into a single
+            // vec4 slot. A vec2 can live at .xy or .zw of one slot; four
+            // scalars can share .x/.y/.z/.w. The previous alias logic
+            // ignored the in-slot byte offset entirely, so any second
+            // scalar in the same vec4 (e.g. `float Time; float Glitch;`)
+            // got aliased to `.x` exactly like the first one — only the
+            // first scalar's value was actually visible to the shader.
+            const byteOffsetInSlot = field.offsetBytes - slot * 16;
+            lines.push(buildFieldAlias(cb.name, slot, byteOffsetInSlot, field));
         }
     }
     return lines.join('\n');
@@ -1072,7 +1080,12 @@ function synthesizeCbufferGlsl(cbuffers: FxCbufferDecl[]): string {
 // cbuffer array: `#define MatrixTransform ps_uniforms_vec4` makes
 // `MatrixTransform[i]` expand to `ps_uniforms_vec4[i]`, which is exactly
 // what `mul(vec, matrix)` expansion expects.
-function buildFieldAlias(cbName: string, slot: number, field: FxCbufferField): string {
+function buildFieldAlias(
+    cbName: string,
+    slot: number,
+    byteOffsetInSlot: number,
+    field: FxCbufferField,
+): string {
     const cols = field.columns;
     const rows = field.rows;
     if (rows > 1) {
@@ -1086,14 +1099,28 @@ function buildFieldAlias(cbName: string, slot: number, field: FxCbufferField): s
     if (field.arraySize > 0) {
         return `#define ${field.name} ${cbName}[${slot}]`;
     }
-    switch (cols) {
-        case 1: return `#define ${field.name} ${cbName}[${slot}].x`;
-        case 2: return `#define ${field.name} ${cbName}[${slot}].xy`;
-        case 3: return `#define ${field.name} ${cbName}[${slot}].xyz`;
-        case 4: return `#define ${field.name} ${cbName}[${slot}]`;
-        default:
-            return `#define ${field.name} ${cbName}[${slot}]`;
+    // Pick the swizzle for vec1/vec2/vec3 based on which 4-byte lane
+    // inside the vec4 slot the field starts at. HLSL packs scalars
+    // tightly (.x → .y → .z → .w) and vec2 may land at .xy OR .zw of
+    // a slot it shares with two preceding scalars.
+    const laneIndex = byteOffsetInSlot / 4;   // 0, 1, 2, or 3
+    const swizzle = swizzleForLaneAndWidth(laneIndex, cols);
+    if (cols === 4 && swizzle === '.xyzw') {
+        // Whole-slot vec4 reads as the slot itself, no swizzle needed.
+        return `#define ${field.name} ${cbName}[${slot}]`;
     }
+    return `#define ${field.name} ${cbName}[${slot}]${swizzle}`;
+}
+
+// Compose the GLSL swizzle string for a field that occupies `width`
+// components starting at lane `start` (0/1/2/3) within a vec4. `width`
+// is the HLSL columns count (1=scalar, 2=vec2, 3=vec3, 4=vec4). The
+// returned string starts with `.` (e.g. `.x`, `.yz`, `.yzw`).
+function swizzleForLaneAndWidth(start: number, width: number): string {
+    const lanes = ['x', 'y', 'z', 'w'];
+    const safeStart = Math.max(0, Math.min(3, start));
+    const safeWidth = Math.max(1, Math.min(4 - safeStart, width));
+    return '.' + lanes.slice(safeStart, safeStart + safeWidth).join('');
 }
 
 // Names of cbuffer fields whose type is a matrix (rows >= 2). Only these

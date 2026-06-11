@@ -5,6 +5,16 @@
 // share `HoverHandler.BuildCommandMarkdown`.
 
 import { marked } from 'marked';
+import {
+    highlightFadeCodeBlocks,
+    renderTokenizedSnippet,
+    type SnippetToken,
+} from './snippet-highlight';
+import {
+    guessCommandName,
+    helpTabForSource,
+    normalizeHeadingMatch,
+} from './ai/rag/doc-citation-links';
 
 export interface CommandDocEntry {
     name: string;
@@ -24,6 +34,8 @@ export interface HelpController {
     selectCommand(name: string): boolean;
     /** Current search query (read-only). */
     getQuery(): string;
+    /** Jump to a RAG citation (FadeBook/Language.md, etc.) in this panel. */
+    openDocCitation(source: string, heading: string): Promise<boolean>;
 }
 
 /** Optional services the help panel uses if provided. Today: a tokenizer
@@ -32,8 +44,11 @@ export interface HelpController {
 export interface HelpServices {
     /** Asynchronously classify a Fade snippet. Wired from main.ts to
      *  FadeRunner.tokenizeSnippet (which hits the LSP worker). */
-    tokenizeSnippet?: (source: string) => Promise<HelpSnippetToken[]>;
+    tokenizeSnippet?: (source: string) => Promise<SnippetToken[]>;
 }
+
+/** @deprecated Use SnippetToken from snippet-highlight.ts */
+export type HelpSnippetToken = SnippetToken;
 
 interface Mounted {
     toc: HTMLElement;
@@ -194,18 +209,6 @@ const STATIC_DOCS: Record<Exclude<Tab, 'commands'>, StaticDocConfig> = {
     language:   { url: '/docs/Language.md',   label: 'Language reference' },
     playground: { url: '/docs/Playground.md', label: 'Playground guide' },
 };
-
-// Per-token classification returned by FadeBridge.LspTokenizeSnippet. The
-// `type` field is the index into SemanticTokensHandler.Legend
-// (0=comment, 1=keyword, 2=function, 3=method, 4=macro, 5=parameter,
-// 6=struct, 7=type, 8=operator, 9=number, 10=string). Coordinates are
-// 0-based to match the LSP-side handler's output.
-export interface HelpSnippetToken {
-    line: number;
-    col: number;
-    length: number;
-    type: number;
-}
 
 // Static docs are sliced into discrete sections so the TOC behaves like
 // Commands (click → swap body), not a long-scroll outline. We split on
@@ -817,6 +820,64 @@ export function mountHelpPanel(services: HelpServices = {}): HelpController {
     void ensureDocLoaded('language');
     void ensureDocLoaded('playground');
 
+    async function openDocCitation(source: string, heading: string): Promise<boolean> {
+        const cmd = guessCommandName(heading);
+        if (cmd && selectCommand(cmd, true)) return true;
+
+        const tab = helpTabForSource(source);
+        if (!tab) return false;
+        switchTab(tab);
+        await ensureDocLoaded(tab);
+        const state = docs[tab];
+        if (!state.sections || state.sections.length === 0) return false;
+
+        const segments = heading.split('>')
+            .map(s => normalizeHeadingMatch(s))
+            .filter(Boolean);
+        const tail = segments[segments.length - 1] ?? normalizeHeadingMatch(heading);
+        const full = normalizeHeadingMatch(heading);
+
+        let sectionSlug: string | null = null;
+        let subSlug: string | null = null;
+        let bestScore = 0;
+        for (const section of state.sections) {
+            const sectionKey = normalizeHeadingMatch(section.title);
+            for (const sub of section.subs) {
+                const subKey = normalizeHeadingMatch(sub.text);
+                for (const seg of [...segments, tail]) {
+                    let score = 0;
+                    if (seg === subKey) score = 100;
+                    else if (subKey.includes(seg) || seg.includes(subKey)) score = 60;
+                    else if (full.includes(subKey)) score = 40;
+                    if (score > bestScore) {
+                        bestScore = score;
+                        sectionSlug = section.slug;
+                        subSlug = sub.slug;
+                    }
+                }
+            }
+            for (const seg of segments) {
+                let score = 0;
+                if (seg === sectionKey) score = 80;
+                else if (sectionKey.includes(seg) || seg.includes(sectionKey)) score = 50;
+                if (score > bestScore) {
+                    bestScore = score;
+                    sectionSlug = section.slug;
+                    subSlug = null;
+                }
+            }
+        }
+        if (!sectionSlug) sectionSlug = state.sections[0].slug;
+
+        expandedDocSections[tab].add(sectionSlug);
+        if (subSlug) {
+            selectDocSubheading(tab, sectionSlug, subSlug);
+        } else {
+            selectDocSection(tab, sectionSlug);
+        }
+        return true;
+    }
+
     // Global search wiring lives at the bottom so all the closures it
     // depends on (selectCommand, selectDocSection, expansion state,
     // entries/docs) are already defined.
@@ -826,6 +887,7 @@ export function mountHelpPanel(services: HelpServices = {}): HelpController {
         setEntries,
         selectCommand: (name) => selectCommand(name, true),
         getQuery: () => m.search.value,
+        openDocCitation,
     };
 
     // ── global search ───────────────────────────────────────────────────
@@ -1078,102 +1140,17 @@ function injectSubAnchors(html: string, subs: DocSubheading[], boundaryLevel: nu
 // failure we leave the original textContent alone.
 async function highlightTitleElement(
     el: HTMLElement,
-    tokenize: (source: string) => Promise<HelpSnippetToken[]>,
+    tokenize: (source: string) => Promise<SnippetToken[]>,
 ): Promise<void> {
     if (el.dataset.fadeHighlighted) return;
     el.dataset.fadeHighlighted = '1';
     const source = (el.textContent ?? '').trim();
     if (!source) return;
-    let tokens: HelpSnippetToken[] = [];
+    let tokens: SnippetToken[] = [];
     try { tokens = await tokenize(source); }
     catch { return; }
     el.innerHTML = renderTokenizedSnippet(source, tokens);
 }
-
-// Replace ```fade``` (and unspecified-language) <pre><code> blocks in the
-// body with LSP-classified spans. Tolerant of late or failed tokenize
-// calls — the block stays as plain text if the worker is slow or errors.
-// Languages other than 'fade'/'basic'/empty are skipped so embedded
-// ```csharp``` etc. render normally.
-async function highlightFadeCodeBlocks(
-    root: HTMLElement,
-    tokenize: (source: string) => Promise<HelpSnippetToken[]>,
-): Promise<void> {
-    const blocks = Array.from(root.querySelectorAll<HTMLElement>('pre > code'));
-    for (const code of blocks) {
-        const langClass = Array.from(code.classList).find(c => c.startsWith('language-'));
-        const lang = langClass ? langClass.slice('language-'.length).toLowerCase() : '';
-        // Treat no-language and fade-flavored fences as Fade. Skip
-        // explicit non-Fade languages (we don't know how to highlight them).
-        if (lang && lang !== 'fade' && lang !== 'basic' && lang !== 'fbasic') continue;
-        if (code.dataset.fadeHighlighted) continue;
-        code.dataset.fadeHighlighted = '1';
-        const source = code.textContent ?? '';
-        if (!source.trim()) continue;
-        let tokens: HelpSnippetToken[] = [];
-        try { tokens = await tokenize(source); }
-        catch { /* leave as plain text */ continue; }
-        code.innerHTML = renderTokenizedSnippet(source, tokens);
-    }
-}
-
-// Slice the source into spans by token (line, col, length) → CSS class.
-// Anything not covered by a token stays as plain text. Newlines are
-// preserved so the <pre> layout stays intact.
-function renderTokenizedSnippet(source: string, tokens: HelpSnippetToken[]): string {
-    if (tokens.length === 0) return escapeHtml(source);
-    // Convert (line, col) to absolute string offset once per line.
-    const lineStarts: number[] = [0];
-    for (let i = 0; i < source.length; i++) {
-        if (source.charCodeAt(i) === 10) lineStarts.push(i + 1);
-    }
-    interface Span { start: number; end: number; type: number; }
-    const spans: Span[] = [];
-    for (const t of tokens) {
-        const lineStart = lineStarts[t.line];
-        if (lineStart === undefined) continue;
-        const start = lineStart + t.col;
-        const end = start + t.length;
-        if (end > source.length) continue;
-        spans.push({ start, end, type: t.type });
-    }
-    spans.sort((a, b) => a.start - b.start);
-    // Drop overlaps (later span wins): the lexer shouldn't produce them,
-    // but defensive.
-    const cleaned: Span[] = [];
-    for (const s of spans) {
-        if (cleaned.length > 0 && s.start < cleaned[cleaned.length - 1].end) continue;
-        cleaned.push(s);
-    }
-    let out = '';
-    let cursor = 0;
-    for (const s of cleaned) {
-        if (s.start > cursor) out += escapeHtml(source.slice(cursor, s.start));
-        const cls = TOKEN_TYPE_CLASS[s.type] ?? 'fade-tok-default';
-        out += `<span class="${cls}">${escapeHtml(source.slice(s.start, s.end))}</span>`;
-        cursor = s.end;
-    }
-    if (cursor < source.length) out += escapeHtml(source.slice(cursor));
-    return out;
-}
-
-// Maps SemanticTokensHandler.Legend index → CSS class. Styled in
-// index.html to match the editor theme's keyword/comment/string/etc.
-// colors (see .fade-tok-* rules).
-const TOKEN_TYPE_CLASS: Record<number, string> = {
-    0:  'fade-tok-comment',
-    1:  'fade-tok-keyword',
-    2:  'fade-tok-function',
-    3:  'fade-tok-method',
-    4:  'fade-tok-macro',
-    5:  'fade-tok-parameter',
-    6:  'fade-tok-struct',
-    7:  'fade-tok-type',
-    8:  'fade-tok-operator',
-    9:  'fade-tok-number',
-    10: 'fade-tok-string',
-};
-
 
 // Split markdown into discrete "pages" the TOC can swap between, plus the
 // nested sub-headings the TOC shows under the active page. Boundary level

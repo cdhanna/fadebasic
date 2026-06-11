@@ -78,6 +78,167 @@ dim x(3,5) as vec
     }
 
     [Test]
+    public async Task SetValue_ArrayElement_MatchesPlaygroundCallSequence()
+    {
+        // Replicate the EXACT sequence the Playground's monogame host
+        // runs when the user pauses at a bp, expands `n`, and clicks
+        // n[1] to set it. If this passes but the user's browser still
+        // throws, the running WASM is stale.
+        //
+        // Sequence (mirrors main.ts → Index.Debug.cs):
+        //   1. BREAKPOINT case fires → fetchPausedFramesAndBroadcast
+        //      calls DebugScopes(0) (the new top-frame snapshot)
+        //   2. refreshDebugView calls DebugScopes(0) again (cached)
+        //   3. refreshDebugView walks watches (no-op for now)
+        //   4. User clicks "expand n" → DebugVariableExpansion(n.id)
+        //   5. User clicks n[1] value, types "3", hits Enter →
+        //      DebugSetVariable(0, n[1].id, "3") → Eval → TrySetValue
+        var src = @"
+glitchamount# = 0
+x = 3
+y = 5
+dim n(3) as integer
+n(0) = 0
+n(1) = 0
+n(2) = 0
+";
+        Compile(src, out _, out var compiler, out var vm);
+        var dbg = compiler.DebugData;
+        var session = new DebugSession(vm, dbg, TestCommands.CommandsForTesting, new LaunchOptions
+        {
+            debug = true, debugPort = 9999, debugWaitForConnection = false
+        });
+        session.StartDebugging();
+        await Task.Delay(50);
+
+        // [1] First DebugScopes — populates idToVariable.
+        var scopes1 = session.GetScopes(new DebugScopeRequest { frameIndex = 0 });
+        Assert.That(scopes1?.scopes, Is.Not.Null);
+        var arrayVar = scopes1.scopes.SelectMany(s => s.variables).FirstOrDefault(v => v.name == "n");
+        Assert.That(arrayVar, Is.Not.Null, "should find 'n'");
+
+        // [2] Second DebugScopes — should be cached, return same ids.
+        var scopes2 = session.GetScopes(new DebugScopeRequest { frameIndex = 0 });
+        var arrayVar2 = scopes2.scopes.SelectMany(s => s.variables).FirstOrDefault(v => v.name == "n");
+        Assert.That(arrayVar2?.id, Is.EqualTo(arrayVar.id), "ID must be stable across cached GetScopes calls");
+
+        // [4] Expand n — registers element ids in idToVariable.
+        var arrayScope = session.variableDb.Expand(arrayVar.id);
+        Assert.That(arrayScope.variables.Count, Is.EqualTo(3));
+        var nMid = arrayScope.variables[1]; // n[1] — the element user clicked
+        Assert.That(nMid.name, Is.EqualTo("1"));
+        Assert.That(nMid.type, Is.EqualTo("Integer"));
+
+        // [5] Set n[1] to 3 via the same call shape DebugSetVariable
+        // makes (Eval with overwriteVariableId pointing at the element).
+        var result = session.Eval(0, "3", nMid.id);
+        Assert.That(result, Is.Not.Null, "Eval returned null — something blew up");
+        Assert.That(result.id, Is.Not.EqualTo(-1), $"Eval failed: {result?.value}");
+
+        // ClearLifetime fires after a successful set. Re-fetch and
+        // verify the value landed AT n[1] and NOT in the array's
+        // register (which would corrupt all elements).
+        var scopes3 = session.GetScopes(new DebugScopeRequest { frameIndex = 0 });
+        var arrayVar3 = scopes3.scopes.SelectMany(s => s.variables).FirstOrDefault(v => v.name == "n");
+        var arrayScope3 = session.variableDb.Expand(arrayVar3.id);
+        Assert.That(arrayScope3.variables[0].value, Is.EqualTo("0"), "n[0] must still be 0");
+        Assert.That(arrayScope3.variables[1].value, Is.EqualTo("3"), "n[1] should now be 3");
+        Assert.That(arrayScope3.variables[2].value, Is.EqualTo("0"), "n[2] must still be 0");
+    }
+
+    [Test]
+    public async Task SetValue_TopLevelArray_DoesNotThrow_NoVariableForId()
+    {
+        // The Variables panel renders the array variable's value as
+        // "(3)". If the user clicks that cell and types a value, the
+        // playground sends DebugSetVariable(frameId, arrayVar.id, rhs).
+        // C# may legitimately respond with "types do not match" — but
+        // it must NOT throw "no variable for given id" because the
+        // array IS in idToVariable (registered by GetVariablesForFrame).
+        var src = @"
+dim n(3) as integer
+n(0) = 1
+";
+        Compile(src, out _, out var compiler, out var vm);
+        var dbg = compiler.DebugData;
+        var session = new DebugSession(vm, dbg, TestCommands.CommandsForTesting, new LaunchOptions
+        {
+            debug = true, debugPort = 9999, debugWaitForConnection = false
+        });
+        session.StartDebugging();
+        await Task.Delay(50);
+
+        var scopes = session.GetScopes(new DebugScopeRequest { frameIndex = 0 });
+        var arrayVar = scopes.scopes.SelectMany(s => s.variables).FirstOrDefault(v => v.name == "n");
+        Assert.That(arrayVar, Is.Not.Null, "should find 'n'");
+
+        Assert.DoesNotThrow(() =>
+        {
+            // Same call shape the playground's edit-cell uses for the
+            // top-level array variable. C# may return a failure result
+            // (id == -1) — that's fine; it's the THROW we're checking
+            // doesn't happen.
+            var _ = session.Eval(0, "5", arrayVar.id);
+        });
+    }
+
+    [Test]
+    public async Task SetValue_ArrayElement_WritesToHeap()
+    {
+        // Editing a terminal scalar array element from the Variables
+        // panel (`DIM n(3)` → click n[2] → type 5 → Enter) used to throw
+        // "no variable for given id" because the element's id from
+        // Expand was never registered. Even if we naively registered
+        // it in idToTopLevelVariable, TrySetValue's isTop=true branch
+        // would write to the ARRAY's register and corrupt the array.
+        // The fix registers the element in idToVariable with a
+        // runtimeVariable pointing at the element's heap pointer, so
+        // TrySetValue's heap-write branch fires.
+        var src = @"
+dim n(3) as integer
+n(0) = 7
+n(1) = 8
+n(2) = 9
+";
+        Compile(src, out _, out var compiler, out var vm);
+        var dbg = compiler.DebugData;
+        var session = new DebugSession(vm, dbg, TestCommands.CommandsForTesting, new LaunchOptions
+        {
+            debug = true, debugPort = 9999, debugWaitForConnection = false
+        });
+        session.StartDebugging();
+        await Task.Delay(50);
+
+        var scopes = session.GetScopes(new DebugScopeRequest { frameIndex = 0 });
+        var allVars = scopes.scopes.SelectMany(s => s.variables).ToList();
+        var arrayVar = allVars.FirstOrDefault(v => v.name == "n");
+        Assert.That(arrayVar, Is.Not.Null, "should find 'n' array variable");
+
+        var arrayScope = session.variableDb.Expand(arrayVar.id);
+        Assert.That(arrayScope.variables.Count, Is.EqualTo(3), "DIM n(3) → 3 elements");
+        Assert.That(arrayScope.variables[2].value, Is.EqualTo("9"), "n[2] starts at 9");
+
+        // Set the THIRD element to 42 via the same path the Playground
+        // takes — DebugSession.Eval with overwriteVariableId pointing
+        // at the element id.
+        var thirdId = arrayScope.variables[2].id;
+        var result = session.Eval(0, "42", thirdId);
+        Assert.That(result, Is.Not.Null);
+        Assert.That(result.id, Is.Not.EqualTo(-1), $"set failed: {result?.value}");
+
+        // ClearLifetime ran after the set; re-expand to confirm the
+        // VALUE landed in the right slot. n[0] and n[1] must still be
+        // their originals; only n[2] should be 42.
+        scopes = session.GetScopes(new DebugScopeRequest { frameIndex = 0 });
+        arrayVar = scopes.scopes.SelectMany(s => s.variables).First(v => v.name == "n");
+        arrayScope = session.variableDb.Expand(arrayVar.id);
+        Assert.That(arrayScope.variables[0].value, Is.EqualTo("7"),
+            "n[0] must stay 7 — register-write branch would have clobbered the whole array");
+        Assert.That(arrayScope.variables[1].value, Is.EqualTo("8"), "n[1] must stay 8");
+        Assert.That(arrayScope.variables[2].value, Is.EqualTo("42"), "n[2] should now be 42");
+    }
+
+    [Test]
     public async Task Exploration_StructWithFloatField_Expand()
     {
         var src = @"

@@ -6,6 +6,12 @@
 // @codingame default-extension package + textmate-service-override.
 
 import * as monaco from 'monaco-editor';
+import {
+    getModelSymbols,
+    attachFxSymbolTracker,
+    rangeFromOffsets,
+    type FxSymbolKind,
+} from './shader/fx-symbols';
 
 type ThemeRule = { token: string; foreground?: string; fontStyle?: string };
 
@@ -342,6 +348,139 @@ export function registerExtraLanguages() {
     configureHlslLanguage();
     registerHlslCompletions();
     registerHlslHovers();
+    registerHlslDocumentSymbols();
+    registerHlslDefinitions();
+    // Hook the per-model symbol tracker onto every existing AND future
+    // .fx model. The tracker debounces a reparse on each edit so the
+    // hover/definition/outline providers always have a recent table to
+    // look up against. Without this, lookups would parse the model
+    // synchronously every call — wasteful when many providers fire on
+    // the same cursor move.
+    for (const m of monaco.editor.getModels()) attachFxSymbolTracker(m);
+    monaco.editor.onDidCreateModel((m) => attachFxSymbolTracker(m));
+}
+
+// ── Document Symbols (outline) ─────────────────────────────────────────────
+//
+// Feeds the VS Code "Outline" panel + Ctrl+Shift+O quick-pick. We surface
+// every top-level declaration (uniforms, cbuffers with their fields,
+// structs with their fields, functions, samplers, techniques) so the user
+// can jump around large shaders quickly.
+function registerHlslDocumentSymbols() {
+    monaco.languages.registerDocumentSymbolProvider('fadefx', {
+        provideDocumentSymbols(model) {
+            const { parsed } = getModelSymbols(model);
+            const out: monaco.languages.DocumentSymbol[] = [];
+
+            for (const cb of parsed.cbuffers) {
+                // Skip fields without name ranges (synthetic / non-author-
+                // produced records); they have no jump-to-definition target.
+                const fields: monaco.languages.DocumentSymbol[] = cb.fields
+                    .filter(f => f.nameStart != null && f.nameEnd != null)
+                    .map((f) => ({
+                        name: f.name,
+                        detail: f.typeName + (f.arraySize > 0 ? `[${f.arraySize}]` : ''),
+                        kind: monaco.languages.SymbolKind.Field,
+                        range: rangeFromOffsets(model, f.nameStart!, f.nameEnd!),
+                        selectionRange: rangeFromOffsets(model, f.nameStart!, f.nameEnd!),
+                        tags: [],
+                    }));
+                if (cb.synthetic) {
+                    // Top-level uniforms surface flat at the document root.
+                    out.push(...fields);
+                } else {
+                    out.push({
+                        name: cb.name,
+                        detail: `cbuffer (${cb.sizeInBytes} bytes)`,
+                        kind: monaco.languages.SymbolKind.Namespace,
+                        range: rangeFromOffsets(model, cb.sourceStart, cb.sourceEnd),
+                        selectionRange: rangeFromOffsets(model, cb.sourceStart, cb.sourceEnd),
+                        children: fields,
+                        tags: [],
+                    });
+                }
+            }
+
+            for (const s of parsed.structs) {
+                out.push({
+                    name: s.name,
+                    detail: `struct (${s.fields.length} fields)`,
+                    kind: monaco.languages.SymbolKind.Struct,
+                    range: rangeFromOffsets(model, s.sourceStart, s.sourceEnd),
+                    selectionRange: rangeFromOffsets(model, s.nameStart, s.nameEnd),
+                    children: s.fields.map((f) => ({
+                        name: f.name,
+                        detail: f.semantic ? `${f.typeName} : ${f.semantic}` : f.typeName,
+                        kind: monaco.languages.SymbolKind.Field,
+                        range: rangeFromOffsets(model, f.nameStart, f.nameEnd),
+                        selectionRange: rangeFromOffsets(model, f.nameStart, f.nameEnd),
+                        tags: [],
+                    })),
+                    tags: [],
+                });
+            }
+
+            for (const fn of parsed.functions) {
+                const sig = fn.params.map(p => `${p.typeName} ${p.name}`).join(', ');
+                out.push({
+                    name: fn.name,
+                    detail: `${fn.returnType}(${sig})`,
+                    kind: monaco.languages.SymbolKind.Function,
+                    range: rangeFromOffsets(model, fn.sourceStart, fn.sourceEnd),
+                    selectionRange: rangeFromOffsets(model, fn.nameStart, fn.nameEnd),
+                    tags: [],
+                });
+            }
+
+            for (const samp of parsed.samplerStateLiterals) {
+                out.push({
+                    name: samp.samplerName,
+                    detail: samp.samplerType,
+                    kind: monaco.languages.SymbolKind.Object,
+                    range: rangeFromOffsets(model, samp.sourceStart, samp.sourceEnd),
+                    selectionRange: rangeFromOffsets(
+                        model, samp.sourceStart, samp.sourceStart + samp.samplerName.length,
+                    ),
+                    tags: [],
+                });
+            }
+
+            for (const t of parsed.techniques) {
+                out.push({
+                    name: t.name,
+                    detail: `technique (${t.passes.length} pass${t.passes.length === 1 ? '' : 'es'})`,
+                    kind: monaco.languages.SymbolKind.Class,
+                    range: rangeFromOffsets(model, t.sourceStart, t.sourceEnd),
+                    selectionRange: rangeFromOffsets(model, t.sourceStart, t.sourceEnd),
+                    tags: [],
+                });
+            }
+
+            return out;
+        },
+    });
+}
+
+// ── Go-to-Definition / Ctrl+click ──────────────────────────────────────────
+//
+// The symbol table records each identifier's declaration site. Resolve the
+// word under the cursor against the per-model table; return the location of
+// the declaration's name token. Works for uniforms, struct types, struct
+// fields (cross-struct ambiguity broken by first-match), functions, and
+// function parameters.
+function registerHlslDefinitions() {
+    monaco.languages.registerDefinitionProvider('fadefx', {
+        provideDefinition(model, position) {
+            const word = model.getWordAtPosition(position);
+            if (!word) return null;
+            const sym = getModelSymbols(model).byName.get(word.word);
+            if (!sym) return null;
+            return {
+                uri: model.uri,
+                range: rangeFromOffsets(model, sym.nameStart, sym.nameEnd),
+            };
+        },
+    });
 }
 
 // ── HLSL / .fx language configuration ──────────────────────────────────────
@@ -414,8 +553,46 @@ function registerHlslCompletions() {
                 range,
             });
 
+            // User-declared symbols (uniforms, structs, functions, samplers,
+            // techniques, function params) get folded into completion
+            // alongside the static snippet list. Each maps to a Monaco
+            // SymbolKind via monacoSymbolKindFor so the IDE shows the right
+            // icon. We dedupe by name+kind to keep the list tidy when the
+            // user opens multiple shaders with similar APIs.
+            const userSyms = getModelSymbols(model).symbols;
+            const seen = new Set<string>();
+            const completionKindFor = (k: FxSymbolKind): monaco.languages.CompletionItemKind => {
+                switch (k) {
+                    case 'uniform':        return Kind.Variable;
+                    case 'cbuffer':        return Kind.Module;
+                    case 'struct':         return Kind.Struct;
+                    case 'struct-field':   return Kind.Field;
+                    case 'function':       return Kind.Function;
+                    case 'function-param': return Kind.Variable;
+                    case 'sampler':        return Kind.Variable;
+                    case 'technique':      return Kind.Class;
+                }
+            };
+            const userCompletions: monaco.languages.CompletionItem[] = [];
+            for (const s of userSyms) {
+                const key = `${s.kind}:${s.name}`;
+                if (seen.has(key)) continue;
+                seen.add(key);
+                userCompletions.push({
+                    label: s.name,
+                    kind: completionKindFor(s.kind),
+                    detail: s.typeLabel,
+                    insertText: s.kind === 'function' && s.detail
+                        ? `${s.name}\${1:${s.detail}}`
+                        : s.name,
+                    insertTextRules: s.kind === 'function' ? InsertAsSnippet : undefined,
+                    range,
+                });
+            }
+
             return {
                 suggestions: [
+                    ...userCompletions,
                     snippet(
                         'technique',
                         [
@@ -697,6 +874,51 @@ function registerHlslHovers() {
         provideHover(model, position) {
             const word = model.getWordAtPosition(position);
             if (!word) return null;
+            const range = new monaco.Range(
+                position.lineNumber, word.startColumn,
+                position.lineNumber, word.endColumn,
+            );
+
+            // User-declared symbol (uniform, struct, function, …) wins
+            // over the static intrinsic table — if someone names their
+            // own field `lerp` we'd rather show them what it is than the
+            // intrinsic.
+            const userSym = getModelSymbols(model).byName.get(word.word);
+            if (userSym) {
+                const lines = [`**\`${userSym.typeLabel}\`**`];
+                switch (userSym.kind) {
+                    case 'uniform':
+                        lines.push('', `Set from Fade with \`set effect param <id>, "${userSym.name}", …\`.`);
+                        break;
+                    case 'struct':
+                        lines.push('', 'User-defined struct.');
+                        break;
+                    case 'struct-field':
+                        lines.push('', userSym.container
+                            ? `Field of \`struct ${userSym.container}\`.`
+                            : 'Struct field.');
+                        break;
+                    case 'function':
+                        lines.push('', 'User-defined function.');
+                        break;
+                    case 'function-param':
+                        lines.push('', userSym.container
+                            ? `Parameter of \`${userSym.container}\`.`
+                            : 'Function parameter.');
+                        break;
+                    case 'sampler':
+                        lines.push('', 'Sampler declared via `sampler_state`.');
+                        break;
+                    case 'technique':
+                        lines.push('', 'Technique block.');
+                        break;
+                    case 'cbuffer':
+                        lines.push('', 'Constant-buffer block.');
+                        break;
+                }
+                return { range, contents: [{ value: lines.join('\n') }] };
+            }
+
             const entry = HOVER_TABLE[word.word];
             if (!entry) return null;
             const lines = [`**\`${entry.sig}\`**`];
@@ -704,10 +926,7 @@ function registerHlslHovers() {
             lines.push('');
             lines.push(entry.doc);
             return {
-                range: new monaco.Range(
-                    position.lineNumber, word.startColumn,
-                    position.lineNumber, word.endColumn,
-                ),
+                range,
                 contents: [{ value: lines.join('\n') }],
             };
         },

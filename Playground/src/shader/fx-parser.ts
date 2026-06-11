@@ -98,6 +98,14 @@ export interface FxCbufferField {
     columns: number;        // 1=scalar, 2/3/4=vec, plus N for matrices
     offsetBytes: number;    // HLSL constant buffer packing offset (16-byte aligned)
     sizeBytes: number;
+    // Character offsets into the ORIGINAL `.fx` source where this field's
+    // name token starts and ends. Used by the LSP layer (go-to-def, hover,
+    // rename). Optional because test fixtures and other synthetic
+    // FxCbufferField producers (downstream of compile-fx, validator stubs)
+    // don't need them; the LSP code treats absent ranges as "no
+    // declaration site available" and skips that symbol.
+    nameStart?: number;
+    nameEnd?: number;
 }
 
 export interface FxCbufferDecl {
@@ -106,12 +114,62 @@ export interface FxCbufferDecl {
     sizeInBytes: number;    // total cbuffer size, 16-byte aligned
     sourceStart: number;
     sourceEnd: number;
+    // The synthetic cbuffer `_TopLevelUniforms` carries top-level
+    // declarations that didn't live in a user-authored cbuffer block.
+    // LSP code uses this to decide what label to show in hover ("global
+    // uniform" vs "field of cbuffer Globals").
+    synthetic?: boolean;
+}
+
+// A user-defined struct declaration. Used for LSP hover / outline / member
+// completion (e.g. typing `input.<TAB>` after `MainPS(VertexShaderOutput
+// input)` should suggest Position/Color/TextureCoordinates).
+export interface FxStructField {
+    typeName: string;
+    name: string;
+    semantic: string | null;
+    nameStart: number;
+    nameEnd: number;
+}
+export interface FxStructDecl {
+    name: string;
+    fields: FxStructField[];
+    nameStart: number;
+    nameEnd: number;
+    sourceStart: number;
+    sourceEnd: number;
+}
+
+// A top-level function declaration (`VertexShaderOutput MainVS(…)` etc.).
+// Enough info to power hover ("function returning float4, two args") and
+// go-to-definition. We don't parse function bodies — only the signature.
+export interface FxFunctionParam {
+    typeName: string;
+    name: string;
+    semantic: string | null;
+    nameStart: number;
+    nameEnd: number;
+}
+export interface FxFunctionDecl {
+    name: string;
+    returnType: string;
+    returnSemantic: string | null;
+    params: FxFunctionParam[];
+    nameStart: number;
+    nameEnd: number;
+    sourceStart: number;        // first byte of the return type
+    sourceEnd: number;          // byte just past the closing `}`
 }
 
 export interface FxParsed {
     techniques: FxTechnique[];
     samplerStateLiterals: FxSamplerStateLiteral[];
     cbuffers: FxCbufferDecl[];
+
+    // LSP-facing extras. Populated by the same single pass that produces
+    // techniques/cbuffers/samplers, so consumers get them for free.
+    structs: FxStructDecl[];
+    functions: FxFunctionDecl[];
 
     // The original source with FX framing stripped out — ready to pass to
     // glslang's HLSL frontend. Stripped ranges are replaced with whitespace
@@ -130,6 +188,8 @@ export function parseFx(source: string): FxParsed {
     const techniques: FxTechnique[] = [];
     const samplers: FxSamplerStateLiteral[] = [];
     const cbuffers: FxCbufferDecl[] = [];
+    const structs: FxStructDecl[] = [];
+    const functions: FxFunctionDecl[] = [];
 
     // Track ranges we want to whitespace-out in the final stripped source.
     // We collect them as [start, end) half-open ranges and apply once at the
@@ -194,6 +254,8 @@ export function parseFx(source: string): FxParsed {
                     columns: tl.info.columns,
                     offsetBytes: topLevelOffset,
                     sizeBytes: tl.totalSize,
+                    nameStart: tl.nameStart,
+                    nameEnd: tl.nameEnd,
                 });
                 topLevelOffset += tl.totalSize;
                 topLevelRanges.push([t.start, tl.end]);
@@ -246,6 +308,36 @@ export function parseFx(source: string): FxParsed {
                 }
                 continue;
             }
+
+            // struct NAME { … };
+            // We don't strip these — they need to stay in the GLSL output
+            // for the translator. We do collect them for LSP purposes
+            // (hover types, member completion, outline panel).
+            if (t.text === 'struct') {
+                const s = parseStructBody(cleaned, t.start, warnings);
+                if (s) {
+                    structs.push(s);
+                    // Don't push into stripRanges — the translator (and GLSL)
+                    // both want this declaration in the body. We've already
+                    // captured the LSP metadata.
+                    i = s.sourceEnd;
+                }
+                continue;
+            }
+
+            // Top-level function definition: `<retType> <name>(<params>) [: SEMANTIC]? { … }`
+            // We don't strip these either — they ARE the user's shader logic.
+            // The `tryParseTopLevelUniform` branch already greedily consumed
+            // anything that looked like `<type> <name>;` so by the time we get
+            // here `t` is some other word — possibly a return type. Look ahead
+            // to confirm the function shape, capture the signature, and skip
+            // past the body.
+            const fn = tryParseFunctionDefinition(cleaned, t);
+            if (fn) {
+                functions.push(fn);
+                i = fn.sourceEnd;
+                continue;
+            }
         }
     }
 
@@ -256,10 +348,19 @@ export function parseFx(source: string): FxParsed {
     if (topLevelFields.length > 0) {
         cbuffers.push({
             name: '_TopLevelUniforms',
-            sizeInBytes: topLevelOffset,
+            // KNI's MGFX→GL upload writes via glUniform4fv on the cbuffer
+            // array, which is sized `ceil(sizeInBytes / 16)` vec4 slots.
+            // If we leave sizeInBytes at the raw byte count (4 for a single
+            // `float Alpha;`), the upload writes zero vec4s and the
+            // parameter never reaches the shader — `set effect param`
+            // appears to be a no-op. Round up to a 16-byte boundary so
+            // there's always at least one slot, matching what the
+            // user-authored cbuffer parser does (parseCbufferBody, below).
+            sizeInBytes: Math.ceil(topLevelOffset / 16) * 16,
             fields: topLevelFields,
             sourceStart: 0,
             sourceEnd: 0,
+            synthetic: true,
         });
         for (const r of topLevelRanges) stripRanges.push(r);
     }
@@ -269,7 +370,15 @@ export function parseFx(source: string): FxParsed {
     // their original line/column).
     const hlslStripped = applyWhitespaceRanges(source, stripRanges);
 
-    return { techniques, samplerStateLiterals: samplers, cbuffers, hlslStripped, warnings };
+    return {
+        techniques,
+        samplerStateLiterals: samplers,
+        cbuffers,
+        structs,
+        functions,
+        hlslStripped,
+        warnings,
+    };
 }
 
 // Try to read a `<type> <name> [ \[N\] ]? ;` top-level uniform declaration
@@ -286,6 +395,8 @@ function tryParseTopLevelUniform(
     info: { rows: number; columns: number; sizeBytes: number };
     totalSize: number;
     end: number;
+    nameStart: number;
+    nameEnd: number;
 } | null {
     const info = HLSL_TYPE_SIZES[typeTok.text];
     if (!info) return null;       // Not a known HLSL primitive type.
@@ -326,6 +437,8 @@ function tryParseTopLevelUniform(
         info,
         totalSize,
         end: bi + 1,        // past the `;`
+        nameStart: nameTok.start,
+        nameEnd: nameTok.end,
     };
 }
 
@@ -468,6 +581,8 @@ function parseCbufferBody(
             columns: info.columns,
             offsetBytes: offset,
             sizeBytes: totalSize,
+            nameStart: fieldTok.start,
+            nameEnd: fieldTok.end,
         });
         offset += totalSize;
     }
@@ -484,6 +599,186 @@ function parseCbufferBody(
         sourceStart: keywordStart,
         sourceEnd: endOff,
     };
+}
+
+// ── struct / function parsing (LSP metadata) ───────────────────────────────
+
+// Parse a top-level `struct NAME { fields… };` block. Returns the parsed
+// struct OR null if the shape doesn't match (caller falls through to the
+// other top-level dispatch). The struct itself stays in the source for the
+// translator — we only collect the names + ranges.
+function parseStructBody(
+    src: string,
+    keywordStart: number,
+    warnings: FxParseWarning[],
+): FxStructDecl | null {
+    // Advance past `struct`.
+    let i = skipWhitespace(src, keywordStart + 'struct'.length);
+    const nameTok = nextToken(src, i);
+    if (!nameTok || nameTok.kind !== 'word') return null;
+    i = skipWhitespace(src, nameTok.end);
+    if (src[i] !== '{') return null;            // Could be a use, not a definition.
+    const bodyOpen = i;
+    const bodyEnd = findMatching(src, bodyOpen, '{', '}');
+    if (bodyEnd < 0) {
+        warnings.push({
+            message: `Unterminated struct '${nameTok.text}'`,
+            sourceOffset: nameTok.start,
+        });
+        return null;
+    }
+
+    // Walk the body for `<type> <name> [: SEMANTIC]? ;` fields. Permissive —
+    // we ignore anything we don't recognize so the LSP doesn't die on
+    // unusual constructs the translator may still cope with.
+    const fields: FxStructField[] = [];
+    let bi = bodyOpen + 1;
+    while (bi < bodyEnd) {
+        bi = skipWhitespace(src, bi);
+        if (bi >= bodyEnd) break;
+        if (src[bi] === ';' || src[bi] === ',') { bi++; continue; }
+
+        const typeTok = nextToken(src, bi);
+        if (!typeTok || typeTok.kind !== 'word') { bi++; continue; }
+        bi = skipWhitespace(src, typeTok.end);
+
+        const nameTokF = nextToken(src, bi);
+        if (!nameTokF || nameTokF.kind !== 'word') { bi = typeTok.end; continue; }
+        bi = skipWhitespace(src, nameTokF.end);
+
+        let semantic: string | null = null;
+        if (src[bi] === ':') {
+            bi = skipWhitespace(src, bi + 1);
+            const semTok = nextToken(src, bi);
+            if (semTok && semTok.kind === 'word') {
+                semantic = semTok.text;
+                bi = semTok.end;
+            }
+        }
+
+        // Step past the terminating `;`.
+        const semi = src.indexOf(';', bi);
+        if (semi < 0 || semi > bodyEnd) break;
+        bi = semi + 1;
+
+        fields.push({
+            typeName: typeTok.text,
+            name: nameTokF.text,
+            semantic,
+            nameStart: nameTokF.start,
+            nameEnd: nameTokF.end,
+        });
+    }
+
+    // HLSL permits a trailing `;` after the closing brace; accept it so
+    // sourceEnd includes it.
+    let endOff = bodyEnd + 1;
+    const after = skipWhitespace(src, endOff);
+    if (src[after] === ';') endOff = after + 1;
+
+    return {
+        name: nameTok.text,
+        fields,
+        nameStart: nameTok.start,
+        nameEnd: nameTok.end,
+        sourceStart: keywordStart,
+        sourceEnd: endOff,
+    };
+}
+
+// Try to read a top-level function definition starting at `typeTok`:
+//
+//     <returnType> <name>(<param>, <param>, …) [: SEMANTIC]? { … }
+//
+// Returns null if the shape doesn't match (which is the common case —
+// most top-level words are NOT function definitions, e.g. a stray `if`).
+// Caller falls through to the next dispatch.
+function tryParseFunctionDefinition(
+    src: string,
+    typeTok: { kind: 'word'; text: string; start: number; end: number },
+): FxFunctionDecl | null {
+    // Quick reject: return type must look like a type name (identifier).
+    // We don't restrict to a known list because the user may legitimately
+    // return a user-defined struct.
+    let i = skipWhitespace(src, typeTok.end);
+    const nameTok = nextToken(src, i);
+    if (!nameTok || nameTok.kind !== 'word') return null;
+    i = skipWhitespace(src, nameTok.end);
+    if (src[i] !== '(') return null;
+    const parenOpen = i;
+    const parenClose = findMatching(src, parenOpen, '(', ')');
+    if (parenClose < 0) return null;
+
+    // Optional `: SEMANTIC` between `)` and `{`.
+    let postParen = skipWhitespace(src, parenClose + 1);
+    let returnSemantic: string | null = null;
+    if (src[postParen] === ':') {
+        postParen = skipWhitespace(src, postParen + 1);
+        const semTok = nextToken(src, postParen);
+        if (semTok && semTok.kind === 'word') {
+            returnSemantic = semTok.text;
+            postParen = skipWhitespace(src, semTok.end);
+        }
+    }
+
+    if (src[postParen] !== '{') return null;     // Forward decl or something else.
+    const bodyEnd = findMatching(src, postParen, '{', '}');
+    if (bodyEnd < 0) return null;
+
+    const params = parseFunctionParamList(src, parenOpen + 1, parenClose);
+
+    return {
+        name: nameTok.text,
+        returnType: typeTok.text,
+        returnSemantic,
+        params,
+        nameStart: nameTok.start,
+        nameEnd: nameTok.end,
+        sourceStart: typeTok.start,
+        sourceEnd: bodyEnd + 1,
+    };
+}
+
+function parseFunctionParamList(src: string, start: number, end: number): FxFunctionParam[] {
+    const out: FxFunctionParam[] = [];
+    const raw = src.slice(start, end);
+    if (raw.trim().length === 0) return out;
+
+    // Split on commas at depth 0. (Function parameters can't contain
+    // top-level commas — the only nesting would be array dimensions like
+    // `float v[4]` which use square brackets.)
+    const pieces: Array<[number, number]> = [];
+    let segStart = 0;
+    let depth = 0;
+    for (let p = 0; p < raw.length; p++) {
+        const c = raw[p];
+        if (c === '(' || c === '[' || c === '<') depth++;
+        else if (c === ')' || c === ']' || c === '>') depth--;
+        else if (c === ',' && depth === 0) {
+            pieces.push([segStart, p]);
+            segStart = p + 1;
+        }
+    }
+    pieces.push([segStart, raw.length]);
+
+    for (const [s, e] of pieces) {
+        const segment = raw.slice(s, e);
+        // Skip leading qualifiers (`inout`, `in`, `out`, `uniform`).
+        const m = /^\s*(?:in(?:out)?\s+|out\s+|uniform\s+)?(\w+)\s+(\w+)(?:\s*\[\s*\d+\s*\])?(?:\s*:\s*(\w+))?\s*$/.exec(segment);
+        if (!m) continue;
+        const [, typeName, paramName, semantic] = m;
+        // Find the param-name position in the original source.
+        const localNameOffset = segment.lastIndexOf(paramName);
+        const nameStart = start + s + localNameOffset;
+        out.push({
+            typeName,
+            name: paramName,
+            semantic: semantic ?? null,
+            nameStart,
+            nameEnd: nameStart + paramName.length,
+        });
+    }
+    return out;
 }
 
 // ── Strip comments and strings ──────────────────────────────────────────────

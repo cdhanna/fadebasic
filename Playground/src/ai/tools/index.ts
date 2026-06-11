@@ -4,6 +4,7 @@
 // `ToolHandle` shape — execution is decoupled from the agent.
 
 import { z, toJSONSchema } from 'zod';
+import type { EditReviewRequest, EditReviewResult } from '../edit-review-types';
 import type { Tool } from '../providers/types';
 
 /** Workspace interface the tools depend on. Mirrors OpfsWorkspace's public
@@ -63,6 +64,15 @@ export interface ToolContext {
     workspace: ToolWorkspace;
     editor?: EditorAdapter;
     diagnostics?: DiagnosticsProvider;
+    /** Optional pre-approval reviewer — runs before confirmEdit. When it
+     *  rejects, the tool returns feedback to the agent (user never sees a
+     *  diff). */
+    reviewEdit?: (req: EditReviewRequest) => Promise<EditReviewResult>;
+    onEditReviewStart?: () => void;
+    onEditReviewEnd?: () => void;
+    onEditReviewPhase?: (phase: 'lsp' | 'llm') => void;
+    /** Set by the agent loop so long-running tool steps can honour abort. */
+    abortSignal?: AbortSignal;
     /** When set, write_file / apply_edit must call this and await its
      *  resolution before writing. Resolves to true to proceed, false to
      *  reject the change. */

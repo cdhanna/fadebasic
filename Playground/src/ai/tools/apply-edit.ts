@@ -60,6 +60,27 @@ export const applyEdit = defineTool({
         ];
         const newContent = newLines.join('\n');
 
+        if (ctx.reviewEdit) {
+            if (ctx.abortSignal?.aborted) {
+                return { ok: false, result: { error: 'Cancelled' } };
+            }
+            ctx.onEditReviewStart?.();
+            try {
+                const review = await ctx.reviewEdit({ path, oldContent, newContent });
+                if (!review.approved) {
+                    return {
+                        ok: false,
+                        result: {
+                            error: 'Code review rejected the edit',
+                            review: review.feedback,
+                        },
+                    };
+                }
+            } finally {
+                ctx.onEditReviewEnd?.();
+            }
+        }
+
         if (ctx.confirmEdit) {
             // Diff against the normalized old content so the user sees a
             // clean diff (no phantom line-ending changes).

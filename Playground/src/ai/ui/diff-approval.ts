@@ -179,33 +179,49 @@ export function mountDiffApproval(opts: DiffApprovalOptions): DiffApprovalHandle
         wrapper.style.maxHeight = `${containerHeight - 24}px`;
     }
 
-    // Header
-    const header = document.createElement('div');
+    // Header — click to collapse/expand the diff body (actions stay visible).
+    const header = document.createElement('button');
     header.className = 'ai-diff-header';
+    header.type = 'button';
+    const chevron = document.createElement('span');
+    chevron.className = 'ai-diff-chevron';
+    chevron.textContent = '▼';
+    const headerText = document.createElement('span');
+    headerText.className = 'ai-diff-header-text';
     if (isNew) {
         const lineCount = newContent ? newContent.split('\n').length : 0;
-        header.textContent = `Create file: ${path}  (${lineCount} line${lineCount === 1 ? '' : 's'})`;
+        headerText.textContent = `Create file: ${path}  (${lineCount} line${lineCount === 1 ? '' : 's'})`;
     } else if (added === 0 && removed === 0) {
-        header.textContent = `Edit: ${path}  (no visible changes)`;
+        headerText.textContent = `Edit: ${path}  (no visible changes)`;
     } else {
         const parts: string[] = [];
         if (added > 0) parts.push(`+${added}`);
         if (removed > 0) parts.push(`−${removed}`);
-        header.textContent = `Edit: ${path}  (${parts.join(' ')})`;
+        headerText.textContent = `Edit: ${path}  (${parts.join(' ')})`;
     }
+    header.append(chevron, headerText);
     wrapper.appendChild(header);
 
-    // Body — diff or "no visible changes" placeholder
+    const body = document.createElement('div');
+    body.className = 'ai-diff-body';
     if (diff.length === 0 || (added === 0 && removed === 0 && !isNew)) {
         const empty = document.createElement('div');
         empty.className = 'ai-diff-empty';
         empty.textContent = isNew
             ? '(empty file — no content to display)'
             : '(model proposed the file but it matches the current contents exactly)';
-        wrapper.appendChild(empty);
+        body.appendChild(empty);
     } else {
-        wrapper.appendChild(renderDiffPre(diff));
+        body.appendChild(renderDiffPre(diff));
     }
+    wrapper.appendChild(body);
+
+    let collapsed = false;
+    header.addEventListener('click', () => {
+        collapsed = !collapsed;
+        wrapper.classList.toggle('ai-diff-collapsed', collapsed);
+        chevron.textContent = collapsed ? '▶' : '▼';
+    });
 
     // Actions
     const actions = document.createElement('div');

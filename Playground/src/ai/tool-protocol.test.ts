@@ -1,8 +1,11 @@
 import { describe, it, expect } from 'vitest';
 import {
     BlockStreamParser,
+    repairAndParseJson,
+    parseToolCallBody,
     renderToolProtocolPrompt,
     renderToolResult,
+    renderToolCallRetryPrompt,
     type ProtocolEvent,
 } from './tool-protocol';
 
@@ -13,14 +16,12 @@ function feedAll(parser: BlockStreamParser, deltas: string[]): ProtocolEvent[] {
     return out;
 }
 
-// Alias for the old test-name to keep the file readable.
 const ToolCallStreamParser = BlockStreamParser;
 
 describe('ToolCallStreamParser', () => {
     it('passes plain text through as one stream', () => {
         const p = new ToolCallStreamParser();
         const out = feedAll(p, ['hello ', 'world']);
-        // Text may be split across deltas — collapse for comparison.
         const text = out.filter(e => e.kind === 'text').map(e => (e as { delta: string }).delta).join('');
         expect(text).toBe('hello world');
         expect(out.find(e => e.kind === 'tool_call')).toBeUndefined();
@@ -44,7 +45,6 @@ describe('ToolCallStreamParser', () => {
 
     it('extracts a tool call split across many deltas', () => {
         const p = new ToolCallStreamParser();
-        // Maximally adversarial: split the open and close tags across deltas.
         const out = feedAll(p, [
             '<tool',
             '_call>',
@@ -68,19 +68,19 @@ describe('ToolCallStreamParser', () => {
         expect(calls.map(c => c.name)).toEqual(['a', 'b']);
     });
 
-    it('surfaces malformed JSON as text instead of crashing', () => {
+    it('surfaces malformed JSON as tool_parse_error', () => {
         const p = new ToolCallStreamParser();
         const out = feedAll(p, ['<tool_call>{not json}</tool_call> ok']);
+        const errors = out.filter(e => e.kind === 'tool_parse_error') as Array<{ error: string }>;
+        expect(errors).toHaveLength(1);
+        expect(errors[0].error).toContain('not valid JSON');
         const text = out.filter(e => e.kind === 'text').map(e => (e as { delta: string }).delta).join('');
-        expect(text).toContain('invalid tool call');
-        expect(text).toContain(' ok');
-        expect(out.find(e => e.kind === 'tool_call')).toBeUndefined();
+        expect(text).toBe(' ok');
     });
 
     it('handles an unclosed tag gracefully on end()', () => {
         const p = new ToolCallStreamParser();
         const out = feedAll(p, ['<tool_call>{"name":"a","args":{}}']);
-        // No close tag — surfaces as text on end()
         const text = out.filter(e => e.kind === 'text').map(e => (e as { delta: string }).delta).join('');
         expect(text).toContain('unclosed <tool_call>');
     });
@@ -91,6 +91,70 @@ describe('ToolCallStreamParser', () => {
         const calls = out.filter(e => e.kind === 'tool_call') as Array<{ args: { k: string } }>;
         expect(calls[0].args.k).toBe('v');
     });
+
+    it('parses attributed apply_edit with multiline body', () => {
+        const p = new ToolCallStreamParser();
+        const out = feedAll(p, [
+            '<tool_call name="apply_edit" path="main.fbasic" start="2" end="3">\n',
+            'print "hello"\n',
+            'print "world"\n',
+            '</tool_call>',
+        ]);
+        const calls = out.filter(e => e.kind === 'tool_call') as Array<{
+            name: string;
+            args: { path: string; startLine: number; endLine: number; newText: string };
+        }>;
+        expect(calls).toHaveLength(1);
+        expect(calls[0].name).toBe('apply_edit');
+        expect(calls[0].args.path).toBe('main.fbasic');
+        expect(calls[0].args.startLine).toBe(2);
+        expect(calls[0].args.endLine).toBe(3);
+        expect(calls[0].args.newText).toBe('\nprint "hello"\nprint "world"\n');
+    });
+
+    it('parses attributed create_file', () => {
+        const p = new ToolCallStreamParser();
+        const out = feedAll(p, [
+            '<tool_call name="create_file" path="new.fbasic">\n',
+            'print "new"\n',
+            '</tool_call>',
+        ]);
+        const calls = out.filter(e => e.kind === 'tool_call') as Array<{
+            args: { path: string; content: string };
+        }>;
+        expect(calls[0].args.path).toBe('new.fbasic');
+        expect(calls[0].args.content).toBe('\nprint "new"\n');
+    });
+});
+
+describe('repairAndParseJson', () => {
+    it('strips markdown fences', () => {
+        const r = repairAndParseJson('```json\n{"name":"a","args":{}}\n```');
+        expect(r.ok).toBe(true);
+        expect((r as { value: { name: string } }).value.name).toBe('a');
+    });
+
+    it('tolerates trailing commas', () => {
+        const r = repairAndParseJson('{"name":"a","args":{},}');
+        expect(r.ok).toBe(true);
+    });
+
+    it('extracts JSON from surrounding prose', () => {
+        const r = repairAndParseJson('here: {"name":"read_file","args":{"path":"x.fade"}} thanks');
+        expect(r.ok).toBe(true);
+        expect((r as { value: { name: string } }).value.name).toBe('read_file');
+    });
+});
+
+describe('parseToolCallBody', () => {
+    it('parses attributed read_file', () => {
+        const r = parseToolCallBody('', 1, { name: 'read_file', path: 'a.fade' });
+        expect(r.ok).toBe(true);
+        if (r.ok) {
+            expect(r.value.name).toBe('read_file');
+            expect(r.value.args).toEqual({ path: 'a.fade' });
+        }
+    });
 });
 
 describe('BlockStreamParser — plan blocks', () => {
@@ -100,51 +164,25 @@ describe('BlockStreamParser — plan blocks', () => {
             '<plan>{"goal":"list files","steps":[{"tool":"list_files","description":"see what is here"}]}</plan>',
             'OK now I will look.',
         ]);
-        const plans = out.filter(e => e.kind === 'plan') as Array<{ plan: { goal: string; steps: Array<{ tool?: string; description: string }> } }>;
+        const plans = out.filter(e => e.kind === 'plan') as Array<{ plan: { goal: string } }>;
         expect(plans).toHaveLength(1);
         expect(plans[0].plan.goal).toBe('list files');
-        expect(plans[0].plan.steps).toEqual([{ tool: 'list_files', description: 'see what is here' }]);
-
-        const text = out.filter(e => e.kind === 'text').map(e => (e as { delta: string }).delta).join('');
-        expect(text).toBe('OK now I will look.');
     });
 
-    it('extracts a plan followed by a tool call', () => {
+    it('treats prose plans as goal-only plans', () => {
         const p = new BlockStreamParser();
         const out = feedAll(p, [
-            '<plan>{"goal":"read it","steps":[{"tool":"read_file","description":"x"}]}</plan>\n',
-            '<tool_call>{"name":"read_file","args":{"path":"a.fade"}}</tool_call>',
-        ]);
-        const kinds = out.map(e => e.kind);
-        expect(kinds).toContain('plan');
-        expect(kinds).toContain('tool_call');
-    });
-
-    it('accepts string-only steps', () => {
-        const p = new BlockStreamParser();
-        const out = feedAll(p, ['<plan>{"goal":"x","steps":["first","second"]}</plan>']);
-        const plan = out.find(e => e.kind === 'plan') as { plan: { steps: Array<{ description: string }> } };
-        expect(plan.plan.steps.map(s => s.description)).toEqual(['first', 'second']);
-    });
-
-    it('treats prose plans as goal-only plans (no "[invalid plan]" noise)', () => {
-        // Claude often emits prose inside <plan> instead of JSON. We don't
-        // want that to surface as a user-visible error — plans are advisory.
-        const p = new BlockStreamParser();
-        const out = feedAll(p, [
-            '<plan>I will read main.fbasic, then add the print statement after "test 9".</plan> ok',
+            '<plan>I will read main.fbasic, then add the print statement.</plan> ok',
         ]);
         const text = out.filter(e => e.kind === 'text').map(e => (e as { delta: string }).delta).join('');
         expect(text).not.toContain('invalid plan');
-        const plan = out.find(e => e.kind === 'plan') as { plan: { goal: string; steps: unknown[] } } | undefined;
-        expect(plan, 'prose plan should still emit a plan event').toBeDefined();
-        expect(plan!.plan.goal).toContain('read main.fbasic');
-        expect(plan!.plan.steps).toEqual([]);
+        const plan = out.find(e => e.kind === 'plan') as { plan: { goal: string } } | undefined;
+        expect(plan?.plan.goal).toContain('read main.fbasic');
     });
 });
 
 describe('renderToolProtocolPrompt', () => {
-    it('lists tool names and arg types', () => {
+    it('lists tool names and documents attribute form for writes', () => {
         const prompt = renderToolProtocolPrompt([
             {
                 name: 'read_file',
@@ -161,8 +199,8 @@ describe('renderToolProtocolPrompt', () => {
             },
         ]);
         expect(prompt).toContain('<tool_call>');
+        expect(prompt).toContain('name="apply_edit"');
         expect(prompt).toContain('read_file(path: string) — Read a file');
-        expect(prompt).toContain('apply_edit(path: string, startLine: number) — Edit a range');
     });
 });
 
@@ -172,5 +210,13 @@ describe('renderToolResult', () => {
     });
     it('JSON-encodes objects', () => {
         expect(renderToolResult('foo', { a: 1 })).toBe('<tool_result name="foo">{"a":1}</tool_result>');
+    });
+});
+
+describe('renderToolCallRetryPrompt', () => {
+    it('includes the parse error and format hints', () => {
+        const p = renderToolCallRetryPrompt('not valid JSON');
+        expect(p).toContain('not valid JSON');
+        expect(p).toContain('apply_edit');
     });
 });

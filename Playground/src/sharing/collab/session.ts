@@ -45,6 +45,13 @@ const MSG_QUERY_AWARENESS = 3;
 const MSG_GAMEFRAME = 4;
 const MSG_RPC_REQUEST = 5;
 const MSG_RPC_RESPONSE = 6;
+const MSG_LOG_LINE = 7;
+// Debug-UI envelope (Tweakpane panel state) broadcast by whoever's
+// running the program. The host gets one per render frame from the
+// monogame iframe; observers don't have an iframe so they need this
+// relay to populate their Debug UI panel. Payload is JSON of the
+// envelope: { gen, queue, autoInspector, metadata?, entities? }.
+const MSG_DEBUG_UI_FRAME = 8;
 
 export type SessionRole = 'host' | 'guest';
 
@@ -164,13 +171,48 @@ export interface SessionState {
  *  immediately even before any frame data flows. */
 export type PeerActivity = 'idle' | 'running' | 'debugging' | 'testing' | 'syncing';
 
+/** A program-output log line that one peer broadcasts to all others.
+ *  Used for sharing `print`/stdout/stderr across collaborators so an
+ *  observer's Logs panel mirrors the host's. */
+export interface SessionLogLine {
+    /** Logger channel — e.g. 'program', 'program-stderr'. */
+    channel: string;
+    level: 'debug' | 'info' | 'warn' | 'error';
+    message: string;
+}
+
+/** Where a peer's pointer is hovering, broadcast via awareness so we
+ *  can render their cursor on shared surfaces.
+ *
+ *  For the EDITOR scope: anchored to a Monaco text position
+ *  (lineNumber + column, both 1-based) plus a fractional sub-cell
+ *  offset (dx, dy in [0,1]) for smooth in-character placement. Tying
+ *  to text content means scrolling and word-wrap changes don't drift
+ *  the cursor away from the character the sender's mouse is actually
+ *  over.
+ *
+ *  For the GAME scope: normalised (nx, ny) in [0,1] against the game
+ *  panel's bounding box, since the canvas content has no scroll. */
+export type PeerFocus =
+    | { scope: 'editor'; file: string; line: number; column: number; dx: number; dy: number; ts: number }
+    | { scope: 'game';   nx: number; ny: number; ts: number }
+    | null;
+
 export interface PeerView {
     clientId: number;
+    /** Transport-level peer ID (Trystero room peer ID for the live case,
+     *  mock-* for the mock transport). Null for our own entry when we
+     *  haven't received awareness back yet, but normally always present.
+     *  Use this for `session.request(peerId, ...)` targeting. */
+    peerId: string | null;
     isSelf: boolean;
     identity: PeerIdentity;
     role: SessionRole;
     activeFile: string | null;
     activity: PeerActivity;
+    /** Latest broadcast mouse-cursor position + scope. Null when the
+     *  peer's pointer isn't on a shared surface (game tab or editor). */
+    focus: PeerFocus;
 }
 
 export interface StartOptions {
@@ -194,9 +236,26 @@ export class CollabSession {
      *  no session is in flight; observers should fall back to local
      *  state. */
     readonly debugState: Y.Map<any>;
+    /** Shared breakpoints — persist across debug sessions (unlike
+     *  debugState which clears on debug exit). Keys are `${file}:${line}`.
+     *  Values include the owner's Yjs awareness clientID so consumers
+     *  can tint the gutter glyph by who set the breakpoint. Both host
+     *  and observers may write here, but only the host's runtime
+     *  actually breaks on them — observer breakpoints become "visible
+     *  hints" until the host runtime picks them up via its breakpoint
+     *  sync. */
+    readonly breakpoints: Y.Map<{ file: string; line: number; ownerClientId: number; condition?: string }>;
     /** Public read-only view of game-frame subscribers' callbacks. Each
      *  registered handler receives `(peerId, jpegBytes)` per frame. */
     private readonly gameFrameCbs = new Set<(peerId: string, bytes: Uint8Array) => void>();
+    /** Subscribers for broadcast log/print lines (e.g. the host's program
+     *  `print` output forwarded so observers can see it in their Logs
+     *  panel). Each handler receives `(peerId, line)`. */
+    private readonly logLineCbs = new Set<(peerId: string, line: SessionLogLine) => void>();
+    /** Subscribers for relayed Debug UI envelopes (Tweakpane panel state
+     *  snapshots). The active runner broadcasts one per frame; observers
+     *  apply them to their Debug UI panel. */
+    private readonly debugUiFrameCbs = new Set<(peerId: string, json: string) => void>();
     /** Registered RPC handlers, keyed by channel name. A `request()`
      *  from a peer routes to the channel's handler; the handler's
      *  return value (or thrown error) is shipped back as a response. */
@@ -268,6 +327,7 @@ export class CollabSession {
         this.assets = this.doc.getMap('assets');
         this.meta = this.doc.getMap('meta');
         this.debugState = this.doc.getMap('debugState');
+        this.breakpoints = this.doc.getMap('breakpoints');
         this.awareness = new Awareness(this.doc);
     }
 
@@ -290,11 +350,15 @@ export class CollabSession {
         }
 
         // Stamp our local awareness state so peers can render our presence
-        // immediately on connect.
+        // immediately on connect. `peerId` is the transport-level ID
+        // (room.selfId) — published here so RPC callers can look up the
+        // target peer's transport ID by clientId in PeerView, without
+        // each call having to re-fish it out of debugState/runState.
         this.awareness.setLocalState({
             user: { ...this.identity },
             role: this.role,
             activeFile: this.host.getActiveFileName(),
+            peerId: this.room.selfId,
         });
 
         // Wire incoming room messages → sync/awareness handlers.
@@ -304,7 +368,26 @@ export class CollabSession {
             this.clearConnectionWatchdog();
             this.onPeerJoin(peerId);
         }));
-        this.unsubs.push(this.room.onPeerLeave(() => this.emitState()));
+        this.unsubs.push(this.room.onPeerLeave((peerId) => {
+            // Locate the departing peer's awareness clientID via the
+            // peerId we publish in their state. Without explicitly
+            // removing their awareness entry, the Yjs default keeps
+            // it around for ~30s before its outlive timer fires, so
+            // chips and cursors linger after a clean disconnect.
+            try {
+                const toRemove: number[] = [];
+                for (const [clientId, state] of this.awareness.getStates()) {
+                    if (clientId === this.doc.clientID) continue;
+                    if ((state as any)?.peerId === peerId) toRemove.push(clientId);
+                }
+                if (toRemove.length > 0) {
+                    awarenessProtocol.removeAwarenessStates(this.awareness, toRemove, 'peer-leave');
+                }
+            } catch (e) {
+                console.warn('[fade-collab] onPeerLeave cleanup failed', e);
+            }
+            this.emitState();
+        }));
         this.unsubs.push(this.room.onStatusChange(() => this.emitState()));
 
         // Watchdog — if no peer connects within the timeout, surface a
@@ -438,6 +521,8 @@ export class CollabSession {
         }
         this.rpcHandlers.clear();
         this.gameFrameCbs.clear();
+        this.logLineCbs.clear();
+        this.debugUiFrameCbs.clear();
         try { this.binding?.destroy(); } catch { /* ignore */ }
         this.binding = null;
         this.boundFileName = null;
@@ -645,11 +730,13 @@ export class CollabSession {
             if (!user) continue;
             out.push({
                 clientId,
+                peerId: ((state as any)?.peerId as string | undefined) ?? null,
                 isSelf: clientId === this.doc.clientID,
                 identity: user,
                 role: ((state as any)?.role as SessionRole) ?? 'guest',
                 activeFile: ((state as any)?.activeFile as string | null) ?? null,
                 activity: ((state as any)?.activity as PeerActivity) ?? 'idle',
+                focus: sanitizeFocus((state as any)?.focus),
             });
         }
         return out;
@@ -660,6 +747,14 @@ export class CollabSession {
      *  Travels via awareness so all peers' UIs can label the relevant
      *  participant ("Alice is debugging") without waiting for actual
      *  frame / debug-state streaming to land. */
+    /** Update our broadcast cursor focus — see PeerFocus. Pass null to
+     *  clear (e.g. mouseleave from shared surfaces, browser blur). The
+     *  awareness machinery diffs against the previous value so writing
+     *  the same value repeatedly is essentially free. */
+    setFocus(focus: PeerFocus): void {
+        this.awareness.setLocalStateField('focus', focus);
+    }
+
     setActivity(activity: PeerActivity): void {
         this.awareness.setLocalStateField('activity', activity);
     }
@@ -684,6 +779,48 @@ export class CollabSession {
     onGameFrame(cb: (peerId: string, bytes: Uint8Array) => void): Unsubscribe {
         this.gameFrameCbs.add(cb);
         return () => this.gameFrameCbs.delete(cb);
+    }
+
+    /** Broadcast a program-output line to every peer. Used for sharing
+     *  `print` / stdout / stderr from the host's running program so
+     *  observers see the same output in their Logs panel. */
+    sendLogLine(line: SessionLogLine): void {
+        if (this.destroyed) return;
+        const enc = encoding.createEncoder();
+        encoding.writeVarUint(enc, MSG_LOG_LINE);
+        encoding.writeVarString(enc, line.channel);
+        encoding.writeVarString(enc, line.level);
+        encoding.writeVarString(enc, line.message);
+        this.room.broadcast(encoding.toUint8Array(enc));
+    }
+
+    /** Subscribe to log lines broadcast by any peer. Returns an unsub fn. */
+    onLogLine(cb: (peerId: string, line: SessionLogLine) => void): Unsubscribe {
+        this.logLineCbs.add(cb);
+        return () => this.logLineCbs.delete(cb);
+    }
+
+    /** Broadcast a Debug UI envelope (JSON-encoded) to every peer. The
+     *  host calls this on every iframe-emitted `debug-ui-frame` so
+     *  observers can mirror the Tweakpane panel state. Payload is the
+     *  envelope JSON; we ship it as a string rather than parsing here so
+     *  observers can apply via their existing
+     *  `applyFrameEnvelope(parseDebugUiEnvelope(json))` pipeline without
+     *  this layer caring about the shape. */
+    sendDebugUiFrame(json: string): void {
+        if (this.destroyed) return;
+        const enc = encoding.createEncoder();
+        encoding.writeVarUint(enc, MSG_DEBUG_UI_FRAME);
+        encoding.writeVarString(enc, json);
+        this.room.broadcast(encoding.toUint8Array(enc));
+    }
+
+    /** Subscribe to relayed Debug UI envelopes. Receives the raw JSON
+     *  string — caller parses with whatever envelope parser they have.
+     *  Returns an unsub fn. */
+    onDebugUiFrame(cb: (peerId: string, json: string) => void): Unsubscribe {
+        this.debugUiFrameCbs.add(cb);
+        return () => this.debugUiFrameCbs.delete(cb);
     }
 
     // ── Peer-to-peer RPC (Phase 2C foundation) ────────────────────────────
@@ -724,6 +861,15 @@ export class CollabSession {
         const enc = encoding.createEncoder();
         encoding.writeVarUint(enc, MSG_RPC_REQUEST);
         encoding.writeVarUint(enc, correlationId);
+        // Target peer ID is now embedded in the message body so we can
+        // dispatch via room.broadcast() instead of room.sendTo(). In the
+        // field, Trystero's per-peer addressing has been observed to hang
+        // while broadcasts arrive normally — observers can see the host's
+        // Y.Map updates but session.request() to that same peer times
+        // out. Broadcasting the RPC request + filtering at the receiver
+        // (and broadcasting the response too — correlationId already
+        // disambiguates) sidesteps the unicast path entirely.
+        encoding.writeVarString(enc, peerId);
         encoding.writeVarString(enc, channel);
         encoding.writeVarString(enc, safeJsonStringify(payload));
         return new Promise<unknown>((resolve, reject) => {
@@ -734,7 +880,7 @@ export class CollabSession {
                 }
             }, timeoutMs);
             this.pendingRpc.set(correlationId, { resolve, reject, timeoutId });
-            try { this.room.sendTo(peerId, encoding.toUint8Array(enc)); }
+            try { this.room.broadcast(encoding.toUint8Array(enc)); }
             catch (e) {
                 this.pendingRpc.delete(correlationId);
                 clearTimeout(timeoutId);
@@ -1098,10 +1244,36 @@ export class CollabSession {
                     }
                     break;
                 }
+                case MSG_LOG_LINE: {
+                    const channel = decoding.readVarString(dec);
+                    const level = decoding.readVarString(dec) as SessionLogLine['level'];
+                    const message = decoding.readVarString(dec);
+                    const line: SessionLogLine = { channel, level, message };
+                    for (const cb of this.logLineCbs) {
+                        try { cb(peerId, line); }
+                        catch (e) { console.warn('[fade-collab] logLine listener threw', e); }
+                    }
+                    break;
+                }
+                case MSG_DEBUG_UI_FRAME: {
+                    const json = decoding.readVarString(dec);
+                    for (const cb of this.debugUiFrameCbs) {
+                        try { cb(peerId, json); }
+                        catch (e) { console.warn('[fade-collab] debugUiFrame listener threw', e); }
+                    }
+                    break;
+                }
                 case MSG_RPC_REQUEST: {
                     const correlationId = decoding.readVarUint(dec);
+                    const targetPeerId = decoding.readVarString(dec);
                     const channel = decoding.readVarString(dec);
                     const payload = safeJsonParse(decoding.readVarString(dec));
+                    // RPC requests are sent via broadcast (workaround for
+                    // a Trystero unicast issue — see request() above).
+                    // Every peer in the room receives every RPC; only the
+                    // peer whose selfId matches `targetPeerId` should
+                    // dispatch the handler. The others ignore.
+                    if (targetPeerId !== this.room.selfId) break;
                     const handler = this.rpcHandlers.get(channel);
                     const respond = (ok: boolean, result: unknown) => {
                         const enc = encoding.createEncoder();
@@ -1109,7 +1281,12 @@ export class CollabSession {
                         encoding.writeVarUint(enc, correlationId);
                         encoding.writeVarUint(enc, ok ? 1 : 0);
                         encoding.writeVarString(enc, safeJsonStringify(result));
-                        try { this.room.sendTo(peerId, encoding.toUint8Array(enc)); }
+                        // Responses also go via broadcast — same reason.
+                        // The originator's correlationId is unique
+                        // enough that other peers will simply have no
+                        // matching pendingRpc entry and ignore the
+                        // message.
+                        try { this.room.broadcast(encoding.toUint8Array(enc)); }
                         catch (e) { console.warn('[fade-collab] failed to send RPC response', e); }
                     };
                     if (!handler) {
@@ -1238,5 +1415,29 @@ function safeJsonParse(s: string): unknown {
     if (!s) return null;
     try { return JSON.parse(s); }
     catch { return null; }
+}
+
+/** Validate an incoming awareness focus payload — peers can send
+ *  anything, so we defensively normalise the shape before exposing it
+ *  to receivers. Returns null for anything malformed. */
+function sanitizeFocus(raw: unknown): PeerFocus {
+    if (raw == null || typeof raw !== 'object') return null;
+    const r = raw as Record<string, unknown>;
+    const ts = typeof r.ts === 'number' ? r.ts : 0;
+    if (r.scope === 'game') {
+        const nx = typeof r.nx === 'number' ? r.nx : NaN;
+        const ny = typeof r.ny === 'number' ? r.ny : NaN;
+        if (!Number.isFinite(nx) || !Number.isFinite(ny)) return null;
+        return { scope: 'game', nx, ny, ts };
+    }
+    if (r.scope === 'editor' && typeof r.file === 'string') {
+        const line = typeof r.line === 'number' ? r.line : NaN;
+        const column = typeof r.column === 'number' ? r.column : NaN;
+        const dx = typeof r.dx === 'number' ? r.dx : 0;
+        const dy = typeof r.dy === 'number' ? r.dy : 0;
+        if (!Number.isFinite(line) || !Number.isFinite(column)) return null;
+        return { scope: 'editor', file: r.file, line, column, dx, dy, ts };
+    }
+    return null;
 }
 

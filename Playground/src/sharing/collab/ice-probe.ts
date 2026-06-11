@@ -37,8 +37,24 @@
  *  public services with multi-decade track records. */
 const BASE_ICE_CONFIG: RTCConfiguration = {
     iceServers: [
+        // Google's STUN — multiple endpoints for DNS-level redundancy.
+        // Cloudflare's `stun.cloudflare.com:3478` was here previously
+        // but Cloudflare doesn't actually run a free public STUN there
+        // (their TURN/STUN is paid + auth-gated), and Firefox has been
+        // observed to bail the entire ICE gather when any listed
+        // iceServer is unreachable.
+        //
+        // ONE URL PER ENTRY — not the {urls: [array]} form. Older
+        // Firefox (≤ 99 and possibly later) silently fails to parse
+        // the array-of-URLs shape and leaves gather wedged at
+        // `iceGatheringState === 'new'` indefinitely, with no candidate
+        // events ever firing. The single-string form is bullet-proof
+        // across all browsers. Confirmed via in-console sanity test
+        // on a Firefox where the array form produced zero candidates
+        // but a single-URL entry produced host + srflx in <1s.
         { urls: 'stun:stun.l.google.com:19302' },
-        { urls: 'stun:stun.cloudflare.com:3478' },
+        { urls: 'stun:stun1.l.google.com:19302' },
+        { urls: 'stun:stun2.l.google.com:19302' },
     ],
 };
 

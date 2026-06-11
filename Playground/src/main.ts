@@ -125,11 +125,15 @@ const EMPTY_CONTENT_PLAN: MonoGameContentPlan = {
     entries: [],
 };
 import { mountHelpPanel } from './help';
-import { monoGameHost } from './monogame-host';
+import { monoGameHost, parseDebugUiEnvelope } from './monogame-host';
+import { mountSharedCursors, type SharedCursorHandle } from './shared-cursor';
 import { createLocalDebugAdapter } from './debug/local-adapter';
-import type { DebugAdapter } from './debug/adapter';
+import { createRemoteDebugAdapter } from './debug/remote-adapter';
+import { createFacadeDebugAdapter, type FacadeDebugAdapter } from './debug/facade-adapter';
+import type { DebugAdapter, StepKind } from './debug/adapter';
 import { mountAiChat, mountAiModels } from './ai-chat';
 import { monacoDiagnosticsProvider } from './ai/adapters/monaco-diagnostics';
+import { createProjectAwareLspEditValidator } from './ai/adapters/lsp-validate-edit';
 import { PLAYGROUND_VERSION } from './changelog';
 import { maybeShowChangelogPopup, showFullChangelog } from './version-popup';
 import {
@@ -155,6 +159,7 @@ import {
     bootstrapLiveSession,
     type LiveSessionHandle,
     type SessionHost as CollabSessionHost,
+    type PeerView,
 } from './sharing/collab';
 import { mountLogsPanel } from './logs-panel';
 import { mountSearchPanel } from './search-panel';
@@ -164,6 +169,7 @@ import {
     initSettings,
     onSettingsChange,
     currentSettings,
+    getEffective,
     type SettingsState,
 } from './settings';
 import { resolveTheme } from './themes';
@@ -655,8 +661,61 @@ function setActiveName(name: string | null) {
     for (const cb of activeFileListeners) {
         try { cb(name); } catch (e) { console.warn('[fade] activeFile listener threw', e); }
     }
+    // Tell the shared-cursor module the active file changed so it can
+    // re-evaluate which remote cursors render in the editor vs become
+    // tab badges instead.
+    try { sharedCursorHandle?.notifyActiveFileChanged(); }
+    catch { /* ignore — module may be torn down */ }
 }
 let liveSessionHandle: LiveSessionHandle | null = null;
+// Module-scope state for the shared-cursor system. `sharedCursorHandle`
+// is rebuilt per session; `currentPeerFilePresence` is the latest
+// per-file map of { color, names } the receiver pushed in. Both the
+// editor tab strip and the workspace file list consult this on each
+// repaint to decorate their rows.
+let sharedCursorHandle: SharedCursorHandle | null = null;
+let currentPeerFilePresence: Map<string, { color: string; names: string[] }> = new Map();
+function applyPeerFilePresence(m: Map<string, { color: string; names: string[] }>) {
+    currentPeerFilePresence = m;
+    repaintPeerPresenceDots();
+}
+/** Apply per-file presence dots to BOTH the editor tab strip and the
+ *  workspace file list. Tab strip skips the user's currently-active
+ *  file (their own cursor is shown instead). Workspace shows every
+ *  file someone else is editing so the user can spot peer activity
+ *  even on files they don't have open. */
+function repaintPeerPresenceDots() {
+    paintPresenceDotsIn(document.getElementById('tabs'), { skipActive: true });
+    paintPresenceDotsIn(document.getElementById('file-list'), { skipActive: false });
+}
+function paintPresenceDotsIn(root: HTMLElement | null, opts: { skipActive: boolean }) {
+    if (!root) return;
+    const seen = new Set<HTMLElement>();
+    for (const [file, entry] of currentPeerFilePresence) {
+        if (opts.skipActive && file === activeName) continue;
+        const row = root.querySelector<HTMLElement>(`[data-name="${cssEscape(file)}"]`);
+        if (!row) continue;
+        let dot = row.querySelector<HTMLElement>('.fade-tab-peer-dot');
+        if (!dot) {
+            dot = document.createElement('span');
+            dot.className = 'fade-tab-peer-dot';
+            row.appendChild(dot);
+        }
+        dot.style.backgroundColor = entry.color;
+        dot.title = entry.names.length === 1
+            ? `${entry.names[0]} is editing ${file}`
+            : `${entry.names.join(', ')} are editing ${file}`;
+        seen.add(dot);
+    }
+    root.querySelectorAll<HTMLElement>('.fade-tab-peer-dot').forEach((dot) => {
+        if (!seen.has(dot)) dot.remove();
+    });
+}
+function cssEscape(s: string): string {
+    // Minimal escape for CSS attribute selector — \ and " are the
+    // only meta characters relevant to `[attr="value"]`.
+    return s.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+}
 
 /**
  * Force every pending 600ms-debounced autosave to land *now*. Used by the
@@ -844,6 +903,17 @@ async function openFile(workspace: OpfsWorkspace, name: string) {
     setActiveName(name);
     if (editor) {
         editor.setModel(tab.model);
+        // Ensure the Editor dockview tab itself is active — otherwise
+        // `editor.focus()` is a no-op (Monaco can't take focus while
+        // the panel containing it is hidden behind another tab).
+        // Common scenario: user is on Live Session / Logs / Debug UI
+        // tab and clicks a file in the workspace list; we want them
+        // jumped over to the editor view as part of the click.
+        try {
+            const dock = (window as any).__fadeDockview;
+            const panel = dock?.getPanel?.('editor');
+            if (panel && !panel.api.isActive) panel.api.setActive();
+        } catch { /* ignore — dockview not ready or panel gone */ }
         editor.focus();
     }
     editorContainer.style.display = '';
@@ -893,6 +963,9 @@ function renderTabs() {
         const basename = name.split('/').pop() ?? name;
         const el = document.createElement('div');
         el.className = 'tab' + (name === activeName ? ' active' : '');
+        // Used by shared-cursor's tab-badge repaint to locate the
+        // right tab element via attribute selector.
+        el.dataset.name = name;
         const label = document.createElement('span');
         label.className = tab.dirty ? 'dirty' : '';
         label.textContent = (tab.dirty ? '● ' : '') + basename;
@@ -927,8 +1000,18 @@ function renderTabs() {
             closeTab(name);
         };
         el.append(close);
+        // Right-click menu: focus / close / close-others / close-to-side / close-all.
+        // Mirrors the pattern used for file-list rows.
+        el.addEventListener('contextmenu', (e) => {
+            e.preventDefault();
+            showTabContextMenu(e.clientX, e.clientY, name);
+        });
         tabsEl.append(el);
     }
+    // Re-apply the live-session per-tab peer dots — renderTabs() blew
+    // them away with `innerHTML = ''` so we reattach from the cached
+    // map. Cheap selector pass; no badges to apply in solo mode.
+    repaintPeerPresenceDots();
 }
 
 // Open (or activate, if already present) a markdown preview panel for the
@@ -1036,6 +1119,54 @@ const NEW_FILE_EXTENSIONS: ReadonlyArray<{ label: string; ext: string }> = [
     { label: 'JSON (.json)',          ext: 'json' },
     { label: 'Text (.txt)',           ext: 'txt' },
 ];
+
+// Starter content placed in each newly-created `.fx` file. PS-only —
+// MatrixTransform at file scope (the translator folds it into the
+// synthetic `_TopLevelUniforms` cbuffer) and no MainVS (compile-fx
+// auto-injects a default VS for any pass whose vsShaderIndex is -1,
+// mirroring what `MonoGame.Effect.Compiler.exe` does). Both code paths
+// route MatrixTransform to the right GL uniform via name-dedup, so the
+// user gets a working pass-through sprite shader with the absolute
+// minimum boilerplate.
+const NEW_FX_TEMPLATE = `#define VS_SHADERMODEL vs_3_0
+#define PS_SHADERMODEL ps_3_0
+
+Texture2D SpriteTexture;
+sampler2D SpriteTextureSampler = sampler_state
+{
+    Texture = <SpriteTexture>;
+};
+
+float4x4 MatrixTransform;
+
+struct PSInput
+{
+    float4 Position : POSITION;
+    float4 Color    : COLOR0;
+    float2 TexCoord : TEXCOORD0;
+};
+
+float4 MainPS(PSInput input) : COLOR
+{
+    float4 c = tex2D(SpriteTextureSampler, input.TexCoord) * input.Color;
+    return float4(c.rgb, c.a);
+}
+
+technique MainTechnique
+{
+    pass P0
+    {
+        PixelShader  = compile PS_SHADERMODEL MainPS();
+    }
+};
+`;
+
+// Pick the seed content for a newly-created file. Returns '' for any
+// extension we don't have a starter for, matching the prior behavior.
+function templateForExtension(ext: string): string {
+    if (ext === 'fx') return NEW_FX_TEMPLATE;
+    return '';
+}
 
 // Source-control wiring: the panel mounts at bootstrap (after dockview is up)
 // and publishes a status map (path → A/M/D) via onStatusChange. We mirror it
@@ -1346,6 +1477,10 @@ async function renderFileList(workspace: OpfsWorkspace) {
         wireDragSource(li, name);
         fileListEl.append(li);
     }
+    // After a re-render the per-file peer dots are gone — reattach
+    // from the cached presence map. Same selector pattern as the
+    // editor tab strip.
+    repaintPeerPresenceDots();
 }
 
 // File-list right-click context menu. Source-membership actions (add /
@@ -1418,6 +1553,94 @@ function closeAnyFileMenu() {
         (m as any).__cleanup?.();
         m.remove();
     }
+}
+
+// Right-click menu for an editor tab. Reuses the source-badge-menu chrome
+// for visual consistency with the file/folder context menus. The actions
+// operate on the `tabs` Map insertion order — that's the same order
+// renderTabs uses to lay out the tab strip, so "left of" / "right of"
+// matches what the user sees.
+function showTabContextMenu(x: number, y: number, name: string) {
+    closeAnyFileMenu();
+    if (!tabs.has(name)) return;
+
+    const order = Array.from(tabs.keys());
+    const idx = order.indexOf(name);
+    const leftCount = idx;
+    const rightCount = order.length - idx - 1;
+    const otherCount = order.length - 1;
+    const isActive = activeName === name;
+
+    const menu = document.createElement('div');
+    menu.className = 'source-badge-menu';
+    // Reuse the file-context data attribute so closeAnyFileMenu tears
+    // either flavor down — they're functionally the same floating popup.
+    menu.dataset.menu = 'file-context';
+
+    const addItem = (label: string, handler: () => void, opts?: { disabled?: boolean }) => {
+        const item = document.createElement('button');
+        item.className = 'source-badge-item';
+        item.type = 'button';
+        item.textContent = label;
+        if (opts?.disabled) item.disabled = true;
+        item.onclick = (e) => {
+            e.stopPropagation();
+            if (item.disabled) return;
+            closeAnyFileMenu();
+            handler();
+        };
+        menu.append(item);
+    };
+    const addSeparator = () => {
+        const sep = document.createElement('div');
+        sep.className = 'source-badge-sep';
+        menu.append(sep);
+    };
+
+    const focusTab = (target: string) => {
+        const tab = tabs.get(target);
+        if (!tab) return;
+        setActiveName(target);
+        if (editor) editor.setModel(tab.model);
+        renderTabs();
+        renderFileListSelection();
+    };
+
+    addItem('Focus tab', () => focusTab(name), { disabled: isActive });
+    addSeparator();
+    addItem(`Close "${name.split('/').pop() ?? name}"`, () => closeTab(name));
+    addItem('Close others', () => {
+        for (const other of order) if (other !== name) closeTab(other);
+    }, { disabled: otherCount === 0 });
+    addItem('Close tabs to the left', () => {
+        for (const other of order.slice(0, idx)) closeTab(other);
+    }, { disabled: leftCount === 0 });
+    addItem('Close tabs to the right', () => {
+        for (const other of order.slice(idx + 1)) closeTab(other);
+    }, { disabled: rightCount === 0 });
+    addSeparator();
+    addItem('Close all', () => {
+        for (const other of order) closeTab(other);
+    });
+
+    document.body.append(menu);
+    menu.style.left = `${x}px`;
+    menu.style.top = `${y}px`;
+    const r = menu.getBoundingClientRect();
+    if (r.right > window.innerWidth) menu.style.left = `${window.innerWidth - r.width - 4}px`;
+    if (r.bottom > window.innerHeight) menu.style.top = `${window.innerHeight - r.height - 4}px`;
+    setTimeout(() => {
+        const onClick = (e: MouseEvent) => {
+            if (!(e.target as HTMLElement).closest('.source-badge-menu')) closeAnyFileMenu();
+        };
+        const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') closeAnyFileMenu(); };
+        document.addEventListener('mousedown', onClick, true);
+        document.addEventListener('keydown', onKey, true);
+        (menu as any).__cleanup = () => {
+            document.removeEventListener('mousedown', onClick, true);
+            document.removeEventListener('keydown', onKey, true);
+        };
+    }, 0);
 }
 
 /** Right-click menu for a folder row. Smaller than the file menu —
@@ -1663,6 +1886,7 @@ class FadeRunner {
             if (r) r(msg.result);
             return;
         }
+        if (msg.type === 'lsp-check-result')          { this.resolvePending(msg.id, msg.diagnostics); return; }
         if (msg.type === 'lsp-tokens-result')         { this.resolvePending(msg.id, msg.tokens); return; }
         if (msg.type === 'lsp-hover-result')          { this.resolvePending(msg.id, msg.hover); return; }
         if (msg.type === 'lsp-completion-result')     { this.resolvePending(msg.id, msg.items); return; }
@@ -1782,6 +2006,26 @@ class FadeRunner {
 
     setDocument(uri: string, text: string) {
         this.worker.postMessage({ type: 'lsp-set', uri, text });
+    }
+
+    /** Synchronous LSP document check — returns diagnostics without waiting
+     *  for Monaco markers. Used by the AI edit reviewer. */
+    async checkDocumentDiagnostics(uri: string, text: string, timeoutMs = 8_000): Promise<Diagnostic[]> {
+        const id = ++this.nextId;
+        return new Promise<Diagnostic[]>((resolve, reject) => {
+            const timer = setTimeout(() => {
+                this.pending.delete(id);
+                reject(new Error('LSP worker did not respond (rebuild runtime or reload)'));
+            }, timeoutMs);
+            this.pending.set(id, (diagnosticsJson: string) => {
+                clearTimeout(timer);
+                try {
+                    const parsed = JSON.parse(diagnosticsJson);
+                    resolve(Array.isArray(parsed) ? parsed : []);
+                } catch { resolve([]); }
+            });
+            this.lspWorker.postMessage({ type: 'lsp-check', id, uri, text });
+        });
     }
 
     // Switch both workers' LSP CommandCollection to match the active
@@ -2830,8 +3074,29 @@ async function bootstrap() {
     }
     setInterval(paintHeartbeat, 250);
 
+    // Program-output forwarding. `print`, stdout, and stderr from the
+    // user's running program land in the Output panel (where users
+    // expect to see them). When a live session is active, each line
+    // is ALSO broadcast to peers so an observer sees the host's output
+    // appear in their own Output panel — without it, observers stream
+    // the game canvas but can't tell what the program logged.
+    const broadcastLogLine = (channel: string, level: 'info' | 'warn' | 'error', message: string) => {
+        const session = liveSessionHandle?.getSession();
+        if (!session) return;
+        try { session.sendLogLine({ channel, level, message }); }
+        catch (e) { console.warn('[fade-collab] sendLogLine failed', e); }
+    };
+    const handleProgramPrint = (line: string) => {
+        appendOutputLine(line);
+        broadcastLogLine('program', 'info', line);
+    };
+    const handleProgramStderr = (line: string) => {
+        appendOutputLine(line, 'error');
+        broadcastLogLine('program-err', 'error', line);
+    };
+
     const runner = new FadeRunner({
-        onPrint: (line) => appendOutputLine(line),
+        onPrint: handleProgramPrint,
         onAlert: (msg) => window.alert(msg),
         onHeartbeat: (role, tick, t) => {
             if (role !== 'lsp') return;
@@ -3408,9 +3673,24 @@ async function bootstrap() {
     // Without this, the early call hits TDZ on the let-bindings.
     let debugSessionActive = false;
     let debugPaused = false;
+    // Sticky flag set when the VM hit a fatal exception (divide-by-zero,
+    // invalid-address, unhandled .NET exception, etc). The session stays
+    // alive in a paused state for post-mortem inspection — locals, call
+    // stack, REPL — but Continue / Step / Pause MUST be disabled because
+    // the VM can't actually resume from a fatal fault; clicking any of
+    // them locks the whole UI thread waiting for a response that won't
+    // come. Only Stop / Abort are valid actions in this state. Cleared
+    // when a new debug session begins.
+    let debugFatalException = false;
     let runActive = false;
     let testsBusy = false;
     let exportBusy = false;
+    // True when SOME OTHER peer is actively running or debugging in this
+    // live session. Updated by the awareness onStateChange handler that
+    // also drives the game-stream overlay. Read by refreshRunButtons /
+    // refreshStopButton so observers' Run goes grey (host has control)
+    // and their Stop becomes available (they can end the shared session).
+    let remoteActivityInProgress = false;
 
     // Translate a single Diagnostic from joined-doc coords (start.line +
     // end.line in the project URI's space) to per-file coords. Returns
@@ -5195,6 +5475,44 @@ async function bootstrap() {
             // playground's styling (vs-dark Monaco theme, vscode-elements).
             theme: { name: 'vs', className: 'dockview-theme-vs' },
             disableFloatingGroups: false,
+            // Right-click menu on dockview tabs (Output, Tests, Debug
+            // Console, etc.). Built-ins ('close' / 'closeOthers' / 'closeAll')
+            // are shipped by dockview-core; the focus + left/right
+            // variants are custom entries that map to panel.api calls.
+            // group.panels is in tab order, so idx gives left/right.
+            getTabContextMenuItems: ({ panel, group }) => {
+                const list = group.panels;
+                const idx = list.indexOf(panel);
+                const isActive = group.activePanel === panel;
+                const leftCount = idx;
+                const rightCount = list.length - idx - 1;
+                return [
+                    {
+                        label: 'Focus tab',
+                        disabled: isActive,
+                        action: () => panel.api.setActive(),
+                    },
+                    'separator',
+                    'close',
+                    'closeOthers',
+                    {
+                        label: 'Close tabs to the left',
+                        disabled: leftCount === 0,
+                        action: () => {
+                            for (const p of list.slice(0, idx)) p.api.close();
+                        },
+                    },
+                    {
+                        label: 'Close tabs to the right',
+                        disabled: rightCount === 0,
+                        action: () => {
+                            for (const p of list.slice(idx + 1)) p.api.close();
+                        },
+                    },
+                    'separator',
+                    'closeAll',
+                ];
+            },
             createComponent: ({ name, id }) => {
                 // Dynamic components (one element per panel instance) —
                 // resolved before the static `panel-cell` pool. Each name
@@ -5676,19 +5994,262 @@ async function bootstrap() {
     // as top-level folders + an "Inspector" folder when the program
     // calls `enable debug inspector`.
     const debugUiHost = document.getElementById('debug-ui-host');
+    // Resolve the peer ID of whoever's currently running/debugging in
+    // the live session, if anyone. Used to RPC debug-UI operations to
+    // the host when this peer is observing — otherwise the calls go to
+    // the local monoGameHost (which has no live iframe on the observer
+    // side and returns nothing useful).
+    function getRemoteRunnerPeerId(): string | null {
+        const session = liveSessionHandle?.getSession();
+        if (!session) return null;
+        const peers = session.getState().peers;
+        const runner = peers.find((p) => !p.isSelf
+            && (p.activity === 'running' || p.activity === 'debugging'));
+        return runner?.peerId ?? null;
+    }
+    // RPC dispatch helper for the debug-UI panel callbacks. Each panel
+    // callback is one method on monoGameHost; when we're observing, we
+    // route to the host's `debugUi:*` handler instead. The 8s timeout
+    // matches typical debug RPC budget — schema/list calls round-trip
+    // quickly but a busy host can take a beat.
+    async function rpcDebugUi<T>(
+        channel: string,
+        payload: unknown,
+        localFallback: () => T | Promise<T>,
+    ): Promise<T> {
+        const peerId = getRemoteRunnerPeerId();
+        if (!peerId) return await localFallback();
+        const session = liveSessionHandle!.getSession()!;
+        try {
+            const result = await session.request(peerId, channel, payload, { timeoutMs: 8_000 }) as T;
+            // Diagnostic: log inspector RPCs so we can tell whether the
+            // host returned null/empty (no fields render) vs returned
+            // real data (panel-side issue). Cheap — only fires on user
+            // interaction (folder expand / per-entity refresh).
+            const summary = (result == null)
+                ? 'null'
+                : (typeof result === 'object')
+                    ? `object(${Object.keys(result as object).length} keys)`
+                    : String(result).slice(0, 40);
+            getLogger('debug-ui-collab').info(
+                `${channel} ← ${summary}  payload=${JSON.stringify(payload).slice(0, 80)}`,
+            );
+            return result;
+        } catch (e) {
+            getLogger('debug-ui-collab').error(
+                `${channel} RPC failed: ${e instanceof Error ? e.message : String(e)}`,
+            );
+            throw e;
+        }
+    }
+    // dockview-core attaches each panel to a `dv-render-overlay` div
+    // initialised with `style.visibility = 'hidden'` for one-frame flash
+    // prevention (dockview-core.js: `// Hide until the first RAF-based
+    // position is applied`). The overlay is supposed to flip to visible
+    // once dockview's RAF runs AND `panel.api.isVisible` is true. In
+    // practice, on the observer side after a layout restore + late
+    // attach (the panel-cell pool pattern we use), the RAF can fire
+    // before the panel is actually active in its tab group, and dockview
+    // never re-clears the inline `visibility:hidden` afterwards. The
+    // observer sees their Debug UI tab as active but the overlay
+    // ancestor stays hidden — confirmed via the DOM probe in `debug-ui-
+    // collab` logs (`#debug-ui-host[0] ... visibility=hidden ancestors=...
+    // dv-render-overlay`).
+    //
+    // Per CSS spec, `visibility: visible` on a child element overrides
+    // `visibility: hidden` inherited from an ancestor. Force-set it on
+    // #debug-ui-host AND keep it in sync with the dockview panel api's
+    // own isVisible signal so tab-switching still hides us correctly.
+    if (debugUiHost) {
+        // dockview-core attaches each panel to a dv-render-overlay
+        // initialised with `style.visibility = 'hidden'` (anti-flicker;
+        // see dockview-core.js:11465-11467). The overlay clears to
+        // visible inside a RAF once `panel.api.isVisible === true`.
+        // In production we've seen this RAF window miss the
+        // visibility transition — observer's Debug UI tab is visually
+        // active but the overlay stays inline `visibility:hidden`
+        // forever. The Pane renders correctly into #debug-ui-host but
+        // inherits hidden and looks blank.
+        //
+        // Two-part fix:
+        //   1. Force `visibility: visible` on #debug-ui-host. CSS spec
+        //      says a child's `visibility: visible` overrides an
+        //      ancestor's `visibility: hidden` — content shows even
+        //      when dockview's overlay is hidden.
+        //   2. MutationObserver on the overlay ancestor: when dockview
+        //      DOES correctly set visibility:hidden (user switched to
+        //      a sibling tab in the same group), the inner element
+        //      flips to display:none to fully hide. When dockview
+        //      clears it (we're active again), the inner switches
+        //      back to display:flex.
+        debugUiHost.style.visibility = 'visible';
+        const overlayParent = (() => {
+            let p: HTMLElement | null = debugUiHost.parentElement;
+            while (p && !p.classList.contains('dv-render-overlay')) p = p.parentElement;
+            return p;
+        })();
+        if (overlayParent) {
+            const sync = () => {
+                // dockview sets pointerEvents=none AND visibility=hidden
+                // when the panel is inactive. Use pointerEvents as the
+                // signal because it's actually toggled correctly even
+                // when visibility gets stuck.
+                const pe = overlayParent.style.pointerEvents;
+                const v = overlayParent.style.visibility;
+                const dockviewWantsHidden = pe === 'none' && v === 'hidden';
+                debugUiHost.style.display = dockviewWantsHidden ? 'none' : 'flex';
+            };
+            new MutationObserver(sync).observe(overlayParent, {
+                attributes: true, attributeFilter: ['style'],
+            });
+            sync();
+        }
+        // Nudge dockview to recompute layout once the panel and the
+        // mount have settled. The RAF inside dockview's `resize()` only
+        // fires when something invalidates the position cache; an
+        // explicit dock.layout() call invalidates it, so the next
+        // resize callback runs and (hopefully) clears the anti-flicker
+        // visibility:hidden on the overlay. Belt-and-suspenders with
+        // the inline override above — if dockview behaves, both work
+        // together; if dockview stays stuck, the override wins.
+        setTimeout(() => {
+            try {
+                const root = document.querySelector('.dv-shell') as HTMLElement | null;
+                if (root) (dockApi as any).layout?.(root.clientWidth, root.clientHeight);
+            } catch (e) { console.warn('[debug-ui] dock layout nudge failed', e); }
+        }, 50);
+    }
     const debugUiHandle = debugUiHost ? mountDebugUiPanel({
         container: debugUiHost,
-        getSchema: (t) => monoGameHost.debugGetSchema(t),
-        getEntitySchema: (t, id) => monoGameHost.debugGetEntitySchema(t, id),
-        listEntities: (t) => monoGameHost.debugListEntities(t),
-        getEntity: (t, id) => monoGameHost.debugGetEntity(t, id),
-        setField: (t, id, p, v) => monoGameHost.debugSetField(t, id, p, v),
-        sendFbasicChange: (ctrlId, kind, value) => monoGameHost.sendDebugUiChange(ctrlId, kind, value),
+        getSchema: (t) => rpcDebugUi(
+            'debugUi:getSchema', { typeName: t },
+            () => monoGameHost.debugGetSchema(t),
+        ),
+        getEntitySchema: (t, id) => rpcDebugUi(
+            'debugUi:getEntitySchema', { typeName: t, entityId: id },
+            () => monoGameHost.debugGetEntitySchema(t, id),
+        ),
+        listEntities: (t) => rpcDebugUi(
+            'debugUi:listEntities', { typeName: t },
+            () => monoGameHost.debugListEntities(t),
+        ),
+        getLabels: (t) => rpcDebugUi(
+            'debugUi:getLabels', { typeName: t },
+            () => monoGameHost.debugGetLabels(t),
+        ),
+        getEntity: (t, id) => rpcDebugUi(
+            'debugUi:getEntity', { typeName: t, entityId: id },
+            () => monoGameHost.debugGetEntity(t, id),
+        ),
+        setField: (t, id, p, v) => rpcDebugUi(
+            'debugUi:setField', { typeName: t, entityId: id, path: p, valueJson: v },
+            () => monoGameHost.debugSetField(t, id, p, v),
+        ),
+        sendFbasicChange: (ctrlId, kind, value) => {
+            // sendDebugUiChange is fire-and-forget locally; mirror that
+            // for the observer path so the slider doesn't block on a
+            // round-trip. The RPC response is discarded.
+            const peerId = getRemoteRunnerPeerId();
+            getLogger('debug-ui-collab').info(
+                `sendFbasicChange ctrl=${ctrlId} kind=${kind} value=${value} remotePeer=${peerId ? peerId.slice(0, 8) : 'none(local)'}`,
+            );
+            if (peerId) {
+                const session = liveSessionHandle!.getSession()!;
+                session.request(peerId, 'debugUi:sendFbasicChange',
+                    { ctrlId, kind, value }, { timeoutMs: 8_000 })
+                    .then(() => getLogger('debug-ui-collab').info(`sendFbasicChange RPC ack ctrl=${ctrlId}`))
+                    .catch((e) => getLogger('debug-ui-collab').error(`sendFbasicChange RPC failed: ${e instanceof Error ? e.message : String(e)}`));
+                return;
+            }
+            monoGameHost.sendDebugUiChange(ctrlId, kind, value);
+        },
     }) : null;
 
-    monoGameHost.onDebugUiFrame = (env) => {
-        try { debugUiHandle?.applyFrameEnvelope(env); }
-        catch (e) { console.warn('[debug-ui] applyFrameEnvelope threw', e); }
+    const debugUiCollabLog = getLogger('debug-ui-collab');
+    let debugUiIframeCount = 0;
+    let debugUiBroadcastCount = 0;
+    let debugUiLastQueueLen = -1;
+    let debugUiLastGen = -1;
+    let debugUiBroadcastSkipReason: string | null = null;
+    // Expose the panel handle for Playwright probes (see
+    // scripts/probe-debug-ui-visibility.mjs). The probe needs to drive
+    // applyFrameEnvelope directly because the monogame postMessage
+    // bridge isn't wired up in 'web'-type projects.
+    if (debugUiHandle) {
+        (window as any).__fadeDebugUiHandle = debugUiHandle;
+    }
+    monoGameHost.onDebugUiFrame = (env, rawJson) => {
+        debugUiIframeCount++;
+        // Log whenever the queue length OR gen changes — captures the
+        // initial empty frames, the first non-empty frame after Run,
+        // and program-restart resets, without spamming at 60 fps.
+        const qLen = env.queue?.length ?? 0;
+        if (qLen !== debugUiLastQueueLen || env.gen !== debugUiLastGen) {
+            debugUiCollabLog.info(
+                `iframe frame #${debugUiIframeCount}: queue ${debugUiLastQueueLen}→${qLen}, gen ${debugUiLastGen}→${env.gen}, autoInspector=${env.autoInspector}`,
+            );
+            debugUiLastQueueLen = qLen;
+            debugUiLastGen = env.gen;
+        }
+        // CRITICAL: do NOT apply our own iframe's frames to the panel
+        // when we're observing someone else's runtime. Our iframe is
+        // idle (no program loaded) and pumps empty envelopes at gen=0;
+        // applying them races against the relayed real envelopes from
+        // the host and constantly wipes the rendered Pane back to the
+        // idle hint. The relay handler in installCollabRuntimeListeners
+        // is the only thing that should drive the panel when observing.
+        const observingRemote = getRemoteRunnerPeerId() != null;
+        if (!observingRemote) {
+            try { debugUiHandle?.applyFrameEnvelope(env); }
+            catch (e) { console.warn('[debug-ui] applyFrameEnvelope threw', e); }
+        }
+        // Relay the raw envelope to live-session observers so their
+        // Debug UI panel mirrors ours. Skip broadcasting when WE are
+        // observing — we have nothing useful to send (our iframe is
+        // idle); broadcasting empty envelopes from observers would
+        // overwrite the host's content for everyone.
+        if (observingRemote) return;
+        const session = liveSessionHandle?.getSession();
+        if (!session) {
+            // Tell the user once if we're dropping broadcasts because
+            // there's no session yet — common when the iframe boots
+            // before the user shares.
+            if (debugUiBroadcastSkipReason !== 'no-session') {
+                debugUiBroadcastSkipReason = 'no-session';
+                debugUiCollabLog.info(`broadcast skipped — no live session yet`);
+            }
+            return;
+        }
+        if (!rawJson) {
+            if (debugUiBroadcastSkipReason !== 'no-json') {
+                debugUiBroadcastSkipReason = 'no-json';
+                debugUiCollabLog.warn(`broadcast skipped — rawJson is empty (frame #${debugUiIframeCount})`);
+            }
+            return;
+        }
+        if (debugUiBroadcastSkipReason) {
+            debugUiCollabLog.info(`broadcast resumed (was: ${debugUiBroadcastSkipReason})`);
+            debugUiBroadcastSkipReason = null;
+        }
+        try {
+            session.sendDebugUiFrame(rawJson);
+            debugUiBroadcastCount++;
+            // Log first 3 frames + every 200 thereafter. First 3 makes
+            // it cheap to verify "broadcasts are flowing" without
+            // waiting 3 seconds for the 200-counter.
+            if (debugUiBroadcastCount <= 3 || debugUiBroadcastCount % 200 === 0) {
+                debugUiCollabLog.info(
+                    `host broadcast frame #${debugUiBroadcastCount} (queue ${qLen}, bytes ${rawJson.length})`,
+                );
+                console.log(`[debug-ui-collab] host broadcast frame #${debugUiBroadcastCount} qlen=${qLen}`);
+            }
+        }
+        catch (e) {
+            // Surface broadcast failures to Logs so they don't hide in
+            // the browser console — if the relay is silently dying after
+            // frame 1, this is where it shows up.
+            debugUiCollabLog.error(`sendDebugUiFrame failed at frame #${debugUiBroadcastCount + 1}: ${e instanceof Error ? e.message : String(e)}`);
+        }
     };
 
     // Find-in-Files panel. Mounted once at boot into the offscreen
@@ -5823,6 +6384,13 @@ async function bootstrap() {
         // then keep its badge state in sync via the listeners above.
         wireSharingStatusIcon();
         renderSharingStatusIcon();
+        // Make sure the Live Session chip paints its idle state even
+        // before any session has been started — otherwise the chip
+        // doesn't exist as a clickable affordance until a session is
+        // already in flight. Deferred via queueMicrotask because the
+        // `let liveSessionChipScheduled` binding lives further down in
+        // this bootstrap closure; calling synchronously here hits TDZ.
+        queueMicrotask(() => { try { renderLiveSessionChip(); } catch (e) { console.warn('[fade] initial chip render failed', e); } });
 
         // History panel binds to the same controller. Mounting here (after
         // sharing is up) guarantees the controller is non-null when the
@@ -5941,6 +6509,42 @@ async function bootstrap() {
                 sessionHost: sessionAdapter,
                 getProjectName: () => workspace.currentProject(),
                 getGithubLogin: () => null,
+                // "Force sync debug data" button in the Live Session
+                // panel. Recovery affordance for the intermittent
+                // observer-doesn't-see-scopes problem (RPC drops while
+                // the host's iframe is busy). On the host: re-fetch
+                // frames from the runtime and re-broadcast the snapshot.
+                // On a guest: clear any cached call stack on the remote
+                // adapter and re-run refreshDebugView, which pulls a
+                // fresh stack/scopes RPC from the host.
+                forceDebugSync: async () => {
+                    const session = liveSessionHandle?.getSession();
+                    // eslint-disable-next-line no-console
+                    console.log('[fade-collab] forceDebugSync clicked', {
+                        hasSession: !!session,
+                        debugSessionActive,
+                        isLocalDebugInitiator: session ? isLocalDebugInitiator() : null,
+                        dbgKind: dbg.kind,
+                        currentDebugState: session
+                            ? Object.fromEntries(Array.from(session.debugState.entries()))
+                            : null,
+                    });
+                    if (!session) return;
+                    if (!debugSessionActive) return;
+                    if (isLocalDebugInitiator()) {
+                        const frames = await fetchPausedFramesAndBroadcast();
+                        // eslint-disable-next-line no-console
+                        console.log('[fade-collab] forceDebugSync (host) re-broadcast', {
+                            frameCount: frames.length,
+                            firstLine: frames[0]?.lineNumber,
+                        });
+                        await refreshDebugView(frames);
+                    } else {
+                        // eslint-disable-next-line no-console
+                        console.log('[fade-collab] forceDebugSync (observer) refreshing');
+                        await refreshDebugView();
+                    }
+                },
                 guestLifecycle: {
                     onGuestJoinStart: async (roomId) => {
                         // Snapshot the current project so we can swap
@@ -6048,6 +6652,109 @@ async function bootstrap() {
             // because the previous session's handlers got disposed.
             liveSessionHandle.onSessionChange((session) => {
                 installCollabRuntimeListeners(session);
+                // Expose for devtools debugging — `window.__fadeCollab.debugState`
+                // dumps the current Y.Map state; `__fadeCollab.peerId` shows
+                // our Trystero peer ID; `__fadeCollab.initiatorPeerId` shows
+                // who we'd RPC for debug commands. `__fadeCollab.forceSync()`
+                // mirrors the Live Session panel button so the user can
+                // trigger it from devtools when the button doesn't appear
+                // to fire.
+                (window as any).__fadeCollab = session
+                    ? {
+                        get session() { return session; },
+                        get debugState() {
+                            return Object.fromEntries(Array.from(session.debugState.entries()));
+                        },
+                        get peerId() { return (session as any).room?.selfId; },
+                        get initiatorPeerId() { return session.debugState.get('initiatorPeerId'); },
+                        get peers() {
+                            return Array.from(session.awareness.getStates().keys());
+                        },
+                        get debugSessionActive() { return debugSessionActive; },
+                        get debugPaused() { return debugPaused; },
+                        get dbgKind() { return dbg.kind; },
+                        forceSync: async () => {
+                            if (!debugSessionActive) return 'no active debug session';
+                            if (isLocalDebugInitiator()) {
+                                const frames = await fetchPausedFramesAndBroadcast();
+                                await refreshDebugView(frames);
+                                return `host re-broadcast (${frames.length} frames, line ${frames[0]?.lineNumber})`;
+                            } else {
+                                await refreshDebugView();
+                                return 'observer refresh complete';
+                            }
+                        },
+                        // Self-test that walks through the observer flow
+                        // and reports where it breaks. Run in devtools on
+                        // either peer to diagnose intermittent issues.
+                        diagnose: async () => {
+                            const report: Record<string, unknown> = {
+                                role: isLocalDebugInitiator() ? 'host' : 'observer',
+                                selfPeerId: (session as any).room?.selfId,
+                                selfClientId: session.awareness.clientID,
+                                debugSessionActive,
+                                debugPaused,
+                                dbgKind: dbg.kind,
+                                debugState: Object.fromEntries(Array.from(session.debugState.entries())),
+                                peers: Array.from(session.awareness.getStates().entries()).map(
+                                    ([id, state]) => ({ clientId: id, state }),
+                                ),
+                            };
+                            // For an observer: test that the host's RPC
+                            // round-trip actually works. Send a stackFrames
+                            // RPC with a short timeout — if it hangs,
+                            // we've identified the transport-level cause
+                            // of the missing-data symptom.
+                            if (!isLocalDebugInitiator()) {
+                                const start = Date.now();
+                                try {
+                                    const peerId = session.debugState.get('initiatorPeerId') as string;
+                                    if (!peerId) {
+                                        report.rpcProbe = { error: 'no initiatorPeerId' };
+                                    } else {
+                                        const res = await session.request(peerId, 'debug:stackFrames', null, { timeoutMs: 3000 });
+                                        report.rpcProbe = {
+                                            ok: true,
+                                            elapsedMs: Date.now() - start,
+                                            frameCount: Array.isArray(res) ? res.length : '<not-array>',
+                                        };
+                                    }
+                                } catch (e) {
+                                    report.rpcProbe = {
+                                        ok: false,
+                                        elapsedMs: Date.now() - start,
+                                        error: e instanceof Error ? e.message : String(e),
+                                    };
+                                }
+                                // Also test scopes — the RPC the user
+                                // sees timing out.
+                                const scopesStart = Date.now();
+                                try {
+                                    const peerId = session.debugState.get('initiatorPeerId') as string;
+                                    if (!peerId) {
+                                        report.scopesProbe = { error: 'no initiatorPeerId' };
+                                    } else {
+                                        const res = await session.request(peerId, 'debug:scopes', { frameId: 0 }, { timeoutMs: 3000 });
+                                        report.scopesProbe = {
+                                            ok: true,
+                                            elapsedMs: Date.now() - scopesStart,
+                                            scopeCount: Array.isArray((res as any)?.scopes) ? (res as any).scopes.length : '<not-array>',
+                                        };
+                                    }
+                                } catch (e) {
+                                    report.scopesProbe = {
+                                        ok: false,
+                                        elapsedMs: Date.now() - scopesStart,
+                                        error: e instanceof Error ? e.message : String(e),
+                                    };
+                                }
+                            }
+                            // eslint-disable-next-line no-console
+                            console.log('[fade-collab diagnose]', report);
+                            return report;
+                        },
+                    }
+                    : undefined;
             });
         }
     }
@@ -6065,12 +6772,42 @@ async function bootstrap() {
     function installCollabRuntimeListeners(session: ReturnType<NonNullable<typeof liveSessionHandle>['getSession']>): void {
         for (const u of collabRuntimeUnsubs) { try { u(); } catch { /* ignore */ } }
         collabRuntimeUnsubs = [];
+        // Tear down any previous-session cursor surface before we
+        // (maybe) build a fresh one. dispose() clears overlay DOM,
+        // removes the awareness listener, and broadcasts focus=null
+        // so peers stop showing us.
+        if (sharedCursorHandle) {
+            try { sharedCursorHandle.dispose(); }
+            catch (e) { console.warn('[fade-collab] sharedCursor dispose threw', e); }
+            sharedCursorHandle = null;
+        }
         if (!session) {
             // Session ended — hide observer overlays and stop streaming.
             stopGameFrameStreaming();
             hideGameStreamOverlay();
             updateDebugObserverBanner(null);
+            // Clear any lingering peer-presence dots from the previous session.
+            try { applyPeerFilePresence(new Map()); }
+            catch { /* ignore */ }
             return;
+        }
+
+        // Mount the shared-cursor system on every fresh session. Editor
+        // is the same long-lived Monaco instance for the lifetime of
+        // the page, so we always have a target for the in-editor
+        // cursors. Tab badges flow into the workspace tab strip via
+        // applyEditorTabBadges defined alongside the file list render.
+        if (editor) {
+            try {
+                sharedCursorHandle = mountSharedCursors({
+                    session,
+                    editor,
+                    getActiveFile: () => activeName,
+                    setPeerFilePresence: (m) => applyPeerFilePresence(m),
+                });
+            } catch (e) {
+                console.warn('[fade-collab] mountSharedCursors failed', e);
+            }
         }
 
         // Game frames from any other peer.
@@ -6095,6 +6832,120 @@ async function bootstrap() {
             void renderGameFrame(bytes);
         }));
 
+        // Program-output forwarding: when another peer broadcasts a log
+        // line (their program's `print` / stdout / stderr), pipe it into
+        // our local Output panel — same surface where our OWN program's
+        // print lines go, so observers see the host's output alongside
+        // anything they print locally. Drops the loopback so peers don't
+        // see their own broadcasts.
+        collabRuntimeUnsubs.push(session.onLogLine((peerId, line) => {
+            if (peerId === (session as any).room?.selfId) return;
+            appendOutputLine(line.message, line.level === 'error' ? 'error' : 'plain');
+        }));
+
+        // Apply Debug UI envelopes broadcast by whoever's running the
+        // program. Observers don't have a monogame iframe, so this relay
+        // is the only path their debug-ui-panel sees envelopes. Self-
+        // broadcasts are skipped to avoid double-applying.
+        let debugUiReceiveCount = 0;
+        let observerLastQueueLen = -1;
+        let observerLastGen = -1;
+        collabRuntimeUnsubs.push(session.onDebugUiFrame((peerId, json) => {
+            console.log(`[debug-ui-collab] observer onDebugUiFrame fired peerId=${peerId.slice(0,8)} self=${(session as any).room?.selfId?.slice(0,8)} jsonLen=${json.length}`);
+            if (peerId === (session as any).room?.selfId) return;
+            if (!debugUiHandle) {
+                debugUiCollabLog.warn(`relayed debug-ui frame received but debugUiHandle is null — panel not mounted`);
+                return;
+            }
+            try {
+                const env = parseDebugUiEnvelope(json);
+                const qLenBefore = env.queue?.length ?? 0;
+                debugUiHandle.applyFrameEnvelope(env);
+                debugUiReceiveCount++;
+                if (debugUiReceiveCount <= 3) {
+                    console.log(`[debug-ui-collab] observer applied frame #${debugUiReceiveCount} qlen=${qLenBefore} gen=${env.gen}`);
+                }
+                // One-shot DOM probe right after we apply the first
+                // non-empty queue: if the panel mounted Tweakpane
+                // correctly the host element will have child nodes; if
+                // it's still empty, the apply path silently did nothing.
+                if (qLenBefore > 0 && observerLastQueueLen === 0) {
+                    // Find every #debug-ui-host AND every panel-cell with
+                    // data-panel="debug-ui" — the user reports a visible
+                    // idle-hint text alongside a hidden Pane, which only
+                    // makes sense if dockview duplicated the cell.
+                    const allHosts = Array.from(document.querySelectorAll('#debug-ui-host')) as HTMLElement[];
+                    const allCells = Array.from(document.querySelectorAll('.panel-cell[data-panel="debug-ui"]')) as HTMLElement[];
+                    // Find every element whose textContent contains the
+                    // idle-hint string. Catches an orphaned host where the
+                    // user can see the text but the Pane is elsewhere.
+                    const idleHintEls: HTMLElement[] = [];
+                    document.querySelectorAll<HTMLElement>('*').forEach((el) => {
+                        if (el.children.length === 0
+                            && (el.textContent ?? '').includes('Run your program to see custom debug windows')) {
+                            idleHintEls.push(el);
+                        }
+                    });
+                    debugUiCollabLog.info(
+                        `observer DOM census: #debug-ui-host count=${allHosts.length}, .panel-cell[data-panel=debug-ui] count=${allCells.length}, idleHintEls=${idleHintEls.length}`,
+                    );
+                    const reportEl = (label: string, el: HTMLElement) => {
+                        const rect = el.getBoundingClientRect();
+                        const cs = getComputedStyle(el);
+                        let p: HTMLElement | null = el.parentElement;
+                        let depth = 0;
+                        const ancestors: { tag: string; cls: string; vis: string; disp: string }[] = [];
+                        while (p && depth < 8) {
+                            const ps = getComputedStyle(p);
+                            ancestors.push({
+                                tag: p.tagName.toLowerCase(),
+                                cls: p.className?.toString?.().slice(0, 60) ?? '',
+                                vis: ps.visibility,
+                                disp: ps.display,
+                            });
+                            p = p.parentElement;
+                            depth++;
+                        }
+                        debugUiCollabLog.info(
+                            `${label} size=${Math.round(rect.width)}x${Math.round(rect.height)} display=${cs.display} visibility=${cs.visibility} attached=${el.isConnected}`,
+                        );
+                        ancestors.forEach((a, i) => {
+                            debugUiCollabLog.info(`  ↑[${i}] ${a.tag}.${a.cls} display=${a.disp} visibility=${a.vis}`);
+                        });
+                    };
+                    allHosts.forEach((host, i) => reportEl(`#debug-ui-host[${i}]`, host));
+                    allCells.forEach((cell, i) => {
+                        const hosts = cell.querySelectorAll('#debug-ui-host').length;
+                        const sliders = cell.querySelectorAll('.tp-sldv').length;
+                        reportEl(`panel-cell[${i}] (containedHosts=${hosts} sliders=${sliders})`, cell);
+                    });
+                    idleHintEls.forEach((el, i) => reportEl(`idleHintEl[${i}]`, el));
+                }
+                // Log first 3 + every queue-length change so we see when
+                // (and whether) a real queue arrives from the host.
+                const qLen = env.queue?.length ?? 0;
+                const shouldLog = debugUiReceiveCount <= 3
+                    || qLen !== observerLastQueueLen
+                    || env.gen !== observerLastGen
+                    || debugUiReceiveCount % 200 === 0;
+                if (shouldLog) {
+                    const types = (env.queue ?? []).map(c => c.t);
+                    const hist = types.reduce<Record<number, number>>((m, t) => {
+                        m[t] = (m[t] ?? 0) + 1; return m;
+                    }, {});
+                    const sample = (env.queue ?? []).slice(0, 4);
+                    debugUiCollabLog.info(
+                        `observer frame #${debugUiReceiveCount}: gen=${env.gen} queue=${qLen} autoInspector=${env.autoInspector} hist=${JSON.stringify(hist)} sample=${JSON.stringify(sample)}`,
+                    );
+                    observerLastQueueLen = qLen;
+                    observerLastGen = env.gen;
+                }
+            }
+            catch (e) {
+                debugUiCollabLog.error(`applyFrameEnvelope (relayed) failed: ${e instanceof Error ? e.message : String(e)}`);
+            }
+        }));
+
         // Debug state: when host writes pause info, render the observer
         // banner on guest panels. Cleared when the initiator drops the
         // session or ends debugging.
@@ -6106,10 +6957,355 @@ async function bootstrap() {
 
         // Phase 2C smoke test: register a ping handler so the host can
         // be probed from a guest. Returns `{ pong: payload }` so the
-        // round-trip is verifiable. Real debug command handlers will
-        // sit alongside this once the debug-control surface is wired.
+        // round-trip is verifiable.
         const offPing = session.onRequest('ping', (_peerId, payload) => ({ pong: payload }));
         collabRuntimeUnsubs.push(offPing);
+
+        // Observer-initiated stop. The observer's Stop button reaches us
+        // here when this peer is the active runner/debugger. Just call
+        // stopAll — same code path the host's own Stop click follows.
+        // Idempotent on the host side (stopAll is safe when nothing is
+        // actually running, which can happen if the activity flag was
+        // stale by the time the RPC arrived).
+        const offRunStop = session.onRequest('run:stop', async () => {
+            await stopAll();
+            return { ok: true };
+        });
+        collabRuntimeUnsubs.push(offRunStop);
+
+        // Debug UI dispatch — observers' Tweakpane panel routes its
+        // get/set/list calls here when we're the active runner. Each
+        // handler is a thin proxy to the corresponding monoGameHost
+        // method; payloads mirror the panel callback shapes 1:1.
+        const debugUiHandlers: Array<[string, (p: any) => unknown | Promise<unknown>]> = [
+            ['debugUi:getSchema',
+                (p: { typeName: string }) => monoGameHost.debugGetSchema(p.typeName)],
+            ['debugUi:getEntitySchema',
+                (p: { typeName: string; entityId: number }) =>
+                    monoGameHost.debugGetEntitySchema(p.typeName, p.entityId)],
+            ['debugUi:listEntities',
+                (p: { typeName: string }) => monoGameHost.debugListEntities(p.typeName)],
+            ['debugUi:getLabels',
+                (p: { typeName: string }) => monoGameHost.debugGetLabels(p.typeName)],
+            ['debugUi:getEntity',
+                (p: { typeName: string; entityId: number }) =>
+                    monoGameHost.debugGetEntity(p.typeName, p.entityId)],
+            ['debugUi:setField',
+                (p: { typeName: string; entityId: number; path: string; valueJson: string }) =>
+                    monoGameHost.debugSetField(p.typeName, p.entityId, p.path, p.valueJson)],
+            ['debugUi:sendFbasicChange',
+                (p: { ctrlId: number; kind: number; value: string }) => {
+                    getLogger('debug-ui-collab').info(
+                        `host received sendFbasicChange ctrl=${p.ctrlId} kind=${p.kind} value=${p.value}`,
+                    );
+                    monoGameHost.sendDebugUiChange(p.ctrlId, p.kind, p.value);
+                    return { ok: true };
+                }],
+        ];
+        for (const [channel, handler] of debugUiHandlers) {
+            collabRuntimeUnsubs.push(session.onRequest(channel, (_peerId, payload) => handler(payload as any)));
+        }
+
+        // ── Phase 2C: host-side debug RPC handlers ───────────────────────
+        // Each handler forwards to localDebugAdapter — the LOCAL adapter,
+        // not the facade. We always want to act on this peer's actual
+        // debug runtime, even if some other peer somehow became
+        // initiator. (The session-layer's `setDebugState` guard already
+        // ensures only the active initiator can mutate debugState, but
+        // we double-check the channel can only run when we have a live
+        // debug session — refusing the RPC with a clear error
+        // otherwise.)
+        const debugRpcCheck = (): string | null => {
+            if (!debugSessionActive) return 'no active debug session on host';
+            if (session.debugState.get('initiatorClientId') !== session.awareness.clientID) {
+                return 'this peer is not the active debug initiator';
+            }
+            return null;
+        };
+        // Observer-driven control RPCs (continue/step/pause) need to do
+        // MORE than just call the local adapter — they must also mirror
+        // the side-effects that the host's own button handlers do:
+        //   * Update the host's `debugPaused` flag + status pill + button
+        //     enable-states so the host's Debug panel doesn't look stuck.
+        //   * Broadcast the transient state-change to the Y.Map so OTHER
+        //     observers (and the triggering observer's RemoteAdapter)
+        //     see `paused: false` immediately, before the runtime lands
+        //     at the next pause. Without this, the observer's UI looks
+        //     dead between click and the next BREAKPOINT.
+        // Observer-driven control RPCs. Mirror the host's local UI flags
+        // so the host's Debug panel doesn't look stuck while the observer
+        // drives the debugger. Only `continue` broadcasts proactively —
+        // see the matching reasoning on the local button handlers. The
+        // BREAKPOINT case in onAnyDebugEvent is the single source of
+        // truth for {paused:true, currentFile, currentLine, callStack}
+        // broadcasts; double-broadcasting them from here would race the
+        // runtime's own broadcast.
+        const onObserverContinue = async () => {
+            await localDebugAdapter.continue();
+            debugPaused = false;
+            setDebugStatus('running', 'running');
+            setCurrentLine(null);
+            setDebugButtons();
+            broadcastDebugState({ paused: false });
+        };
+        const onObserverPause = async () => {
+            await localDebugAdapter.pause();
+            debugPaused = true;
+            setDebugStatus('paused', 'paused');
+            setDebugButtons();
+            // Same reasoning as the local pauseBtn handler: REQUEST_PAUSE
+            // doesn't fire REV_REQUEST_BREAKPOINT, so we have to push the
+            // {paused, currentFile, currentLine, callStack, topFrameScopes}
+            // snapshot ourselves, otherwise the observer's debugState never
+            // flips to paused:true and their UI looks dead.
+            const frames = await fetchPausedFramesAndBroadcast();
+            await refreshDebugView(frames);
+        };
+        const onObserverStep = async (p: { kind: StepKind }) => {
+            await localDebugAdapter.step(p.kind);
+            debugPaused = false;
+            setCurrentLine(null);
+            setDebugButtons();
+        };
+        const debugRpcRoutes: Array<[string, (payload: any) => Promise<unknown>]> = [
+            ['debug:continue',           () => onObserverContinue()],
+            ['debug:pause',              () => onObserverPause()],
+            ['debug:step',               (p: { kind: StepKind }) => onObserverStep(p)],
+            ['debug:terminate',          () => localDebugAdapter.terminate()],
+            ['debug:setBreakpoints',     (p: { payload: unknown }) => localDebugAdapter.setBreakpoints(p.payload)],
+            ['debug:stackFrames',        () => localDebugAdapter.stackFrames()],
+            ['debug:scopes',             (p: { frameId: number }) => localDebugAdapter.scopes(p.frameId)],
+            ['debug:expandVariable',     (p: { variableId: number }) => localDebugAdapter.expandVariable(p.variableId)],
+            ['debug:eval',               (p: { frameId: number; expression: string }) => localDebugAdapter.eval(p.frameId, p.expression)],
+            ['debug:repl',               (p: { frameId: number; code: string }) => localDebugAdapter.repl(p.frameId, p.code)],
+            ['debug:setVariable',        (p: { frameId: number; variableId: number; rhs: string }) => localDebugAdapter.setVariable(p.frameId, p.variableId, p.rhs)],
+            ['debug:resolveInstruction', (p: { insIndex: number }) => Promise.resolve(localDebugAdapter.resolveInstruction(p.insIndex))],
+        ];
+        // Channels that MUTATE debug state — after running them the
+        // host's local panels show stale values until the user refreshes
+        // manually. Re-fetch scopes for the currently-active frame so the
+        // host sees observer-driven changes immediately, AND re-broadcast
+        // topFrameScopes so the requesting observer (and anyone else
+        // watching) reads the new value from the shared cache rather than
+        // pulling stale data and triggering a follow-up RPC. Without the
+        // re-broadcast, the observer's refreshScopes() falls back to a
+        // second RPC for fresh data — that round-trip is what made the
+        // post-edit UI feel janky and racy.
+        const debugMutatingChannels = new Set(['debug:setVariable', 'debug:eval', 'debug:repl']);
+        for (const [channel, handler] of debugRpcRoutes) {
+            const off = session.onRequest(channel, async (_peerId, payload) => {
+                const err = debugRpcCheck();
+                if (err) throw new Error(err);
+                const result = await handler(payload as any);
+                if (debugMutatingChannels.has(channel) && activeFrameId != null && debugSessionActive) {
+                    // Fire-and-forget — we've already got `result` for
+                    // the observer; the host's scope refresh + observer
+                    // re-broadcast are independent UI hygiene that
+                    // shouldn't block the RPC response.
+                    void (async () => {
+                        await refreshScopes(activeFrameId!);
+                        await rebroadcastTopFrameScopes();
+                    })();
+                }
+                return result;
+            });
+            collabRuntimeUnsubs.push(off);
+        }
+
+        // ── Phase 2B: adapter swap on remote initiator changes ───────────
+        // Whenever `debugState.initiatorClientId` toggles between "us /
+        // empty" and "some other peer", swap the facade to the matching
+        // adapter and mirror the UI flags so the observer's Debug panel
+        // surfaces as if their own debugger were live.
+        let currentRemoteAdapter: ReturnType<typeof createRemoteDebugAdapter> | null = null;
+        // Track the last observed `paused` value so we can detect the
+        // host's resume edge (paused: true → false). Local code paths
+        // handle this by manually clearing the current-line decoration
+        // and updating the status pill after each step/continue; on the
+        // observer side those calls don't run, so without an explicit
+        // edge-handler the status stays stuck on "paused on breakpoint"
+        // and the line highlight lingers after the host resumes.
+        let lastObservedPaused = false;
+        // Track the previous topFrameScopes reference so we can detect
+        // a mutation re-broadcast (the host re-publishes scopes after a
+        // setVariable/eval/repl). On a fresh reference, re-render the
+        // observer's variables panel without waiting for the next pause —
+        // otherwise the new value lands in the Y.Map but the UI keeps
+        // showing the value from the BREAKPOINT snapshot.
+        let lastObservedTopFrameScopes: unknown = undefined;
+        const swapOnDebugStateChange = () => {
+            const initiator = session.debugState.get('initiatorClientId') as number | undefined;
+            const observingRemote = initiator != null && initiator !== session.awareness.clientID;
+
+            if (observingRemote) {
+                // Build (or keep) the remote adapter; point facade at it.
+                const justAttached = !currentRemoteAdapter;
+                if (!currentRemoteAdapter) {
+                    currentRemoteAdapter = createRemoteDebugAdapter({ session });
+                    dbg.setInner(currentRemoteAdapter);
+                }
+                // Mirror the host's session state into our UI flags so
+                // the debug panel + step buttons enable. We're not
+                // running our own debugger; these flags are about
+                // "is the UI in debug mode".
+                const newPaused = Boolean(session.debugState.get('paused'));
+                debugSessionActive = true;
+                debugPaused = newPaused;
+                // Resume edge: host just hit Continue / Step. Update the
+                // status pill, clear the current-line highlight in our
+                // editor (otherwise it sticks at the previous pause
+                // point), and let the synthesized REV_REQUEST_BREAKPOINT
+                // event re-set everything on the next pause.
+                if (lastObservedPaused && !newPaused) {
+                    setDebugStatus('running', 'running');
+                    setCurrentLine(null);
+                }
+                // Re-render scopes when paused AND the topFrameScopes
+                // reference changed (mutation re-broadcast). renderScopes
+                // is cheap (DOM rebuild from cached data), no RPC.
+                const newTopFrameScopes = session.debugState.get('topFrameScopes');
+                if (newPaused
+                    && newTopFrameScopes !== lastObservedTopFrameScopes
+                    && newTopFrameScopes
+                    && typeof newTopFrameScopes === 'object'
+                ) {
+                    try { renderScopes(((newTopFrameScopes as any).scopes ?? []) as DebugScope[]); }
+                    catch (e) { console.warn('[fade-collab] observer scope re-render failed', e); }
+                }
+                lastObservedTopFrameScopes = newTopFrameScopes;
+                // Pause edge: status text gets set by onAnyDebugEvent's
+                // REV_REQUEST_BREAKPOINT case (which fires via the
+                // RemoteDebugAdapter's synthesized event), so we don't
+                // need to duplicate that here.
+                lastObservedPaused = newPaused;
+                refreshRunButtons();
+                refreshStopButton();
+                setDebugButtons();
+                // First time we swapped to remote — the RemoteAdapter's
+                // constructor primed BEFORE `dbg.setInner()` attached the
+                // facade fanout, so any synthesized REV_REQUEST_BREAKPOINT
+                // for the current paused state was emitted to an empty
+                // subscriber set and lost. Replay it now by directly
+                // running refreshDebugView() if we're already paused AND
+                // have a usable call stack cached.
+                //
+                // Without the callStack gate, refreshDebugView calls
+                // dbg.stackFrames(), the cache is empty, and a 15-second
+                // timeout RPC fires against a host whose iframe is mid-
+                // `await dbg.continue()` (the host's startDebug path
+                // broadcasts the initial {paused:true} before its
+                // program has hit any breakpoint, so the host has no
+                // frames to return yet). If we don't have frames, do
+                // nothing — the subsequent BREAKPOINT broadcast carries
+                // the call stack and will trigger a real refresh.
+                if (justAttached && newPaused) {
+                    const callStack = session.debugState.get('callStack');
+                    if (Array.isArray(callStack) && callStack.length > 0) {
+                        void refreshDebugView();
+                    }
+                }
+            } else {
+                // No remote initiator (or it's us). If we were observing,
+                // tear down and revert to local.
+                if (currentRemoteAdapter) {
+                    dbg.setInner(localDebugAdapter);
+                    try { currentRemoteAdapter.destroy(); } catch { /* ignore */ }
+                    currentRemoteAdapter = null;
+                    // Clear the mirrored flags ONLY if we set them while
+                    // observing — guarded against clobbering a real
+                    // local debug session that's underway on this peer.
+                    if (initiator !== session.awareness.clientID) {
+                        debugSessionActive = false;
+                        debugPaused = false;
+                        debugFatalException = false;
+                        setDebugStatus('program exited', 'idle');
+                        setCurrentLine(null);
+                        // Clear the inspection panels so the observer
+                        // doesn't see stale frames/scopes/watches from
+                        // the now-ended remote session.
+                        clearDebugInspectionPanels();
+                        setDebugEmptyStates(true);
+                        refreshRunButtons();
+                        refreshStopButton();
+                        setDebugButtons();
+                    }
+                }
+                lastObservedPaused = false;
+                lastObservedTopFrameScopes = undefined;
+            }
+        };
+        session.debugState.observe(swapOnDebugStateChange);
+        collabRuntimeUnsubs.push(() => {
+            session.debugState.unobserve(swapOnDebugStateChange);
+            // Make sure we leave the facade pointing at LOCAL when the
+            // session ends — otherwise the next session-less debug
+            // attempt would route through a stale remote adapter that
+            // can't reach anyone.
+            if (currentRemoteAdapter) {
+                dbg.setInner(localDebugAdapter);
+                try { currentRemoteAdapter.destroy(); } catch { /* ignore */ }
+                currentRemoteAdapter = null;
+            }
+        });
+        // Initial pass — handle the case where we joined a session that
+        // already has an active debug initiator.
+        swapOnDebugStateChange();
+
+        // ── Shared breakpoints ──────────────────────────────────────────
+        // Mirror the session's breakpoints Y.Map into the local
+        // `remoteBreakpointsByUri` view (own entries are excluded; they
+        // live in `breakpointsByUri`). After every change, repaint the
+        // gutter and refresh the per-peer CSS so each peer's
+        // breakpoints render in their identity colour.
+        const reapplyBreakpointsFromSession = () => {
+            remoteBreakpointsByUri.clear();
+            const selfClientId = session.awareness.clientID;
+            for (const entry of session.breakpoints.values()) {
+                const e = entry as { file: string; line: number; ownerClientId: number };
+                if (e.ownerClientId === selfClientId) continue;
+                const uri = monaco.Uri.file(`/workspace/${e.file}`).toString();
+                let m = remoteBreakpointsByUri.get(uri);
+                if (!m) { m = new Map<number, number>(); remoteBreakpointsByUri.set(uri, m); }
+                m.set(e.line, e.ownerClientId);
+            }
+            refreshBreakpointDecorations();
+            updatePeerBreakpointStyles(session.getState().peers);
+            // If THIS peer is the active local debugger, push the
+            // updated union of local + remote breakpoints to the
+            // runtime so observer-set breakpoints actually break.
+            // (Observers reach this path too, but their dbg points at
+            // the remote adapter, so setBreakpoints would just RPC back
+            // to the host — which is wasteful but harmless. The
+            // `isLocalDebugInitiator` guard avoids the round-trip.)
+            if (debugSessionActive && isLocalDebugInitiator()) {
+                syncBreakpointsToWorker();
+            }
+        };
+        session.breakpoints.observe(reapplyBreakpointsFromSession);
+        collabRuntimeUnsubs.push(() => {
+            session.breakpoints.unobserve(reapplyBreakpointsFromSession);
+            remoteBreakpointsByUri.clear();
+            // Drop the per-peer breakpoint CSS that was injected for
+            // this session — leaving stale `fade-breakpoint-peer-<id>`
+            // rules behind would tint any future identical clientID
+            // (rare but possible across reconnects) with the wrong
+            // colour.
+            updatePeerBreakpointStyles([]);
+            refreshBreakpointDecorations();
+        });
+        // Initial pass + push any breakpoints we already have locally
+        // into the session map so peers see them immediately.
+        reapplyBreakpointsFromSession();
+        for (const [uri, lines] of breakpointsByUri) {
+            const m = /^file:\/\/\/workspace\/(.+)$/.exec(uri);
+            if (!m) continue;
+            const file = m[1];
+            for (const line of lines) {
+                const key = `${file}:${line}`;
+                if (session.breakpoints.has(key)) continue;
+                session.breakpoints.set(key, { file, line, ownerClientId: session.awareness.clientID });
+            }
+        }
 
         // Show / hide the observer game overlay based on whether any
         // OTHER peer is currently running or debugging. Driven by
@@ -6119,11 +7315,41 @@ async function bootstrap() {
         const onState = session.onStateChange((st) => {
             const activeRunner = st.peers.find((p) => !p.isSelf
                 && (p.activity === 'running' || p.activity === 'debugging'));
+            // Diagnostic — fires every onStateChange. Filter on
+            // [collab-state] in DevTools to watch awareness flow.
+            console.info('[collab-state] activeRunner=%s remoteActivityInProgress=%s peers=%d',
+                activeRunner ? `${activeRunner.identity.displayName}(${activeRunner.activity})` : 'null',
+                remoteActivityInProgress, st.peers.length);
             if (activeRunner) {
                 showGameStreamOverlay(activeRunner.identity.displayName, activeRunner.activity);
             } else {
-                hideGameStreamOverlay();
+                // Host stopped, but the live session is still alive —
+                // hide just the banner and let the last frame linger
+                // on the canvas (same UX the host gets locally; they
+                // keep their last frame until Reset). hideGameStreamOverlay
+                // is reserved for full session teardown above.
+                clearGameStreamBanner();
             }
+            // Drive observer-side button state: if someone else owns the
+            // runtime, our Run/Reset goes grey ("host has control") and
+            // our Stop becomes the way to end the shared session.
+            const newRemote = !!activeRunner;
+            if (newRemote !== remoteActivityInProgress) {
+                remoteActivityInProgress = newRemote;
+                refreshRunButtons();
+                refreshStopButton();
+                console.info('[collab-state] remoteActivityInProgress flipped → %s; stopBtn.disabled=%s banner.hidden=%s',
+                    newRemote,
+                    (document.getElementById('stop-btn') as HTMLButtonElement | null)?.disabled,
+                    (document.getElementById('game-stream-banner') as HTMLElement | null)?.hidden);
+            }
+            // Live-session arrival can race the editor's focus state: if
+            // the editor already had focus when the peer joined, the
+            // monogame tick is paused right now — kick it back on so the
+            // game-frame stream and Debug UI relay resume for the new
+            // observer. Same condition pauseMgTick checks (someone else
+            // is in the room).
+            if (st.peers.some((p) => !p.isSelf)) resumeMgTick();
         });
         collabRuntimeUnsubs.push(onState);
     }
@@ -6155,21 +7381,103 @@ async function bootstrap() {
     // banner + canvas. We draw incoming JPEG frames into the canvas via
     // an off-DOM <img> as the decoder. Frame URL strings are kept in a
     // throwaway scope so the GC handles cleanup; no manual revoke needed.
+
+    // dockview-core wraps each panel-cell in a `dv-render-overlay` div
+    // initialised with style.visibility:hidden for one-frame anti-flicker
+    // (dockview-core.js:11465-11467). The wrapper is supposed to clear
+    // visibility once dockview's RAF runs AND the panel is active. In
+    // practice on the static panel-cells pool + restored layouts we use,
+    // the RAF can fire BEFORE the panel becomes active and dockview
+    // never re-clears the inline visibility:hidden. The canvas inside
+    // happily renders incoming JPEG frames (gameFrameReceiveStats.rendered
+    // increments correctly) but the GPU never composites them — the
+    // observer sees a blank panel until they hover/click the game tab,
+    // which finally nudges dockview to re-evaluate.
+    //
+    // Same root cause + fix as the debug-ui panel: force visibility:visible
+    // on the overlay so a stuck-hidden ancestor doesn't keep frames off-
+    // screen (CSS spec — child visibility:visible overrides ancestor
+    // visibility:hidden). Mirror dockview's CORRECT hide signal via a
+    // MutationObserver so tab-switching still hides the overlay.
+    //
+    // applyGameOverlayState is the single source of truth for what the
+    // overlay's inline display/visibility should be. show/hide just flip
+    // overlay.hidden and call it; the observer also calls it on every
+    // wrapper-style mutation.
+    let gameOverlayDvSyncInstalled = false;
+    function applyGameOverlayState(): void {
+        const overlay = document.getElementById('game-stream-overlay');
+        if (!overlay) return;
+        // Always assert visibility:visible to defeat the wrapper's stuck
+        // anti-flicker visibility:hidden. Harmless when display is 'none'
+        // (display:none wins regardless).
+        overlay.style.visibility = 'visible';
+        // Walk to the dockview wrapper and check whether dockview is
+        // correctly signaling "panel is inactive" (pointer-events:none
+        // + visibility:hidden together — visibility alone is the stuck
+        // anti-flicker state we want to ignore).
+        let p: HTMLElement | null = overlay.parentElement;
+        while (p && !p.classList.contains('dv-render-overlay')) p = p.parentElement;
+        const dockviewWantsHidden = !!p
+            && p.style.pointerEvents === 'none'
+            && p.style.visibility === 'hidden';
+        const shouldHide = overlay.hidden || dockviewWantsHidden;
+        // Force display inline rather than relying on the [hidden] +
+        // CSS cascade — the visibility:visible we leave inline above
+        // can otherwise keep the canvas's compositor layer pinned even
+        // after [hidden] kicks in, so the GPU keeps painting the last
+        // frame's cached pixels until the user hovers / nudges a
+        // repaint.
+        overlay.style.display = shouldHide ? 'none' : '';
+    }
+    function ensureGameOverlayVisibilitySync(overlay: HTMLElement): void {
+        if (gameOverlayDvSyncInstalled) return;
+        let p: HTMLElement | null = overlay.parentElement;
+        while (p && !p.classList.contains('dv-render-overlay')) p = p.parentElement;
+        if (!p) return;  // dockview hasn't adopted the panel yet — retry next call
+        const observer = new MutationObserver(applyGameOverlayState);
+        observer.observe(p, { attributes: true, attributeFilter: ['style'] });
+        gameOverlayDvSyncInstalled = true;
+    }
+
     function showGameStreamOverlay(initiatorName: string, activity: string): void {
         const overlay = document.getElementById('game-stream-overlay');
         const banner = document.getElementById('game-stream-banner');
         if (!overlay || !banner) return;
         overlay.hidden = false;
+        banner.hidden = false;
+        ensureGameOverlayVisibilitySync(overlay);
+        applyGameOverlayState();
         const verb = activity === 'debugging' ? 'is debugging' : 'is running the program';
         banner.textContent = `${initiatorName} ${verb}. Your view is a low-FPS stream — input control stays with them.`;
     }
 
+    /** Host stopped running, but the live session is still active. Hides
+     *  ONLY the "X is running…" banner — the canvas keeps its last frame
+     *  on screen, intentionally, to mirror what the host sees on their
+     *  side (their own iframe also keeps the last frame until they hit
+     *  Reset). When the next Run kicks off, the banner shows again and
+     *  the canvas's first new frame overwrites the lingering one. */
+    function clearGameStreamBanner(): void {
+        const banner = document.getElementById('game-stream-banner');
+        if (!banner) return;
+        banner.hidden = true;
+    }
+
+
+    /** Full teardown — used only when the live session itself ends. The
+     *  overlay disappears entirely (canvas included) so the local panel
+     *  surfaces underneath (web-preview / monogame iframe) can show
+     *  through again. Don't use this on the host-stop transition; use
+     *  clearGameStreamBanner() for that. */
     function hideGameStreamOverlay(): void {
         const overlay = document.getElementById('game-stream-overlay');
         if (!overlay) return;
         overlay.hidden = true;
-        // Clear the canvas so the last frame doesn't linger if a new
-        // session starts later.
+        applyGameOverlayState();
+        // Clear the canvas so a future re-show doesn't briefly flash
+        // the previous session's last frame before the first new
+        // frame arrives.
         const canvas = document.getElementById('game-stream-canvas') as HTMLCanvasElement | null;
         if (canvas) {
             const ctx = canvas.getContext('2d');
@@ -6217,20 +7525,60 @@ async function bootstrap() {
 
     // ── Phase 2B: host writes debug state ────────────────────────────────
     /** Idempotently push a partial debug-state update over the live
-     *  session. Only the active initiator should call this (the local
-     *  debug paths). Safely no-op when no session is in flight. */
+     *  session. Only the active initiator should call this. Observers
+     *  also reach this path via their RemoteDebugAdapter's synthesised
+     *  REV_REQUEST_BREAKPOINT event — onAnyDebugEvent runs identically
+     *  on both peers, and without this gate the observer would
+     *  overwrite the host's debugState (currentFile, callStack, etc.)
+     *  with their own (empty / wrong-file) values, breaking the locals
+     *  view for everyone. */
+    function isLocalDebugInitiator(): boolean {
+        const session = liveSessionHandle?.getSession();
+        if (!session) return true; // no session — local-only is implicitly initiator
+        const initiator = session.debugState.get('initiatorClientId') as number | undefined;
+        // First write (claiming the role) is allowed; subsequent writes
+        // require the existing initiator to match us.
+        return initiator === undefined || initiator === session.awareness.clientID;
+    }
     function broadcastDebugState(patch: Record<string, unknown>): void {
         const session = liveSessionHandle?.getSession();
         if (!session) return;
+        // Allow this write if either: the patch is staking the initiator
+        // claim (it sets initiatorClientId to us, or clears it), OR the
+        // existing initiator is already us. Reject otherwise.
+        const localClientId = session.awareness.clientID;
+        const patchInitiator = (patch as { initiatorClientId?: number | null }).initiatorClientId;
+        const claimingOrClearing = patchInitiator === localClientId || patchInitiator === null;
+        if (!claimingOrClearing && !isLocalDebugInitiator()) return;
         try { session.setDebugState(patch); }
         catch (e) { console.warn('[fade-collab] setDebugState failed', e); }
     }
 
-    /** Wipe shared debug state on session end. Called from the debug
-     *  exit path. */
+    /** Re-broadcast just the top-frame scope payload. Called after an
+     *  observer-driven mutation (setVariable/eval/repl) lands so observers
+     *  read the fresh value from the shared cache instead of falling back
+     *  to a second RPC. Cheaper than fetchPausedFramesAndBroadcast (which
+     *  also re-fetches stack frames) since the call stack is unchanged by
+     *  these mutations. */
+    async function rebroadcastTopFrameScopes(): Promise<void> {
+        if (!isLocalDebugInitiator()) return;
+        if (!debugSessionActive) return;
+        try {
+            const scopes = await localDebugAdapter.scopes(0);
+            broadcastDebugState({ topFrameScopes: scopes ?? null });
+        } catch (e) {
+            console.warn('[fade-collab] rebroadcastTopFrameScopes failed', e);
+        }
+    }
+
+    /** Wipe shared debug state on session end. Only valid from the peer
+     *  that owns the active initiator role — observers that reach this
+     *  path via REV_REQUEST_EXITED on a synthesised remote event should
+     *  not clear the host's state out from under them. */
     function clearBroadcastDebugState(): void {
         const session = liveSessionHandle?.getSession();
         if (!session) return;
+        if (!isLocalDebugInitiator()) return;
         try { session.clearDebugState(); }
         catch (e) { console.warn('[fade-collab] clearDebugState failed', e); }
     }
@@ -6308,11 +7656,33 @@ async function bootstrap() {
         const host = document.getElementById('live-session-chip');
         if (!host) return;
         const session = liveSessionHandle?.getSession() ?? null;
+        // Strip is always visible. Rebuild children every paint —
+        // children are: one `.sharing-status-icon` button (the live-
+        // share affordance) + one peer pill per participant when a
+        // session is active. The strip itself is transparent; each
+        // child carries its own visual treatment so we never get a
+        // pill-inside-a-pill look.
+        host.replaceChildren();
+        host.onclick = null;
+        host.title = '';
+
+        // Live-share icon button — visually identical to the git
+        // `#sharing-status-icon` button (same class) so hover states
+        // match across the top-bar. Click always opens the Live
+        // Session panel, regardless of session state.
+        const iconBtn = document.createElement('button');
+        iconBtn.type = 'button';
+        iconBtn.className = 'sharing-status-icon';
+        iconBtn.setAttribute('aria-label', 'Open Live Session panel');
+        const iconGlyph = document.createElement('span');
+        iconGlyph.className = 'codicon codicon-vm-connect';
+        iconBtn.appendChild(iconGlyph);
+        iconBtn.addEventListener('click', focusLiveSessionPanel);
+        host.appendChild(iconBtn);
+
         if (!session) {
-            host.replaceChildren();
-            host.setAttribute('hidden', '');
-            host.onclick = null;
-            // Drop the per-peer cursor stylesheet too.
+            host.classList.remove('live-session-chip-syncing', 'live-session-chip-warning');
+            iconBtn.title = 'Live Session: not started. Click to open Live Session panel.';
             updatePeerCursorStyles([]);
             if (liveSessionStateUnsub) { liveSessionStateUnsub(); liveSessionStateUnsub = null; }
             return;
@@ -6323,28 +7693,14 @@ async function bootstrap() {
             liveSessionStateUnsub = session.onStateChange(() => renderLiveSessionChip());
         }
         const state = session.getState();
-        host.removeAttribute('hidden');
-        host.replaceChildren();
-        host.onclick = focusLiveSessionPanel;
-        // Visually swap the chip into a "syncing" variant when meta.sync
-        // is non-null — same width, different palette, progress text in
-        // place of the per-peer dots.
         host.classList.toggle('live-session-chip-syncing', state.sync != null);
         host.classList.toggle('live-session-chip-warning', state.connectionWarning != null);
 
-        // Connection warning takes visual priority over normal "hosting/
-        // joined" state — without surfacing it here, users who close the
-        // Live Session panel after starting have no idea something's
-        // gone wrong.
         if (state.connectionWarning && !state.sync) {
-            const label = document.createElement('span');
-            label.className = 'live-session-chip-role';
-            label.textContent = '⚠ connection';
-            const detail = document.createElement('span');
-            detail.className = 'live-session-chip-count';
-            detail.textContent = state.role === 'host' ? 'no peers' : 'unreachable';
-            host.append(label, detail);
-            host.title = state.connectionWarning;
+            iconBtn.title = state.connectionWarning;
+            const note = document.createElement('span');
+            note.textContent = state.role === 'host' ? '⚠ no peers' : '⚠ unreachable';
+            host.appendChild(note);
             updatePeerCursorStyles(state.peers);
             return;
         }
@@ -6353,49 +7709,34 @@ async function bootstrap() {
             const pct = state.sync.total > 0
                 ? Math.min(100, Math.round((state.sync.completed / state.sync.total) * 100))
                 : 0;
-            const label = document.createElement('span');
-            label.className = 'live-session-chip-role';
-            label.textContent = 'syncing';
-            const detail = document.createElement('span');
-            detail.className = 'live-session-chip-count';
-            detail.textContent = `${state.sync.completed}/${state.sync.total} · ${pct}%`;
-            host.append(label, detail);
-            host.title = state.sync.currentFile
+            const note = document.createElement('span');
+            note.textContent = `syncing ${state.sync.completed}/${state.sync.total} · ${pct}%`;
+            iconBtn.title = state.sync.currentFile
                 ? `Syncing ${state.sync.currentFile}`
                 : 'Workspace sync in progress';
+            host.appendChild(note);
             updatePeerCursorStyles(state.peers);
             return;
         }
 
-        host.title = '';
-        const role = document.createElement('span');
-        role.className = 'live-session-chip-role';
-        role.textContent = state.role === 'host' ? 'hosting' : 'joined';
-        host.appendChild(role);
+        const otherCount = state.peers.filter((p) => !p.isSelf).length;
+        const total = state.peers.length;
+        iconBtn.title = state.role === 'host'
+            ? `Live Session: hosting · ${total} ${total === 1 ? 'participant' : 'participants'}${otherCount > 0 ? ` (${otherCount} other)` : ''}. Click to open Live Session panel.`
+            : `Live Session: joined · ${total} ${total === 1 ? 'participant' : 'participants'}. Click to open Live Session panel.`;
 
-        // Peer pills — one per non-self peer, showing color + name +
-        // activity badge. Drawn into the same chip container so the
-        // existing layout / theming applies. Self isn't shown because
-        // the user already knows who they are.
-        const pills = document.createElement('span');
-        pills.className = 'live-session-chip-pills';
+        // One pill per participant — self first (so "you" is anchored
+        // left, immediately after the icon), then others alphabetically.
+        // Each pill is a direct child of the strip, NOT nested inside
+        // an outer chip. The user explicitly asked for this layout so
+        // peers don't appear to be contained inside the host's pill.
         const sorted = [...state.peers].sort((a, b) => {
-            // Self last so others are read left-to-right first.
-            if (a.isSelf !== b.isSelf) return a.isSelf ? 1 : -1;
+            if (a.isSelf !== b.isSelf) return a.isSelf ? -1 : 1;
             return a.identity.displayName.localeCompare(b.identity.displayName);
         });
         for (const peer of sorted) {
-            if (peer.isSelf) continue;
-            pills.appendChild(renderPeerPill(peer));
+            host.appendChild(renderPeerPill(peer));
         }
-        host.appendChild(pills);
-
-        // Total count (including self) at the right — gives at-a-glance
-        // "how many of us are here" without scanning the pill list.
-        const count = document.createElement('span');
-        count.className = 'live-session-chip-count';
-        count.textContent = String(state.peers.length);
-        host.appendChild(count);
 
         // Refresh the per-peer cursor color stylesheet — the awareness
         // states (which carry user color + clientID) are what y-monaco's
@@ -6407,10 +7748,11 @@ async function bootstrap() {
      *  activity badge (`▶ run`, `🐞 debug`, etc.). Tooltip carries the
      *  active file. Clicking opens the Live Session panel for the full
      *  collaborator list / actions. */
-    function renderPeerPill(peer: { identity: { displayName: string; color: string }; activeFile: string | null; activity?: string }): HTMLElement {
+    function renderPeerPill(peer: PeerView): HTMLElement {
         const pill = document.createElement('span');
         pill.className = 'live-session-chip-pill';
         pill.style.setProperty('--peer-color', peer.identity.color);
+        if (peer.isSelf) pill.dataset.self = 'true';
         // Use a tinted background of the peer's color via CSS variable;
         // the actual rule lives in index.html so a single class can be
         // styled per-peer without re-emitting CSS for each pill.
@@ -6422,8 +7764,20 @@ async function bootstrap() {
 
         const name = document.createElement('span');
         name.className = 'live-session-chip-pill-name';
-        name.textContent = peer.identity.displayName;
+        name.textContent = peer.identity.displayName + (peer.isSelf ? ' (you)' : '');
         pill.appendChild(name);
+
+        // Focus context — where the peer's pointer currently is.
+        // Renders a faint "in editor.fbasic" / "in game" / etc.
+        // suffix; clearer at-a-glance than just a name. Idle peers
+        // (no focus) drop this segment.
+        const focusText = peerFocusLabel(peer);
+        if (focusText) {
+            const focus = document.createElement('span');
+            focus.className = 'live-session-chip-pill-focus';
+            focus.textContent = focusText;
+            pill.appendChild(focus);
+        }
 
         // Activity badge — only when the peer is doing something
         // noteworthy. Idle is the default and isn't worth a glyph.
@@ -6435,16 +7789,94 @@ async function bootstrap() {
             pill.appendChild(badge);
         }
 
-        pill.title = `${peer.identity.displayName}${peer.activeFile ? ` — ${peer.activeFile}` : ''}${a !== 'idle' ? ` (${a})` : ''}`;
+        const tooltipFocus = focusText ? ` — ${focusText}` : '';
+        pill.title = `${peer.identity.displayName}${peer.isSelf ? ' (you)' : ''}${tooltipFocus}${a !== 'idle' ? ` (${a})` : ''}`;
+        // Pill click: jump to wherever the peer is looking. If their
+        // focus is on a file we have open, switch to that tab so the
+        // user can see the same content; if focus is on the game
+        // panel, activate it. Pulse their cursor for ~1.4s either way
+        // so the user can spot it. Self-pill just opens the panel.
+        pill.addEventListener('click', () => focusPeer(peer));
         return pill;
     }
 
+    /** Action handler for clicking a peer's chip pill — focuses the
+     *  surface they're currently on (file tab / game) and pulses
+     *  their cursor for visibility. Falls back to opening the Live
+     *  Session panel when there's no concrete focus to follow. */
+    function focusPeer(peer: PeerView) {
+        if (peer.isSelf) { focusLiveSessionPanel(); return; }
+        // Game wins if their pointer is currently there.
+        if (peer.focus?.scope === 'game') {
+            try { dockApi.getPanel('game')?.api.setActive(); }
+            catch { /* ignore */ }
+            window.setTimeout(() => sharedCursorHandle?.pulseCursor(peer.clientId), 30);
+            return;
+        }
+        // Editor focus → switch to the peer's file. If their cursor
+        // hasn't moved yet (focus is null) we still want the click to
+        // do something useful, so fall back to `peer.activeFile` —
+        // that's broadcast as soon as they open the file, before any
+        // mouse movement. Last resort: open the Live Session panel.
+        const file = (peer.focus?.scope === 'editor' ? peer.focus.file : null)
+            ?? peer.activeFile;
+        if (!file) { focusLiveSessionPanel(); return; }
+
+        // Activate the editor dockview panel before swapping tabs —
+        // otherwise editor.focus() inside openFile won't take.
+        try {
+            const editorPanel = dockApi.getPanel('editor');
+            if (editorPanel && !editorPanel.api.isActive) editorPanel.api.setActive();
+        } catch { /* ignore */ }
+
+        const tab = tabs.get(file);
+        if (tab && editor) {
+            setActiveName(file);
+            editor.setModel(tab.model);
+            renderTabs();
+            renderFileListSelection();
+            editor.focus();
+        } else if (!isBinaryFileName(file)) {
+            // File isn't open as a tab yet. Open it from the workspace
+            // — same path the file-list click uses. openFile is async
+            // (workspace.read), so the pulse delay must clear it.
+            void openFile(workspace, file);
+        }
+        // 80ms delay — longer than the openFile sync case to cover the
+        // async workspace.read + model creation that runs when the
+        // file wasn't open. Cursor render needs to have re-evaluated
+        // peer-in-active-file for the pulse to find an element.
+        window.setTimeout(() => sharedCursorHandle?.pulseCursor(peer.clientId), 80);
+    }
+
+    /** Short focus label for the chip pill: "in main.fbasic" /
+     *  "in game" / "" when the peer's pointer isn't on a shared
+     *  surface. Falls back to peer.activeFile if no live focus is set
+     *  so the pill always shows SOMETHING useful when the peer is
+     *  active in the editor but hasn't moved their mouse yet. */
+    function peerFocusLabel(peer: PeerView): string {
+        if (peer.focus?.scope === 'editor') {
+            const basename = peer.focus.file.split('/').pop() ?? peer.focus.file;
+            return `in ${basename}`;
+        }
+        if (peer.focus?.scope === 'game') return 'in game';
+        if (peer.activeFile) {
+            const basename = peer.activeFile.split('/').pop() ?? peer.activeFile;
+            return `editing ${basename}`;
+        }
+        return '';
+    }
+
     function activityLabel(activity: string): string {
+        // Plain-text badges — no glyphs. The activity-* CSS class
+        // already color-codes the badge so the meaning is conveyed
+        // without dropping emoji into the strip (user feedback: the
+        // emoji+text combo looked noisy and unprofessional).
         switch (activity) {
-            case 'running':   return '▶ run';
-            case 'debugging': return '🐞 debug';
-            case 'testing':   return '✓ tests';
-            case 'syncing':   return '↻ sync';
+            case 'running':   return 'run';
+            case 'debugging': return 'debug';
+            case 'testing':   return 'tests';
+            case 'syncing':   return 'sync';
             default:          return activity;
         }
     }
@@ -6538,6 +7970,46 @@ async function bootstrap() {
         style.textContent = lines.join('\n');
     }
 
+    /** Inject per-peer breakpoint glyph colors. Mirrors the cursor-style
+     *  injector above. The default `.fade-breakpoint` is red (host's
+     *  own / pre-session colour). Each peer gets their own class
+     *  `fade-breakpoint-peer-<clientId>` tinted with their awareness
+     *  color so the gutter glyph identifies who set the breakpoint.
+     *  refreshBreakpointDecorations uses these class names when
+     *  rendering remote breakpoints; this function just keeps the CSS
+     *  rules in sync with the current peer list. */
+    function updatePeerBreakpointStyles(peers: ReadonlyArray<{ clientId: number; isSelf: boolean; identity: { color: string; displayName: string } }>) {
+        const STYLE_ID = 'fade-collab-peer-breakpoints';
+        let style = document.getElementById(STYLE_ID) as HTMLStyleElement | null;
+        if (peers.length === 0) {
+            if (style) style.remove();
+            return;
+        }
+        if (!style) {
+            style = document.createElement('style');
+            style.id = STYLE_ID;
+            document.head.appendChild(style);
+        }
+        const lines: string[] = [];
+        for (const peer of peers) {
+            if (peer.isSelf) continue;
+            // The codicon glyph is rendered via the ::before pseudo on
+            // the .fade-breakpoint element, and the default red rule
+            // is `.fade-breakpoint::before { color: #e51400 !important }`
+            // — pseudo-element selectors carry an extra specificity
+            // step that a plain class selector can't beat, !important or
+            // not. So we have to target BOTH .fade-breakpoint-peer-<id>
+            // AND .fade-breakpoint-peer-<id>::before to win the cascade
+            // on the actual glyph.
+            const c = peer.identity.color;
+            lines.push(
+                `.fade-breakpoint-peer-${peer.clientId},\n` +
+                `.fade-breakpoint-peer-${peer.clientId}::before { color: ${c} !important; }`,
+            );
+        }
+        style.textContent = lines.join('\n');
+    }
+
     /** Paint the four sharing-status pills into the app header. Counts
      *  come straight off the controller's getters so we don't have to
      *  cache state at module scope. Clicking any pill focuses the
@@ -6608,6 +8080,7 @@ async function bootstrap() {
         if (!btn) return;
         btn.addEventListener('click', focusCollaborationPanel);
     }
+
 
     /** Update the header status icon's badge to reflect the current
      *  GitHub connection state. Three states:
@@ -6711,6 +8184,28 @@ async function bootstrap() {
             // Re-read on every retrieval so a project-type switch mid-chat
             // (web → monogame or back) is picked up without a remount.
             getProjectType: () => currentProject?.type,
+            tokenizeSnippet: (source) => runner.tokenizeSnippet(source),
+            openDocCitation: async (source, heading) => {
+                try { dockApi.getPanel('help')?.api?.setActive(); } catch { /* ignore */ }
+                const opened = await helpCtl.openDocCitation(source, heading);
+                if (!opened) {
+                    const { externalDocUrl } = await import('./ai/rag/doc-citation-links');
+                    const url = externalDocUrl(source);
+                    if (url) window.open(url, '_blank', 'noopener');
+                }
+            },
+            validateEditContent: createProjectAwareLspEditValidator({
+                projectLspUri: PROJECT_LSP_URI,
+                readProjectSources: readProjectSourcesSync,
+                isProjectSource: (path) =>
+                    (currentProject?.sources.includes(path) ?? false)
+                    || (projectSourceMap?.hasFile(path) ?? false),
+                checkDiagnostics: (uri, text) => runner.checkDocumentDiagnostics(uri, text),
+                restoreProjectDoc: () => { rebuildAndPushProjectDoc(true); },
+            }),
+            getCommandNames: () => runner.listCommandDocs().then(
+                docs => docs.map(d => d.name).filter(Boolean).sort(),
+            ),
         },
     );
     mountAiModels(document.getElementById('ai-models-pane')!.parentElement!);
@@ -7568,6 +9063,16 @@ async function bootstrap() {
         if (currentProject?.type !== 'monogame') return;
         if (!runActive && !debugSessionActive) return;
         if (mgTickPaused) return;
+        // Live-session guard: halting the iframe also halts the game-
+        // frame stream and the Debug UI envelope relay that observers
+        // depend on. If anyone else is in the room, keep ticking even
+        // when the editor has focus — Monaco vs KNI rAF contention is a
+        // smaller cost than freezing observers' view of the session.
+        const session = liveSessionHandle?.getSession();
+        if (session) {
+            const hasOtherPeers = session.getState().peers.some((p) => !p.isSelf);
+            if (hasOtherPeers) return;
+        }
         mgTickPaused = true;
         monoGameHost.pauseTick();
         updateGameStatus('paused');
@@ -8541,12 +10046,37 @@ async function bootstrap() {
     // still the right way to end a debug session there.
     stopBtn.addEventListener('click', async () => {
         try {
+            // If a remote peer owns the runtime (host is running/debugging
+            // and we're an observer), Stop ends the shared session by
+            // RPC'ing the active runner. We don't have local runtime state
+            // to tear down — stopAll would be a no-op here.
+            if (remoteActivityInProgress
+                && !runActive && !testsBusy && !debugSessionActive) {
+                await requestRemoteStop();
+                appendOutputLine('Stopped (requested by you).', 'dim');
+                return;
+            }
             await stopAll();
             appendOutputLine('Stopped.', 'dim');
         } catch (e: any) {
             appendOutputLine('Stop failed: ' + (e?.message ?? String(e)), 'error');
         }
     });
+
+    /** Observer-side: ask whichever peer is currently running/debugging
+     *  to stop. Uses the awareness `activity` field to find the target,
+     *  then sends a `run:stop` RPC. The host's matching handler calls
+     *  stopAll on its side. Falls through silently if no active runner
+     *  is visible — the button shouldn't have been enabled in that case. */
+    async function requestRemoteStop(): Promise<void> {
+        const session = liveSessionHandle?.getSession();
+        if (!session) return;
+        const peers = session.getState().peers;
+        const runner = peers.find((p) => !p.isSelf
+            && (p.activity === 'running' || p.activity === 'debugging'));
+        if (!runner || !runner.peerId) return;
+        await session.request(runner.peerId, 'run:stop', null, { timeoutMs: 10_000 });
+    }
 
     // ─── Debug session wiring ───────────────────────────────────────────
     const debugControlBar = document.getElementById('debug-control-bar')!;
@@ -8774,7 +10304,10 @@ async function bootstrap() {
     // mid-bootstrap refreshFadeProject call can safely use them. The
     // refreshStopButton + refreshRunButtons below read them.
     function refreshStopButton() {
-        stopBtn.disabled = !(runActive || testsBusy || debugSessionActive);
+        // Observer side: enable Stop while another peer owns the runtime,
+        // so the observer can end the shared session even though they
+        // have no local activity flags set.
+        stopBtn.disabled = !(runActive || testsBusy || debugSessionActive || remoteActivityInProgress);
     }
     // Single source of truth for Run / Debug / Export enablement. Gates
     // on (a) compile errors in any current-project source — clicking Run
@@ -8795,11 +10328,15 @@ async function bootstrap() {
             runBtn.textContent = 'Reset';
             runBtn.setAttribute('icon', 'refresh');
         } else {
-            runBtn.disabled = hasErr || debugSessionActive || runActive;
+            // Observer side: also disable Run while a remote peer owns
+            // the runtime — the host has control, double-launching would
+            // be a no-op locally (we'd run our copy independently) which
+            // confuses the shared-session narrative.
+            runBtn.disabled = hasErr || debugSessionActive || runActive || remoteActivityInProgress;
             runBtn.textContent = 'Run (⌘R)';
             runBtn.setAttribute('icon', 'play');
         }
-        debugBtn.disabled = hasErr || debugSessionActive || runActive;
+        debugBtn.disabled = hasErr || debugSessionActive || runActive || remoteActivityInProgress;
         exportBtn.disabled = exportBusy || hasErr;
         lastBlockedByErrors = hasErr;
         // Broadcast this peer's current runtime activity to the live
@@ -8821,20 +10358,32 @@ async function bootstrap() {
     function broadcastLiveActivity(): void {
         const session = liveSessionHandle?.getSession();
         if (!session) return;
-        // Priority: debug > run > test > idle. Run+test typically don't
-        // co-occur (run uses the same runtime), so the ordering only
-        // matters for the edge cases.
+        // CRUCIAL: only count `debugSessionActive` toward our own
+        // activity if we're the LOCAL debugger driving it. Observers
+        // also flip `debugSessionActive = true` (so their Debug panel
+        // enables and mirrors the host's state), but they're NOT
+        // running a debug runtime — broadcasting 'debugging' from them
+        // would make every other peer treat them as a debug initiator,
+        // start showing the observer overlay, and start trying to stream
+        // their (non-existent) game canvas back. That's the bug where
+        // the host's own game view turned into a "so-and-so is
+        // debugging" black overlay.
+        const initiatorClientId = session.debugState.get('initiatorClientId') as number | undefined;
+        const isLocalDebugger = debugSessionActive && (
+            initiatorClientId === undefined || initiatorClientId === session.awareness.clientID
+        );
+        // Priority: local-debug > run > test > idle. Run+test typically
+        // don't co-occur (run uses the same runtime).
         const activity: 'idle' | 'running' | 'debugging' | 'testing' =
-            debugSessionActive ? 'debugging'
+            isLocalDebugger ? 'debugging'
             : runActive ? 'running'
             : testsBusy ? 'testing'
             : 'idle';
         try { session.setActivity(activity); }
         catch (e) { console.warn('[fade-collab] setActivity failed', e); }
         // Frame streaming follows the activity: capture only while this
-        // peer is actually running or debugging something. The capture
-        // function tolerates a missing iframe (monogame, splash) so we
-        // can flip it on unconditionally for running/debugging activity.
+        // peer is actually running or debugging something. Observer-mode
+        // is excluded by the `isLocalDebugger` gate above.
         if (activity === 'running' || activity === 'debugging') {
             startGameFrameStreaming(session);
         } else {
@@ -8847,22 +10396,57 @@ async function bootstrap() {
     // that JPEG encoding + WebRTC throughput aren't a concern. Each frame
     // ends up around 5-30 KB depending on canvas content; at 5 fps that's
     // well under the ~10 Mbps the data channel can sustain.
-    const GAME_FRAME_FPS = 5;
-    const GAME_FRAME_QUALITY = 0.55;
+    // FPS + JPEG quality are user-tunable via the Settings panel
+    // (collab.gameFrameFps / collab.gameFrameQuality). Read at stream-
+    // start time. Changing while a stream is in flight requires
+    // restart — captureStream pipelines the FPS into MediaStream
+    // creation, so changing live wouldn't take effect anyway.
+    function currentGameFrameFps(): number {
+        const v = Number(getEffective('collab.gameFrameFps')) || 12;
+        return Math.max(1, Math.min(30, v));
+    }
+    function currentGameFrameQuality(): number {
+        const v = Number(getEffective('collab.gameFrameQuality')) || 0.55;
+        return Math.max(0.1, Math.min(1.0, v));
+    }
+    let activeGameFrameFps = 12;
     let gameFrameInterval: ReturnType<typeof setInterval> | null = null;
 
     function startGameFrameStreaming(session: ReturnType<NonNullable<typeof liveSessionHandle>['getSession']>): void {
         if (gameFrameInterval) return;
         if (!session) return;
-        console.log('[fade-collab] starting game frame streaming @ ' + GAME_FRAME_FPS + ' FPS');
+        activeGameFrameFps = currentGameFrameFps();
+        console.log('[fade-collab] starting game frame streaming @ ' + activeGameFrameFps + ' FPS');
+        // Kick an immediate capture so the very first frame doesn't
+        // wait for the setInterval tick (one interval = up to a full
+        // second at low FPS). The first call usually skips because the
+        // captureStream's video element hasn't composited yet; that's
+        // also why we additionally wire a `requestVideoFrameCallback`
+        // inside ensureCaptureStreamFor so the FIRST real frame fires
+        // as soon as the browser produces it, instead of waiting for
+        // the next interval boundary.
+        void captureAndSendFrame(session);
         gameFrameInterval = setInterval(() => {
             // The session reference can become stale if the user leaves
             // the session while a run is in flight. Re-resolve every tick.
             const live = liveSessionHandle?.getSession();
             if (!live) { stopGameFrameStreaming(); return; }
             void captureAndSendFrame(live);
-        }, Math.floor(1000 / GAME_FRAME_FPS));
+        }, Math.floor(1000 / activeGameFrameFps));
     }
+
+    // Listen for user changes to fps/quality. Restart the stream so
+    // the new fps takes effect without waiting for the next session
+    // start.
+    onSettingsChange(() => {
+        if (!gameFrameInterval) return;
+        const newFps = currentGameFrameFps();
+        if (newFps === activeGameFrameFps) return;
+        const session = liveSessionHandle?.getSession();
+        if (!session) return;
+        stopGameFrameStreaming();
+        startGameFrameStreaming(session);
+    });
 
     function stopGameFrameStreaming(): void {
         if (gameFrameInterval) {
@@ -8870,6 +10454,12 @@ async function bootstrap() {
             clearInterval(gameFrameInterval);
             gameFrameInterval = null;
         }
+        // Drop the captureStream pipeline so the next run starts clean.
+        // Keeping it across stop/start is risky because the source
+        // canvas may have been disposed by the iframe (project switch,
+        // run reset) and the MediaStreamTrack tied to a dead canvas
+        // emits silent empty frames forever.
+        teardownCaptureStream();
     }
 
     /** Grab the current contents of whichever game-surface canvas this
@@ -8885,8 +10475,83 @@ async function bootstrap() {
      *  checking both is no measurable cost — it's a single
      *  querySelector each. The first iframe with both a canvas and a
      *  non-zero drawing-buffer wins. */
-    let gameFrameStats = { captures: 0, sent: 0, skippedNoCanvas: 0, skippedEmpty: 0, skippedError: 0 };
+    let gameFrameStats = { captures: 0, sent: 0, skippedNoCanvas: 0, skippedEmpty: 0, skippedError: 0, skippedVideoNotReady: 0 };
     let lastGameFrameStatsLog = 0;
+    // captureStream pipeline state. We don't capture the source canvas
+    // directly with `canvas.toBlob()` — for WebGL canvases (Blazor /
+    // monogame / Kni renderers use WebGL) the default
+    // preserveDrawingBuffer=false means the drawing buffer has been
+    // cleared by the time toBlob runs, producing valid-but-empty JPEGs
+    // (~2-3 KB headers with no pixels). The fix is to read the
+    // compositor's output via `canvas.captureStream(fps)` → <video> →
+    // drawImage onto a separate 2D canvas → toBlob. The 2D working
+    // canvas is plain, so toBlob captures its pixels reliably.
+    let captureSourceCanvas: HTMLCanvasElement | null = null;
+    let captureMediaStream: MediaStream | null = null;
+    let captureVideo: HTMLVideoElement | null = null;
+    let captureWorkingCanvas: HTMLCanvasElement | null = null;
+
+    function ensureCaptureStreamFor(source: HTMLCanvasElement): boolean {
+        if (captureSourceCanvas === source && captureVideo && captureWorkingCanvas && captureMediaStream) {
+            return true;
+        }
+        // Source canvas changed (or first time) — rebuild the pipeline.
+        teardownCaptureStream();
+        try {
+            const stream = (source as HTMLCanvasElement & { captureStream?: (fps: number) => MediaStream })
+                .captureStream?.(activeGameFrameFps);
+            if (!stream) {
+                console.warn('[fade-collab] source canvas does not support captureStream — frames may be empty for WebGL canvases');
+                return false;
+            }
+            captureMediaStream = stream;
+            captureVideo = document.createElement('video');
+            captureVideo.muted = true;
+            captureVideo.playsInline = true;
+            captureVideo.autoplay = true;
+            captureVideo.srcObject = stream;
+            void captureVideo.play().catch((e) => {
+                console.warn('[fade-collab] capture video play() failed', e);
+            });
+            captureWorkingCanvas = document.createElement('canvas');
+            captureSourceCanvas = source;
+            // requestVideoFrameCallback fires as soon as the browser
+            // produces the first composited frame for the video element.
+            // Catching that lets us send the first real frame instantly
+            // instead of waiting for the next setInterval tick (could be
+            // up to 1000ms at low FPS). Without this, the observer sees
+            // an empty canvas for up to one full frame interval after
+            // the host clicks Run — which felt like "the stream takes
+            // forever to start."
+            const v = captureVideo as HTMLVideoElement & { requestVideoFrameCallback?: (cb: () => void) => void };
+            v.requestVideoFrameCallback?.(() => {
+                const live = liveSessionHandle?.getSession();
+                if (live) void captureAndSendFrame(live);
+            });
+            console.log(`[fade-collab] capture stream wired (source canvas ${source.width}x${source.height})`);
+            return true;
+        } catch (e) {
+            console.warn('[fade-collab] captureStream setup failed', e);
+            teardownCaptureStream();
+            return false;
+        }
+    }
+
+    function teardownCaptureStream(): void {
+        if (captureMediaStream) {
+            try { captureMediaStream.getTracks().forEach((t) => t.stop()); }
+            catch { /* ignore */ }
+            captureMediaStream = null;
+        }
+        if (captureVideo) {
+            try { captureVideo.srcObject = null; }
+            catch { /* ignore */ }
+            captureVideo = null;
+        }
+        captureWorkingCanvas = null;
+        captureSourceCanvas = null;
+    }
+
     async function captureAndSendFrame(session: NonNullable<ReturnType<NonNullable<typeof liveSessionHandle>['getSession']>>): Promise<void> {
         gameFrameStats.captures++;
         // Periodic capture-stats log so the user can see what's
@@ -8901,7 +10566,6 @@ async function bootstrap() {
 
         const iframeIds = ['mg-preview-frame', 'web-preview-frame'] as const;
         let canvas: HTMLCanvasElement | null = null;
-        let foundIframe: string | null = null;
         for (const id of iframeIds) {
             const iframe = document.getElementById(id) as HTMLIFrameElement | null;
             if (!iframe) continue;
@@ -8915,20 +10579,49 @@ async function bootstrap() {
             // non-zero size.
             const tagged = doc.getElementById('theCanvas') as HTMLCanvasElement | null;
             if (tagged && tagged.width > 0 && tagged.height > 0) {
-                canvas = tagged; foundIframe = id; break;
+                canvas = tagged; break;
             }
             const generic = Array.from(doc.querySelectorAll('canvas'))
                 .find((c) => (c as HTMLCanvasElement).width > 0 && (c as HTMLCanvasElement).height > 0) as HTMLCanvasElement | undefined;
-            if (generic) { canvas = generic; foundIframe = id; break; }
+            if (generic) { canvas = generic; break; }
         }
         if (!canvas) {
             gameFrameStats.skippedNoCanvas++;
             return;
         }
-        void foundIframe; // captured for the stats log above if needed
+        // Wire (or rewire) the captureStream pipeline to this canvas.
+        if (!ensureCaptureStreamFor(canvas)) {
+            gameFrameStats.skippedError++;
+            return;
+        }
+        const video = captureVideo;
+        const working = captureWorkingCanvas;
+        if (!video || !working) {
+            gameFrameStats.skippedError++;
+            return;
+        }
+        const w = video.videoWidth;
+        const h = video.videoHeight;
+        if (w === 0 || h === 0) {
+            // The captureStream hasn't produced its first composited
+            // frame yet — common during the first ~2 ticks after the
+            // pipeline arms.
+            gameFrameStats.skippedVideoNotReady++;
+            return;
+        }
         try {
+            if (working.width !== w || working.height !== h) {
+                working.width = w;
+                working.height = h;
+            }
+            const ctx = working.getContext('2d');
+            if (!ctx) {
+                gameFrameStats.skippedError++;
+                return;
+            }
+            ctx.drawImage(video, 0, 0, w, h);
             const blob: Blob | null = await new Promise((resolve) =>
-                canvas!.toBlob(resolve, 'image/jpeg', GAME_FRAME_QUALITY),
+                working.toBlob(resolve, 'image/jpeg', currentGameFrameQuality()),
             );
             if (!blob || blob.size === 0) {
                 gameFrameStats.skippedEmpty++;
@@ -8959,12 +10652,22 @@ async function bootstrap() {
     function setDebugButtons() {
         const hasSession = debugSessionActive;
         const paused = hasSession && debugPaused;
-        debugContinueBtn.disabled = !paused;
-        debugPauseBtn.disabled = !hasSession || paused;
-        debugStepOverBtn.disabled = !paused;
-        debugStepInBtn.disabled = !paused;
-        debugStepOutBtn.disabled = !paused;
+        // After a fatal VM exception the session is paused for post-mortem
+        // inspection only — Continue / Step / Pause are not valid because
+        // the VM can't actually resume past the fault. Clicking them
+        // freezes the page (the bridge sends a request the runtime will
+        // never answer). Only Stop is allowed. The crash overlay's Abort
+        // button also remains clickable since it lives outside this bar.
+        const canResume = paused && !debugFatalException;
+        debugContinueBtn.disabled = !canResume;
+        debugPauseBtn.disabled = !hasSession || paused || debugFatalException;
+        debugStepOverBtn.disabled = !canResume;
+        debugStepInBtn.disabled = !canResume;
+        debugStepOutBtn.disabled = !canResume;
         debugStopBtn.disabled = !hasSession;
+        // REPL stays usable in the fatal-paused state — locals, watch
+        // expressions, and printing variables are exactly the kind of
+        // post-mortem inspection we keep the session alive for.
         debugReplInput.disabled = !paused;
         // Header Run/Debug enablement now lives in refreshRunButtons —
         // it folds together hasSession, in-flight run, and compile errors
@@ -8983,19 +10686,49 @@ async function bootstrap() {
     }
     setDebugButtons();
 
+    // Breakpoints set by OTHER peers via the live session. Maintained
+    // alongside `breakpointsByUri` so the gutter render can show both
+    // sets with distinct per-owner tints. Local breakpoints never
+    // appear here (they're in breakpointsByUri); only remote ones.
+    // Map<uri, Map<line, ownerClientId>>.
+    const remoteBreakpointsByUri = new Map<string, Map<number, number>>();
     function refreshBreakpointDecorations() {
         const model = editor?.getModel();
         if (!model) return;
         const uri = model.uri.toString();
-        const lines = breakpointsByUri.get(uri) ?? new Set();
+        const localLines = breakpointsByUri.get(uri) ?? new Set<number>();
+        const remoteForFile = remoteBreakpointsByUri.get(uri) ?? new Map<number, number>();
         const decos: monaco.editor.IModelDeltaDecoration[] = [];
-        for (const ln of lines) {
+        // Our own breakpoints — keep the default red icon (the existing
+        // `.fade-breakpoint` CSS class). On the host this is the actual
+        // executable breakpoint set; on the observer side these are
+        // ones THIS peer set in the gutter, which the host runtime
+        // picks up via the Y.Map mirror.
+        for (const ln of localLines) {
             decos.push({
                 range: new monaco.Range(ln, 1, ln, 1),
                 options: {
                     isWholeLine: false,
                     glyphMarginClassName: 'fade-breakpoint codicon codicon-circle-filled',
                     glyphMarginHoverMessage: { value: 'Breakpoint' },
+                },
+            });
+        }
+        // Peer breakpoints — only render lines we don't already have
+        // locally (own colour wins over remote on collision). Per-peer
+        // class is `fade-breakpoint-peer-<clientId>` so the dynamic
+        // stylesheet can tint them with the owner's awareness colour.
+        for (const [ln, ownerClientId] of remoteForFile) {
+            if (localLines.has(ln)) continue;
+            const session = liveSessionHandle?.getSession();
+            const peer = session?.getState().peers.find((p) => p.clientId === ownerClientId);
+            const ownerName = peer?.identity.displayName ?? 'remote peer';
+            decos.push({
+                range: new monaco.Range(ln, 1, ln, 1),
+                options: {
+                    isWholeLine: false,
+                    glyphMarginClassName: `fade-breakpoint fade-breakpoint-peer-${ownerClientId} codicon codicon-circle-filled`,
+                    glyphMarginHoverMessage: { value: `Breakpoint set by ${ownerName}` },
                 },
             });
         }
@@ -9044,6 +10777,30 @@ async function bootstrap() {
     // multi-source project (single-file workspaces still pass through this
     // helper but skip the tab-switch).
     async function focusJoinedDebugLine(joinedLine: number): Promise<void> {
+        // If we're observing another peer's debug session, prefer the
+        // per-file (name, 1-based-line) the host already broadcast in
+        // debugState. The observer's projectSourceMap may be stale, may
+        // map to a different joined-line layout than the host's, or
+        // may not exist at all if the observer hasn't compiled — any
+        // of which makes the fromProject() result wrong. The host's
+        // broadcast is the source of truth here.
+        const session = liveSessionHandle?.getSession();
+        if (session) {
+            const initiator = session.debugState.get('initiatorClientId') as number | undefined;
+            const observing = initiator != null && initiator !== session.awareness.clientID;
+            if (observing) {
+                const file = session.debugState.get('currentFile') as string | null;
+                const line = session.debugState.get('currentLine') as number | null;
+                if (file != null && line != null) {
+                    if (file !== activeName) {
+                        try { await openFile(workspace, file); }
+                        catch { /* fall through to setCurrentLine on whatever's active */ }
+                    }
+                    setCurrentLine(line); // already 1-based from host's broadcast
+                    return;
+                }
+            }
+        }
         if (projectSourceMap) {
             const m = projectSourceMap.fromProject(joinedLine, 0);
             if (m) {
@@ -9062,10 +10819,16 @@ async function bootstrap() {
         const model = editor?.getModel();
         if (!model) return;
         const uri = model.uri.toString();
-        const lines = [...(breakpointsByUri.get(uri) ?? new Set<number>())];
+        // Union of local + remote (live-session) breakpoints. The host's
+        // runtime needs to know about both so an observer-set breakpoint
+        // actually pauses execution. Without this, remote glyphs show up
+        // in the gutter but execution sails right past them.
+        const local = breakpointsByUri.get(uri) ?? new Set<number>();
+        const remote = remoteBreakpointsByUri.get(uri) ?? new Map<number, number>();
+        const allLines = new Set<number>([...local, ...remote.keys()]);
         // Monaco lines are 1-based; the lexer/token lineNumber the bridge
         // expects is 0-based. Drop one.
-        const payload: BreakpointRequest[] = lines.map((ln) => ({ line: ln - 1, column: 0 }));
+        const payload: BreakpointRequest[] = [...allLines].map((ln) => ({ line: ln - 1, column: 0 }));
         void dbg.setBreakpoints(payload);
     }
 
@@ -9088,11 +10851,36 @@ async function bootstrap() {
         const uri = model!.uri.toString();
         let set = breakpointsByUri.get(uri);
         if (!set) { set = new Set(); breakpointsByUri.set(uri, set); }
-        if (set.has(line)) set.delete(line);
+        const wasSet = set.has(line);
+        if (wasSet) set.delete(line);
         else set.add(line);
         refreshBreakpointDecorations();
         renderBreakpoints();
         if (debugSessionActive) syncBreakpointsToWorker();
+        // Mirror to the live session's shared breakpoint map so other
+        // peers see our gutter glyphs. Keyed by `${file}:${line}` so
+        // the entries dedup naturally. The `file` we store is the
+        // workspace-relative name (e.g. "main.fbasic"), not the
+        // full URI, because the URI scheme is identical on every peer
+        // (`file:///workspace/<name>`) and stripping the prefix here
+        // means future renames don't need to rewrite Y.Map keys.
+        const session = liveSessionHandle?.getSession();
+        if (session) {
+            const fileMatch = /^file:\/\/\/workspace\/(.+)$/.exec(uri);
+            const file = fileMatch?.[1];
+            if (file) {
+                const key = `${file}:${line}`;
+                if (wasSet) {
+                    session.breakpoints.delete(key);
+                } else {
+                    session.breakpoints.set(key, {
+                        file,
+                        line,
+                        ownerClientId: session.awareness.clientID,
+                    });
+                }
+            }
+        }
         // The line we just toggled now has the opposite breakpoint state,
         // which means the phantom-vs-not-allowed cursor signal should
         // flip too. Recompute the preview against the new state.
@@ -9347,22 +11135,28 @@ async function bootstrap() {
     // DebugStackFrame from C# only carries lineNumber/colNumber/name — frames
     // are addressed by *index* in the returned list (DebugScopeRequest.frameIndex).
     // Treat that index as the id we surface to the rest of this UI.
-    async function refreshDebugView() {
-        const frames = await dbg.stackFrames();
+    async function refreshDebugView(prefetchedFrames?: DebugStackFrame[]): Promise<DebugStackFrame[]> {
+        // Accept frames from the caller to avoid a redundant
+        // dbg.stackFrames() round-trip when the caller already fetched
+        // them — the BREAKPOINT-case broadcast needs the SAME frames it
+        // hands to the local render, otherwise the iframe can move past
+        // them between the two calls and Y.Map ends up with state from
+        // a different VM instant than the editor's line decoration.
+        const frames = prefetchedFrames ?? await dbg.stackFrames();
         // Guard against the teardown race: if the user clicked Stop
         // while we were awaiting stackFrames, stopAll has already
         // cleared the panels and flipped debugSessionActive. Bail
         // before we re-render stale frames on top of the cleared state.
-        if (!debugSessionActive) return;
+        if (!debugSessionActive) return frames;
         renderFrames(frames);
         if (frames.length > 0) {
             activeFrameId = 0;
             await focusJoinedDebugLine(frames[0].lineNumber);
-            if (!debugSessionActive) return;
+            if (!debugSessionActive) return frames;
             await refreshScopes(0);
-            if (!debugSessionActive) return;
+            if (!debugSessionActive) return frames;
             await refreshWatches();
-            if (!debugSessionActive) return;
+            if (!debugSessionActive) return frames;
             setDebugEmptyStates(false);
         } else {
             activeFrameId = null;
@@ -9371,6 +11165,69 @@ async function bootstrap() {
             setDebugEmptyStates(true);
             await refreshWatches();
         }
+        return frames;
+    }
+
+    /** Shared between REV_REQUEST_BREAKPOINT and PROTO_ACK(stepLanded).
+     *  Both events mean "the VM has stopped at a new instruction" and
+     *  need to:
+     *    (a) fetch the new call stack ONCE (multiple fetches race with
+     *        the iframe's pumpDebugTick — successive calls can land at
+     *        different VM instants),
+     *    (b) translate the top frame's joined-source line into the
+     *        per-file (name, line) the editor displays,
+     *    (c) broadcast {paused, currentFile, currentLine, callStack}
+     *        atomically so observers' debugState matches the host's
+     *        editor.
+     *  Returns the frames so the caller can pass them to
+     *  refreshDebugView without re-fetching. */
+    async function fetchPausedFramesAndBroadcast(): Promise<DebugStackFrame[]> {
+        let frames: DebugStackFrame[] = [];
+        try {
+            const res = await (dbg.kind === 'remote'
+                ? dbg.stackFrames()
+                : localDebugAdapter.stackFrames());
+            frames = Array.isArray(res)
+                ? (res as DebugStackFrame[])
+                : ((res as any)?.stackFrames as DebugStackFrame[]) ?? [];
+        } catch (e) {
+            console.warn('[fade-collab] stackFrames fetch failed', e);
+        }
+        if (isLocalDebugInitiator()) {
+            // ALSO fetch + broadcast the top frame's scopes so observers
+            // can render the variables panel without an additional RPC.
+            // Previously the observer's refreshDebugView called dbg.scopes
+            // which routes through the remote adapter — that's an RPC
+            // back to the host whose iframe is often busy with the host's
+            // own refresh, so it intermittently times out. Bundling
+            // scopes into the same Y.Doc snapshot eliminates that RPC.
+            let scopesPayload: unknown = null;
+            try {
+                const scopes = await localDebugAdapter.scopes(0);
+                scopesPayload = scopes ?? null;
+            } catch (e) {
+                console.warn('[fade-collab] scopes snapshot failed', e);
+            }
+            const lineNumber = frames[0]?.lineNumber;
+            let perFileName: string | null = activeName;
+            let perFileLine: number | null =
+                lineNumber != null ? lineNumber + 1 : null;
+            if (lineNumber != null && projectSourceMap) {
+                const m = projectSourceMap.fromProject(lineNumber, 0);
+                if (m) {
+                    perFileName = m.name;
+                    perFileLine = m.line + 1;
+                }
+            }
+            broadcastDebugState({
+                paused: true,
+                currentFile: perFileName,
+                currentLine: perFileLine,
+                callStack: frames,
+                topFrameScopes: scopesPayload,
+            });
+        }
+        return frames;
     }
 
     function renderFrames(frames: DebugStackFrame[]) {
@@ -9399,7 +11256,24 @@ async function bootstrap() {
     const expandedVars = new Map<number, DebugScope[]>();
 
     async function refreshScopes(frameId: number) {
-        const result = await dbg.scopes(frameId);
+        // Observer-side optimisation: for the top frame, prefer the
+        // scopes payload the host already broadcast on the BREAKPOINT/
+        // PROTO_ACK snapshot. Bypasses an RPC that was the dominant
+        // cause of intermittent "observer doesn't see variables" — the
+        // host's iframe is often busy with its own refresh and the
+        // observer's RPC ends up waiting behind it. Falls back to the
+        // RPC for non-top frames (which the broadcast doesn't include)
+        // and for the host (whose dbg.kind is 'local' so the cache
+        // doesn't apply).
+        let result: any = null;
+        if (frameId === 0 && dbg.kind === 'remote') {
+            const session = liveSessionHandle?.getSession();
+            const cached = session?.debugState.get('topFrameScopes');
+            if (cached && typeof cached === 'object') {
+                result = cached;
+            }
+        }
+        if (!result) result = await dbg.scopes(frameId);
         // Same teardown-race guard as refreshDebugView: if Stop landed
         // while dbg.scopes was in flight, the panels are already gone.
         if (!debugSessionActive) return;
@@ -9577,6 +11451,9 @@ async function bootstrap() {
                     return;
                 }
                 const rhs = input.value;
+                // eslint-disable-next-line no-console
+                console.log('[DBG-EV] setVariable click',
+                    { frameId: activeFrameId, vId: v.id, vName: v.name, vType: v.type, vValue: v.value, rhs });
                 try {
                     const result = await dbg.setVariable(activeFrameId!, v.id, rhs);
                     // DebugEvalResult signals failure with id === -1 + value
@@ -9592,6 +11469,12 @@ async function bootstrap() {
                 }
                 // Refresh scopes so the value reflects what the VM actually has.
                 if (activeFrameId != null) await refreshScopes(activeFrameId);
+                // If we're the active debug initiator, re-broadcast the
+                // top-frame scopes so observers see the new value.
+                // (Observer-driven mutations get re-broadcast by the host's
+                // RPC wrapper; host-driven mutations have no such wrapper,
+                // so they need to do it explicitly.)
+                await rebroadcastTopFrameScopes();
             };
             input.addEventListener('keydown', (e) => {
                 if (e.key === 'Enter') { e.preventDefault(); void commit(true); }
@@ -9640,13 +11523,15 @@ async function bootstrap() {
         updateGameStatus('stopped');
     };
 
-    // Pipe iframe-side Console.WriteLine output into the Output panel.
+    // Pipe iframe-side Console.WriteLine output into the Logs panel.
     // User `print` lines, runtime status messages, and asset-load
     // warnings all land here so the user doesn't have to crack the
-    // browser dev console to see what their game is doing.
-    monoGameHost.onStdout = (line) => appendOutputLine(line);
+    // browser dev console to see what their game is doing — and
+    // they're filterable by channel/level. The Output panel stays
+    // reserved for editor/runtime status messages.
+    monoGameHost.onStdout = handleProgramPrint;
     monoGameHost.onStderr = (line) => {
-        appendOutputLine(line, 'error');
+        handleProgramStderr(line);
         // KNI's `Console.Error.WriteLine` of a multi-line error message
         // arrives here as ONE stderr event with embedded newlines (the
         // iframe's console-forwarding bridge does join+post per call,
@@ -9679,23 +11564,17 @@ async function bootstrap() {
             });
         } catch { /* logging is best-effort */ }
         switch (event.type) {
-            case 'REV_REQUEST_BREAKPOINT':
+            case 'REV_REQUEST_BREAKPOINT': {
                 debugPaused = true;
                 setDebugStatus('paused on breakpoint', 'paused');
                 revealPanel('call-stack');
                 setDebugButtons();
-                await refreshDebugView();
+                const frames = await fetchPausedFramesAndBroadcast();
+                await refreshDebugView(frames);
                 // eslint-disable-next-line no-console
-                console.log('[DBG-EV] BREAKPOINT refreshDebugView done');
-                // Tell observers we paused at this file:line. Phase 2B
-                // — fancier replication (call stack, locals) goes
-                // through this same broadcastDebugState path once the
-                // observer Debug panel is wired to render from it.
-                broadcastDebugState({
-                    paused: true,
-                    currentFile: activeName,
-                });
+                console.log('[DBG-EV] BREAKPOINT refreshDebugView done', frames[0]?.lineNumber);
                 break;
+            }
             case 'REV_REQUEST_EXITED':
             case 'complete':
                 // For a debug-test session, snapshot the test's result
@@ -9735,6 +11614,7 @@ async function bootstrap() {
                 }
                 debugSessionActive = false;
                 debugPaused = false;
+                debugFatalException = false;
                 setDebugStatus('program exited', 'idle');
                 setCurrentLine(null);
                 clearDebugInspectionPanels();
@@ -9757,6 +11637,7 @@ async function bootstrap() {
                     // Treat as terminal stop (existing teardown path).
                     debugSessionActive = false;
                     debugPaused = false;
+                    debugFatalException = false;
                     setDebugStatus('stopped', 'idle');
                     if (currentDebugTestName) {
                         const finishedName = currentDebugTestName;
@@ -9784,6 +11665,12 @@ async function bootstrap() {
                 // abort. Abort tears down via stopAll() on the zone
                 // widget's button.
                 debugPaused = true;
+                // Sticky flag so Continue / Step / Pause are disabled
+                // for the rest of this session. The VM can't actually
+                // resume past the fault — sending continue/step here
+                // hangs the bridge waiting for a reply that never
+                // comes, locking the whole UI thread.
+                debugFatalException = true;
                 setDebugStatus('runtime error', 'error');
 
                 // expMsg arrives as the full debug-envelope JSON (e.g.
@@ -9897,9 +11784,18 @@ async function bootstrap() {
                     debugPaused = true;
                     setDebugStatus('paused on step', 'paused');
                     setDebugButtons();
-                    await refreshDebugView();
+                    // SAME flow as REV_REQUEST_BREAKPOINT: fetch frames
+                    // once, broadcast the per-file snapshot, then
+                    // refresh the local panel from those frames. The
+                    // previous code path only called refreshDebugView,
+                    // which updated the local editor but NEVER wrote
+                    // to debugState — so after the initial breakpoint,
+                    // every subsequent step left debugState stuck at
+                    // the original line. That's the lag the user saw.
+                    const frames = await fetchPausedFramesAndBroadcast();
+                    await refreshDebugView(frames);
                     // eslint-disable-next-line no-console
-                    console.log('[DBG-EV] STEP refreshDebugView done');
+                    console.log('[DBG-EV] STEP refreshDebugView done', frames[0]?.lineNumber);
                 }
                 break;
             }
@@ -9946,12 +11842,84 @@ async function bootstrap() {
         ensureWebVmReady: ensureWebVmReadyForDebug,
         syncMonoGameAssets: syncAssetsToRuntime,
     });
-    const dbg: DebugAdapter = localDebugAdapter;
-    // Single subscription point: the adapter forwards events from both
-    // the web runner and the monogame iframe through this handler. Used
-    // to be two direct assignments to `runner.onDebugEvent` /
-    // `monoGameHost.onDebugEvent` earlier in the bootstrap; those have
-    // been removed because the adapter now owns those slots.
+
+    // ── Shader hot-reload ─────────────────────────────────────────────────
+    //
+    // On every `.fx` edit, debounce ~400ms then push the changed shader's
+    // compiled XNB into the running MonoGame iframe. The .NET-side wiring
+    // (BrowserContentManager.RegisterAsset → ConsumeReloadedAssets →
+    // RenderSystem.RefreshEffects) already swaps the new bytes into the
+    // active Effect on the next frame; this just adds the edit-time
+    // trigger. No-ops when:
+    //   - the runtime isn't booted (monoGameHost.isReady() === false)
+    //   - the project is a web project (no MonoGame iframe to push to)
+    //   - the model's URI doesn't map to a `.fx` workspace file
+    // Compilation errors are silent here — the shader-validator already
+    // shows squiggles + the Problems panel entry for the same source.
+    const shaderReloadTimers = new WeakMap<monaco.editor.ITextModel, number>();
+    const SHADER_RELOAD_DEBOUNCE_MS = 400;
+
+    function shouldHotReloadShader(model: monaco.editor.ITextModel): boolean {
+        if (model.getLanguageId() !== 'fadefx') return false;
+        if (!monoGameHost.isReady()) return false;
+        if (currentProject?.type !== 'monogame') return false;
+        return true;
+    }
+
+    function scheduleShaderHotReload(model: monaco.editor.ITextModel): void {
+        if (!shouldHotReloadShader(model)) return;
+        const prev = shaderReloadTimers.get(model);
+        if (prev !== undefined) window.clearTimeout(prev);
+        const timer = window.setTimeout(async () => {
+            shaderReloadTimers.delete(model);
+            if (!shouldHotReloadShader(model)) return;
+            // Persist the editor buffer to the workspace first — the
+            // compile path reads the file from `workspace.list()` /
+            // `workspace.read()`, not the live Monaco model. Without
+            // this the iframe would re-load the *previous* content.
+            const uri = model.uri.toString();
+            const name = uriToName(uri);
+            if (!name) return;
+            try {
+                await workspace.write(name, model.getValue());
+            } catch (e) {
+                console.warn('[shader-hot-reload] failed to persist before reload:', e);
+                return;
+            }
+            try {
+                await syncAssetsToRuntime();
+            } catch (e) {
+                // syncAssetsToRuntime already routes per-asset errors
+                // into the Logs panel; we only catch the top-level
+                // exception to keep the timer chain alive.
+                console.warn('[shader-hot-reload] sync failed:', e);
+            }
+        }, SHADER_RELOAD_DEBOUNCE_MS);
+        shaderReloadTimers.set(model, timer);
+    }
+
+    function attachShaderHotReload(model: monaco.editor.ITextModel): void {
+        if (model.getLanguageId() !== 'fadefx') return;
+        const sub = model.onDidChangeContent(() => scheduleShaderHotReload(model));
+        model.onWillDispose(() => {
+            const t = shaderReloadTimers.get(model);
+            if (t !== undefined) {
+                window.clearTimeout(t);
+                shaderReloadTimers.delete(model);
+            }
+            sub.dispose();
+        });
+    }
+
+    for (const m of monaco.editor.getModels()) attachShaderHotReload(m);
+    monaco.editor.onDidCreateModel((m) => attachShaderHotReload(m));
+    // `dbg` is a facade — the rest of the bootstrap calls dbg.X() and the
+    // facade forwards to whichever adapter is currently active. Local
+    // by default; swapped to a RemoteDebugAdapter while another peer is
+    // driving a shared debug session, then swapped back when they stop.
+    // Subscribers (next line) attach to the facade, so they keep
+    // receiving events through swaps.
+    const dbg: FacadeDebugAdapter = createFacadeDebugAdapter(localDebugAdapter);
     dbg.onDebugEvent((event) => { void onAnyDebugEvent(event); });
 
     const startDebug = async () => {
@@ -10006,15 +11974,23 @@ async function bootstrap() {
         runActive = false;
         debugSessionActive = true;
         debugPaused = true;
+        // New session — clear any sticky fatal-exception state left over
+        // from a previous session whose crash overlay was dismissed.
+        debugFatalException = false;
         setDebugStatus('starting', 'paused');
         setDebugButtons();
-        // Live-session: mark this peer as the debug initiator. Observers
-        // will see "Alice is debugging" via the banner; their step / eval
-        // / inspect actions are still routed to the local debug runtime
-        // for now (Phase 2C RPC plumbing is in place but the host-side
-        // command handlers aren't wired yet — see the docs at the end of
-        // the Live Session panel).
-        broadcastDebugState({ initiatorClientId: liveSessionHandle?.getSession()?.awareness.clientID ?? null, paused: true });
+        // Live-session: mark this peer as the debug initiator. Both the
+        // awareness clientID and the transport peer ID are published —
+        // the clientID is used by observers' UI to label "Alice is
+        // debugging" via the awareness state lookup; the peer ID is
+        // what observers' RemoteDebugAdapter targets when sending RPC
+        // commands (step / continue / eval).
+        const liveSession = liveSessionHandle?.getSession();
+        broadcastDebugState({
+            initiatorClientId: liveSession?.awareness.clientID ?? null,
+            initiatorPeerId: (liveSession as any)?.room?.selfId ?? null,
+            paused: true,
+        });
         syncBreakpointsToWorker();
         await dbg.continue();
         debugPaused = false;
@@ -10113,25 +12089,40 @@ async function bootstrap() {
         setDebugStatus('running', 'running');
         setCurrentLine(null);
         setDebugButtons();
+        // For host: tell observers we're running immediately so they
+        // see "running" feedback before the next BREAKPOINT. For observer:
+        // gated out by isLocalDebugInitiator() inside broadcastDebugState
+        // (their RPC handler on the host already wrote paused:false).
+        // currentFile/currentLine/callStack are left untouched — clearing
+        // them races the BREAKPOINT broadcast for any program that
+        // immediately hits another bp. Stale location data is harmless
+        // while paused=false; the next BREAKPOINT will overwrite it.
+        broadcastDebugState({ paused: false });
     });
     debugPauseBtn.addEventListener('click', async () => {
         await dbg.pause();
-        // REQUEST_PAUSE is now in-flight. The PROTO_ACK that comes back
-        // is a plain ack with no useful payload — the desktop DAP turns
-        // it into a StoppedEvent via a callback, but we have no callback
-        // here. Update paused state immediately and sample the call stack
-        // from the current instruction pointer — the VM stops on the
-        // next iteration of its debug loop, so frames are accurate enough.
         debugPaused = true;
         setDebugStatus('paused', 'paused');
         setDebugButtons();
-        await refreshDebugView();
+        // REQUEST_PAUSE doesn't fire REV_REQUEST_BREAKPOINT (the C# runtime
+        // only emits BREAKPOINT for real bp hits, not the manual pause
+        // request) — so onAnyDebugEvent's broadcast branch never runs and
+        // observers stay stuck on `paused:false`. Fetch frames + broadcast
+        // explicitly, then pass them to refreshDebugView so the local panel
+        // and the Y.Doc snapshot are from the SAME VM instant.
+        const frames = await fetchPausedFramesAndBroadcast();
+        await refreshDebugView(frames);
     });
     debugStepOverBtn.addEventListener('click', async () => {
         await dbg.step('over');
         debugPaused = false;
         setCurrentLine(null);
         setDebugButtons();
+        // No broadcast — the step lands at a new pause point almost
+        // immediately; the runtime's BREAKPOINT broadcast carries the
+        // new state. The observer's RemoteAdapter synthesises BREAKPOINT
+        // on location-change-while-paused so it refreshes the panel
+        // even though paused stays true throughout.
     });
     debugStepInBtn.addEventListener('click', async () => {
         await dbg.step('in');
@@ -10164,6 +12155,7 @@ async function bootstrap() {
         const wasDebugActive = debugSessionActive;
         debugSessionActive = false;
         debugPaused = false;
+        debugFatalException = false;
         if (wasDebugActive) {
             // If a debug-test session is in flight, flag the test row
             // as 'stopped' BEFORE we tear down (the explosion handler
@@ -10184,6 +12176,15 @@ async function bootstrap() {
             clearDebugInspectionPanels();
             setDebugEmptyStates(true);
             restorePreDebugLayoutIfUnchanged();
+            // Tell observers the session is over. The `complete` /
+            // REV_REQUEST_EXITED case in onAnyDebugEvent also clears
+            // this, but the runtime doesn't always emit those events
+            // after an explicit terminate (e.g., test mode early-exit,
+            // monogame's debug terminate path), so this is the reliable
+            // "host stopped" signal on the Y.Map. If the event also
+            // fires later, the second clearDebugState is a no-op
+            // (it bails when debugState.size === 0).
+            clearBroadcastDebugState();
         }
         if (currentProject?.type === 'monogame') {
             // Pause the canvas regardless of debug state — even after debug
@@ -10219,6 +12220,9 @@ async function bootstrap() {
         appendReplLine(result?.value ?? '(no result)', failed ? 'err' : 'out');
         // Variables may have changed.
         if (activeFrameId != null) await refreshScopes(activeFrameId);
+        // Re-broadcast for observers (host-driven mutation has no RPC
+        // wrapper, so it has to push topFrameScopes itself).
+        await rebroadcastTopFrameScopes();
     });
 
     // Editor option: glyph margin must be on to show breakpoint glyphs.
@@ -10376,7 +12380,11 @@ async function bootstrap() {
             const fullPath = inFolder(name);
             if ((await workspace.list()).includes(fullPath)) return;
             try {
-                await workspace.write(fullPath, '');
+                // Seed the file with an extension-specific starter so new
+                // .fx files compile out of the box (a faint UV grid over
+                // the sprite texture). Other extensions stay empty.
+                const fileExt = name.split('.').pop()?.toLowerCase() ?? '';
+                await workspace.write(fullPath, templateForExtension(fileExt));
                 // Make sure the parent folder is expanded so the new
                 // file is visible. Without this, creating a file in a
                 // collapsed folder feels like nothing happened.

@@ -34,8 +34,22 @@ export const CHANGELOG: ChangelogEntry[] = [
     //     ],
     // },
         {
+            version: '0.4.1',
+            date: '2026-06-10',
+            changed: [
+                'Local AI improvements.'
+            ],
+            added: [
+                'Manual SDP mode for Live Collab.'
+            ],
+            fixed: [
+                'Cannot freeze browser after fatal vm exception.',
+                'Live Collab shows game starts faster.'
+            ],
+        },
+        {
         version: '0.4.0',
-        date: '2026-06-01',
+        date: '2026-06-03',
         added: [
             'Audio support for `.mp3` and `.ogg` file formats.',
             'Font support for the `.ttf` file format.',
@@ -46,6 +60,9 @@ export const CHANGELOG: ChangelogEntry[] = [
         changed: [
             'Live collaboration supports debug workflows.',
         ],
+        fixed: [
+            'Goto definition no longer has scrolling overflow bug'
+        ]
     },
     {
         version: '0.3.1',

@@ -131,6 +131,54 @@ float4 MainPS(float2 uv : TEXCOORD0) : SV_TARGET {
         expect(glsl).toMatch(/#define Tint ps_uniforms_vec4\[0\]/);
     });
 
+    it('packs multiple scalars into the same vec4 slot with distinct swizzles (.x, .y, .z, .w)', () => {
+        // HLSL packs sequential float scalars tightly: Time at offset 0,
+        // GlitchAmount at offset 4, Phase at offset 8, Amount at offset 12
+        // — all four live in vec4 slot 0. Previously the alias emitter
+        // ignored the in-slot byte offset and aliased EVERY scalar to
+        // `.x`, so only the first parameter the user `set effect param`'d
+        // actually moved — second/third/fourth all read the first one's
+        // .x value through the collapsed `#define`.
+        const packed: FxCbufferDecl = {
+            name: 'cb',
+            fields: [
+                { typeName: 'float', name: 'Time',         arraySize: 0, rows: 1, columns: 1, offsetBytes:  0, sizeBytes: 4 },
+                { typeName: 'float', name: 'GlitchAmount', arraySize: 0, rows: 1, columns: 1, offsetBytes:  4, sizeBytes: 4 },
+                { typeName: 'float', name: 'Phase',        arraySize: 0, rows: 1, columns: 1, offsetBytes:  8, sizeBytes: 4 },
+                { typeName: 'float', name: 'Amount',       arraySize: 0, rows: 1, columns: 1, offsetBytes: 12, sizeBytes: 4 },
+            ],
+            sizeInBytes: 16, sourceStart: 0, sourceEnd: 0,
+        };
+        const src = `float4 MainPS() : SV_TARGET { return float4(Time, GlitchAmount, Phase, Amount); }`;
+        const { glsl } = translateHlslToGlsl({
+            source: src, entrypoint: 'MainPS', stage: 'pixel', cbuffers: [packed],
+        });
+        expect(glsl).toMatch(/uniform vec4 cb\[1\];/);
+        expect(glsl).toMatch(/#define Time cb\[0\]\.x/);
+        expect(glsl).toMatch(/#define GlitchAmount cb\[0\]\.y/);
+        expect(glsl).toMatch(/#define Phase cb\[0\]\.z/);
+        expect(glsl).toMatch(/#define Amount cb\[0\]\.w/);
+    });
+
+    it('places a vec2 at .zw when it follows two scalars in the same slot', () => {
+        const packed: FxCbufferDecl = {
+            name: 'cb',
+            fields: [
+                { typeName: 'float',  name: 'A', arraySize: 0, rows: 1, columns: 1, offsetBytes: 0, sizeBytes: 4 },
+                { typeName: 'float',  name: 'B', arraySize: 0, rows: 1, columns: 1, offsetBytes: 4, sizeBytes: 4 },
+                { typeName: 'float2', name: 'C', arraySize: 0, rows: 1, columns: 2, offsetBytes: 8, sizeBytes: 8 },
+            ],
+            sizeInBytes: 16, sourceStart: 0, sourceEnd: 0,
+        };
+        const src = `float4 MainPS() : SV_TARGET { return float4(A, B, C); }`;
+        const { glsl } = translateHlslToGlsl({
+            source: src, entrypoint: 'MainPS', stage: 'pixel', cbuffers: [packed],
+        });
+        expect(glsl).toMatch(/#define A cb\[0\]\.x/);
+        expect(glsl).toMatch(/#define B cb\[0\]\.y/);
+        expect(glsl).toMatch(/#define C cb\[0\]\.zw/);
+    });
+
     it('handles mixed-type cbuffer fields with the right swizzle per field size', () => {
         const mixed: FxCbufferDecl = {
             name: 'cb',
@@ -528,12 +576,14 @@ VertexShaderOutput MainVS(VertexShaderInput input) {
     return output;
 }`;
 
-    const SPRITE_VS_CBUFFERS = [
+    const SPRITE_VS_CBUFFERS: FxCbufferDecl[] = [
         {
             name: 'Globals',
             sizeInBytes: 64,
+            sourceStart: 0,
+            sourceEnd: 0,
             fields: [
-                { name: 'MatrixTransform', offsetBytes: 0, sizeBytes: 64, rows: 4, columns: 4, arraySize: 0 },
+                { typeName: 'float4x4', name: 'MatrixTransform', offsetBytes: 0, sizeBytes: 64, rows: 4, columns: 4, arraySize: 0 },
             ],
         },
     ];
@@ -605,7 +655,9 @@ float4 V(float4 p : POSITION0) : SV_POSITION { return mul(p * 2.0, M); }`;
             cbuffers: [{
                 name: 'G',
                 sizeInBytes: 64,
-                fields: [{ name: 'M', offsetBytes: 0, sizeBytes: 64, rows: 4, columns: 4, arraySize: 0 }],
+                sourceStart: 0,
+                sourceEnd: 0,
+                fields: [{ typeName: 'float4x4', name: 'M', offsetBytes: 0, sizeBytes: 64, rows: 4, columns: 4, arraySize: 0 }],
             }],
         });
         // First arg is preserved verbatim (paren-balanced scan, not greedy regex).
@@ -642,7 +694,9 @@ float4 P(float2 uv : TEXCOORD0) : SV_TARGET {
             cbuffers: [{
                 name: 'ps',
                 sizeInBytes: 16,
-                fields: [{ name: 'Tint', offsetBytes: 0, sizeBytes: 16, rows: 1, columns: 4, arraySize: 0 }],
+                sourceStart: 0,
+                sourceEnd: 0,
+                fields: [{ typeName: 'float4', name: 'Tint', offsetBytes: 0, sizeBytes: 16, rows: 1, columns: 4, arraySize: 0 }],
             }],
         });
         // No mul() expansion — Tint isn't a matrix.

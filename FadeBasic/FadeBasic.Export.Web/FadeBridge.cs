@@ -928,12 +928,7 @@ public static partial class FadeBridge
             var commands = _workspace.Commands;
             if (!FadeSdk.TryCreateFromString(source, commands, out var ctx, out var errors))
             {
-                return JsonSerializer.Serialize(new
-                {
-                    ok = false,
-                    error = "Compile failed:\n" + errors.ToDisplay(),
-                    statementLines = Array.Empty<int>(),
-                }, _jsonOpts);
+                return DebugStartErr("Compile failed:\n" + errors.ToDisplay());
             }
             _debugContext = ctx;
             _debugSession = new WebDebugSession(ctx.Machine, ctx.Compiler.DebugData, commands);
@@ -955,20 +950,37 @@ public static partial class FadeBridge
             var lines = new SortedSet<int>();
             foreach (var t in ctx.Compiler.DebugData.statementTokens)
                 if (t?.token != null) lines.Add(t.token.lineNumber);
-            return JsonSerializer.Serialize(new
-            {
-                ok = true,
-                statementLines = lines,
-            }, _jsonOpts);
+            return DebugStartOk(lines);
         }
         catch (Exception ex)
         {
-            return JsonSerializer.Serialize(new
-            {
-                ok = false,
-                error = "Debug start failed: " + ex.Message,
-            }, _jsonOpts);
+            return DebugStartErr("Debug start failed: " + ex.Message);
         }
+    }
+
+    // Hand-rolled JSON for DebugStart's return shape. Same reasoning as
+    // StatusOk above: PublishTrimmed=true strips parameter names from
+    // anonymous types, breaking System.Text.Json's deserialization
+    // metadata. A literal JSON string is trim-safe.
+    private static string DebugStartOk(SortedSet<int> statementLines)
+    {
+        var sb = new StringBuilder("{\"ok\":true,\"statementLines\":[");
+        var first = true;
+        foreach (var line in statementLines)
+        {
+            if (!first) sb.Append(',');
+            sb.Append(line);
+            first = false;
+        }
+        sb.Append("]}");
+        return sb.ToString();
+    }
+    private static string DebugStartErr(string error)
+    {
+        var sb = new StringBuilder("{\"ok\":false,\"error\":");
+        AppendJsonString(sb, error);
+        sb.Append(",\"statementLines\":[]}");
+        return sb.ToString();
     }
 
     // Run a budget of VM instructions. Returns drained outbound messages
@@ -979,7 +991,7 @@ public static partial class FadeBridge
     public static string DebugTick(int ops)
     {
         if (_debugSession == null)
-            return JsonSerializer.Serialize(new { running = false, complete = true, messages = Array.Empty<object>() }, _jsonOpts);
+            return DebugTickComplete();
 
         // Per-tick reset for the cooperative-wait hint. WaitImpl writes
         // this when `wait ms` fires inside the debug session; pumpDebugTick
@@ -991,13 +1003,7 @@ public static partial class FadeBridge
         try { _debugSession.StartDebugging(ops); }
         catch (Exception ex) { /* never fail the worker — surface as a message */
             _debugSession.Enqueue(new DebugMessage { id = NextDebugId(), type = DebugMessageType.NOOP });
-            return JsonSerializer.Serialize(new
-            {
-                running = false,
-                complete = true,
-                error = "Runtime exception: " + ex.Message,
-                messages = Array.Empty<object>(),
-            }, _jsonOpts);
+            return DebugTickFailed("Runtime exception: " + ex.Message);
         }
         // If WaitImpl flipped requestedExit to unwind early (kind=3 yield
         // for breakpoint updates etc., or kind=2 terminate before the
@@ -1008,37 +1014,58 @@ public static partial class FadeBridge
         _debugSession.ClearYieldRequest();
 
         var drained = _debugSession.DrainOutbound();
-        var msgs = new List<object>(drained.Count);
-        foreach (var m in drained)
-        {
-            msgs.Add(new
-            {
-                id = m.id,
-                type = m.type.ToString(),
-                json = m.RawJson ?? m.Jsonify(),
-            });
-        }
 
         // No synthetic events. The page acts as its own DAP adapter — it
         // listens for PROTO_ACK with status=1 on its own step requests and
         // treats those as "stopped after step", same way a real DAP adapter
         // translates the ACK into a DAP Stopped event for VSCode.
+        return DebugTickRunning(
+            running: !_debugSession.IsPaused,
+            paused: _debugSession.IsPaused,
+            complete: _debugSession.ProgramComplete,
+            instructionPointer: _debugSession.InstructionPointer,
+            waitMs: CooperativePump.PendingWaitMs,
+            messages: drained);
+    }
 
-        var printed = "";
-        return JsonSerializer.Serialize(new
+    // Hand-rolled JSON for DebugTick's return shapes. Anonymous types
+    // (the old code) trip System.Text.Json's deserialization-metadata
+    // reflection under PublishTrimmed=true. See StatusOk above.
+    private static string DebugTickComplete() =>
+        "{\"running\":false,\"paused\":false,\"complete\":true,\"messages\":[]}";
+    private static string DebugTickFailed(string error)
+    {
+        var sb = new StringBuilder("{\"running\":false,\"paused\":false,\"complete\":true,\"error\":");
+        AppendJsonString(sb, error);
+        sb.Append(",\"messages\":[]}");
+        return sb.ToString();
+    }
+    private static string DebugTickRunning(
+        bool running, bool paused, bool complete, int instructionPointer, int waitMs,
+        List<DebugMessage> messages)
+    {
+        var sb = new StringBuilder(256);
+        sb.Append("{\"running\":").Append(running ? "true" : "false");
+        sb.Append(",\"paused\":").Append(paused ? "true" : "false");
+        sb.Append(",\"complete\":").Append(complete ? "true" : "false");
+        sb.Append(",\"instructionPointer\":").Append(instructionPointer);
+        sb.Append(",\"waitMs\":").Append(waitMs);
+        sb.Append(",\"printed\":\"\"");
+        sb.Append(",\"messages\":[");
+        var first = true;
+        foreach (var m in messages)
         {
-            running = !_debugSession.IsPaused,
-            paused = _debugSession.IsPaused,
-            complete = _debugSession.ProgramComplete,
-            instructionPointer = _debugSession.InstructionPointer,
-            messages = msgs,
-            // Cooperative wait: when `wait ms` fired during this tick
-            // the JS pump should setTimeout for that duration before
-            // the next tick. Zero means "no wait pending" — pump uses
-            // its normal small interval.
-            waitMs = CooperativePump.PendingWaitMs,
-            printed,
-        }, _jsonOpts);
+            if (!first) sb.Append(',');
+            first = false;
+            sb.Append("{\"id\":").Append(m.id);
+            sb.Append(",\"type\":");
+            AppendJsonString(sb, m.type.ToString());
+            sb.Append(",\"json\":");
+            AppendJsonString(sb, m.RawJson ?? m.Jsonify());
+            sb.Append('}');
+        }
+        sb.Append("]}");
+        return sb.ToString();
     }
 
     // Replace the active breakpoint set. linesJson is a JSON array of
@@ -1191,13 +1218,39 @@ public static partial class FadeBridge
     // them. The native LSP/DAP serializer skips this via IJsonable's
     // ProcessJson, but our STJ-based path here doesn't honor that. Null
     // the field before serializing so the response is clean.
+    // Null out runtimeVariable for serialization WITHOUT mutating the
+    // original Launch.DebugVariable objects — those live in the
+    // variableDb's idToVariable map and subsequent setVariable calls
+    // need their runtimeVariable to still point at the live VM data.
+    // (Mutating in place worked back when variables didn't carry a
+    // runtimeVariable, but the array-element fix in DebugUtil.Expand
+    // now attaches one so TrySetValue's heap-write branch fires.
+    // Stripping in place broke that — the element id was in
+    // idToVariable but its runtimeVariable came back null, so
+    // TrySetValue's null-check threw "no variable for given id".)
     private static void StripRuntimeRefs(ScopesMessage msg)
     {
         if (msg?.scopes == null) return;
-        foreach (var scope in msg.scopes)
+        for (var si = 0; si < msg.scopes.Count; si++)
         {
+            var scope = msg.scopes[si];
             if (scope?.variables == null) continue;
-            foreach (var v in scope.variables) v.runtimeVariable = null;
+            for (var vi = 0; vi < scope.variables.Count; vi++)
+            {
+                var v = scope.variables[vi];
+                if (v?.runtimeVariable == null) continue;
+                scope.variables[vi] = new Launch.DebugVariable
+                {
+                    id = v.id,
+                    name = v.name,
+                    type = v.type,
+                    value = v.value,
+                    evalName = v.evalName,
+                    fieldCount = v.fieldCount,
+                    elementCount = v.elementCount,
+                    // runtimeVariable intentionally left null — STJ-safe.
+                };
+            }
         }
     }
 

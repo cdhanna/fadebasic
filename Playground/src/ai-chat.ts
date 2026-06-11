@@ -10,18 +10,23 @@
 import { Agent, type AgentEvent } from './ai/agent';
 import { getLogger } from './log-bus';
 import { createDefaultRegistry } from './ai/tools/default-registry';
+import { reviewProposedEdit } from './ai/code-reviewer';
+import { renderAssistantMarkdown } from './ai/ui/assistant-markdown';
+import { headingTail } from './ai/rag/doc-citation-links';
 import { mountDiffApproval, type DiffApprovalHandle } from './ai/ui/diff-approval';
 import type { AgentPlan } from './ai/tool-protocol';
 import type { DiagnosticsProvider, EditorAdapter, ToolRegistry } from './ai/tools';
 import { createDefaultSlashRegistry } from './ai/slash-commands/default-registry';
 import { emptySlashState } from './ai/slash-commands/registry';
 import type { SlashResult, SlashStateSnapshot } from './ai/slash-commands/types';
-import { ensureAnthropicApiKey } from './ai/providers/anthropic';
 import {
     PROVIDER_CATALOG,
     createSelectedProvider,
+    disposeInferenceWorker,
     getSelectedProviderId,
+    markProviderLoaded,
     setSelectedProviderId,
+    shouldAutoLoadProvider,
     type ChatProvider,
     type Msg,
 } from './ai/providers';
@@ -47,6 +52,14 @@ export interface ChatDependencies {
      *  Agent + tool context so RAG retrieval can hide type-scoped chunks
      *  (see docs-sources.mjs `projectTypes`). */
     getProjectType?: () => string | undefined;
+    /** LSP tokenize hook for Fade code fences in assistant markdown. */
+    tokenizeSnippet?: (source: string) => Promise<Array<{ line: number; col: number; length: number; type: number }>>;
+    /** Open a retrieved doc chunk in the Help panel (command or doc section). */
+    openDocCitation?: (source: string, heading: string) => void | Promise<void>;
+    /** LSP-check proposed Fade source before diff approval. */
+    validateEditContent?: (path: string, content: string) => Promise<import('./ai/tools').DiagnosticEntry[]>;
+    /** Loaded Fade command names for the agent system prompt. */
+    getCommandNames?: () => Promise<string[]>;
 }
 
 type EngineStatus = 'idle' | 'loading' | 'ready' | 'error';
@@ -75,19 +88,10 @@ export async function loadSelectedProvider(): Promise<void> {
 
     notifyStatus('loading');
     try {
-        // If the user selected an Anthropic provider, make sure we have a
-        // key on hand before we even build the provider. Prompts the user
-        // if missing. Throws if they cancel.
-        const selectedId = getSelectedProviderId();
-        if (selectedId.startsWith('anthropic:')) {
-            const key = ensureAnthropicApiKey();
-            if (!key) {
-                throw new Error('Anthropic API key required. Cancelled by user.');
-            }
-        }
         provider = createSelectedProvider();
         provider.onProgress(({ text, pct }) => notifyProgress(text, pct));
         await provider.ensureReady();
+        markProviderLoaded(getSelectedProviderId());
         notifyStatus('ready');
     } catch (err) {
         provider = null;
@@ -112,6 +116,7 @@ if (typeof window !== 'undefined') {
         if (p) {
             try { void p.reset(); } catch { /* ignore — page is dying */ }
         }
+        disposeInferenceWorker();
     });
 }
 
@@ -202,6 +207,18 @@ function formatJson(raw: unknown): string {
     try { return JSON.stringify(raw, null, 2); } catch { return String(raw); }
 }
 
+function formatToolError(raw: unknown): string {
+    if (typeof raw === 'string') return raw;
+    if (raw && typeof raw === 'object') {
+        const r = raw as Record<string, unknown>;
+        if (typeof r.review === 'string' && r.review.trim()) {
+            return `Code review rejected:\n${r.review.trim()}`;
+        }
+        if (typeof r.error === 'string') return r.error;
+    }
+    return formatJson(raw);
+}
+
 function highlightJson(json: string): string {
     const escaped = escapeHtml(json);
     return escaped.replace(
@@ -233,7 +250,8 @@ export function mountAiChat(
     const clearBtn = pane.querySelector<HTMLButtonElement>('.ai-clear-btn')!;
     const progressBar = pane.querySelector<HTMLElement>('.ai-progress-bar-fill')!;
     const progressRow = pane.querySelector<HTMLElement>('.ai-progress-row')!;
-    const progressText = pane.querySelector<HTMLElement>('.ai-progress-text')!;
+    const progressPct = pane.querySelector<HTMLElement>('.ai-progress-pct')!;
+    const progressDetail = pane.querySelector<HTMLElement>('.ai-progress-detail')!;
     const historyBtn = pane.querySelector<HTMLButtonElement>('.ai-history-btn')!;
     const historyMenu = pane.querySelector<HTMLElement>('.ai-history-menu')!;
     const historyList = pane.querySelector<HTMLElement>('.ai-history-list')!;
@@ -242,6 +260,8 @@ export function mountAiChat(
     let activeChatId: string = newChatId();
     let generating = false;
     let agent: Agent | null = null;
+    /** Tracks which provider the current agent was built against. */
+    let boundProviderId: string | null = null;
     /** Kept on the panel so /tools and /context can inspect them without
      *  reaching into the Agent's internals. Refreshed when the agent is
      *  rebuilt (e.g. after a model swap). */
@@ -253,21 +273,70 @@ export function mountAiChat(
      *  them when the user aborts — otherwise the agent hangs forever on
      *  a Promise that nothing else can resolve. */
     const pendingDiffApprovals = new Set<DiffApprovalHandle>();
+    /** Active review progress row shown during pre-diff LSP check. */
+    let hideReviewing: (() => void) | null = null;
+    let reviewProgressTimer: ReturnType<typeof setInterval> | null = null;
+
+    function clearReviewProgress(): void {
+        if (reviewProgressTimer) {
+            clearInterval(reviewProgressTimer);
+            reviewProgressTimer = null;
+        }
+        hideReviewing?.();
+        hideReviewing = null;
+    }
+
+    function startReviewProgress(label: string): void {
+        clearReviewProgress();
+        let elapsed = 0;
+        hideReviewing = showThinking(label);
+        reviewProgressTimer = setInterval(() => {
+            elapsed += 2;
+            hideReviewing?.();
+            hideReviewing = showThinking(`${label} (${elapsed}s)`);
+        }, 2000);
+    }
 
     const store = new ChatStore();
     void store.init().catch(e => console.warn('[fade/ai] chat store init failed:', e));
 
     function buildAgent(): Agent | null {
         if (!provider) return null;
+        // Capture so the closures below see a narrowed non-null type;
+        // the field-level `provider` reference isn't auto-narrowed
+        // through the arrow function below.
+        const activeProvider = provider;
         toolRegistry = createDefaultRegistry();
+        boundProviderId = activeProvider.id;
         const toolLog = getLogger('ai/tool');
         return new Agent({
-            provider,
+            provider: activeProvider,
             tools: toolRegistry,
             toolContext: {
                 workspace,
                 diagnostics: deps.diagnostics,
                 editor: deps.editor,
+                reviewEdit: activeProvider
+                    ? async (req) => reviewProposedEdit(activeProvider, {
+                        ...req,
+                        validateContent: deps.validateEditContent,
+                    }, {
+                        llmReview: false,
+                        signal: agent?.getAbortSignal?.(),
+                        onPhase: (phase) => {
+                            const label = phase === 'lsp'
+                                ? 'Checking syntax (LSP)…'
+                                : 'AI code review…';
+                            startReviewProgress(label);
+                        },
+                    })
+                    : undefined,
+                onEditReviewStart: () => {
+                    startReviewProgress('Checking syntax (LSP)…');
+                },
+                onEditReviewEnd: () => {
+                    clearReviewProgress();
+                },
                 confirmEdit: (path, oldContent, newContent) => {
                     // Log every approval request — when a hang happens
                     // again, the Logs panel shows what file + sizes were
@@ -280,6 +349,7 @@ export function mountAiChat(
                 projectType: deps.getProjectType,
             },
             getProjectType: deps.getProjectType,
+            getCommandNames: deps.getCommandNames,
         });
     }
 
@@ -365,10 +435,19 @@ export function mountAiChat(
         messagesEl.innerHTML = '';
     }
 
+    function ensureAgent(): Agent | null {
+        if (!provider) return null;
+        if (!agent || boundProviderId !== provider.id) {
+            rejectPendingDiffs();
+            agent = buildAgent();
+        }
+        return agent;
+    }
+
     async function loadChat(id: string): Promise<void> {
         const record = await store.load(id);
         if (!record) return;
-        if (!agent) agent = buildAgent();
+        ensureAgent();
         agent?.setHistory(record.messages);
         activeChatId = id;
         renderHistoryToDOM(record.messages);
@@ -428,7 +507,8 @@ export function mountAiChat(
             inputEl.disabled = false;
             progressRow.hidden = true;
         } else if (engineStatus === 'loading') {
-            statusEl.textContent = 'Loading…';
+            const pct = progressPct.textContent;
+            statusEl.textContent = pct && pct !== '0%' ? `Loading ${pct}` : 'Loading…';
             statusEl.className = 'ai-chat-status ai-status-loading';
             loadBtn.hidden = true;
             sendBtn.disabled = true;
@@ -453,10 +533,30 @@ export function mountAiChat(
         }
     }
 
-    statusListeners.add(renderStatus);
+    function onEngineStatusChange(): void {
+        renderStatus();
+        // Rebind the agent when a new model finishes loading (or after a
+        // failed load recovers) so sends don't hit a stale provider.
+        if (engineStatus === 'ready' && provider && boundProviderId !== provider.id) {
+            rejectPendingDiffs();
+            agent = buildAgent();
+        }
+        if (engineStatus === 'idle' || engineStatus === 'error') {
+            boundProviderId = null;
+            agent = null;
+        }
+    }
+
+    function applyChatLoadProgress(text: string, pct: number): void {
+        const pctInt = Math.min(100, Math.max(0, Math.round(pct * 100)));
+        progressBar.style.width = `${pctInt}%`;
+        progressPct.textContent = `${pctInt}%`;
+        progressDetail.textContent = text.replace(/^\d+% — /, '') || 'Loading…';
+    }
+
+    statusListeners.add(onEngineStatusChange);
     progressListeners.add((text, pct) => {
-        progressBar.style.width = `${Math.round(pct * 100)}%`;
-        progressText.textContent = text;
+        applyChatLoadProgress(text, pct);
     });
     renderStatus();
 
@@ -469,23 +569,53 @@ export function mountAiChat(
         scrollToBottom();
     }
 
-    function appendAssistantBubble(): { setText(t: string): void; appendText(t: string): void; el: HTMLElement } {
+    function appendAssistantBubble(): {
+        setText(t: string): void;
+        appendText(t: string): void;
+        finalize(): Promise<void>;
+        el: HTMLElement;
+    } {
         const div = document.createElement('div');
-        div.className = 'ai-msg ai-msg-assistant';
+        div.className = 'ai-msg ai-msg-assistant ai-msg-markdown';
         messagesEl.appendChild(div);
         scrollToBottom();
         let buf = '';
+        let renderTimer: ReturnType<typeof setTimeout> | null = null;
+
+        const flush = async () => {
+            renderTimer = null;
+            await renderAssistantMarkdown(div, buf, deps.tokenizeSnippet);
+            scrollToBottom();
+        };
+        const scheduleRender = () => {
+            if (renderTimer) clearTimeout(renderTimer);
+            renderTimer = setTimeout(() => { void flush(); }, 150);
+        };
+
         return {
-            setText(t: string) { buf = t; div.textContent = t; scrollToBottom(); },
-            appendText(t: string) { buf += t; div.textContent = buf; scrollToBottom(); },
+            setText(t: string) { buf = t; void flush(); },
+            appendText(t: string) { buf += t; scheduleRender(); },
+            async finalize() {
+                if (renderTimer) { clearTimeout(renderTimer); renderTimer = null; }
+                await flush();
+            },
             el: div,
         };
     }
 
-    function showThinking(): () => void {
+    function showThinking(label = 'Thinking…'): () => void {
         const div = document.createElement('div');
         div.className = 'ai-thinking';
-        div.innerHTML = '<span></span><span></span><span></span>';
+        const dots = document.createElement('span');
+        dots.className = 'ai-thinking-dots';
+        dots.innerHTML = '<span></span><span></span><span></span>';
+        div.appendChild(dots);
+        if (label) {
+            const text = document.createElement('span');
+            text.className = 'ai-thinking-label';
+            text.textContent = label;
+            div.appendChild(text);
+        }
         messagesEl.appendChild(div);
         scrollToBottom();
         return () => div.remove();
@@ -523,10 +653,23 @@ export function mountAiChat(
         list.className = 'ai-docs-list';
         for (const hit of hits) {
             const li = document.createElement('li');
-            const cite = hit.chunk.heading
-                ? `${hit.chunk.source} → ${hit.chunk.heading}`
+            const label = hit.chunk.heading
+                ? `${hit.chunk.source} → ${headingTail(hit.chunk.heading)}`
                 : hit.chunk.source;
-            li.textContent = `${cite} (${hit.score.toFixed(2)})`;
+            const link = document.createElement('button');
+            link.type = 'button';
+            link.className = 'ai-docs-link';
+            link.textContent = label;
+            link.title = `Open ${hit.chunk.source}`;
+            link.addEventListener('click', () => {
+                if (deps.openDocCitation) {
+                    void deps.openDocCitation(hit.chunk.source, hit.chunk.heading);
+                }
+            });
+            const score = document.createElement('span');
+            score.className = 'ai-docs-score';
+            score.textContent = ` (${hit.score.toFixed(2)})`;
+            li.append(link, score);
             list.appendChild(li);
         }
         wrap.appendChild(list);
@@ -550,6 +693,15 @@ export function mountAiChat(
         row.innerHTML = `<span class="ai-post-edit-icon"></span><span class="ai-post-edit-text"></span>`;
         row.querySelector('.ai-post-edit-icon')!.textContent = icon;
         row.querySelector('.ai-post-edit-text')!.textContent = text;
+        messagesEl.appendChild(row);
+        scrollToBottom();
+    }
+
+    function appendReviewNotice(message: string): void {
+        if (!message.includes('review rejected') && !message.includes('LSP')) return;
+        const row = document.createElement('div');
+        row.className = 'ai-msg ai-msg-error ai-review-notice';
+        row.textContent = message;
         messagesEl.appendChild(row);
         scrollToBottom();
     }
@@ -741,12 +893,21 @@ export function mountAiChat(
         inputEl.style.height = 'auto';
         appendUserBubble(text);
 
-        if (!agent) agent = buildAgent();
+        if (!ensureAgent()) return;
+        // ensureAgent() returning true implies agent is non-null, but
+        // TypeScript can't narrow through a function call on a let
+        // binding. Belt-and-suspenders null check narrows the type for
+        // the rest of the closure.
         if (!agent) return;
 
         setGenerating(true);
         inputEl.disabled = true;
-        const hideThinking = showThinking();
+        let hideThinking: (() => void) | null = showThinking();
+        const clearThinking = () => { hideThinking?.(); hideThinking = null; };
+        const ensureThinking = (label = 'Thinking…') => {
+            clearThinking();
+            hideThinking = showThinking(label);
+        };
         let firstDelta = true;
         let currentBubble: ReturnType<typeof appendAssistantBubble> | null = null;
         const toolRows = new Map<string, ReturnType<typeof appendToolRow>>();
@@ -760,13 +921,14 @@ export function mountAiChat(
             else if (ev.kind === 'plan_emitted') slashState.lastPlan = ev.plan;
 
             if (ev.kind === 'text_delta') {
-                if (firstDelta) { hideThinking(); firstDelta = false; }
+                if (firstDelta) { clearThinking(); firstDelta = false; }
                 if (!currentBubble) currentBubble = appendAssistantBubble();
                 currentBubble.appendText(ev.delta);
-            } else if (ev.kind === 'iteration_start' && ev.iteration > 1) {
+            } else if (ev.kind === 'iteration_start') {
                 currentBubble = null;
+                ensureThinking('Thinking…');
             } else if (ev.kind === 'plan_emitted') {
-                if (firstDelta) { hideThinking(); firstDelta = false; }
+                if (firstDelta) { clearThinking(); firstDelta = false; }
                 appendPlanBubble(ev.plan);
                 currentBubble = null;
             } else if (ev.kind === 'docs_retrieved') {
@@ -774,7 +936,7 @@ export function mountAiChat(
             } else if (ev.kind === 'post_edit_diagnostics') {
                 appendPostEditDiagnostics(ev.path, ev.errors, ev.warnings, ev.clean);
             } else if (ev.kind === 'tool_call_start') {
-                if (firstDelta) { hideThinking(); firstDelta = false; }
+                if (firstDelta) { clearThinking(); firstDelta = false; }
                 const icon = toolIcon(ev.name);
                 const row = appendToolRow(icon, ev.name);
                 toolRows.set(ev.id, row);
@@ -782,13 +944,23 @@ export function mountAiChat(
                 const row = toolRows.get(ev.id);
                 if (!row) return;
                 if (ev.ok) row.done(ev.result);
-                else row.fail(typeof ev.result === 'string' ? ev.result : formatJson(ev.result));
+                else {
+                    const msg = formatToolError(ev.result);
+                    row.fail(msg);
+                    if (ev.name === 'apply_edit' || ev.name === 'create_file') {
+                        appendReviewNotice(msg);
+                    }
+                }
+                currentBubble = null;
+                ensureThinking('Thinking…');
             } else if (ev.kind === 'budget_warning') {
                 showBudgetWarning(ev.tokens, ev.max);
             } else if (ev.kind === 'eviction') {
                 showEvictionNotice(ev.result, ev.tokensBefore, ev.tokensAfter, ev.max);
+            } else if (ev.kind === 'turn_complete') {
+                void currentBubble?.finalize();
             } else if (ev.kind === 'error') {
-                if (firstDelta) { hideThinking(); firstDelta = false; }
+                if (firstDelta) { clearThinking(); firstDelta = false; }
                 const err = document.createElement('div');
                 err.className = 'ai-msg ai-msg-error';
                 err.textContent = `Error: ${ev.message}`;
@@ -801,7 +973,16 @@ export function mountAiChat(
             await agent.send(text);
         } finally {
             unbind();
-            if (firstDelta) hideThinking();
+            // TS narrows `currentBubble` to `null` here because its
+            // initial assignment is `null` and the closure
+            // reassignments above aren't visible to control-flow
+            // analysis. Cast back to the declared type before
+            // dereferencing — at runtime the closure has fired by
+            // the time the `finally` runs.
+            const bubble = currentBubble as ReturnType<typeof appendAssistantBubble> | null;
+            if (bubble) await bubble.finalize();
+            clearThinking();
+            clearReviewProgress();
             saveChat();
             setGenerating(false);
             inputEl.disabled = false;
@@ -828,6 +1009,33 @@ export function mountAiChat(
     loadBtn.addEventListener('click', () => {
         void loadSelectedProvider();
     });
+
+    // Probe / automation hook — mirrors __fadeRunnerHelpers pattern.
+    // Auto-warm on return visits. Weights are cached in IndexedDB by
+    // transformers.js — this rebuilds the in-memory session only (seconds,
+    // not another multi-GB download). Skip the manual "Load Model" click.
+    if (shouldAutoLoadProvider()) {
+        void loadSelectedProvider().catch(e =>
+            console.warn('[fade/ai] auto-load failed:', e),
+        );
+    }
+
+    (window as Window & { __fadeAiHelpers?: {
+        loadModel(): Promise<void>;
+        engineStatus(): EngineStatus;
+        providerLabel(): string | null;
+        toolRowCount(): number;
+        sendMessage(text: string): Promise<void>;
+    } }).__fadeAiHelpers = {
+        loadModel: () => loadSelectedProvider(),
+        engineStatus: () => engineStatus,
+        providerLabel: () => provider?.label ?? null,
+        toolRowCount: () => messagesEl.querySelectorAll('.ai-tool-row').length,
+        sendMessage: (text: string) => {
+            inputEl.value = text;
+            return handleSend();
+        },
+    };
 }
 
 function toolIcon(name: string): string {
@@ -855,6 +1063,7 @@ export function mountAiModels(container: HTMLElement): void {
         btnEl: HTMLButtonElement;
         barEl: HTMLElement;
         barFill: HTMLElement;
+        barPct: HTMLElement;
     }
     const rows: RowState[] = [];
 
@@ -896,11 +1105,18 @@ export function mountAiModels(container: HTMLElement): void {
             const barFill = document.createElement('div');
             barFill.className = 'ai-model-bar-fill';
             barWrap.appendChild(barFill);
+            const barPct = document.createElement('div');
+            barPct.className = 'ai-model-bar-pct';
+            barPct.textContent = '0%';
+            barWrap.appendChild(barPct);
 
             row.append(info, right, barWrap);
             list.appendChild(row);
 
-            const state: RowState = { id: entry.id, label: entry.label, note: entry.note, rowEl: row, statusEl, btnEl, barEl: barWrap, barFill };
+            const state: RowState = {
+                id: entry.id, label: entry.label, note: entry.note,
+                rowEl: row, statusEl, btnEl, barEl: barWrap, barFill, barPct,
+            };
             rows.push(state);
 
             btnEl.addEventListener('click', () => {
@@ -930,7 +1146,8 @@ export function mountAiModels(container: HTMLElement): void {
             state.btnEl.disabled = true;
             state.barEl.hidden = true;
         } else if (isLoading) {
-            state.statusEl.textContent = 'Loading…';
+            const pctLabel = state.barPct.textContent ?? '0%';
+            state.statusEl.textContent = pctLabel === '0%' ? 'Loading…' : `Loading ${pctLabel}`;
             state.statusEl.className = 'ai-model-status ai-model-status-loading';
             state.btnEl.textContent = 'Loading…';
             state.btnEl.disabled = true;
@@ -948,10 +1165,17 @@ export function mountAiModels(container: HTMLElement): void {
     }
 
     statusListeners.add(updateRows);
-    progressListeners.add((_, pct) => {
+    progressListeners.add((_text, pct) => {
         const sel = getSelectedProviderId();
+        const pctInt = Math.min(100, Math.max(0, Math.round(pct * 100)));
+        const pctLabel = `${pctInt}%`;
         for (const state of rows) {
-            if (state.id === sel) state.barFill.style.width = `${Math.round(pct * 100)}%`;
+            if (state.id !== sel) continue;
+            state.barFill.style.width = pctLabel;
+            state.barPct.textContent = pctLabel;
+            if (engineStatus === 'loading') {
+                state.statusEl.textContent = pctInt > 0 ? `Loading ${pctLabel}` : 'Loading…';
+            }
         }
     });
 

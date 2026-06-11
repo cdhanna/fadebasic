@@ -284,7 +284,31 @@ export const DEFAULT_AUDIO_COMPRESSION: AudioCompression = 'auto';
 //        locals are excluded) into a synthetic cbuffer named
 //        `_TopLevelUniforms`, sized via the same HLSL packing rules
 //        as user-authored cbuffers.
-export const ENCODER_VERSION = 31;
+//   v32: 16-byte alignment for the synthetic `_TopLevelUniforms`
+//        cbuffer. A single `float Alpha;` at file scope used to be
+//        emitted with `sizeInBytes: 4`, which is less than one vec4.
+//        KNI's MGFX→GL uploader writes via glUniform4fv on the cbuffer
+//        array (sized `ceil(sizeInBytes / 16)` slots), so a 4-byte
+//        cbuffer rounded down to ZERO slots — the parameter never
+//        actually reached the shader. `set effect param "Alpha", …`
+//        looked like a silent no-op. The user-authored cbuffer parser
+//        already aligns to 16; the synthetic path now matches.
+//   v33: cbuffer #define aliases now respect the field's in-slot
+//        byte offset, not just the vec4 slot index. HLSL packs
+//        multiple sequential scalars into the same vec4 (Time at
+//        offset 0 → .x, GlitchAmount at offset 4 → .y, …), but
+//        `buildFieldAlias` was emitting `#define <name> cb[slot].x`
+//        for EVERY scalar regardless of its byte offset within the
+//        slot. So `cbuffer Globals { float Time; float Glitch; }`
+//        produced TWO `#define`s both pointing at `cb[0].x` — only
+//        the first param's value was visible; the second silently
+//        read the first's value. Same applied to vec2/vec3 that
+//        follow scalars in the same slot (now correctly aliased
+//        to .zw / .yzw etc.). Symptom: only the FIRST scalar
+//        parameter in a cbuffer worked; flipping declaration order
+//        swapped which one did. Two new regression tests cover the
+//        scalar-packing and vec2-after-scalars cases.
+export const ENCODER_VERSION = 33;
 
 // Source extensions we know how to compile into an XNB. Anything else
 // in OPFS is either already an XNB (passed through) or non-asset state

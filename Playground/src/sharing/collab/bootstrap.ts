@@ -12,10 +12,16 @@ import {
     mockTransport,
     mountLiveSessionPanel,
     trysteroTransport,
+    manualTransport,
+    startManualHost as startManualHostHandle,
+    startManualJoin as startManualJoinHandle,
     makeIdentity,
     type CollabTransport,
     type LiveSessionPanelController,
     type LiveSessionPanelHost,
+    type ManualHostFlow,
+    type ManualJoinFlow,
+    type ManualStartArgs,
     type SessionHost,
     type StartHostArgs,
     type StartJoinArgs,
@@ -36,6 +42,11 @@ export interface BootstrapOptions {
      *  means the session stays focused on Yjs + sync, and project
      *  management stays in the main bootstrap where it belongs. */
     guestLifecycle?: GuestLifecycle;
+    /** Optional callback to re-sync debug state. The panel's "Force sync
+     *  debug data" button delegates here. Bootstrap passes it through to
+     *  the panel verbatim; main.ts decides whether to re-broadcast
+     *  (host) or re-fetch (guest). */
+    forceDebugSync?: () => Promise<void>;
     /** appId namespace. Hard-coded to fade-playground for now. */
     appId?: string;
 }
@@ -120,9 +131,9 @@ export function bootstrapLiveSession(opts: BootstrapOptions): LiveSessionHandle 
         console.warn('[fade-collab] ICE probe failed', e);
     });
 
-    // Transport preference: real network first, mock last. The mock is
-    // still useful for two-tab smoke testing in one browser.
-    const allTransports: CollabTransport[] = [trysteroTransport, mockTransport];
+    // Transport preference: real network first, manual second (most
+    // reliable fallback when signaling is broken), mock last (test-only).
+    const allTransports: CollabTransport[] = [trysteroTransport, manualTransport, mockTransport];
 
     const panelHost: LiveSessionPanelHost = {
         transports: allTransports,
@@ -130,6 +141,7 @@ export function bootstrapLiveSession(opts: BootstrapOptions): LiveSessionHandle 
         pendingJoin: () => parseUrlJoin(),
         consumePendingJoin: () => clearUrlJoin(),
         buildShareLink: (roomId, password) => buildShareLink(roomId, password),
+        forceDebugSync: opts.forceDebugSync,
 
         async startHost(args: StartHostArgs): Promise<CollabSession> {
             const transport = allTransports.find((t) => t.id === args.transportId) ?? allTransports[0];
@@ -182,6 +194,69 @@ export function bootstrapLiveSession(opts: BootstrapOptions): LiveSessionHandle 
             if (transientArgs) (session as any).__transient = transientArgs;
             return session;
         },
+
+        async startManualHost(args: ManualStartArgs): Promise<ManualHostFlow> {
+            const roomId = generateRoomId();
+            const identity = makeIdentity(args.displayName, {
+                githubLogin: opts.getGithubLogin?.() ?? undefined,
+            });
+            // Generate the offer eagerly — the wizard wants to display
+            // it as soon as the host clicks "Start hosting (manual)".
+            const handle = await startManualHostHandle({ roomId });
+            return {
+                roomId,
+                offer: handle.offer,
+                async acceptAnswer(answerBlob: string): Promise<CollabSession> {
+                    const room = await handle.acceptAnswer(answerBlob);
+                    const session = new CollabSession(opts.sessionHost, room);
+                    await session.start({
+                        role: 'host',
+                        identity,
+                        projectName: opts.getProjectName?.() ?? undefined,
+                    });
+                    (session as any).__roomId = roomId;
+                    if (args.password) (session as any).__password = args.password;
+                    (session as any).__manual = true;
+                    return session;
+                },
+                cancel: () => handle.cancel(),
+            };
+        },
+
+        async startManualJoin(args: ManualStartArgs): Promise<ManualJoinFlow> {
+            const identity = makeIdentity(args.displayName, {
+                githubLogin: opts.getGithubLogin?.() ?? undefined,
+            });
+            const handle = await startManualJoinHandle({});
+            return {
+                async acceptOffer(offerBlob: string) {
+                    const inner = await handle.acceptOffer(offerBlob);
+                    const sessionPromise = (async () => {
+                        // The roomId we learn from the offer envelope
+                        // doubles as the transient OPFS project name —
+                        // same shape as the trystero join above. If
+                        // missing (older host blob), fall back to a
+                        // synthesised name so the guest still gets an
+                        // isolated workspace.
+                        const projectKey = inner.roomId ?? `manual-${Math.random().toString(36).slice(2, 10)}`;
+                        let transientArgs: { transientProjectName: string; previousProjectName: string | null } | null = null;
+                        if (opts.guestLifecycle) {
+                            transientArgs = await opts.guestLifecycle.onGuestJoinStart(projectKey);
+                        }
+                        const room = await inner.whenConnected;
+                        const session = new CollabSession(opts.sessionHost, room);
+                        await session.start({ role: 'guest', identity });
+                        (session as any).__roomId = projectKey;
+                        if (args.password) (session as any).__password = args.password;
+                        (session as any).__manual = true;
+                        if (transientArgs) (session as any).__transient = transientArgs;
+                        return session;
+                    })();
+                    return { answer: inner.answer, sessionPromise, roomId: inner.roomId };
+                },
+                cancel: () => handle.cancel(),
+            };
+        },
     };
 
     const controller = mountLiveSessionPanel({
@@ -223,6 +298,23 @@ export function bootstrapLiveSession(opts: BootstrapOptions): LiveSessionHandle 
         }
     });
 
+    // Expose the host shim for headless probes — drives startHost /
+    // startJoin without touching the panel UI. We also inject the new
+    // session into the panel controller so onSessionChange subscribers
+    // (incl. __fadeCollab, installCollabRuntimeListeners) wire up the
+    // same way they would after a real button-click flow.
+    (window as any).__fadeCollabBootstrap = {
+        startHost: async (args: StartHostArgs) => {
+            const session = await panelHost.startHost(args);
+            controller.injectSessionForTesting(session);
+            return session;
+        },
+        startJoin: async (args: StartJoinArgs) => {
+            const session = await panelHost.startJoin(args);
+            controller.injectSessionForTesting(session);
+            return session;
+        },
+    };
     return {
         controller,
         getSession: () => controller.getSession(),
