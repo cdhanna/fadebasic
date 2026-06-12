@@ -2340,15 +2340,16 @@ a = x(1)
 
 ";
         Setup(src, out _, out var prog);
-        
+
         var vm = new VirtualMachine(prog);
+        vm.sweepInterval = 1; // cursor math below assumes freed blocks become reusable immediately
         vm.Execute2();
-        
-        // the first data-register is the loop variable, n 
+
+        // the first data-register is the loop variable, n
         // Assert.That(vm.dataRegisters[1], Is.EqualTo(0));
         // Assert.That(vm.typeRegisters[1], Is.EqualTo(TypeCodes.INT));
-        
-        
+
+
         Assert.That(vm.heap.Cursor, Is.EqualTo((2*(10*4)).ToPtr())); //10 ints, which have a size of 4.. And the second one, because of the re-assignment
          
 //        Assert.Fail("It shouldn't be possible to clear an array, because the pointer tracking is going to get confused. ");

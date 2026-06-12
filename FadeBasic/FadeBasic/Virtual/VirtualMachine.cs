@@ -121,7 +121,20 @@ namespace FadeBasic.Virtual
         
         public FastStack<byte> stack = new FastStack<byte>(256);
         public VmHeap heap;
-        
+
+        /// <summary>
+        /// How many pointer-store instructions may run between heap sweeps.
+        /// <see cref="VmHeap.Sweep"/> walks every live allocation, so sweeping
+        /// on every store makes pointer-assignment loops O(stores × allocations).
+        /// 1 sweeps on every store — the historical, most aggressive behavior,
+        /// which the GC tests rely on. The default amortizes the sweep cost
+        /// while keeping unreachable memory short-lived.
+        /// </summary>
+        public int sweepInterval = DEFAULT_SWEEP_INTERVAL;
+        public const int DEFAULT_SWEEP_INTERVAL = 64;
+        private int _storesSinceSweep;
+
+
         public HostMethodTable hostMethods;
         public FastStack<JumpHistoryData> methodStack; // TODO: This could also store the index of the scope-stack at the time of the push; so that a debugger could know the scope at the frame.
 
@@ -795,10 +808,11 @@ namespace FadeBasic.Virtual
 
                             heap.IncrementRefCount(data);
 
-                            // TODO: this is not a very good balance of efficiency...
-                            //       the sweeping is costly, and maybe it makes sense to
-                            //       do it only every now and then, not on EVERY assign
-                            heap.Sweep();
+                            if (++_storesSinceSweep >= sweepInterval)
+                            {
+                                _storesSinceSweep = 0;
+                                heap.Sweep();
+                            }
 
                             break;
                         case OpCodes.STORE_PTR_GLOBAL:
@@ -819,7 +833,12 @@ namespace FadeBasic.Virtual
                             globalScope.flags[addr] = VirtualScope.FLAG_PTR | VirtualScope.FLAG_GLOBAL;
 
                             heap.IncrementRefCount(data);
-                            heap.Sweep();
+
+                            if (++_storesSinceSweep >= sweepInterval)
+                            {
+                                _storesSinceSweep = 0;
+                                heap.Sweep();
+                            }
 
                             break;
                         case OpCodes.STORE_GLOBAL:

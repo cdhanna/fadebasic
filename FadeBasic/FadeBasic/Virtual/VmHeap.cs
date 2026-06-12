@@ -41,11 +41,23 @@ namespace FadeBasic.Virtual
         
         public static VmPtr FromRaw(ulong raw)
         {
-            var bytes = BitConverter.GetBytes(raw);
-            return FromBytes(bytes);
+            // little-endian equivalent of BitConverter.GetBytes(raw) → FromBytes:
+            // the low 32 bits hold the bucket, the high 32 bits the memory offset.
+            return new VmPtr
+            {
+                bucketPtr = unchecked((int)raw),
+                memoryPtr = unchecked((int)(raw >> 32)),
+            };
         }
 
-        public static VmPtr FromBytes(ReadOnlySpan<byte> span) => FromBytes(span.ToArray());
+        public static VmPtr FromBytes(ReadOnlySpan<byte> span)
+        {
+            return new VmPtr
+            {
+                bucketPtr = MemoryMarshal.Read<int>(span),
+                memoryPtr = MemoryMarshal.Read<int>(span.Slice(4)),
+            };
+        }
 
         public static VmPtr FromBytes(byte[] bytes)
         {
@@ -77,7 +89,7 @@ namespace FadeBasic.Virtual
         
         public static ulong GetRaw(ref VmPtr ptr)
         {
-            return BitConverter.ToUInt64(GetBytes(ref ptr), 0);
+            return unchecked((uint)ptr.bucketPtr | ((ulong)(uint)ptr.memoryPtr << 32));
         }
         
         
@@ -135,6 +147,9 @@ namespace FadeBasic.Virtual
 
         private Dictionary<VmPtr, int> _ptrToRefCount;
 
+        // reused by Sweep so freeing doesn't mutate _allocations mid-enumeration
+        private List<VmPtr> _sweepKillList;
+
         public int Allocations => _allocations.Count;
         
         public VmHeap(int initialCapacity)
@@ -147,6 +162,7 @@ namespace FadeBasic.Virtual
             _allocations = new Dictionary<VmPtr, VmAllocation>();
             _lengthToPtrs = new Dictionary<int, Stack<VmPtr>>();
             _ptrToRefCount = new Dictionary<VmPtr, int>();
+            _sweepKillList = new List<VmPtr>();
         }
 
         public void Write(VmPtr ptr, int length, byte[] data)
@@ -319,6 +335,8 @@ namespace FadeBasic.Virtual
 
         public void Sweep()
         {
+            var killList = _sweepKillList ?? (_sweepKillList = new List<VmPtr>());
+            killList.Clear();
             foreach (var allocation in _allocations)
             {
                 if (!_ptrToRefCount.TryGetValue(allocation.Key, out var refCount))
@@ -328,9 +346,13 @@ namespace FadeBasic.Virtual
 
                 if (refCount <= 0)
                 {
-                    Free(allocation.Key);
+                    killList.Add(allocation.Key);
                 }
-            
+            }
+
+            for (var i = 0; i < killList.Count; i++)
+            {
+                Free(killList[i]);
             }
         }
 

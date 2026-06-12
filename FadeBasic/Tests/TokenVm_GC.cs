@@ -109,9 +109,10 @@ tuna_opt_string 3 `an empty optional does not need to allocate
     public void GC_Simple(string src, int allocationCount)
     {
         Setup(src, out var compiler, out var prog);
-        
+
         var vm = new VirtualMachine(prog);
         vm.hostMethods = compiler.methodTable;
+        vm.sweepInterval = 1; // GC tests exercise the sweep-on-every-store path
 
         vm.Execute2(0);
         vm.heap.Sweep();
@@ -147,9 +148,10 @@ x3 = a(3)
 q3 = x3.z
 ";
         Setup(src, out var compiler, out var prog);
-        
+
         var vm = new VirtualMachine(prog);
         vm.hostMethods = compiler.methodTable;
+        vm.sweepInterval = 1; // this test guards against stale copies of freed memory
 
         vm.Execute2(0);
         vm.heap.Sweep();
@@ -186,9 +188,10 @@ next
     public void GC_Simple_StringConcatIssues(string src, int allocationCount)
     {
         Setup(src, out var compiler, out var prog);
-        
+
         var vm = new VirtualMachine(prog);
         vm.hostMethods = compiler.methodTable;
+        vm.sweepInterval = 1; // GC tests exercise the sweep-on-every-store path
 
         vm.Execute2(0);
         vm.heap.Sweep();

@@ -55,47 +55,67 @@ namespace FadeBasic.Virtual
         public void PushArray(T[] data, int start, int length)
         {
             Expand(length);
-            for (var n = start; n < start + length; n ++)
-            {
-                buffer[ptr++] = data[n];
-            }
+            Array.Copy(data, start, buffer, ptr, length);
+            ptr += length;
         }
 
         void Expand(int wiggle)
         {
-            while (ptr + wiggle >= buffer.Length)
+            // post-condition: buffer.Length > ptr + wiggle, leaving one spare
+            // slot — PushSpanAndType writes wiggle+1 items after Expand(wiggle).
+            if (ptr + wiggle < buffer.Length) return;
+            var newSize = buffer.Length * 2;
+            while (ptr + wiggle >= newSize)
             {
-                Array.Resize(ref buffer, buffer.Length * 2);
+                newSize *= 2;
             }
+            Array.Resize(ref buffer, newSize);
         }
-        
+
         public void PushFiller(T filler, int length)
         {
             Expand(length);
 
-            for (var n = 0; n < length; n ++)
-            {
-                buffer[ptr++] = filler;
-            }
+            new Span<T>(buffer, ptr, length).Fill(filler);
+            ptr += length;
         }
-        
+
         public void PushSpan(ReadOnlySpan<T> data, int length)
         {
             Expand(length);
 
-            for (var n = 0; n < length; n ++)
+            // most pushes are 1-8 element values; a manual loop beats the
+            // Span.CopyTo call overhead there, while large payloads
+            // (strings, arrays) want the block copy.
+            if (length <= 8)
             {
-                buffer[ptr++] = data[n];
+                for (var n = 0; n < length; n ++)
+                {
+                    buffer[ptr + n] = data[n];
+                }
             }
+            else
+            {
+                data.Slice(0, length).CopyTo(new Span<T>(buffer, ptr, length));
+            }
+            ptr += length;
         }
         public void PushSpanAndType(ReadOnlySpan<T> data, T typecode, int length)
         {
             Expand(length);
 
-            for (var n = 0; n < length; n ++)
+            if (length <= 8)
             {
-                buffer[ptr++] = data[n];
+                for (var n = 0; n < length; n ++)
+                {
+                    buffer[ptr + n] = data[n];
+                }
             }
+            else
+            {
+                data.Slice(0, length).CopyTo(new Span<T>(buffer, ptr, length));
+            }
+            ptr += length;
 
             buffer[ptr++] = typecode;
         }
