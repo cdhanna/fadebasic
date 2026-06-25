@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { parseDocSections, groupsForEntry } from './help';
+import { parseDocSections, groupsForEntry, extractCommandNameFromHover, findKeywordDocHeading } from './help';
 import type { CommandDocEntry } from './help';
 
 function mg(name: string, markdown = ''): CommandDocEntry {
@@ -124,5 +124,126 @@ describe('groupsForEntry', () => {
 
     it('falls back to Other when nothing matches', () => {
         expect(groupsForEntry(mg('totally unknown command'))).toEqual(['Other']);
+    });
+});
+
+
+describe('extractCommandNameFromHover', () => {
+    it('returns the trimmed name from a single-word command hover', () => {
+        expect(extractCommandNameFromHover('### print\n\nPrints text to the console.')).toBe('print');
+    });
+
+    // The whole reason this helper exists — Monaco's
+    // getWordAtPosition would only yield "position" or "sprite"
+    // depending on which word the cursor was on, and neither maps
+    // to a byName index keyed under the full phrase.
+    it('handles multi-word commands like "position sprite"', () => {
+        const body = '### position sprite\n\nMoves a sprite to the given (x, y) coordinates.';
+        expect(extractCommandNameFromHover(body)).toBe('position sprite');
+    });
+
+    it('tolerates leading whitespace + extra spaces around the name', () => {
+        expect(extractCommandNameFromHover('   ###   set color   \nbody')).toBe('set color');
+    });
+
+    it('tolerates a blank line before the header', () => {
+        expect(extractCommandNameFromHover('\n### load image\n')).toBe('load image');
+    });
+
+    it('returns null when the hover has no ### header', () => {
+        expect(extractCommandNameFromHover('plain hover text, no header')).toBeNull();
+    });
+
+    it('returns null when only lower-level headers are present', () => {
+        expect(extractCommandNameFromHover('# Section\n## Subsection\nbody')).toBeNull();
+    });
+
+    it('returns null on an empty string', () => {
+        expect(extractCommandNameFromHover('')).toBeNull();
+    });
+
+    it('stops at the first newline (does not greedily consume the body)', () => {
+        const body = '### draw sprite\n\nDraws sprite. ### not a header in body';
+        expect(extractCommandNameFromHover(body)).toBe('draw sprite');
+    });
+});
+
+describe('findKeywordDocHeading', () => {
+    it('maps if/then/else/endif to Conditionals', () => {
+        expect(findKeywordDocHeading('if')).toBe('Conditionals');
+        expect(findKeywordDocHeading('then')).toBe('Conditionals');
+        expect(findKeywordDocHeading('else')).toBe('Conditionals');
+        expect(findKeywordDocHeading('endif')).toBe('Conditionals');
+    });
+
+    it('maps the for-loop keywords to "For Loops"', () => {
+        expect(findKeywordDocHeading('for')).toBe('For Loops');
+        expect(findKeywordDocHeading('to')).toBe('For Loops');
+        expect(findKeywordDocHeading('step')).toBe('For Loops');
+        expect(findKeywordDocHeading('next')).toBe('For Loops');
+    });
+
+    it('maps function/endfunction to Functions (but exitfunction to Return Values)', () => {
+        expect(findKeywordDocHeading('function')).toBe('Functions');
+        expect(findKeywordDocHeading('endfunction')).toBe('Functions');
+        expect(findKeywordDocHeading('exitfunction')).toBe('Return Values');
+    });
+
+    it('maps dim/as to Variables and redim to "Resize an Array"', () => {
+        expect(findKeywordDocHeading('dim')).toBe('Variables');
+        expect(findKeywordDocHeading('as')).toBe('Variables');
+        expect(findKeywordDocHeading('redim')).toBe('Resize an Array');
+    });
+
+    it('maps scope keywords (local/global) to Scopes', () => {
+        expect(findKeywordDocHeading('local')).toBe('Scopes');
+        expect(findKeywordDocHeading('global')).toBe('Scopes');
+    });
+
+    it('maps type aliases to Primitive Types (string goes to Strings)', () => {
+        expect(findKeywordDocHeading('integer')).toBe('Primitive Types');
+        expect(findKeywordDocHeading('int')).toBe('Primitive Types');
+        expect(findKeywordDocHeading('float')).toBe('Primitive Types');
+        expect(findKeywordDocHeading('double')).toBe('Primitive Types');
+        expect(findKeywordDocHeading('byte')).toBe('Primitive Types');
+        expect(findKeywordDocHeading('bool')).toBe('Primitive Types');
+        expect(findKeywordDocHeading('boolean')).toBe('Primitive Types');
+        expect(findKeywordDocHeading('string')).toBe('Strings');
+    });
+
+    it('maps boolean ops (and/or/not/xor) to Numeric Operations', () => {
+        expect(findKeywordDocHeading('and')).toBe('Numeric Operations');
+        expect(findKeywordDocHeading('or')).toBe('Numeric Operations');
+        expect(findKeywordDocHeading('not')).toBe('Numeric Operations');
+        expect(findKeywordDocHeading('xor')).toBe('Numeric Operations');
+    });
+
+    it('maps testing keywords to Testing + sub-sections', () => {
+        expect(findKeywordDocHeading('test')).toBe('Testing');
+        expect(findKeywordDocHeading('endtest')).toBe('Testing');
+        expect(findKeywordDocHeading('assert')).toBe('Asserts');
+        expect(findKeywordDocHeading('mock')).toBe('Mocks');
+        expect(findKeywordDocHeading('runto')).toBe('RUNTO');
+    });
+
+    it('is case-insensitive — fbasic lexer is too', () => {
+        expect(findKeywordDocHeading('IF')).toBe('Conditionals');
+        expect(findKeywordDocHeading('If')).toBe('Conditionals');
+        expect(findKeywordDocHeading('Function')).toBe('Functions');
+        expect(findKeywordDocHeading('REDIM')).toBe('Resize an Array');
+        expect(findKeywordDocHeading('FuNcTiOn')).toBe('Functions');
+    });
+
+    it('returns null for non-keywords', () => {
+        expect(findKeywordDocHeading('print')).toBeNull();          // print is a command, not a keyword
+        expect(findKeywordDocHeading('myVariable')).toBeNull();
+        expect(findKeywordDocHeading('somecustomname')).toBeNull();
+    });
+
+    it('returns null for empty / whitespace input without throwing', () => {
+        expect(findKeywordDocHeading('')).toBeNull();
+        // toLowerCase on whitespace yields whitespace — not a key in the
+        // map, so we should still get null without doing anything weird.
+        expect(findKeywordDocHeading('   ')).toBeNull();
     });
 });

@@ -82,6 +82,38 @@ export interface ToolContext {
      *  their queries on this so MonoGame-only content doesn't leak into
      *  a web project. */
     projectType?: () => string | undefined;
+    /** Access to the shared asset Catalog (search + import). Optional. */
+    catalog?: CatalogToolApi;
+    /** LSP-check a standalone Fade snippet (e.g. code shown in an answer, not
+     *  applied through a write tool). Returns diagnostics. Optional. */
+    lintFadeSnippet?: (source: string) => Promise<DiagnosticEntry[]>;
+}
+
+/** A catalog entry as surfaced to the agent — a trimmed projection of the
+ *  full CatalogEntry (the model doesn't need URLs, hashes, etc.). */
+export interface CatalogToolEntry {
+    id: number;
+    name: string;
+    kind: 'asset' | 'pack';
+    mime: string;
+    tags: string[];
+    description: string | null;
+    bytes: number;
+    license: string;
+}
+
+/** Agent access to the shared asset Catalog. Optional — tools degrade
+ *  gracefully when the playground hasn't wired a catalog (e.g. in tests). */
+export interface CatalogToolApi {
+    search(query: string, opts?: {
+        kind?: 'asset' | 'pack';
+        category?: 'image' | 'audio' | 'font';
+        tags?: string[];
+        limit?: number;
+    }): Promise<CatalogToolEntry[]>;
+    /** Import a catalog entry into the current project. Returns the
+     *  workspace-relative path(s) written. Throws on failure. */
+    import(id: number): Promise<{ name: string; paths: string[] }>;
 }
 
 /** Result of a tool execution. Successful tools return arbitrary JSON;

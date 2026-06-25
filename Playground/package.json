@@ -14,6 +14,10 @@
     "preview": "vite preview",
     "test": "vitest run",
     "test:watch": "vitest",
+    "probe:ghostbot": "node scripts/probe-ghostbot-pair.mjs",
+    "probe:ghostbot:cross": "node scripts/probe-ghostbot-cross.mjs",
+    "probe:ghostbot:multi": "node scripts/probe-ghostbot-multi.mjs",
+    "probe:ghostbot:tauri": "node scripts/probe-ghostbot-tauri.mjs",
     "validate-shaders": "vitest run src/shader/snapshot-stock-glsl && node scripts/validate-stock-shaders.cjs"
   },
   "dependencies": {
@@ -61,6 +65,7 @@
   },
   "devDependencies": {
     "@types/node": "^22.10.2",
+    "@types/ws": "^8.18.1",
     "@vitejs/plugin-basic-ssl": "^2.3.0",
     "@webgpu/glslang": "^0.0.15",
     "jsdom": "^29.1.1",
@@ -68,6 +73,7 @@
     "tsx": "^4.22.4",
     "typescript": "^5.7.2",
     "vite": "^6.0.5",
-    "vitest": "^4.1.7"
+    "vitest": "^4.1.7",
+    "ws": "^8.21.0"
   }
 }

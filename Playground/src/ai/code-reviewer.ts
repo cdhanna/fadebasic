@@ -2,6 +2,9 @@ import type { ChatProvider } from './providers/types';
 import type { EditReviewRequest, EditReviewResult } from './edit-review-types';
 import { formatDiagnosticFeedback } from './lsp-diagnostic-format';
 import { withTimeout } from './with-timeout';
+import { detectFadeAntiPatterns } from './fade-antipatterns';
+import { detectMissingCallParens } from './command-phrases';
+import { detectUnknownCommands, detectCommandAsVariable } from './fade-command-check';
 
 export type { EditReviewRequest, EditReviewResult } from './edit-review-types';
 
@@ -108,6 +111,28 @@ export async function reviewProposedEdit(
 
     if (signal?.aborted) {
         return { approved: false, feedback: 'Review cancelled.' };
+    }
+
+    // Deterministic Fade pre-check — runs before the LSP so the model gets a
+    // crisp, Fade-specific reason ("`keydown(...)` is not a command — did you
+    // mean `key down`?", "call it with parentheses") instead of an opaque LSP
+    // code it tends to loop on. Only for Fade source, and only on text-pattern
+    // mistakes that don't need whole-project symbol resolution (the LSP remains
+    // authoritative for everything else).
+    if (/\.(fbasic|fade)$/i.test(req.path)) {
+        const cmds = req.commandNames ?? [];
+        const issues = [
+            ...detectFadeAntiPatterns(req.newContent),
+            ...detectMissingCallParens(req.newContent, cmds),
+            ...detectUnknownCommands(req.newContent, cmds),
+            ...detectCommandAsVariable(req.newContent, cmds),
+        ];
+        if (issues.length > 0) {
+            return {
+                approved: false,
+                feedback: 'Fade syntax problems:\n' + issues.map(s => `  - ${s}`).join('\n'),
+            };
+        }
     }
 
     onPhase?.('lsp');

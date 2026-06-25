@@ -123,16 +123,21 @@ namespace FadeBasic.Virtual
         public VmHeap heap;
 
         /// <summary>
-        /// How many pointer-store instructions may run between heap sweeps.
-        /// <see cref="VmHeap.Sweep"/> walks every live allocation, so sweeping
-        /// on every store makes pointer-assignment loops O(stores × allocations).
-        /// 1 sweeps on every store — the historical, most aggressive behavior,
-        /// which the GC tests rely on. The default amortizes the sweep cost
-        /// while keeping unreachable memory short-lived.
+        /// How many heap allocations may happen between garbage collections.
+        /// Collection triggers are checked at pointer stores, heap writes, and
+        /// allocs; a collection only runs when at least this many allocations
+        /// occurred since the last one. 1 collects at every opportunity — the
+        /// most aggressive behavior, which the GC tests rely on. The default
+        /// amortizes the O(live allocations) trace cost while keeping
+        /// unreachable memory short-lived.
         /// </summary>
         public int sweepInterval = DEFAULT_SWEEP_INTERVAL;
         public const int DEFAULT_SWEEP_INTERVAL = 64;
-        private int _storesSinceSweep;
+
+        // scratch state for CollectGarbage, reused across collections
+        private HashSet<VmPtr> _gcMarks;
+        private Stack<VmPtr> _gcWork;
+        private List<VmPtr> _internedPtrs;
 
 
         public HostMethodTable hostMethods;
@@ -266,6 +271,155 @@ namespace FadeBasic.Virtual
         }
 
 
+        /// <summary>
+        /// Tracing garbage collection: compute the set of reachable heap
+        /// allocations and free everything else.
+        ///
+        /// Roots:
+        ///  - interned strings (pinned for the lifetime of the VM)
+        ///  - every register in every live scope whose type code or flags say
+        ///    it holds a heap pointer (over-approximated on purpose; a stale
+        ///    flag can only retain garbage, never free a live object)
+        ///  - the eval stack, scanned conservatively: any 8-byte window whose
+        ///    bytes match a live allocation's pointer is treated as a
+        ///    reference. This keeps mid-expression temporaries alive, e.g. a
+        ///    concat result sitting on the stack while a called function runs.
+        ///
+        /// Reachability then flows through heap data: arrays of strings,
+        /// struct string fields, and nested structs are traced via each
+        /// allocation's HeapTypeFormat and the interned type table.
+        /// </summary>
+        public void CollectGarbage()
+        {
+            var marks = _gcMarks ?? (_gcMarks = new HashSet<VmPtr>());
+            var work = _gcWork ?? (_gcWork = new Stack<VmPtr>());
+            marks.Clear();
+            work.Clear();
+
+            if (_internedPtrs != null)
+            {
+                for (var i = 0; i < _internedPtrs.Count; i++)
+                {
+                    GcMark(_internedPtrs[i]);
+                }
+            }
+
+            GcMarkScope(ref globalScope);
+            GcMarkScope(ref scope);
+            for (var i = 0; i < scopeStack.ptr; i++)
+            {
+                GcMarkScope(ref scopeStack.buffer[i]);
+            }
+
+            // conservative eval-stack scan: pointers are stored as
+            // [bucket int][memory int], the same layout VmPtr.GetBytes writes.
+            for (var i = 0; i + 8 <= stack.ptr; i++)
+            {
+                var candidate = new VmPtr
+                {
+                    bucketPtr = BitConverter.ToInt32(stack.buffer, i),
+                    memoryPtr = BitConverter.ToInt32(stack.buffer, i + 4),
+                };
+                GcMark(candidate);
+            }
+
+            while (work.Count > 0)
+            {
+                GcTrace(work.Pop());
+            }
+
+            heap.SweepUnmarked(marks);
+        }
+
+        void GcMark(VmPtr ptr)
+        {
+            if (heap.IsAllocated(ptr) && _gcMarks.Add(ptr))
+            {
+                _gcWork.Push(ptr);
+            }
+        }
+
+        void GcMarkScope(ref VirtualScope vScope)
+        {
+            if (vScope.dataRegisters == null) return;
+            for (var r = 0; r < vScope.dataRegisters.Length; r++)
+            {
+                var tc = vScope.typeRegisters[r];
+                if (tc == TypeCodes.STRING || tc == TypeCodes.STRUCT || tc == TypeCodes.PTR_HEAP
+                    || VirtualScope.IsPtr(vScope.flags[r]))
+                {
+                    GcMark(VmPtr.FromRaw(vScope.dataRegisters[r]));
+                }
+            }
+        }
+
+        void GcTrace(VmPtr ptr)
+        {
+            if (!heap.TryGetAllocation(ptr, out var allocation)) return;
+            var format = allocation.format;
+
+            if (format.IsArray(out _))
+            {
+                switch (format.typeCode)
+                {
+                    case TypeCodes.STRING:
+                    {
+                        // string elements are 8-byte heap pointers
+                        heap.ReadSpan(ptr, allocation.length, out var span);
+                        for (var offset = 0; offset + 8 <= allocation.length; offset += 8)
+                        {
+                            GcMark(VmPtr.FromBytes(span.Slice(offset)));
+                        }
+                        break;
+                    }
+                    case TypeCodes.STRUCT:
+                    {
+                        // struct elements are stored inline, one type-sized slot each
+                        if (!typeTable.TryGetValue(format.typeId, out var elementType) || elementType.byteSize <= 0)
+                            break;
+                        heap.ReadSpan(ptr, allocation.length, out var span);
+                        for (var offset = 0; offset + elementType.byteSize <= allocation.length; offset += elementType.byteSize)
+                        {
+                            GcTraceStructFields(span, offset, elementType);
+                        }
+                        break;
+                    }
+                }
+                return;
+            }
+
+            if (format.typeCode == TypeCodes.STRUCT && typeTable.TryGetValue(format.typeId, out var structType))
+            {
+                heap.ReadSpan(ptr, allocation.length, out var structSpan);
+                GcTraceStructFields(structSpan, 0, structType);
+            }
+            // strings and scalar arrays are leaves
+        }
+
+        void GcTraceStructFields(ReadOnlySpan<byte> span, int baseOffset, InternedType type)
+        {
+            foreach (var kvp in type.fields)
+            {
+                var field = kvp.Value;
+                switch (field.typeCode)
+                {
+                    case TypeCodes.STRING:
+                        if (baseOffset + field.offset + 8 <= span.Length)
+                        {
+                            GcMark(VmPtr.FromBytes(span.Slice(baseOffset + field.offset)));
+                        }
+                        break;
+                    case TypeCodes.STRUCT:
+                        // nested structs are inline; recurse into their fields
+                        if (typeTable.TryGetValue(field.typeId, out var fieldType))
+                        {
+                            GcTraceStructFields(span, baseOffset + field.offset, fieldType);
+                        }
+                        break;
+                }
+            }
+        }
+
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         private byte Advance() => program[instructionIndex++];
 
@@ -328,9 +482,9 @@ namespace FadeBasic.Virtual
             {
                 var size = str.value.Length * TypeCodes.GetByteSize(TypeCodes.INT);
                 heap.AllocateString(size, out var ptr);
-                
-                // this interned string should never be free'd, because we don't know when it will need to be accessed. 
-                heap.IncrementRefCount(ptr); 
+
+                // this interned string should never be free'd, because we don't know when it will need to be accessed.
+                (_internedPtrs ?? (_internedPtrs = new List<VmPtr>())).Add(ptr);
                 var span = new byte[size];
                 for (var i = 0; i < str.value.Length; i++)
                 {
@@ -439,24 +593,9 @@ namespace FadeBasic.Virtual
                             break;
                         case OpCodes.POP_SCOPE:
 
-                            
-                            { // clear all references from scope...
-                                var vScope = scopeStack.Peek();
-                                for (var scopeIndex = 0;
-                                     scopeIndex < vScope.insIndexes.Length;
-                                     scopeIndex++)
-                                {
-                                    // var isPtr = vScope.typeRegisters[scopeIndex] == TypeCodes.STRUCT ||
-                                    //             vScope.typeRegisters[scopeIndex] == TypeCodes.STRING;
-                                    var isPtr = VirtualScope.IsPtr(vScope.flags[scopeIndex]);
-                                    var ptr = vScope.dataRegisters[scopeIndex];
-                                    if (isPtr && vScope.insIndexes[scopeIndex] > 0)
-                                    {
-                                        heap.TryDecrementRefCount(ptr);
-                                    }
-                                }
-                            }
-
+                            // popping the scope is what makes its registers
+                            // unreachable; the tracing collector reclaims
+                            // anything they were the last reference to.
                             scopeStack.Pop();
                             scope = scopeStack.buffer[scopeStack.ptr - 1];
                             break;
@@ -796,22 +935,14 @@ namespace FadeBasic.Virtual
 
                             VmUtil.ReadSpanAsUInt(ref stack, out data);
 
-                            if (scope.insIndexes[addr] > 0)
-                            {
-                                heap.TryDecrementRefCount(scope.dataRegisters[addr]);
-                            }
-
                             scope.dataRegisters[addr] = data;
                             scope.typeRegisters[addr] = typeCode;
                             scope.insIndexes[addr] = instructionIndex - 1; // minus one because the instruction has already been advanced.
                             scope.flags[addr] = VirtualScope.FLAG_PTR;
 
-                            heap.IncrementRefCount(data);
-
-                            if (++_storesSinceSweep >= sweepInterval)
+                            if (heap.allocsSinceCollect >= sweepInterval)
                             {
-                                _storesSinceSweep = 0;
-                                heap.Sweep();
+                                CollectGarbage();
                             }
 
                             break;
@@ -822,22 +953,14 @@ namespace FadeBasic.Virtual
 
                             VmUtil.ReadSpanAsUInt(ref stack, out data);
 
-                            if (globalScope.insIndexes[addr] > 0)
-                            {
-                                heap.TryDecrementRefCount(globalScope.dataRegisters[addr]);
-                            }
-
                             globalScope.dataRegisters[addr] = data;
                             globalScope.typeRegisters[addr] = typeCode;
                             globalScope.insIndexes[addr] = instructionIndex - 1; // minus one because the instruction has already been advanced.
                             globalScope.flags[addr] = VirtualScope.FLAG_PTR | VirtualScope.FLAG_GLOBAL;
 
-                            heap.IncrementRefCount(data);
-
-                            if (++_storesSinceSweep >= sweepInterval)
+                            if (heap.allocsSinceCollect >= sweepInterval)
                             {
-                                _storesSinceSweep = 0;
-                                heap.Sweep();
+                                CollectGarbage();
                             }
 
                             break;
@@ -918,9 +1041,17 @@ namespace FadeBasic.Virtual
                             break;
                         case OpCodes.WRITE:
                             VmUtil.WriteToHeap(ref stack, ref heap, false);
+                            if (heap.allocsSinceCollect >= sweepInterval)
+                            {
+                                CollectGarbage();
+                            }
                             break;
                         case OpCodes.WRITE_PTR:
                             VmUtil.WriteToHeap(ref stack, ref heap, true);
+                            if (heap.allocsSinceCollect >= sweepInterval)
+                            {
+                                CollectGarbage();
+                            }
                             break;
                         case OpCodes.BOUNDS_CHECK:
                             VmUtil.ReadAsInt(ref stack, out var ceilingValue);

@@ -37,7 +37,65 @@ public class CompilerService
     private Dictionary<DocumentUri, ProgramNode> _docToAst = new Dictionary<DocumentUri, ProgramNode>();
     private Dictionary<DocumentUri, CodeUnit> _projectToUnit = new Dictionary<DocumentUri, CodeUnit>();
     private Dictionary<DocumentUri, ProjectDocs> _srcToDocs = new Dictionary<DocumentUri, ProjectDocs>();
-    
+
+    // Debounce state for UpdateDebounced. Typing cancels the previous
+    // pending update so diagnostics are only computed (and published)
+    // once the user pauses — mid-word and mid-statement states never
+    // produce visible errors.
+    public const int DebounceMs = 300;
+    private readonly object _debounceLock = new object();
+    private Dictionary<DocumentUri, System.Threading.CancellationTokenSource> _pendingUpdates
+        = new Dictionary<DocumentUri, System.Threading.CancellationTokenSource>();
+
+    /// <summary>
+    /// Schedule an <see cref="Update"/> for this document after a short idle
+    /// period. Each call resets the timer for that document, so a typing
+    /// burst results in a single parse + diagnostics publish at the end.
+    /// Use this from didChange; didOpen/didSave should call Update directly
+    /// for immediate feedback.
+    /// </summary>
+    public void UpdateDebounced(DocumentUri srcUri)
+    {
+        System.Threading.CancellationTokenSource cts;
+        lock (_debounceLock)
+        {
+            if (_pendingUpdates.TryGetValue(srcUri, out var pending))
+            {
+                pending.Cancel();
+                pending.Dispose();
+            }
+            cts = _pendingUpdates[srcUri] = new System.Threading.CancellationTokenSource();
+        }
+
+        var token = cts.Token;
+        Task.Run(async () =>
+        {
+            try
+            {
+                await Task.Delay(DebounceMs, token);
+                Update(srcUri);
+            }
+            catch (OperationCanceledException)
+            {
+                // superseded by a newer keystroke — drop silently
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "debounced update failed for " + srcUri);
+            }
+            finally
+            {
+                lock (_debounceLock)
+                {
+                    if (_pendingUpdates.TryGetValue(srcUri, out var current) && current == cts)
+                    {
+                        _pendingUpdates.Remove(srcUri);
+                    }
+                }
+            }
+        });
+    }
+
     public CompilerService(ILogger<CompilerService> logger, 
         DocumentService docs, 
         ProjectService projects,
@@ -128,7 +186,19 @@ public class CompilerService
     }
     
     
+    // serializes Update bodies — debounced updates run on a background task
+    // and must not interleave with request-thread updates.
+    private readonly object _updateGate = new object();
+
     public void Update(DocumentUri srcUri)
+    {
+        lock (_updateGate)
+        {
+            UpdateUnsafe(srcUri);
+        }
+    }
+
+    void UpdateUnsafe(DocumentUri srcUri)
     {
         if (!_docs.TryGetSourceDocument(srcUri, out var fullText))
         {

@@ -23,6 +23,177 @@ export interface CommandDocEntry {
     markdown: string;
 }
 
+/** fbasic language keywords → matching heading in `FadeBook/Language.md`.
+ *
+ *  Used by the editor's right-click "Help" and Ctrl/Cmd-click handlers
+ *  for tokens that aren't commands (the command index has no entry for
+ *  `if`, `for`, `dim`, etc. — those are lexer keywords). When the
+ *  click resolves to one of these, the help panel jumps straight to
+ *  the relevant Language.md section instead of falling back to a
+ *  generic search.
+ *
+ *  Keys are lowercase because the fbasic lexer in
+ *  `FadeBasic/FadeBasic/Lexer.cs` lowercases identifiers before
+ *  matching against its keyword table — `IF`, `if`, `If` all lex to
+ *  the same token, so they must all resolve to the same heading here.
+ *
+ *  Values match real headings in Language.md (verified against the
+ *  current doc at the time of writing). They're either H2 sections
+ *  (## Variables, ## Strings) or H4 sub-sections under Control
+ *  Statements / Testing / etc. openDocCitation normalises both sides
+ *  before matching so backtick-wrapped headings like ### `RUNTO` are
+ *  equivalent to `RUNTO` here.
+ *
+ *  When Lexer.cs grows a new keyword, add the corresponding entry
+ *  below so the click-to-docs UX covers it. Missing entries fall
+ *  through to the global search — harmless but less precise. The
+ *  test suite in help.test.ts has spot checks for representative
+ *  entries; not exhaustive coverage since the map is large and the
+ *  matching itself is a one-liner. */
+const KEYWORD_DOC_HEADING_MAP: Readonly<Record<string, string>> = Object.freeze({
+    // ── Control Statements / Conditionals ─────────────────────────
+    'if': 'Conditionals',
+    'endif': 'Conditionals',
+    'else': 'Conditionals',
+    'then': 'Conditionals',
+
+    // ── Control Statements / For Loops ────────────────────────────
+    'for': 'For Loops',
+    'next': 'For Loops',
+    'to': 'For Loops',
+    'step': 'For Loops',
+
+    // ── Control Statements / While Loops ──────────────────────────
+    'while': 'While Loops',
+    'endwhile': 'While Loops',
+
+    // ── Control Statements / Repeat Loops ─────────────────────────
+    'repeat': 'Repeat Loops',
+    'until': 'Repeat Loops',
+
+    // ── Control Statements / Do Loops ─────────────────────────────
+    'do': 'Do Loops',
+    'loop': 'Do Loops',
+
+    // ── Control Statements / End (program / loop / scope exit) ────
+    'end': 'End',
+    'exit': 'End',
+    'skip': 'End',
+
+    // ── Control Statements / Goto + Labels + GoSub ────────────────
+    'goto': 'Goto',
+    'gosub': 'GoSub',
+    'return': 'GoSub',
+
+    // ── Control Statements / Select ───────────────────────────────
+    'select': 'Select Statements',
+    'endselect': 'Select Statements',
+    'case': 'Select Statements',
+    'endcase': 'Select Statements',
+    'default': 'Select Statements',
+
+    // ── Control Statements / Defer ────────────────────────────────
+    'defer': 'Defer Statements',
+    'enddefer': 'Defer Statements',
+
+    // ── Functions ─────────────────────────────────────────────────
+    'function': 'Functions',
+    'endfunction': 'Functions',
+    'exitfunction': 'Return Values',
+
+    // ── User Defined Types ────────────────────────────────────────
+    'type': 'User Defined Types',
+    'endtype': 'User Defined Types',
+
+    // ── Variables / Arrays ────────────────────────────────────────
+    'dim': 'Variables',
+    'as': 'Variables',
+    'redim': 'Resize an Array',
+
+    // ── Scopes ────────────────────────────────────────────────────
+    'local': 'Scopes',
+    'global': 'Scopes',
+
+    // ── Comments / Remark blocks ──────────────────────────────────
+    'rem': 'Comments',
+    'remstart': 'Comments',
+    'remend': 'Comments',
+
+    // ── Primitive Types ───────────────────────────────────────────
+    'integer': 'Primitive Types',
+    'int': 'Primitive Types',
+    'boolean': 'Primitive Types',
+    'bool': 'Primitive Types',
+    'byte': 'Primitive Types',
+    'word': 'Primitive Types',
+    'ushort': 'Primitive Types',
+    'dword': 'Primitive Types',
+    'uint': 'Primitive Types',
+    'long': 'Primitive Types',
+    'float': 'Primitive Types',
+    'double': 'Primitive Types',
+
+    // ── Strings (own H2 in Language.md) ───────────────────────────
+    'string': 'Strings',
+    'len': 'Strings',
+
+    // ── Operations / boolean operators ────────────────────────────
+    'not': 'Numeric Operations',
+    'and': 'Numeric Operations',
+    'or': 'Numeric Operations',
+    'xor': 'Numeric Operations',
+
+    // ── Testing ───────────────────────────────────────────────────
+    'test': 'Testing',
+    'endtest': 'Testing',
+    'abstract': 'Testing',
+    'from': 'Testing',
+
+    // ── Testing / sub-sections ────────────────────────────────────
+    'runto': 'RUNTO',
+    'endrunto': 'RUNTO',
+    'assert': 'Asserts',
+    'mock': 'Mocks',
+    'mocks': 'Mocks',
+    'endmock': 'Mocks',
+    'exitmock': 'Mocks',
+    'forbid': 'Mocks',
+    'clear': 'Mocks',
+});
+
+/** Look up a fbasic keyword in the language doc map. Returns the
+ *  matching heading (suitable for `openDocCitation('Language.md',
+ *  ...)`), or null when the word isn't a known keyword.
+ *  Case-insensitive. */
+export function findKeywordDocHeading(word: string): string | null {
+    if (!word) return null;
+    return KEYWORD_DOC_HEADING_MAP[word.toLowerCase()] ?? null;
+}
+
+/** Extract the canonical command name from an LSP hover-markdown body.
+ *
+ *  The LSP's `BuildCommandMarkdown` emits `### <commandname>\n<body>`
+ *  as the first non-blank line whenever the hover is for a command.
+ *  This strips that header and trims, so callers don't have to repeat
+ *  the regex. Returns null when the hover isn't a command hover (no
+ *  ### header present).
+ *
+ *  Why this exists, given that Monaco already gives us
+ *  `model.getWordAtPosition`: fbasic supports multi-word commands like
+ *  `position sprite` or `load image`, and getWordAtPosition only ever
+ *  returns ONE word. The editor's right-click "Help" action and the
+ *  Ctrl/Cmd-click handler need the FULL multi-word phrase as the key
+ *  into the help index, so they go through `runner.getHover` (the LSP
+ *  resolves the position to the full command) and parse the result
+ *  with this helper.
+ *
+ *  Pure function so the regex behaviour can be unit-tested without
+ *  spinning up the LSP worker or Monaco. */
+export function extractCommandNameFromHover(hoverMarkdown: string): string | null {
+    const m = /^\s*###\s+([^\n]+)/.exec(hoverMarkdown);
+    return m ? m[1].trim() : null;
+}
+
 export interface HelpController {
     /** Replace the dataset. Safe to call repeatedly; preserves any
      *  current selection when the previously-shown command still exists
@@ -32,6 +203,25 @@ export interface HelpController {
      *  view. Used by the hover provider's deep-link. Returns false if
      *  the name isn't known. */
     selectCommand(name: string): boolean;
+    /** Look up the canonical command name by case-insensitive match.
+     *  Returns null if no command matches. Callers should use this when
+     *  resolving a user-typed word from the editor (`Print`, `PRINT`,
+     *  etc.) — the help index is keyed by the LSP's single canonical
+     *  casing, which may not be lowercase (e.g. `setColor`). The exact
+     *  name returned is suitable for passing to `selectCommand`. */
+    findCommandName(name: string): string | null;
+    /** Populate the global search box with `query` and trigger the
+     *  search. Used by the editor's Ctrl-click / right-click fallback
+     *  when the clicked word isn't a known command — we treat it as
+     *  a keyword and route the user to whichever doc references it.
+     *  No-op for empty/whitespace input. */
+    searchFor(query: string): void;
+    /** Jump the help panel to the language-doc section that documents
+     *  this fbasic keyword (`if`, `for`, `dim`, …). Returns false when
+     *  `word` isn't a recognised keyword — caller can then fall back
+     *  to `searchFor` or do nothing. Case-insensitive. Mapping table
+     *  lives in `KEYWORD_DOC_HEADING_MAP` above. */
+    jumpToKeyword(word: string): Promise<boolean>;
     /** Current search query (read-only). */
     getQuery(): string;
     /** Jump to a RAG citation (FadeBook/Language.md, etc.) in this panel. */
@@ -290,6 +480,12 @@ export function mountHelpPanel(services: HelpServices = {}): HelpController {
     let activeTab: Tab = 'commands';
     let entries: CommandDocEntry[] = [];
     let byName: Map<string, CommandDocEntry> = new Map();
+    // lowercase(name) → canonical name (entry.name). fbasic is
+    // case-insensitive, so user-typed `Print` / `PRINT` / `print` all
+    // need to resolve to whatever single casing the LSP emits. Used by
+    // findCommandName below (right-click / Ctrl-click handlers in
+    // main.ts feed user-typed words through it).
+    let byNameLower: Map<string, string> = new Map();
     let selectedName: string | null = null;
     const docs: Record<Exclude<Tab, 'commands'>, StaticDocState> = {
         language:   { sections: undefined, failed: false, selectedSlug: null, selectedSubSlug: null },
@@ -735,6 +931,11 @@ export function mountHelpPanel(services: HelpServices = {}): HelpController {
     function setEntries(next: CommandDocEntry[]) {
         entries = next;
         byName = new Map(next.map((e) => [e.name, e]));
+        // Build the case-insensitive lookup index alongside. Last entry
+        // wins on collision — pragmatically there aren't case-only
+        // collisions in fbasic commands (the LSP enforces a single
+        // canonical casing per command).
+        byNameLower = new Map(next.map((e) => [e.name.toLowerCase(), e.name]));
         // Preserve selection if still valid.
         if (selectedName && !byName.has(selectedName)) selectedName = null;
         renderToc();
@@ -886,6 +1087,34 @@ export function mountHelpPanel(services: HelpServices = {}): HelpController {
     return {
         setEntries,
         selectCommand: (name) => selectCommand(name, true),
+        findCommandName: (name) => {
+            // Exact-case fast path so well-formed callers (e.g. the
+            // hover-provider's `### name` extraction) skip the
+            // lowercase round-trip and the .has() probe stays O(1).
+            if (byName.has(name)) return name;
+            return byNameLower.get(name.toLowerCase()) ?? null;
+        },
+        searchFor: (query) => {
+            const q = query.trim();
+            if (!q) return;
+            m.search.value = q;
+            // The 'input' event drives the live-results recompute that
+            // initGlobalSearch wires up. Bubble + cancelable mirror the
+            // properties a real user keystroke would set so any future
+            // listeners that inspect them don't get a synthetic-looking
+            // event.
+            m.search.dispatchEvent(new Event('input', { bubbles: true, cancelable: true }));
+            // Focus + select so the user can refine immediately or
+            // navigate results with arrow keys (initGlobalSearch's
+            // keyboard handler is already wired on the same input).
+            m.search.focus();
+            m.search.select();
+        },
+        jumpToKeyword: async (word) => {
+            const heading = findKeywordDocHeading(word);
+            if (!heading) return false;
+            return openDocCitation('Language.md', heading);
+        },
         getQuery: () => m.search.value,
         openDocCitation,
     };

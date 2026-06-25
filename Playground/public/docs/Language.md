@@ -523,6 +523,15 @@ x = nums(2) `x is zero
 ```
 
 ----
+#### Check Dimension Count
+
+It is possible to get the dimensionality of an array with the `DIMS` keyword.  
+```basic
+DIM nums(4, 5)
+x = DIMS(nums) `x is 2
+```
+
+----
 #### Array Out Of Bounds
 
 It is invalid to access an array with an index that is less than 0, or equal-to-or-greater-than than the length of the array's dimension. If this occurs, the _Fade Basic_ program will **crash**! There is no way to recover this error during the execution of the program, so it is required that your program _avoids_ accessing an array with an invalid index. 
@@ -546,6 +555,65 @@ DIM sticks(5)
 
 fish = sticks `this assignment is not valid
 ```
+
+## Length
+
+It is possible to get the length of a string using the `LEN` keyword.
+```basic
+s$ = "toast"
+PRINT LEN(s$)
+
+`program output
+` 5
+```
+
+The `LEN` keyword may also be used for an array. It will return the number of elements of the array.
+```basic
+DIM fish(5)
+PRINT LEN(fish)
+
+`program output
+` 5
+```
+
+When the array is multi-dimensional, the `LEN` keyword accepts an optional second parameter that gets the length of the requested dimension. 
+```basic
+DIM numbers(3, 5)
+PRINT LEN(numbers, 0)
+PRINT LEN(numbers, 1)
+
+`program output
+` 3
+` 5
+```
+
+It is invalid to pass the second parameter when reading the length of a string.
+
+## Byte Size
+
+It is possible to get the byte size of a UDT or a variable using the `BYTES` keyword. _Fade Basic_ stores all variables and data as a set of bytes behind the scenes. 
+
+A simple integer variable takes 4 bytes. Refer to the [Primitive Types](#primitive-types) table for byte size information.
+```basic
+x = 9525
+PRINT BYTES(x) 
+
+`program output
+` 4
+
+```
+
+The byte size of an array is equal to the size of each element, multiplied by the number of elements in the array.
+```basic
+DIM x(5)
+PRINT BYTES(x)
+
+`program output
+` 20
+```
+
+When the array is multi-dimensional, the number of elements is
+
 
 ## Literals
 

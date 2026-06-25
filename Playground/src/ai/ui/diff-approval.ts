@@ -283,3 +283,83 @@ export function mountDiffApproval(opts: DiffApprovalOptions): DiffApprovalHandle
         forceReject() { close('reject'); },
     };
 }
+
+// ─── Generic confirm (no diff) ───────────────────────────────────────────────
+
+export interface ConfirmOptions {
+    container: HTMLElement;
+    title: string;
+    /** Optional secondary lines (e.g. license, size). */
+    detail?: string;
+    approveLabel?: string;
+    rejectLabel?: string;
+    onApprove(): void;
+    onReject(): void;
+}
+
+/** A lightweight yes/no approval bubble, styled like the diff approval but
+ *  without a diff body. Used for actions that aren't file edits — e.g.
+ *  confirming a catalog asset import before it downloads into the project.
+ *  Returns a handle whose `forceReject()` settles it on abort/new-chat. */
+export function mountConfirm(opts: ConfirmOptions): DiffApprovalHandle {
+    const { container, title, detail, onApprove, onReject } = opts;
+
+    const wrapper = document.createElement('div');
+    wrapper.className = 'ai-diff-wrapper ai-confirm-wrapper';
+    wrapper.style.flexShrink = '0';
+
+    const header = document.createElement('div');
+    header.className = 'ai-diff-header ai-confirm-header';
+    const headerText = document.createElement('span');
+    headerText.className = 'ai-diff-header-text';
+    headerText.textContent = title;
+    header.appendChild(headerText);
+    wrapper.appendChild(header);
+
+    if (detail) {
+        const body = document.createElement('div');
+        body.className = 'ai-diff-body ai-confirm-body';
+        body.textContent = detail;
+        wrapper.appendChild(body);
+    }
+
+    const actions = document.createElement('div');
+    actions.className = 'ai-diff-actions';
+    const applyBtn = document.createElement('button');
+    applyBtn.className = 'ai-diff-apply';
+    applyBtn.type = 'button';
+    applyBtn.textContent = opts.approveLabel ?? 'Import';
+    const rejectBtn = document.createElement('button');
+    rejectBtn.className = 'ai-diff-reject';
+    rejectBtn.type = 'button';
+    rejectBtn.textContent = opts.rejectLabel ?? 'Skip';
+
+    let resolved = false;
+    const close = (verdict: 'approve' | 'reject') => {
+        if (resolved) return;
+        resolved = true;
+        applyBtn.disabled = true;
+        rejectBtn.disabled = true;
+        wrapper.classList.add(verdict === 'approve' ? 'ai-diff-accepted' : 'ai-diff-rejected');
+        (verdict === 'approve' ? onApprove : onReject)();
+    };
+    applyBtn.addEventListener('click', () => close('approve'));
+    rejectBtn.addEventListener('click', () => close('reject'));
+    actions.append(applyBtn, rejectBtn);
+    wrapper.appendChild(actions);
+
+    const hint = document.createElement('div');
+    hint.className = 'ai-approval-hint';
+    hint.textContent = 'Approve to add this to your project, or Skip.';
+
+    container.appendChild(wrapper);
+    container.appendChild(hint);
+    if (typeof requestAnimationFrame === 'function') {
+        requestAnimationFrame(() => {
+            try { wrapper.scrollIntoView({ block: 'nearest', behavior: 'auto' }); }
+            catch { /* jsdom */ }
+        });
+    }
+
+    return { wrapper, hint, forceReject() { close('reject'); } };
+}

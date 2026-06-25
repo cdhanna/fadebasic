@@ -27,4 +27,18 @@ describe('shouldAutoRetrieveDocs', () => {
         expect(needsCommandDocs('what command draws a rectangle')).toBe(true);
         expect(shouldPrefetchDocs('how to use input in fbasic')).toBe(true);
     });
+
+    it('retrieves docs for "how does X work" / "tell me about" language questions', () => {
+        // Regression: these phrasings + a language-feature noun were missed
+        // because the gate only matched "how do i"/"how to" + a narrow noun list.
+        expect(shouldAutoRetrieveDocs('can you tell me about how the defer statement works in fade? what tricks should I know?')).toBe(true);
+        expect(shouldPrefetchDocs('how does the defer statement work in fade')).toBe(true);
+        expect(needsCommandDocs('tell me about the select/case statement in fbasic')).toBe(true);
+        expect(needsCommandDocs('what tricks should I know about arrays in fade')).toBe(true);
+    });
+
+    it('still routes specific-file questions to read_file, not docs', () => {
+        expect(needsCommandDocs('tell me about the main.fbasic file')).toBe(false);
+        expect(needsCommandDocs('how does the function in my code work')).toBe(false);
+    });
 });

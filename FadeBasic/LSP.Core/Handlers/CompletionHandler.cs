@@ -40,6 +40,26 @@ namespace FadeBasic.LSP.Core.Handlers
 
             if (leftToken == null) return new List<LspCompletionItem>();
 
+            // Suppress completions inside comments. The lexer collapses
+            // `rem ...` and `` `... `` lines into a single KeywordRem
+            // token spanning the comment body, so leftToken.type ==
+            // KeywordRem reliably means the cursor is inside one. The
+            // GetCompletions switch below used to treat KeywordRem like
+            // an end-of-statement marker (statement-completions fired
+            // mid-comment), which surfaced suggestions every time the
+            // user paused inside a REM. Bail out here before any of
+            // the rescues run; comments don't have a useful completion
+            // surface.
+            //
+            // KeywordRemStart / KeywordRemEnd cover the multi-line case:
+            // anything after `remstart` and before a matching `remend`
+            // should likewise stay quiet.
+            if (leftToken.type == LexemType.KeywordRem
+                || leftToken.type == LexemType.KeywordRemStart)
+            {
+                return new List<LspCompletionItem>();
+            }
+
             bool isMacro = leftToken.flags.HasFlag(TokenFlags.IsMacroToken);
 
             bool Visit(IAstVisitable v)
@@ -84,6 +104,28 @@ namespace FadeBasic.LSP.Core.Handlers
                 ConstantTable = doc.LexResults.constantTable,
                 LocalScope = entry.value.Item1,
             };
+
+            // Struct-field rescue: user just typed `<var>.` (FieldSplitter).
+            // The parser may not have produced a clean StructFieldReference
+            // node for an incomplete expression, so LSPUtil's switch falls
+            // through and returns nothing. Walk back: find the token
+            // immediately before the dot, look it up in the active scope,
+            // resolve its declared type, then surface the type's fields
+            // directly. Returns early because the field list is exhaustive
+            // for this position — no other completion category applies
+            // after `.` in fbasic.
+            if (leftToken.type == LexemType.FieldSplitter)
+            {
+                var fieldItems = TryGetStructFieldCompletionsAfterDot(
+                    doc, programNode, entry.value.Item1, leftToken);
+                if (fieldItems != null)
+                    return fieldItems.Select(ToLspCompletionItem).ToList();
+                // If we can't resolve the LHS we still bail out — letting
+                // the switch see `FieldSplitter` would dump arbitrary
+                // statement/expression suggestions into a position where
+                // they don't belong.
+                return new List<LspCompletionItem>();
+            }
 
             var portable = LSPUtil.GetCompletions(context);
 
@@ -364,6 +406,102 @@ namespace FadeBasic.LSP.Core.Handlers
             // Multi-word only — single-word fragments are already covered
             // by the normal switch path's GetCommandCallCompletions.
             return prefix.Contains(' ') ? prefix : string.Empty;
+        }
+
+        // After-dot rescue. Locate the token immediately preceding the
+        // FieldSplitter (`.`) — that's the struct variable name. Look it
+        // up in local then global scope, resolve its declared TypeInfo,
+        // and return completion items for that struct's fields.
+        // Returns null when:
+        //   - There's no identifier token immediately before the dot
+        //     (e.g. the user typed `.` after an operator like `5.`).
+        //   - The identifier doesn't resolve to a known variable.
+        //   - The variable's type isn't a struct (TypeInfo.structName
+        //     is null/empty) or the type's field table is missing.
+        // Caller treats null as "abort the whole completion" — after a
+        // dot there's no useful fallback set.
+        private static List<PortableCompletionItem> TryGetStructFieldCompletionsAfterDot(
+            FadeDocument doc,
+            ProgramNode programNode,
+            SymbolTable localScope,
+            Token dotToken)
+        {
+            // Walk allTokens backwards from the dot to find the previous
+            // identifier-bearing token. Skip over whitespace tokens —
+            // they're not in allTokens in practice, but the iteration is
+            // O(N) anyway and a defensive skip lets future lexer tweaks
+            // not subtly break this rescue.
+            Token lhsToken = null;
+            var tokens = doc.LexResults.allTokens;
+            for (var i = tokens.Count - 1; i >= 0; i--)
+            {
+                var t = tokens[i];
+                if (t == dotToken) continue;
+                // We need a token strictly BEFORE the dot. The dot's
+                // position is on the dot character; anything at the same
+                // (line, char) wouldn't precede it.
+                if (t.lineNumber > dotToken.lineNumber) continue;
+                if (t.lineNumber == dotToken.lineNumber && t.charNumber >= dotToken.charNumber) continue;
+                lhsToken = t;
+                break;
+            }
+            if (lhsToken == null) return null;
+            // Only identifier tokens can be the LHS of a struct access.
+            // Bail on operators, literals, etc. — `5.` is a number, not
+            // a member access.
+            if (lhsToken.type != LexemType.VariableGeneral
+                && lhsToken.type != LexemType.VariableReal
+                && lhsToken.type != LexemType.VariableString)
+            {
+                return null;
+            }
+
+            var name = lhsToken.caseInsensitiveRaw
+                       ?? lhsToken.raw?.ToLowerInvariant()
+                       ?? string.Empty;
+            if (string.IsNullOrEmpty(name)) return null;
+
+            // Try local scope first (function/test locals + params),
+            // then global. Mirrors how identifier resolution works
+            // elsewhere — locals shadow globals.
+            Symbol symbol = null;
+            if (localScope != null && localScope.TryGetValue(name, out var localSym))
+            {
+                symbol = localSym;
+            }
+            else if (programNode.scope.globalVariables.TryGetValue(name, out var globalSym))
+            {
+                symbol = globalSym;
+            }
+            if (symbol == null) return null;
+
+            // The scope-aware visitor populates Symbol.typeInfo.structName
+            // for struct-typed variables declared via `local`/`global
+            // <name> as <Type>`. Bail when the symbol isn't actually a
+            // struct (primitive variables can't have a `.field` follow-up).
+            var structName = symbol.typeInfo.structName;
+            if (string.IsNullOrEmpty(structName)) return null;
+            if (!programNode.scope.typeNameToTypeMembers.TryGetValue(structName, out var members))
+                return null;
+
+            var list = new List<PortableCompletionItem>(members.Count);
+            foreach (var kvp in members)
+            {
+                var fieldName = kvp.Key;
+                var fieldSymbol = kvp.Value;
+                var trivia = fieldSymbol.source is IHasTriviaNode triviaNode ? triviaNode.Trivia : string.Empty;
+                list.Add(new PortableCompletionItem
+                {
+                    InsertTextFormat = PortableInsertTextFormat.Snippet,
+                    Kind = PortableCompletionKind.Field,
+                    Label = fieldName,
+                    InsertText = fieldName,
+                    SortText = "a",
+                    Detail = fieldSymbol.typeInfo.ToDisplay(),
+                    Documentation = trivia ?? string.Empty,
+                });
+            }
+            return list;
         }
 
         private static LspCompletionItem ToLspCompletionItem(PortableCompletionItem p)

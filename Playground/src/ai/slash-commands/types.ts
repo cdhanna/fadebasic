@@ -12,6 +12,7 @@
 //     distinct from chat so the user knows it's not the model talking.
 
 import type { Agent, AgentEvent } from '../agent';
+import type { GrammarAgent } from '../loop/grammar-agent';
 import type { ChatProvider } from '../providers/types';
 import type { ToolRegistry } from '../tools';
 import type { AgentPlan } from '../tool-protocol';
@@ -32,7 +33,7 @@ export interface SlashStateSnapshot {
  *  they need; not every command uses everything. agent + provider may be
  *  null before a model is loaded — /help and /tools still work. */
 export interface SlashContext {
-    agent: Agent | null;
+    agent: Agent | GrammarAgent | null;
     provider: ChatProvider | null;
     tools: ToolRegistry;
     state: SlashStateSnapshot;
@@ -41,6 +42,13 @@ export interface SlashContext {
     callbacks: {
         clearConversation?: () => void;
         focusLogs?: (channelPattern: RegExp) => void;
+        /** Read/set how code edits are applied: 'manual' (review each diff)
+         *  or 'auto' (apply immediately). Used by /mode. */
+        getEditMode?: () => 'manual' | 'auto';
+        setEditMode?: (m: 'manual' | 'auto') => void;
+        /** A human-readable summary of the current connection (provider,
+         *  GhostBot code/status/model). Used by /connection. */
+        getConnectionInfo?: () => string;
     };
     /** Look up another command by name — used by `/help` to introspect
      *  itself + by aliases. */

@@ -7,6 +7,7 @@
 
 import type { ChatProvider } from './types';
 import { WorkerBridgeProvider } from './worker-bridge';
+import { GhostBotProvider } from './ghostbot-provider';
 
 export interface ProviderEntry {
     /** Unique key used in localStorage. */
@@ -23,14 +24,20 @@ const SELECTED_KEY = 'fade.ai.selectedProvider';
 /** Set after a successful load; used to auto-warm the model on next visit. */
 const LAST_LOADED_KEY = 'fade.ai.lastLoadedProvider';
 
-/** Default provider id — Qwen 3 4B WebGPU. */
-export const DEFAULT_PROVIDER_ID = 'transformers-js:qwen3-4b';
+/** Default provider id — local GhostBot over WebRTC. */
+export const DEFAULT_PROVIDER_ID = 'ghostbot:local';
 
 export const PROVIDER_CATALOG: ProviderEntry[] = [
     {
+        id: 'ghostbot:local',
+        label: 'GhostBot (local llama.cpp)',
+        note: 'Default — pairs with the GhostBot desktop app via join code. Best tool use.',
+        factory: () => new GhostBotProvider(),
+    },
+    {
         id: 'transformers-js:qwen3-4b',
         label: 'Qwen 3 4B Instruct (WebGPU)',
-        note: 'Default — reliable tool use, ~2.4 GB. Needs Chrome/Edge WebGPU.',
+        note: 'In-browser fallback — ~2.4 GB. Needs Chrome/Edge WebGPU.',
         factory: () => new WorkerBridgeProvider({
             modelId: 'onnx-community/Qwen3-4B-Instruct-2507-ONNX',
             label: 'Qwen 3 4B Instruct (WebGPU)',
@@ -70,8 +77,10 @@ export function markProviderLoaded(id: string): void {
 
 /** True when the selected provider was loaded in a previous session and
  *  should be auto-warmed on startup (weights live in IndexedDB — only
- *  the in-memory ORT/WebGPU session needs rebuilding). */
+ *  the in-memory ORT/WebGPU session needs rebuilding). GhostBot is
+ *  excluded — it requires a live desktop peer. */
 export function shouldAutoLoadProvider(): boolean {
+    if (getSelectedProviderId() === 'ghostbot:local') return false;
     return localStorage.getItem(LAST_LOADED_KEY) === getSelectedProviderId();
 }
 
@@ -88,6 +97,9 @@ export function createSelectedProvider(): ChatProvider {
     return entry.factory();
 }
 
+export { GhostBotProvider } from './ghostbot-provider';
+export type { GhostConnectionState, GhostConnectionStatus } from './ghostbot-provider';
+export { generateJoinCode } from './ghostbot-protocol';
 export { TransformersJSProvider } from './transformers-js';
 export { WorkerBridgeProvider, disposeInferenceWorker } from './worker-bridge';
 export { MockProvider, mockTurn } from './mock';

@@ -262,6 +262,17 @@ namespace FadeBasic
         public static readonly ErrorCode TestFromParentCycle = "[0270] `from`-chain forms a cycle — a test cannot transitively inherit from itself";
         public static readonly ErrorCode TestDuplicateName = "[0271] another test with this name already exists; test names must be unique within a program";
         public static readonly ErrorCode MockParamsObjectArrayUnnamable = "[0268] cannot bind a name to a `params object[]` argument in a mock body";
+        public static readonly ErrorCode LenDimensionOnNonArray = "[0272] `len(x, dim)` only applies to arrays — strings do not have dimensions";
+        public static readonly ErrorCode LenDimensionOutOfRange = "[0273] dimension index is out of range for this array";
+        public static readonly ErrorCode DimsMissingParens = "[0274] `dims` requires parentheses around its argument";
+        public static readonly ErrorCode DimsMissingExpression = "[0275] `dims(...)` requires an array expression inside";
+        public static readonly ErrorCode DimsMissingCloseParen = "[0276] `dims(<expr>` is missing its closing `)`";
+        public static readonly ErrorCode DimsInvalidType = "[0277] `dims` only accepts an array";
+        public static readonly ErrorCode BytesMissingParens = "[0278] `bytes` requires parentheses around its argument";
+        public static readonly ErrorCode BytesMissingExpression = "[0279] `bytes(...)` requires a variable or type name inside";
+        public static readonly ErrorCode BytesMissingCloseParen = "[0280] `bytes(<expr>` is missing its closing `)`";
+        public static readonly ErrorCode BytesInvalidArgument = "[0281] `bytes` expects a variable or a type name";
+        public static readonly ErrorCode BytesUnknownSymbol = "[0282] `bytes` argument is neither a known variable nor a type name";
 
         // 200 series represents post-parse issues
         public static readonly ErrorCode InvalidReference = "[0200] Invalid reference";

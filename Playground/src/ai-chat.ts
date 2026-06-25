@@ -8,14 +8,17 @@
 // file focused on DOM rendering and chat persistence.
 
 import { Agent, type AgentEvent } from './ai/agent';
+import { GrammarAgent } from './ai/loop/grammar-agent';
+import { getRetriever } from './ai/rag/retrieval';
 import { getLogger } from './log-bus';
 import { createDefaultRegistry } from './ai/tools/default-registry';
 import { reviewProposedEdit } from './ai/code-reviewer';
 import { renderAssistantMarkdown } from './ai/ui/assistant-markdown';
+import { createSlashAutocomplete } from './ai/ui/slash-autocomplete';
 import { headingTail } from './ai/rag/doc-citation-links';
-import { mountDiffApproval, type DiffApprovalHandle } from './ai/ui/diff-approval';
+import { mountDiffApproval, mountConfirm, type DiffApprovalHandle } from './ai/ui/diff-approval';
 import type { AgentPlan } from './ai/tool-protocol';
-import type { DiagnosticsProvider, EditorAdapter, ToolRegistry } from './ai/tools';
+import type { DiagnosticsProvider, EditorAdapter, ToolRegistry, ToolContext } from './ai/tools';
 import { createDefaultSlashRegistry } from './ai/slash-commands/default-registry';
 import { emptySlashState } from './ai/slash-commands/registry';
 import type { SlashResult, SlashStateSnapshot } from './ai/slash-commands/types';
@@ -30,6 +33,14 @@ import {
     type ChatProvider,
     type Msg,
 } from './ai/providers';
+import {
+    GhostBotProvider,
+    type GhostConnectionState,
+} from './ai/providers/ghostbot-provider';
+import {
+    formatProviderLoadError,
+    providerErrorSummary,
+} from './ai/provider-load-errors';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -56,10 +67,21 @@ export interface ChatDependencies {
     tokenizeSnippet?: (source: string) => Promise<Array<{ line: number; col: number; length: number; type: number }>>;
     /** Open a retrieved doc chunk in the Help panel (command or doc section). */
     openDocCitation?: (source: string, heading: string) => void | Promise<void>;
+    /** Open docs for a Fade symbol (command/keyword) clicked in a snippet. */
+    openSymbolDocs?: (symbol: string) => void | Promise<void>;
     /** LSP-check proposed Fade source before diff approval. */
     validateEditContent?: (path: string, content: string) => Promise<import('./ai/tools').DiagnosticEntry[]>;
     /** Loaded Fade command names for the agent system prompt. */
     getCommandNames?: () => Promise<string[]>;
+    /** Names of commands that RETURN a value (so they must be called with
+     *  parens). Derived from command signatures; used by the review pass. */
+    getValueReturningCommands?: () => Promise<string[]>;
+    /** Full per-command docs (name + raw signature + rendered markdown). Used
+     *  by the coder loop to inject the EXACT signatures/params for the commands
+     *  a program will actually use. */
+    getCommandDocs?: () => Promise<Array<{ name: string; signature: string; markdown: string }>>;
+    /** Agent access to the asset Catalog (search + import). */
+    catalog?: import('./ai/tools').CatalogToolApi;
 }
 
 type EngineStatus = 'idle' | 'loading' | 'ready' | 'error';
@@ -71,6 +93,25 @@ let engineStatus: EngineStatus = 'idle';
 let engineError: string | null = null;
 const statusListeners = new Set<(s: EngineStatus, detail?: string) => void>();
 const progressListeners = new Set<(text: string, pct: number) => void>();
+
+/** Registered by mountAiChat — binds GhostBot connection UI when the chat panel exists. */
+type GhostBotBinder = (p: GhostBotProvider | null) => void;
+let ghostBotBinder: GhostBotBinder | null = null;
+
+// ─── Edit-approval mode ────────────────────────────────────────────────────
+// 'manual' (default) shows a diff the user approves before writing; 'auto'
+// applies edits immediately. Persisted so it survives reloads.
+export type EditMode = 'manual' | 'auto';
+const EDIT_MODE_KEY = 'fade.ai.editMode';
+let editMode: EditMode = (localStorage.getItem(EDIT_MODE_KEY) as EditMode) || 'manual';
+const editModeListeners = new Set<(m: EditMode) => void>();
+
+function getEditMode(): EditMode { return editMode; }
+function setEditMode(m: EditMode): void {
+    editMode = m;
+    localStorage.setItem(EDIT_MODE_KEY, m);
+    for (const fn of editModeListeners) fn(m);
+}
 
 function notifyStatus(s: EngineStatus, detail?: string) {
     engineStatus = s;
@@ -90,12 +131,33 @@ export async function loadSelectedProvider(): Promise<void> {
     try {
         provider = createSelectedProvider();
         provider.onProgress(({ text, pct }) => notifyProgress(text, pct));
+        if (provider instanceof GhostBotProvider) {
+            ghostBotBinder?.(provider);
+            notifyProgress(
+                provider.hasJoinCode()
+                    ? `Connecting to GhostBot (${provider.getJoinCode()})…`
+                    : "Enter your GhostBot's code below to connect.",
+                0.05,
+            );
+        } else {
+            ghostBotBinder?.(null);
+        }
         await provider.ensureReady();
         markProviderLoaded(getSelectedProviderId());
         notifyStatus('ready');
     } catch (err) {
+        // User pressed Stop while waiting for GhostBot — back to idle, not
+        // an error state.
+        if ((err as Error)?.name === 'GhostBotCancelled') {
+            provider = null;
+            ghostBotBinder?.(null);
+            notifyStatus('idle');
+            return;
+        }
         provider = null;
-        notifyStatus('error', (err as Error).message ?? String(err));
+        ghostBotBinder?.(null);
+        const detail = formatProviderLoadError(err, getSelectedProviderId());
+        notifyStatus('error', detail);
         throw err;
     }
 }
@@ -211,10 +273,25 @@ function formatToolError(raw: unknown): string {
     if (typeof raw === 'string') return raw;
     if (raw && typeof raw === 'object') {
         const r = raw as Record<string, unknown>;
+        const hint = typeof r.hint === 'string' && r.hint.trim() ? `\n→ ${r.hint.trim()}` : '';
         if (typeof r.review === 'string' && r.review.trim()) {
-            return `Code review rejected:\n${r.review.trim()}`;
+            return `Code review rejected:\n${r.review.trim()}${hint}`;
         }
-        if (typeof r.error === 'string') return r.error;
+        if (typeof r.error === 'string') {
+            // Surface Zod validation detail — otherwise "Invalid arguments"
+            // is useless to the user (and to us debugging).
+            const issues = Array.isArray(r.issues) ? r.issues : null;
+            let base = r.error;
+            if (issues && issues.length) {
+                const lines = issues.map((i) => {
+                    const o = i as { path?: string; message?: string };
+                    return o.path ? `• ${o.path}: ${o.message}` : `• ${o.message}`;
+                });
+                base = `${r.error}:\n${lines.join('\n')}`;
+            }
+            const fmt = typeof r.correctFormat === 'string' ? `\nFormat: ${r.correctFormat}` : '';
+            return `${base}${fmt}${hint}`;
+        }
     }
     return formatJson(raw);
 }
@@ -244,14 +321,22 @@ export function mountAiChat(
     const messagesEl = pane.querySelector<HTMLElement>('.ai-messages')!;
     const inputEl = pane.querySelector<HTMLTextAreaElement>('.ai-input')!;
     const sendBtn = pane.querySelector<HTMLButtonElement>('.ai-send-btn')!;
+    const slashPopup = pane.querySelector<HTMLElement>('.ai-slash-popup')!;
     const stopBtn = pane.querySelector<HTMLButtonElement>('.ai-stop-btn')!;
     const statusEl = pane.querySelector<HTMLElement>('.ai-chat-status')!;
     const loadBtn = pane.querySelector<HTMLButtonElement>('.ai-load-btn')!;
     const clearBtn = pane.querySelector<HTMLButtonElement>('.ai-clear-btn')!;
+    const modeBtn = pane.querySelector<HTMLButtonElement>('.ai-mode-btn')!;
     const progressBar = pane.querySelector<HTMLElement>('.ai-progress-bar-fill')!;
     const progressRow = pane.querySelector<HTMLElement>('.ai-progress-row')!;
     const progressPct = pane.querySelector<HTMLElement>('.ai-progress-pct')!;
     const progressDetail = pane.querySelector<HTMLElement>('.ai-progress-detail')!;
+    const ghostBotBar = pane.querySelector<HTMLElement>('.ai-ghostbot-bar')!;
+    const ghostBotLabel = pane.querySelector<HTMLElement>('.ai-ghostbot-label')!;
+    const ghostBotCodeInput = pane.querySelector<HTMLInputElement>('.ai-ghostbot-code-input')!;
+    const ghostBotHint = pane.querySelector<HTMLElement>('.ai-ghostbot-hint')!;
+    const ghostBotConnectBtn = pane.querySelector<HTMLButtonElement>('.ai-ghostbot-connect')!;
+    const ghostBotStopBtn = pane.querySelector<HTMLButtonElement>('.ai-ghostbot-stop')!;
     const historyBtn = pane.querySelector<HTMLButtonElement>('.ai-history-btn')!;
     const historyMenu = pane.querySelector<HTMLElement>('.ai-history-menu')!;
     const historyList = pane.querySelector<HTMLElement>('.ai-history-list')!;
@@ -259,7 +344,7 @@ export function mountAiChat(
 
     let activeChatId: string = newChatId();
     let generating = false;
-    let agent: Agent | null = null;
+    let agent: Agent | GrammarAgent | null = null;
     /** Tracks which provider the current agent was built against. */
     let boundProviderId: string | null = null;
     /** Kept on the panel so /tools and /context can inspect them without
@@ -276,6 +361,9 @@ export function mountAiChat(
     /** Active review progress row shown during pre-diff LSP check. */
     let hideReviewing: (() => void) | null = null;
     let reviewProgressTimer: ReturnType<typeof setInterval> | null = null;
+    let ghostBotConnUnsub: (() => void) | null = null;
+    let ghostBotReconnecting = false;
+    let ghostBotConnState: GhostConnectionState | null = null;
 
     function clearReviewProgress(): void {
         if (reviewProgressTimer) {
@@ -300,7 +388,40 @@ export function mountAiChat(
     const store = new ChatStore();
     void store.init().catch(e => console.warn('[fade/ai] chat store init failed:', e));
 
-    function buildAgent(): Agent | null {
+    // Cache the authoritative command list — used by the deterministic Fade
+    // pre-check in code review. Cheap on repeat (one LSP round-trip, then
+    // reused); failures degrade to an empty list (pre-check just skips).
+    let cachedCommandNames: Promise<string[]> | null = null;
+    // Lowercased command tokens for the synchronous snippet highlighter —
+    // includes whole single-word names AND the individual words of multi-word
+    // commands (so each word of e.g. "key down" colors). Populated lazily.
+    const commandWords = new Set<string>();
+    const populateCommandWords = (names: string[]): void => {
+        for (const name of names) {
+            for (const word of name.toLowerCase().split(/\s+/)) {
+                if (word.length >= 2) commandWords.add(word);
+            }
+        }
+    };
+    const getCommandNamesCached = (): Promise<string[]> => {
+        if (!deps.getCommandNames) return Promise.resolve([]);
+        if (!cachedCommandNames) {
+            cachedCommandNames = deps.getCommandNames().catch(() => []);
+            void cachedCommandNames.then(populateCommandWords);
+        }
+        return cachedCommandNames;
+    };
+    // Warm the command set so highlighting has it on the first answer.
+    void getCommandNamesCached();
+
+    // The explicit decision-tree loop (GrammarAgent) is the DEFAULT — disable
+    // with __fadeAiHelpers.setGrammarLoop(false) to fall back to the ReAct Agent.
+    const useGrammarLoop = (): boolean => {
+        try { return localStorage.getItem('fade.ai.grammarLoop') !== '0'; }
+        catch { return true; }
+    };
+
+    function buildAgent(): Agent | GrammarAgent | null {
         if (!provider) return null;
         // Capture so the closures below see a narrowed non-null type;
         // the field-level `provider` reference isn't auto-narrowed
@@ -309,10 +430,8 @@ export function mountAiChat(
         toolRegistry = createDefaultRegistry();
         boundProviderId = activeProvider.id;
         const toolLog = getLogger('ai/tool');
-        return new Agent({
-            provider: activeProvider,
-            tools: toolRegistry,
-            toolContext: {
+
+        const toolContext: ToolContext = {
                 workspace,
                 diagnostics: deps.diagnostics,
                 editor: deps.editor,
@@ -320,6 +439,7 @@ export function mountAiChat(
                     ? async (req) => reviewProposedEdit(activeProvider, {
                         ...req,
                         validateContent: deps.validateEditContent,
+                        commandNames: await getCommandNamesCached(),
                     }, {
                         llmReview: false,
                         signal: agent?.getAbortSignal?.(),
@@ -342,12 +462,44 @@ export function mountAiChat(
                     // again, the Logs panel shows what file + sizes were
                     // involved (delta=0 usually means a no-op edit).
                     toolLog.info(
-                        `confirmEdit: ${path} (old=${oldContent.length}b, new=${newContent.length}b, delta=${newContent.length - oldContent.length}b)`,
+                        `confirmEdit: ${path} (old=${oldContent.length}b, new=${newContent.length}b, delta=${newContent.length - oldContent.length}b, mode=${editMode})`,
                     );
+                    // Auto mode: skip the diff modal, apply immediately, and
+                    // drop a compact "applied" notice so it's still visible.
+                    if (editMode === 'auto') {
+                        appendAutoEditNotice(path, oldContent, newContent);
+                        return Promise.resolve(true);
+                    }
                     return requestDiffApproval(path, oldContent, newContent);
                 },
                 projectType: deps.getProjectType,
-            },
+                catalog: deps.catalog,
+                // Lint a shown-but-not-applied snippet as a standalone file
+                // (a scratch name → the validator's non-project path).
+                lintFadeSnippet: deps.validateEditContent
+                    ? (source: string) => deps.validateEditContent!('__ai_snippet__.fbasic', source)
+                    : undefined,
+        };
+
+        if (useGrammarLoop()) {
+            getLogger('ai/agent').info('using explicit decision-tree loop (GrammarAgent)');
+            return new GrammarAgent({
+                provider: activeProvider,
+                retriever: getRetriever(),
+                getCommandNames: deps.getCommandNames,
+                getValueReturningCommands: deps.getValueReturningCommands,
+                getCommandDocs: deps.getCommandDocs,
+                getProjectType: deps.getProjectType,
+                tools: toolRegistry,
+                toolContext,
+                confirmCatalogImport: requestImportApproval,
+            });
+        }
+
+        return new Agent({
+            provider: activeProvider,
+            tools: toolRegistry,
+            toolContext,
             getProjectType: deps.getProjectType,
             getCommandNames: deps.getCommandNames,
         });
@@ -428,14 +580,30 @@ export function mountAiChat(
     });
     historyNewBtn.addEventListener('click', () => { closeHistoryMenu(); startNewChat(); });
 
+    // Starter prompts shown on a fresh, empty chat to get the conversation going.
+    const STARTER_CHIPS: ReadonlyArray<{ title: string; prompt: string }> = [
+        { title: 'Sprites + arrow keys demo', prompt: 'write me a simple demo using sprites and arrow keys' },
+        { title: 'What does this project do?', prompt: 'what does this project do so far?' },
+        { title: 'How do I learn Fade BASIC?', prompt: 'how do I start learning fade basic?' },
+    ];
+
+    // Show the starter chips only when the transcript is empty (fresh chat) and
+    // they're not already on screen — used both on mount and after a reset.
+    function showStarterChips(): void {
+        if (messagesEl.querySelector('.ai-msg, .ai-suggestions')) return;
+        appendSuggestions(STARTER_CHIPS, 'Try:');
+    }
+
     function startNewChat(): void {
         rejectPendingDiffs();
         activeChatId = newChatId();
         agent?.clearHistory();
         messagesEl.innerHTML = '';
+        genBar.hide();
+        showStarterChips();
     }
 
-    function ensureAgent(): Agent | null {
+    function ensureAgent(): Agent | GrammarAgent | null {
         if (!provider) return null;
         if (!agent || boundProviderId !== provider.id) {
             rejectPendingDiffs();
@@ -455,6 +623,7 @@ export function mountAiChat(
 
     function renderHistoryToDOM(msgs: Msg[]): void {
         messagesEl.innerHTML = '';
+        genBar.hide();
         for (const msg of msgs) {
             if (msg.role === 'user') {
                 // Skip tool_result re-injections — these are protocol noise
@@ -496,15 +665,158 @@ export function mountAiChat(
     }
     setGenerating(false);
 
+    function isGhostBotSelected(): boolean {
+        return getSelectedProviderId() === 'ghostbot:local';
+    }
+
+    function ghostBotProvider(): GhostBotProvider | null {
+        return provider instanceof GhostBotProvider ? provider : null;
+    }
+
+    function isGhostBotConnected(): boolean {
+        const gb = ghostBotProvider();
+        if (!gb) return true;
+        return gb.getConnectionState().status === 'connected';
+    }
+
+    function ghostStatusLabel(state: GhostConnectionState): string {
+        switch (state.status) {
+            case 'connected': {
+                if (state.modelLoaded === false) return 'Connected — no model loaded';
+                if (state.modelName) {
+                    const name = state.modelName.length > 28
+                        ? `${state.modelName.slice(0, 27)}…`
+                        : state.modelName;
+                    return `Connected — ${name}`;
+                }
+                return 'Connected';
+            }
+            case 'waiting': return 'Looking for GhostBot…';
+            case 'pending': return 'Waiting for approval';
+            case 'reconnecting': return 'Reconnecting…';
+            case 'disconnected': return 'Disconnected';
+            case 'error': return 'Connection error';
+            default: return 'GhostBot';
+        }
+    }
+
+    function storedGhostJoinCode(): string {
+        return localStorage.getItem('fade.ai.ghostbot.code') ?? '';
+    }
+
+    function bindGhostBotConnection(p: GhostBotProvider | null): void {
+        ghostBotConnUnsub?.();
+        ghostBotConnUnsub = null;
+        if (!p) {
+            ghostBotConnState = null;
+            renderGhostBotBar();
+            return;
+        }
+        ghostBotConnUnsub = p.onConnectionState((s) => {
+            ghostBotConnState = s;
+            renderGhostBotBar();
+            renderStatus();
+        });
+    }
+
+    function renderGhostBotBar(): void {
+        const show = isGhostBotSelected();
+        ghostBotBar.hidden = !show;
+        if (!show) return;
+
+        const gb = ghostBotProvider();
+        const state = ghostBotConnState ?? gb?.getConnectionState() ?? {
+            status: (engineStatus === 'ready' ? 'waiting' : 'idle') as GhostConnectionState['status'],
+            joinCode: storedGhostJoinCode(),
+            detail: engineStatus === 'ready'
+                ? 'Waiting for GhostBot desktop app'
+                : 'Click Load Model to open a session',
+        };
+
+        const connectedNoModel = state.status === 'connected' && state.modelLoaded === false;
+        ghostBotBar.dataset.status = connectedNoModel ? 'connected-nomodel' : state.status;
+        ghostBotLabel.textContent = ghostStatusLabel(state);
+        // Don't clobber the field while the user is typing into it.
+        if (document.activeElement !== ghostBotCodeInput) {
+            ghostBotCodeInput.value = state.joinCode ?? '';
+        }
+        const hint = connectedNoModel
+            ? 'GhostBot is paired but has no model loaded — load one in the GhostBot app.'
+            : state.detail ?? '';
+        ghostBotHint.textContent = hint;
+        ghostBotHint.title = hint;
+
+        const busy = ghostBotReconnecting || engineStatus === 'loading';
+        ghostBotConnectBtn.disabled = busy;
+        ghostBotConnectBtn.textContent = state.status === 'connected' || state.status === 'pending'
+            ? 'Reconnect' : 'Connect';
+
+        // Stop ends the session: cancels the wait while pairing, disconnects
+        // when paired. Hidden only when there is no session to end.
+        const stoppable = state.status === 'waiting'
+            || state.status === 'pending'
+            || state.status === 'reconnecting'
+            || state.status === 'connected'
+            || state.status === 'disconnected'
+            || engineStatus === 'loading';
+        ghostBotStopBtn.hidden = !stoppable;
+        ghostBotStopBtn.textContent = state.status === 'connected' ? 'Disconnect' : 'Stop';
+        ghostBotStopBtn.title = state.status === 'connected'
+            ? 'Disconnect from GhostBot and end the session'
+            : 'Stop waiting and end the session';
+    }
+
+    async function stopGhostBotSession(): Promise<void> {
+        const gb = ghostBotProvider();
+        if (!gb) return;
+        await gb.reset();          // aborts a pending wait + leaves the room
+        provider = null;
+        ghostBotReconnecting = false;
+        notifyStatus('idle');
+        renderGhostBotBar();
+        renderStatus();
+    }
+
+    async function reconnectGhostBot(): Promise<void> {
+        const gb = ghostBotProvider();
+        if (!gb || ghostBotReconnecting) return;
+        ghostBotReconnecting = true;
+        renderGhostBotBar();
+        notifyStatus('loading');
+        try {
+            if (engineStatus !== 'ready' || !provider) {
+                provider = gb;
+                gb.onProgress(({ text, pct }) => notifyProgress(text, pct));
+            }
+            await gb.reconnect();
+            markProviderLoaded(getSelectedProviderId());
+            notifyStatus('ready');
+        } catch (err) {
+            if ((err as Error)?.name === 'GhostBotCancelled') {
+                notifyStatus('idle');
+            } else {
+                notifyStatus('error', formatProviderLoadError(err, getSelectedProviderId()));
+            }
+        } finally {
+            ghostBotReconnecting = false;
+            renderGhostBotBar();
+            renderStatus();
+        }
+    }
+
     // ── Status rendering ────────────────────────────────────────────────────
     function renderStatus() {
         const providerLabel = provider?.label ?? PROVIDER_CATALOG.find(p => p.id === getSelectedProviderId())?.label ?? '—';
+        renderGhostBotBar();
         if (engineStatus === 'ready') {
-            statusEl.textContent = providerLabel;
-            statusEl.className = 'ai-chat-status ai-status-ready';
+            const ghostOk = isGhostBotConnected();
+            statusEl.textContent = ghostOk ? providerLabel : 'GhostBot disconnected';
+            statusEl.className = ghostOk
+                ? 'ai-chat-status ai-status-ready'
+                : 'ai-chat-status ai-status-error';
             loadBtn.hidden = true;
-            sendBtn.disabled = false;
-            inputEl.disabled = false;
+            sendBtn.disabled = !ghostOk;
+            inputEl.disabled = !ghostOk;
             progressRow.hidden = true;
         } else if (engineStatus === 'loading') {
             const pct = progressPct.textContent;
@@ -515,13 +827,20 @@ export function mountAiChat(
             inputEl.disabled = true;
             progressRow.hidden = false;
         } else if (engineStatus === 'error') {
-            statusEl.textContent = `Error: ${engineError ?? ''}`;
+            const detail = engineError ?? 'Unknown error';
+            const summary = providerErrorSummary(detail, getSelectedProviderId());
+            statusEl.textContent = summary;
+            statusEl.title = detail;
             statusEl.className = 'ai-chat-status ai-status-error';
             loadBtn.hidden = false;
             loadBtn.textContent = 'Retry';
             sendBtn.disabled = true;
             inputEl.disabled = true;
             progressRow.hidden = true;
+            if (isGhostBotSelected()) {
+                ghostBotHint.textContent = detail;
+                ghostBotHint.title = detail;
+            }
         } else {
             statusEl.textContent = 'No model loaded';
             statusEl.className = 'ai-chat-status';
@@ -534,6 +853,7 @@ export function mountAiChat(
     }
 
     function onEngineStatusChange(): void {
+        bindGhostBotConnection(ghostBotProvider());
         renderStatus();
         // Rebind the agent when a new model finishes loading (or after a
         // failed load recovers) so sends don't hit a stale provider.
@@ -558,7 +878,12 @@ export function mountAiChat(
     progressListeners.add((text, pct) => {
         applyChatLoadProgress(text, pct);
     });
+    ghostBotBinder = bindGhostBotConnection;
     renderStatus();
+    if (isGhostBotSelected()) {
+        bindGhostBotConnection(ghostBotProvider());
+        renderGhostBotBar();
+    }
 
     // ── Message rendering ───────────────────────────────────────────────────
     function appendUserBubble(text: string): void {
@@ -576,32 +901,131 @@ export function mountAiChat(
         el: HTMLElement;
     } {
         const div = document.createElement('div');
-        div.className = 'ai-msg ai-msg-assistant ai-msg-markdown';
+        div.className = 'ai-msg ai-msg-assistant ai-msg-markdown ai-msg-hidden';
+        // Insert immediately to RESERVE the bubble's position in the
+        // transcript — otherwise end-of-turn notices (suggestions, lint)
+        // emitted before the deferred render would append ahead of it. The
+        // bubble stays hidden (ai-msg-hidden) until it has non-whitespace
+        // content, so a tool-only turn never shows an empty box.
         messagesEl.appendChild(div);
-        scrollToBottom();
         let buf = '';
         let renderTimer: ReturnType<typeof setTimeout> | null = null;
 
-        const flush = async () => {
+        // Render the accumulated buffer as markdown. `live` (streaming) renders
+        // STRUCTURE ONLY — formatted, but no async highlight/copy buttons, which
+        // flicker when re-run on incomplete code every token. The final pass
+        // (live=false) does the full highlight once.
+        const flush = async (live: boolean) => {
             renderTimer = null;
-            await renderAssistantMarkdown(div, buf, deps.tokenizeSnippet);
-            scrollToBottom();
+            if (buf.trim()) {
+                div.classList.remove('ai-msg-hidden');
+                await renderAssistantMarkdown(div, buf, {
+                    tokenize: deps.tokenizeSnippet,
+                    onSymbolDocs: deps.openSymbolDocs,
+                    commandWords,
+                    live,
+                });
+                scrollToBottom();
+            } else {
+                div.classList.add('ai-msg-hidden');
+            }
         };
+        // Debounce incremental renders so rapid token deltas don't thrash the
+        // markdown renderer — ~90ms still reads as live typing.
         const scheduleRender = () => {
-            if (renderTimer) clearTimeout(renderTimer);
-            renderTimer = setTimeout(() => { void flush(); }, 150);
+            if (renderTimer) return;
+            renderTimer = setTimeout(() => { void flush(true); }, 90);
         };
 
         return {
-            setText(t: string) { buf = t; void flush(); },
+            setText(t: string) { buf = t; void flush(false); },
             appendText(t: string) { buf += t; scheduleRender(); },
             async finalize() {
                 if (renderTimer) { clearTimeout(renderTimer); renderTimer = null; }
-                await flush();
+                await flush(false);
+                // An assistant turn that produced no prose (only tool calls)
+                // leaves nothing to show — drop the reserved node.
+                if (!buf.trim()) div.remove();
             },
             el: div,
         };
     }
+
+    // Live generation strip above the input — surfaces token throughput and
+    // the current phase (thinking / generating / running a tool) in the
+    // Playground itself, mirroring the GhostBot desktop activity card.
+    const genBarEl = pane.querySelector<HTMLElement>('.ai-genbar')!;
+    const genBarDot = pane.querySelector<HTMLElement>('.ai-genbar-dot')!;
+    const genBarLabel = pane.querySelector<HTMLElement>('.ai-genbar-label')!;
+    const genBarStats = pane.querySelector<HTMLElement>('.ai-genbar-stats')!;
+    void genBarDot;
+
+    function createGenBar() {
+        let tokens = 0;
+        let genStartMs = 0;
+        let statsTimer: ReturnType<typeof setInterval> | null = null;
+
+        const tps = (): number => {
+            if (genStartMs === 0) return 0;
+            const secs = (performance.now() - genStartMs) / 1000;
+            return secs > 0 ? tokens / secs : 0;
+        };
+        const renderStats = () => {
+            genBarStats.textContent = tokens > 0
+                ? `${tokens} tok · ${tps().toFixed(1)}/s`
+                : '';
+        };
+        const stopTimer = () => {
+            if (statsTimer) { clearInterval(statsTimer); statsTimer = null; }
+        };
+
+        return {
+            start() {
+                tokens = 0;
+                genStartMs = 0;
+                stopTimer();
+                genBarEl.hidden = false;
+                genBarEl.dataset.state = 'thinking';
+                genBarLabel.textContent = 'Thinking…';
+                genBarStats.textContent = '';
+            },
+            phase(state: 'thinking' | 'generating' | 'tool', label: string) {
+                genBarEl.dataset.state = state;
+                genBarLabel.textContent = label;
+            },
+            token() {
+                if (genStartMs === 0) {
+                    genStartMs = performance.now();
+                    // Tick the rate even when deltas are bursty/paused.
+                    statsTimer = setInterval(renderStats, 250);
+                }
+                tokens++;
+                if (genBarEl.dataset.state !== 'generating') {
+                    genBarEl.dataset.state = 'generating';
+                    genBarLabel.textContent = 'Generating…';
+                }
+                renderStats();
+            },
+            finalize(state: 'done' | 'error', label?: string) {
+                stopTimer();
+                genBarEl.dataset.state = state;
+                if (state === 'error') {
+                    genBarLabel.textContent = label ?? 'Error';
+                    return;
+                }
+                if (tokens > 0) {
+                    const secs = ((performance.now() - genStartMs) / 1000).toFixed(1);
+                    genBarLabel.textContent = 'Done';
+                    genBarStats.textContent = `${tokens} tok · ${secs}s · ${tps().toFixed(1)}/s`;
+                } else {
+                    // Nothing streamed (e.g. tool-only turn) — no stats to show.
+                    genBarEl.hidden = true;
+                }
+            },
+            hide() { stopTimer(); genBarEl.hidden = true; },
+        };
+    }
+    const genBar = createGenBar();
 
     function showThinking(label = 'Thinking…'): () => void {
         const div = document.createElement('div');
@@ -706,6 +1130,73 @@ export function mountAiChat(
         scrollToBottom();
     }
 
+    function appendAssetReport(
+        present: ReadonlyArray<{ category: string; name: string }>,
+        missing: ReadonlyArray<{ category: string; name: string }>,
+    ): void {
+        if (missing.length === 0) return; // only surface problems
+        const row = document.createElement('div');
+        row.className = 'ai-asset-report';
+        const names = missing.map(m => `${m.name} (${m.category})`).join(', ');
+        const present_ = present.length ? ` ${present.length} referenced asset${present.length === 1 ? '' : 's'} found.` : '';
+        row.innerHTML = '<span class="ai-asset-report-icon">⚠︎</span><span class="ai-asset-report-text"></span>';
+        row.querySelector('.ai-asset-report-text')!.textContent =
+            `Missing asset${missing.length === 1 ? '' : 's'}: ${names} — not in this project.${present_}`;
+        messagesEl.appendChild(row);
+        scrollToBottom();
+    }
+
+    function appendCodeLint(issues: ReadonlyArray<{ line: number; message: string; code?: string }>): void {
+        if (issues.length === 0) return;
+        const row = document.createElement('div');
+        row.className = 'ai-asset-report'; // reuse the amber-warning styling
+        const head = document.createElement('div');
+        head.innerHTML = '<span class="ai-asset-report-icon">⚠︎</span><span class="ai-asset-report-text"></span>';
+        head.querySelector('.ai-asset-report-text')!.textContent =
+            `The code above has ${issues.length} Fade compile error${issues.length === 1 ? '' : 's'}:`;
+        row.appendChild(head);
+        const list = document.createElement('ul');
+        list.className = 'ai-code-lint-list';
+        for (const i of issues) {
+            const li = document.createElement('li');
+            li.textContent = `L${i.line}: ${i.message}`;
+            list.appendChild(li);
+        }
+        row.appendChild(list);
+        messagesEl.appendChild(row);
+        scrollToBottom();
+    }
+
+    function appendSuggestions(
+        suggestions: ReadonlyArray<{ title: string; prompt: string }>,
+        labelText = 'Next:',
+    ): void {
+        if (suggestions.length === 0) return;
+        const wrap = document.createElement('div');
+        wrap.className = 'ai-suggestions';
+        const label = document.createElement('span');
+        label.className = 'ai-suggestions-label';
+        label.textContent = labelText;
+        wrap.appendChild(label);
+        for (const s of suggestions) {
+            const chip = document.createElement('button');
+            chip.type = 'button';
+            chip.className = 'ai-suggestion-chip';
+            chip.textContent = s.title;
+            chip.title = s.prompt;
+            chip.addEventListener('click', () => {
+                if (generating) return;
+                // Disable the whole group so a suggestion fires once.
+                wrap.querySelectorAll('button').forEach(b => { (b as HTMLButtonElement).disabled = true; });
+                inputEl.value = s.prompt;
+                void handleSend();
+            });
+            wrap.appendChild(chip);
+        }
+        messagesEl.appendChild(wrap);
+        scrollToBottom();
+    }
+
     function appendPlanBubble(plan: AgentPlan): void {
         const wrap = document.createElement('div');
         wrap.className = 'ai-plan';
@@ -775,10 +1266,75 @@ export function mountAiChat(
         scrollToBottom();
     }
 
-    function appendToolRow(icon: string, label: string): {
+    // A collapsible "thinking" row for an internal agent step (classifying the
+    // request, self-reviewing code, …). Mirrors the tool-row look so the loop's
+    // internal reasoning is as legible as its tool calls.
+    function appendReasoningRow(title: string, detail?: string, links?: import('./ai/agent').ReasoningLink[]): void {
+        const row = document.createElement('div');
+        row.className = 'ai-tool-row ai-reasoning-row';
+        const header = document.createElement('button');
+        header.className = 'ai-tool-header';
+        const iconEl = document.createElement('span');
+        iconEl.className = 'ai-tool-icon';
+        iconEl.textContent = '💭';
+        const labelEl = document.createElement('span');
+        labelEl.className = 'ai-tool-label';
+        labelEl.textContent = title;
+        const chevron = document.createElement('span');
+        chevron.className = 'ai-tool-chevron';
+        chevron.textContent = detail ? '▶' : '';
+        header.append(iconEl, labelEl, chevron);
+        row.append(header);
+
+        if (detail || (links && links.length)) {
+            const det = document.createElement('div');
+            det.className = 'ai-tool-detail';
+            det.hidden = true;
+            if (links && links.length) {
+                // Render the detail as clickable chips — e.g. command names that
+                // open their help-doc entry. Capped + scrollable via CSS.
+                const wrap = document.createElement('div');
+                wrap.className = 'ai-reasoning-links';
+                for (const lk of links) {
+                    const chip = document.createElement('button');
+                    chip.type = 'button';
+                    chip.className = 'ai-reasoning-link';
+                    chip.textContent = lk.label;
+                    if (lk.symbol && deps.openSymbolDocs) {
+                        const sym = lk.symbol;
+                        chip.addEventListener('click', () => { void deps.openSymbolDocs!(sym); });
+                    } else {
+                        chip.disabled = true;
+                    }
+                    wrap.append(chip);
+                }
+                det.append(wrap);
+            } else {
+                const pre = document.createElement('pre');
+                pre.className = 'ai-tool-json';
+                pre.textContent = detail!;
+                det.append(pre);
+            }
+            row.append(det);
+            let expanded = false;
+            header.addEventListener('click', () => {
+                expanded = !expanded;
+                det.hidden = !expanded;
+                chevron.textContent = expanded ? '▼' : '▶';
+                scrollToBottom();
+            });
+        } else {
+            header.disabled = true;
+        }
+        messagesEl.appendChild(row);
+        scrollToBottom();
+    }
+
+    function appendToolRow(name: string, args: unknown): {
         done(result: unknown): void;
         fail(message: string): void;
     } {
+        const { verb, target } = describeToolCall(name, args);
         const row = document.createElement('div');
         row.className = 'ai-tool-row';
         const header = document.createElement('button');
@@ -786,12 +1342,20 @@ export function mountAiChat(
         header.disabled = true;
         const iconEl = document.createElement('span');
         iconEl.className = 'ai-tool-icon';
-        iconEl.textContent = icon;
+        iconEl.textContent = toolIcon(name);
         const labelEl = document.createElement('span');
         labelEl.className = 'ai-tool-label';
-        labelEl.textContent = label;
+        // Show what the action is doing, e.g. "Reading" + "main.fbasic".
+        labelEl.textContent = verb;
+        if (target) {
+            const targetEl = document.createElement('span');
+            targetEl.className = 'ai-tool-target';
+            targetEl.textContent = target;
+            labelEl.append(' ', targetEl);
+        }
         const badge = document.createElement('span');
         badge.className = 'ai-tool-badge ai-tool-badge-running';
+        badge.textContent = 'running…';
         const chevron = document.createElement('span');
         chevron.className = 'ai-tool-chevron';
         chevron.textContent = '▶';
@@ -801,16 +1365,29 @@ export function mountAiChat(
         detail.className = 'ai-tool-detail';
         detail.hidden = true;
 
+        // Always include what was attempted, so a failure shows the inputs
+        // the model passed — not just an opaque error.
+        const argsLabel = document.createElement('div');
+        argsLabel.className = 'ai-tool-detail-label';
+        argsLabel.textContent = 'Arguments';
+        const argsPre = document.createElement('pre');
+        argsPre.className = 'ai-tool-json';
+        argsPre.innerHTML = highlightJson(formatJson(args ?? {}));
+        detail.append(argsLabel, argsPre);
+
         row.append(header, detail);
         messagesEl.appendChild(row);
         scrollToBottom();
 
+        const setExpanded = (on: boolean) => {
+            detail.hidden = !on;
+            chevron.textContent = on ? '▼' : '▶';
+        };
         let expanded = false;
         header.addEventListener('click', () => {
             if (header.disabled) return;
             expanded = !expanded;
-            detail.hidden = !expanded;
-            chevron.textContent = expanded ? '▼' : '▶';
+            setExpanded(expanded);
             scrollToBottom();
         });
 
@@ -818,24 +1395,49 @@ export function mountAiChat(
             done(result: unknown) {
                 badge.className = 'ai-tool-badge ai-tool-badge-done';
                 badge.textContent = '✓';
+                const lbl = document.createElement('div');
+                lbl.className = 'ai-tool-detail-label';
+                lbl.textContent = 'Result';
                 const pre = document.createElement('pre');
                 pre.className = 'ai-tool-json';
                 pre.innerHTML = highlightJson(formatJson(result));
-                detail.appendChild(pre);
+                detail.append(lbl, pre);
                 header.disabled = false;
                 scrollToBottom();
             },
             fail(message: string) {
                 badge.className = 'ai-tool-badge ai-tool-badge-fail';
                 badge.textContent = '✗';
+                const lbl = document.createElement('div');
+                lbl.className = 'ai-tool-detail-label';
+                lbl.textContent = 'Error';
                 const pre = document.createElement('pre');
                 pre.className = 'ai-tool-json ai-tool-json-fail';
                 pre.textContent = message;
-                detail.appendChild(pre);
+                detail.append(lbl, pre);
                 header.disabled = false;
+                // Auto-expand failures so the reason + attempted args are
+                // visible without a click.
+                expanded = true;
+                setExpanded(true);
                 scrollToBottom();
             },
         };
+    }
+
+    /** Compact "auto-applied" row shown in place of the diff modal when the
+     *  user has chosen auto-accept. Keeps edits visible without a gate. */
+    function appendAutoEditNotice(path: string, oldContent: string, newContent: string): void {
+        const oldLines = oldContent.split('\n').length;
+        const newLines = newContent.split('\n').length;
+        const delta = newLines - oldLines;
+        const stat = delta === 0 ? '~' : (delta > 0 ? `+${delta}` : `${delta}`);
+        const row = document.createElement('div');
+        row.className = 'ai-auto-edit';
+        row.innerHTML = '<span class="ai-auto-edit-icon">⚡</span><span class="ai-auto-edit-text"></span>';
+        row.querySelector('.ai-auto-edit-text')!.textContent = `Auto-applied edit to ${path} (${stat} lines)`;
+        messagesEl.appendChild(row);
+        scrollToBottom();
     }
 
     function requestDiffApproval(path: string, oldContent: string, newContent: string): Promise<boolean> {
@@ -858,12 +1460,39 @@ export function mountAiChat(
         });
     }
 
+    /** Confirm a catalog asset import before it downloads into the project
+     *  (the GrammarAgent's "confirm before import" gate). Auto edit-mode skips
+     *  the prompt, matching the diff-approval behaviour. */
+    function requestImportApproval(entry: { name: string; kind: string; mime: string; bytes: number; license: string }): Promise<boolean> {
+        if (editMode === 'auto') return Promise.resolve(true);
+        return new Promise<boolean>(resolve => {
+            let handle: DiffApprovalHandle | null = null;
+            const settle = (approved: boolean) => {
+                if (handle) pendingDiffApprovals.delete(handle);
+                resolve(approved);
+            };
+            const sizeKb = entry.bytes > 0 ? `${Math.max(1, Math.round(entry.bytes / 1024))} KB · ` : '';
+            handle = mountConfirm({
+                container: messagesEl,
+                title: `Import "${entry.name}" from the Catalog?`,
+                detail: `${entry.kind} · ${entry.mime} · ${sizeKb}${entry.license || 'license n/a'}`,
+                approveLabel: 'Import',
+                rejectLabel: 'Skip',
+                onApprove: () => settle(true),
+                onReject: () => settle(false),
+            });
+            pendingDiffApprovals.add(handle);
+            scrollToBottom();
+        });
+    }
+
     function scrollToBottom(): void {
         messagesEl.scrollTop = messagesEl.scrollHeight;
     }
 
     // ── Send handler ────────────────────────────────────────────────────────
     async function handleSend(): Promise<void> {
+        closeSlashPopup();
         const text = inputEl.value.trim();
         if (!text || generating) return;
 
@@ -881,6 +1510,20 @@ export function mountAiChat(
                 callbacks: {
                     clearConversation: () => startNewChat(),
                     focusLogs: deps.focusLogs,
+                    getEditMode,
+                    setEditMode,
+                    getConnectionInfo: () => {
+                        const st = ghostBotConnState ?? ghostBotProvider()?.getConnectionState();
+                        if (!st) return 'Not using GhostBot.';
+                        const lines = [
+                            `GhostBot code: ${st.joinCode || '(none set)'}`,
+                            `Status: ${ghostStatusLabel(st)}`,
+                        ];
+                        if (st.modelLoaded === false) lines.push('Model: none loaded on GhostBot');
+                        else if (st.modelName) lines.push(`Model: ${st.modelName}`);
+                        if (st.detail) lines.push(st.detail);
+                        return lines.join('\n');
+                    },
                 },
             }));
             if (slashResult) appendSlashResult(slashResult);
@@ -888,7 +1531,7 @@ export function mountAiChat(
             return;
         }
 
-        if (engineStatus !== 'ready') return;
+        if (engineStatus !== 'ready' || !isGhostBotConnected()) return;
         inputEl.value = '';
         inputEl.style.height = 'auto';
         appendUserBubble(text);
@@ -902,6 +1545,7 @@ export function mountAiChat(
 
         setGenerating(true);
         inputEl.disabled = true;
+        genBar.start();
         let hideThinking: (() => void) | null = showThinking();
         const clearThinking = () => { hideThinking?.(); hideThinking = null; };
         const ensureThinking = (label = 'Thinking…') => {
@@ -920,15 +1564,35 @@ export function mountAiChat(
             if (ev.kind === 'docs_retrieved') slashState.lastDocs = ev.hits;
             else if (ev.kind === 'plan_emitted') slashState.lastPlan = ev.plan;
 
-            if (ev.kind === 'text_delta') {
+            if (ev.kind === 'model_token') {
+                // Live throughput — every model token, even tool-call syntax.
+                genBar.token();
+            } else if (ev.kind === 'text_delta') {
                 if (firstDelta) { clearThinking(); firstDelta = false; }
                 if (!currentBubble) currentBubble = appendAssistantBubble();
                 currentBubble.appendText(ev.delta);
+            } else if (ev.kind === 'reasoning') {
+                // Internal step (classifying, self-reviewing) — show as a
+                // collapsible thinking row, and reflect it in the gen bar.
+                appendReasoningRow(ev.title, ev.detail, ev.links);
+                genBar.phase('thinking', ev.title);
+            } else if (ev.kind === 'revising') {
+                // Repair pass starting — clear the bubble so the rewrite streams
+                // in cleanly (subsequent text_delta events fill it live).
+                if (!currentBubble) currentBubble = appendAssistantBubble();
+                currentBubble.setText('');
+            } else if (ev.kind === 'answer_revised') {
+                // The isolated repair sub-agent fixed the code — swap the
+                // streamed (broken) bubble for the corrected, formatted answer.
+                if (!currentBubble) currentBubble = appendAssistantBubble();
+                currentBubble.setText(ev.text);
             } else if (ev.kind === 'iteration_start') {
                 currentBubble = null;
+                genBar.phase('thinking', 'Thinking…');
                 ensureThinking('Thinking…');
             } else if (ev.kind === 'plan_emitted') {
                 if (firstDelta) { clearThinking(); firstDelta = false; }
+                genBar.phase('thinking', 'Planning…');
                 appendPlanBubble(ev.plan);
                 currentBubble = null;
             } else if (ev.kind === 'docs_retrieved') {
@@ -937,8 +1601,9 @@ export function mountAiChat(
                 appendPostEditDiagnostics(ev.path, ev.errors, ev.warnings, ev.clean);
             } else if (ev.kind === 'tool_call_start') {
                 if (firstDelta) { clearThinking(); firstDelta = false; }
-                const icon = toolIcon(ev.name);
-                const row = appendToolRow(icon, ev.name);
+                const { verb, target } = describeToolCall(ev.name, ev.args);
+                genBar.phase('tool', target ? `${verb} ${target}` : verb);
+                const row = appendToolRow(ev.name, ev.args);
                 toolRows.set(ev.id, row);
             } else if (ev.kind === 'tool_call_result') {
                 const row = toolRows.get(ev.id);
@@ -952,15 +1617,24 @@ export function mountAiChat(
                     }
                 }
                 currentBubble = null;
+                genBar.phase('thinking', 'Thinking…');
                 ensureThinking('Thinking…');
             } else if (ev.kind === 'budget_warning') {
                 showBudgetWarning(ev.tokens, ev.max);
             } else if (ev.kind === 'eviction') {
                 showEvictionNotice(ev.result, ev.tokensBefore, ev.tokensAfter, ev.max);
+            } else if (ev.kind === 'asset_report') {
+                appendAssetReport(ev.present, ev.missing);
+            } else if (ev.kind === 'code_lint') {
+                appendCodeLint(ev.issues);
+            } else if (ev.kind === 'suggestion') {
+                appendSuggestions(ev.suggestions);
             } else if (ev.kind === 'turn_complete') {
                 void currentBubble?.finalize();
+                genBar.finalize('done');
             } else if (ev.kind === 'error') {
                 if (firstDelta) { clearThinking(); firstDelta = false; }
+                genBar.finalize('error', `Error — ${ev.message.slice(0, 60)}`);
                 const err = document.createElement('div');
                 err.className = 'ai-msg ai-msg-error';
                 err.textContent = `Error: ${ev.message}`;
@@ -982,6 +1656,14 @@ export function mountAiChat(
             const bubble = currentBubble as ReturnType<typeof appendAssistantBubble> | null;
             if (bubble) await bubble.finalize();
             clearThinking();
+            // Safety net: if the turn ended without a turn_complete/error event
+            // (e.g. the user hit Stop), settle the live strip so it doesn't
+            // keep pulsing.
+            if (!genBarEl.hidden && (genBarEl.dataset.state === 'thinking'
+                || genBarEl.dataset.state === 'generating'
+                || genBarEl.dataset.state === 'tool')) {
+                genBar.finalize('done');
+            }
             clearReviewProgress();
             saveChat();
             setGenerating(false);
@@ -990,8 +1672,18 @@ export function mountAiChat(
         }
     }
 
+    // ── Slash-command autocomplete ───────────────────────────────────────
+    const slashAutocomplete = createSlashAutocomplete({
+        input: inputEl,
+        popup: slashPopup,
+        list: () => slashRegistry.list(),
+        submit: () => void handleSend(),
+    });
+    const closeSlashPopup = () => slashAutocomplete.close();
+
     sendBtn.addEventListener('click', () => void handleSend());
     inputEl.addEventListener('keydown', (e) => {
+        if (slashAutocomplete.handleKeydown(e)) return;
         if (e.key === 'Enter' && !e.shiftKey) {
             e.preventDefault();
             void handleSend();
@@ -1000,6 +1692,11 @@ export function mountAiChat(
     inputEl.addEventListener('input', () => {
         inputEl.style.height = 'auto';
         inputEl.style.height = `${Math.min(inputEl.scrollHeight, 140)}px`;
+        slashAutocomplete.refresh();
+    });
+    inputEl.addEventListener('blur', () => {
+        // Delay so a mousedown on an item still registers.
+        setTimeout(() => slashAutocomplete.close(), 120);
     });
 
     clearBtn.addEventListener('click', () => {
@@ -1009,6 +1706,39 @@ export function mountAiChat(
     loadBtn.addEventListener('click', () => {
         void loadSelectedProvider();
     });
+
+    // Edit-approval mode toggle (also exposed via /mode).
+    function renderModeBtn(): void {
+        const auto = getEditMode() === 'auto';
+        modeBtn.textContent = auto ? 'Edits: Auto' : 'Edits: Manual';
+        modeBtn.dataset.mode = auto ? 'auto' : 'manual';
+        modeBtn.title = auto
+            ? 'Edits apply automatically. Click (or /mode manual) to review each diff.'
+            : 'Edits wait for your approval. Click (or /mode auto) to auto-apply.';
+    }
+    modeBtn.addEventListener('click', () => {
+        setEditMode(getEditMode() === 'auto' ? 'manual' : 'auto');
+    });
+    editModeListeners.add(renderModeBtn);
+    renderModeBtn();
+
+    // Connect: set the entered GhostBot code on the provider, then (re)connect.
+    function connectWithEnteredCode(): void {
+        const code = ghostBotCodeInput.value.trim().toUpperCase();
+        if (!code) { ghostBotHint.textContent = "Enter your GhostBot's code first."; return; }
+        // Persist first so a freshly-created provider picks it up.
+        localStorage.setItem('fade.ai.ghostbot.code', code);
+        const gb = ghostBotProvider();
+        if (gb) { gb.setJoinCode(code); void reconnectGhostBot(); }
+        else { void loadSelectedProvider(); } // creates the provider w/ stored code + connects
+    }
+
+    ghostBotConnectBtn.addEventListener('click', connectWithEnteredCode);
+    ghostBotCodeInput.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') { e.preventDefault(); connectWithEnteredCode(); }
+    });
+
+    ghostBotStopBtn.addEventListener('click', () => { void stopGhostBotSession(); });
 
     // Probe / automation hook — mirrors __fadeRunnerHelpers pattern.
     // Auto-warm on return visits. Weights are cached in IndexedDB by
@@ -1020,12 +1750,18 @@ export function mountAiChat(
         );
     }
 
+    // Fresh mount starts on an empty chat — seed the starter chips so the
+    // conversation has somewhere to begin.
+    showStarterChips();
+
     (window as Window & { __fadeAiHelpers?: {
         loadModel(): Promise<void>;
         engineStatus(): EngineStatus;
         providerLabel(): string | null;
         toolRowCount(): number;
         sendMessage(text: string): Promise<void>;
+        setGrammarLoop(on: boolean): void;
+        grammarLoopEnabled(): boolean;
     } }).__fadeAiHelpers = {
         loadModel: () => loadSelectedProvider(),
         engineStatus: () => engineStatus,
@@ -1035,6 +1771,13 @@ export function mountAiChat(
             inputEl.value = text;
             return handleSend();
         },
+        // Flip the explicit decision-tree loop on/off (vs. the ReAct Agent).
+        // Rebuilds the agent so the next message uses the choice.
+        setGrammarLoop: (on: boolean) => {
+            try { localStorage.setItem('fade.ai.grammarLoop', on ? '1' : '0'); } catch { /* ignore */ }
+            if (provider) agent = buildAgent();
+        },
+        grammarLoopEnabled: () => useGrammarLoop(),
     };
 }
 
@@ -1045,7 +1788,32 @@ function toolIcon(name: string): string {
         case 'apply_edit': return '✏️';
         case 'create_file': return '✨';
         case 'search_docs': return '🔍';
+        case 'get_diagnostics': return '🩺';
         default: return '⚙️';
+    }
+}
+
+/** A human-readable phrase for what a tool call is doing, shown in the chat
+ *  so each agent action is self-explanatory ("Reading main.fbasic" rather
+ *  than a bare "read_file"). */
+function describeToolCall(name: string, args: unknown): { verb: string; target: string } {
+    const a = (args ?? {}) as Record<string, unknown>;
+    const str = (v: unknown): string => (typeof v === 'string' ? v : '');
+    switch (name) {
+        case 'list_files':
+            return { verb: 'Listing project files', target: '' };
+        case 'read_file':
+            return { verb: 'Reading', target: str(a.path) };
+        case 'apply_edit':
+            return { verb: 'Editing', target: str(a.path) };
+        case 'create_file':
+            return { verb: 'Creating', target: str(a.path) };
+        case 'search_docs':
+            return { verb: 'Searching docs', target: str(a.query) };
+        case 'get_diagnostics':
+            return { verb: 'Checking diagnostics', target: str(a.path) };
+        default:
+            return { verb: name, target: '' };
     }
 }
 
@@ -1064,6 +1832,7 @@ export function mountAiModels(container: HTMLElement): void {
         barEl: HTMLElement;
         barFill: HTMLElement;
         barPct: HTMLElement;
+        codeEl?: HTMLElement;
     }
     const rows: RowState[] = [];
 
@@ -1086,7 +1855,15 @@ export function mountAiModels(container: HTMLElement): void {
             noteEl.className = 'ai-model-note';
             noteEl.textContent = entry.note ?? '';
 
-            info.append(nameEl, noteEl);
+            let codeEl: HTMLElement | undefined;
+            if (entry.id === 'ghostbot:local') {
+                codeEl = document.createElement('div');
+                codeEl.className = 'ai-model-join-code';
+                codeEl.textContent = 'Join code appears when you click Load';
+                info.append(nameEl, noteEl, codeEl);
+            } else {
+                info.append(nameEl, noteEl);
+            }
 
             const right = document.createElement('div');
             right.className = 'ai-model-right';
@@ -1116,6 +1893,7 @@ export function mountAiModels(container: HTMLElement): void {
             const state: RowState = {
                 id: entry.id, label: entry.label, note: entry.note,
                 rowEl: row, statusEl, btnEl, barEl: barWrap, barFill, barPct,
+                codeEl,
             };
             rows.push(state);
 
@@ -1142,6 +1920,7 @@ export function mountAiModels(container: HTMLElement): void {
         if (isReady) {
             state.statusEl.textContent = 'Active';
             state.statusEl.className = 'ai-model-status ai-model-status-ready';
+            state.statusEl.title = '';
             state.btnEl.textContent = 'Loaded';
             state.btnEl.disabled = true;
             state.barEl.hidden = true;
@@ -1149,11 +1928,21 @@ export function mountAiModels(container: HTMLElement): void {
             const pctLabel = state.barPct.textContent ?? '0%';
             state.statusEl.textContent = pctLabel === '0%' ? 'Loading…' : `Loading ${pctLabel}`;
             state.statusEl.className = 'ai-model-status ai-model-status-loading';
+            state.statusEl.title = '';
             state.btnEl.textContent = 'Loading…';
             state.btnEl.disabled = true;
             state.barEl.hidden = false;
+        } else if (engineStatus === 'error' && selected) {
+            const detail = engineError ?? 'Load failed';
+            state.statusEl.textContent = providerErrorSummary(detail, state.id);
+            state.statusEl.className = 'ai-model-status ai-model-status-error';
+            state.statusEl.title = detail;
+            state.btnEl.textContent = 'Retry';
+            state.btnEl.disabled = false;
+            state.barEl.hidden = true;
         } else {
             state.statusEl.textContent = selected ? 'Selected' : '';
+            state.statusEl.title = '';
             state.btnEl.textContent = selected ? 'Load' : 'Use';
             state.btnEl.disabled = false;
             state.barEl.hidden = true;
@@ -1175,6 +1964,11 @@ export function mountAiModels(container: HTMLElement): void {
             state.barPct.textContent = pctLabel;
             if (engineStatus === 'loading') {
                 state.statusEl.textContent = pctInt > 0 ? `Loading ${pctLabel}` : 'Loading…';
+            }
+            if (state.codeEl && provider instanceof GhostBotProvider) {
+                state.codeEl.textContent = provider.hasJoinCode()
+                    ? `GhostBot code: ${provider.getJoinCode()}`
+                    : "Enter your GhostBot's code in the chat bar";
             }
         }
     });

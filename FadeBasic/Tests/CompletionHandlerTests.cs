@@ -12,6 +12,7 @@
 // the expected items make it past the routing.
 
 using System.Linq;
+using FadeBasic.Ast;
 using FadeBasic.LSP.Core;
 using FadeBasic.LSP.Core.Handlers;
 using NUnit.Framework;
@@ -186,6 +187,320 @@ namespace Tests
             var items = CompleteAt("inc |\ny = 7");
             Assert.That(HasLabel(items, "y"), Is.False,
                 "variable declared after the cursor should not be offered");
+        }
+
+        // ─── Variable visibility across scopes ──────────────────────────
+        // fbasic functions have isolated scopes — top-level assignments
+        // (`x = 5` at file scope) are top-level locals and are NOT visible
+        // inside function bodies. Only explicit `global x` declarations
+        // cross the boundary. These tests pin the visibility rules that
+        // already work correctly so future LSP refactors can't regress
+        // them silently.
+
+        [Test]
+        public void Variable_FunctionParameter_VisibleInFunctionBody()
+        {
+            // Parameter symbols should appear in completions inside their
+            // function body — the most basic visibility rule.
+            var src =
+                "function add(amount as integer)\n" +
+                "  inc |\n" +
+                "endfunction";
+            var items = CompleteAt(src);
+            Assert.That(HasLabel(items, "amount"), Is.True,
+                "function parameter `amount` should be visible in its body");
+        }
+
+        [Test]
+        public void Variable_DeclaredInsideIfBlock_VisibleAfterIf()
+        {
+            // fbasic doesn't have block-scoped locals — a variable
+            // assigned inside an if/while/for is visible after the block
+            // ends in the same scope. Make sure GetSymbolCompletions
+            // sees variables introduced inside nested control-flow.
+            var src =
+                "if 1 = 1\n" +
+                "  flag = 7\n" +
+                "endif\n" +
+                "inc |";
+            var items = CompleteAt(src);
+            Assert.That(HasLabel(items, "flag"), Is.True,
+                "variable assigned inside an if-block should remain visible after the endif");
+        }
+
+        [Test]
+        public void Variable_DeclaredInsideForLoop_VisibleAfter()
+        {
+            var src =
+                "for i = 1 to 10\n" +
+                "  total = total + i\n" +
+                "next i\n" +
+                "inc |";
+            var items = CompleteAt(src);
+            Assert.That(HasLabel(items, "i"), Is.True,
+                "loop variable `i` should be visible after the loop");
+            Assert.That(HasLabel(items, "total"), Is.True,
+                "loop-body assignment `total` should be visible after the loop");
+        }
+
+        [Test]
+        public void Variable_DeclaredInsideWhileLoop_Visible()
+        {
+            var src =
+                "while count < 10\n" +
+                "  count = count + 1\n" +
+                "  step_amount = 5\n" +
+                "  inc |\n" +
+                "endwhile";
+            var items = CompleteAt(src);
+            Assert.That(HasLabel(items, "count"), Is.True,
+                "loop counter assignable in body should be visible mid-body");
+            Assert.That(HasLabel(items, "step_amount"), Is.True,
+                "any body-local should be visible mid-body");
+        }
+
+        // ─── Comments (REM lines + ` ticks) shouldn't surface anything ───
+
+        [Test]
+        public void Cursor_InsideRemComment_ReturnsNoCompletions()
+        {
+            // User typing inside a `rem` line is in a comment. The lexer
+            // collapses the whole `rem ...` tail into a single KeywordRem
+            // token, so leftToken.type == KeywordRem at any cursor position
+            // past `rem `. We should suppress completions there entirely.
+            var items = CompleteAt("rem this is a comment|");
+            Assert.That(items, Is.Empty,
+                "no completions should appear inside a REM comment");
+        }
+
+        [Test]
+        public void Cursor_InsideRemComment_AfterStatement_ReturnsNoCompletions()
+        {
+            // Same rule applies when the REM follows other content on a
+            // previous line. The cursor is still inside the comment;
+            // the previous statement context shouldn't leak.
+            var items = CompleteAt("x = 5\nrem note about x|");
+            Assert.That(items, Is.Empty,
+                "REM-line completions stay suppressed after a prior statement");
+        }
+
+        // ─── Case-insensitive symbol lookup (fbasic is case-insensitive) ──
+
+        [Test]
+        public void Variable_DeclaredByAssignment_LabelPreservesCase()
+        {
+            // fbasic is case-insensitive at the lexer (variables are
+            // canonicalized to lowercase internally) but the user's
+            // spelling is what should appear in the dropdown.
+            var items = CompleteAt("BallPos = 5\ninc |");
+            var ball = items.FirstOrDefault(i => string.Equals(i.Label, "BallPos", System.StringComparison.OrdinalIgnoreCase));
+            Assert.That(ball, Is.Not.Null, "BallPos variable should be offered");
+            Assert.That(ball.Label, Is.EqualTo("BallPos"),
+                "assignment-declared label should preserve user case");
+        }
+
+        [Test]
+        public void Variable_DeclaredByDim_LabelPreservesCase()
+        {
+            // `dim` declares a typed variable. Symbol's source is a
+            // DeclarationStatement; the label should come from its
+            // VariableNameCaseSensitive, not the lowercased key.
+            var items = CompleteAt("dim Score as integer\ninc |");
+            var s = items.FirstOrDefault(i => string.Equals(i.Label, "Score", System.StringComparison.OrdinalIgnoreCase));
+            Assert.That(s, Is.Not.Null, "Score variable should be offered");
+            Assert.That(s.Label, Is.EqualTo("Score"),
+                "dim-declared label should preserve user case");
+        }
+
+        [Test]
+        public void Variable_DeclaredAsFunctionParameter_LabelPreservesCase()
+        {
+            // Function parameters land in a different symbol-source path
+            // (ParameterNode). Verify case preservation there too — the
+            // GetSymbolCompletions switch has a separate branch for it.
+            var items = CompleteAt(
+                "function add(LeftSide as integer, RightSide as integer)\n" +
+                "  inc |\n" +
+                "endfunction"
+            );
+            var left = items.FirstOrDefault(i => string.Equals(i.Label, "LeftSide", System.StringComparison.OrdinalIgnoreCase));
+            Assert.That(left, Is.Not.Null, "LeftSide param should be offered");
+            Assert.That(left.Label, Is.EqualTo("LeftSide"),
+                "parameter label should preserve user case");
+        }
+
+        // ─── Struct field completion (`ballPos.` → `x`, `y`) ──────────────
+
+        [Test]
+        public void Cursor_AfterStructDotAccess_ReturnsFieldCompletions()
+        {
+            // After typing `ballPos.` the user expects field completions
+            // for the struct type — `x`, `y`. This is handled by
+            // GetStructCompletions when the AST node at the cursor is a
+            // StructFieldReference, but in practice typing `.` mid-edit
+            // often leaves the parser in an error state where the node
+            // shape doesn't match. CompletionHandler needs to detect the
+            // dot-trigger and route through struct completions either way.
+            //
+            // fbasic struct variables are declared with `local`/`global
+            // <name> as <Type>`; `dim` is for array declarations.
+            var src =
+                "type Vec2\n" +
+                "  x as integer\n" +
+                "  y as integer\n" +
+                "endtype\n" +
+                "local ballPos as Vec2\n" +
+                "ballPos.|";
+            var items = CompleteAt(src);
+            Assert.That(HasLabel(items, "x"), Is.True,
+                "expected struct field `x` after `ballPos.`");
+            Assert.That(HasLabel(items, "y"), Is.True,
+                "expected struct field `y` after `ballPos.`");
+        }
+
+        [Test]
+        public void Cursor_AfterStructDotAccess_AssignmentLHS_ReturnsFieldCompletions()
+        {
+            // Same trigger but on the LHS of an assignment (where the user
+            // is targeting the field). Parser puts this through an
+            // AssignmentStatement path that historically returned the
+            // wrong completion set.
+            var src =
+                "type Vec2\n" +
+                "  x as integer\n" +
+                "  y as integer\n" +
+                "endtype\n" +
+                "local ballPos as Vec2\n" +
+                "ballPos.| = 5";
+            var items = CompleteAt(src);
+            Assert.That(HasLabel(items, "x"), Is.True, "expected struct field `x` on LHS dot");
+            Assert.That(HasLabel(items, "y"), Is.True, "expected struct field `y` on LHS dot");
+        }
+
+        [Test]
+        public void Cursor_InsideBacktickComment_ReturnsNoCompletions()
+        {
+            // `... is the alternate single-line comment syntax. The lexer
+            // emits the same KeywordRem token type for both, so the same
+            // suppression rule covers it.
+            var items = CompleteAt("` this is a comment|");
+            Assert.That(items, Is.Empty,
+                "no completions should appear inside a backtick comment");
+        }
+
+        // ─── IF-condition variable visibility ──────────────────────────────
+        //
+        // User-reported bug: inside `if <cursor>`, struct-typed locals don't
+        // appear in the completion list while primitive ones (sometimes) do.
+        // The AST switch has no case for "ProgramNode/IfStatement with
+        // leftToken=KeywordIf", so GetCompletions returns empty and the
+        // safety-net only loads commands + functions — no symbols at all.
+        // Variables of any type should be offered as completion candidates
+        // inside an if condition (the type system permits arbitrary
+        // expressions to coerce to truthy/falsy in fbasic).
+
+        [Test]
+        public void Cursor_AfterIfKeyword_ShowsPrimitiveVariables()
+        {
+            var src =
+                "local count as integer = 5\n" +
+                "if |";
+            var items = CompleteAt(src);
+            Assert.That(HasLabel(items, "count"), Is.True,
+                "primitive local should be visible as a candidate inside `if`");
+        }
+
+        [Test]
+        public void Cursor_AfterIfKeyword_ShowsStructVariables()
+        {
+            // The reported bug: struct-typed locals are hidden after `if `.
+            var src =
+                "type Vec2\n" +
+                "  x as integer\n" +
+                "  y as integer\n" +
+                "endtype\n" +
+                "local ballPos as Vec2\n" +
+                "if |";
+            var items = CompleteAt(src);
+            Assert.That(HasLabel(items, "ballPos"), Is.True,
+                "struct local should be visible as a candidate inside `if`");
+        }
+
+        [Test]
+        public void Cursor_AfterIfStructDot_LowercaseTypeName_ShowsFieldCompletions()
+        {
+            // Same as the test below but with a lowercase type name —
+            // the user's example uses `vec2`, not `Vec2`. fbasic
+            // identifiers are nominally case-insensitive but the LSP
+            // type-table key might be case-sensitive somewhere; pin it.
+            var src =
+                "type vec2\n" +
+                "  x as integer\n" +
+                "  y as integer\n" +
+                "endtype\n" +
+                "local ballPos as vec2\n" +
+                "if ballPos.|";
+            var items = CompleteAt(src);
+            Assert.That(HasLabel(items, "x"), Is.True,
+                "expected struct field `x` for lowercase type `vec2`");
+        }
+
+        [Test]
+        public void Cursor_AfterIfStructDot_InsideFunction_ShowsFieldCompletions()
+        {
+            // Whole flow inside a function — local scope routing matters
+            // for the rescue's identifier lookup.
+            var src =
+                "type Vec2\n" +
+                "  x as integer\n" +
+                "  y as integer\n" +
+                "endtype\n" +
+                "function update()\n" +
+                "  local ballPos as Vec2\n" +
+                "  if ballPos.|\n" +
+                "  endif\n" +
+                "endfunction";
+            var items = CompleteAt(src);
+            Assert.That(HasLabel(items, "x"), Is.True,
+                "expected struct field `x` inside function scope");
+        }
+
+        [Test]
+        public void Cursor_AfterIfStructDot_ShowsFieldCompletions()
+        {
+            // The user-reported follow-up: `if ballPos.█` should show
+            // struct fields `x`/`y` (the dot rescue path), not commands
+            // and not Monaco's word-based fallback.
+            var src =
+                "type Vec2\n" +
+                "  x as integer\n" +
+                "  y as integer\n" +
+                "endtype\n" +
+                "local ballPos as Vec2\n" +
+                "if ballPos.|";
+            var items = CompleteAt(src);
+            Assert.That(HasLabel(items, "x"), Is.True,
+                "expected struct field `x` after `if ballPos.`");
+            Assert.That(HasLabel(items, "y"), Is.True,
+                "expected struct field `y` after `if ballPos.`");
+        }
+
+        [Test]
+        public void Cursor_AfterIfPartialIdent_ShowsStructVariables()
+        {
+            // After typing a partial identifier — same problem because
+            // Visit() excludes the just-typed VariableRefNode from Group
+            // (cursor is past its single-token span).
+            var src =
+                "type Vec2\n" +
+                "  x as integer\n" +
+                "  y as integer\n" +
+                "endtype\n" +
+                "local ballPos as Vec2\n" +
+                "if ball|";
+            var items = CompleteAt(src);
+            Assert.That(HasLabel(items, "ballPos"), Is.True,
+                "struct local should be visible mid-typing of an `if` condition");
         }
     }
 }

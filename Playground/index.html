@@ -4098,6 +4098,42 @@
         .ai-chat-status.ai-status-ready   { color: #4caf50; }
         .ai-chat-status.ai-status-loading { color: #cca700; }
         .ai-chat-status.ai-status-error   { color: #f14c4c; }
+
+        /* Live generation strip — pinned above the input so token throughput
+         * is visible without tabbing to GhostBot. */
+        .ai-genbar {
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            padding: 0.3rem 0.7rem;
+            font-size: 0.72rem;
+            color: var(--fg-muted);
+            border-top: 1px solid var(--border-2);
+            background: var(--bg-2, rgba(127,127,127,0.06));
+        }
+        .ai-genbar[hidden] { display: none; }
+        .ai-genbar .grow { flex: 1; }
+        .ai-genbar-dot {
+            width: 8px; height: 8px; border-radius: 50%;
+            background: var(--fg-muted); flex-shrink: 0;
+        }
+        .ai-genbar[data-state="thinking"] .ai-genbar-dot,
+        .ai-genbar[data-state="generating"] .ai-genbar-dot,
+        .ai-genbar[data-state="tool"] .ai-genbar-dot {
+            background: #cca700;
+            animation: ai-genbar-pulse 1s ease-in-out infinite;
+        }
+        .ai-genbar[data-state="done"] .ai-genbar-dot { background: #4caf50; }
+        .ai-genbar[data-state="error"] .ai-genbar-dot { background: #f14c4c; }
+        @keyframes ai-genbar-pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.35; } }
+        .ai-genbar-label { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+        .ai-genbar-stats {
+            flex-shrink: 0;
+            font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+            font-size: 0.7rem;
+            color: var(--fg);
+            opacity: 0.85;
+        }
         .ai-stop-btn {
             padding: 0.35rem 0.7rem;
             font-size: 0.78rem;
@@ -4120,6 +4156,35 @@
             cursor: pointer;
         }
         .ai-load-btn:hover, .ai-clear-btn:hover { color: var(--fg); border-color: var(--fg-muted); }
+        .ai-mode-btn {
+            padding: 0.15rem 0.55rem;
+            font-size: 0.72rem;
+            background: transparent;
+            border: 1px solid var(--border-2);
+            color: var(--fg-muted);
+            border-radius: 3px;
+            cursor: pointer;
+            white-space: nowrap;
+        }
+        .ai-mode-btn:hover { color: var(--fg); border-color: var(--fg-muted); }
+        .ai-mode-btn[data-mode="auto"] {
+            color: #cca700;
+            border-color: rgba(204, 167, 0, 0.5);
+        }
+        .ai-auto-edit {
+            align-self: flex-start;
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            padding: 0.25rem 0.6rem;
+            margin: 0.1rem 0;
+            border-radius: 6px;
+            font-size: 0.74rem;
+            background: rgba(204, 167, 0, 0.10);
+            border: 1px solid rgba(204, 167, 0, 0.3);
+            color: var(--fg);
+        }
+        .ai-auto-edit-icon { color: #cca700; }
         .ai-progress-row {
             padding: 0.3rem 0.7rem;
             background: var(--bg-2);
@@ -4143,6 +4208,83 @@
             flex-shrink: 0;
             min-width: 2.5em;
         }
+        .ai-ghostbot-bar {
+            padding: 0.45rem 0.7rem;
+            background: var(--bg-2);
+            border-bottom: 1px solid var(--border-2);
+            flex-shrink: 0;
+            display: flex;
+            flex-direction: column;
+            gap: 0.35rem;
+        }
+        .ai-ghostbot-bar[hidden] { display: none; }
+        .ai-ghostbot-row {
+            display: flex;
+            align-items: center;
+            gap: 0.45rem;
+            min-width: 0;
+        }
+        .ai-ghostbot-dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background: var(--fg-muted);
+            flex-shrink: 0;
+        }
+        .ai-ghostbot-bar[data-status="connected"] .ai-ghostbot-dot { background: #4caf50; }
+        /* Paired but GhostBot reports no model in memory — steady amber. */
+        .ai-ghostbot-bar[data-status="connected-nomodel"] .ai-ghostbot-dot { background: #cca700; }
+        .ai-ghostbot-bar[data-status="waiting"] .ai-ghostbot-dot,
+        .ai-ghostbot-bar[data-status="pending"] .ai-ghostbot-dot,
+        .ai-ghostbot-bar[data-status="reconnecting"] .ai-ghostbot-dot { background: #cca700; animation: ai-ghostbot-pulse 1.2s ease-in-out infinite; }
+        .ai-ghostbot-bar[data-status="disconnected"] .ai-ghostbot-dot,
+        .ai-ghostbot-bar[data-status="error"] .ai-ghostbot-dot { background: #f14c4c; }
+        @keyframes ai-ghostbot-pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.35; }
+        }
+        .ai-ghostbot-label {
+            font-size: 0.74rem;
+            font-weight: 600;
+            color: var(--fg);
+        }
+        .ai-ghostbot-code-input {
+            font-family: var(--mono, ui-monospace, monospace);
+            font-size: 0.8rem;
+            font-weight: 600;
+            letter-spacing: 0.08em;
+            text-transform: uppercase;
+            width: 6.5rem;
+            color: var(--fg);
+            background: var(--bg);
+            padding: 0.12rem 0.4rem;
+            border-radius: 3px;
+            border: 1px solid var(--border-2);
+        }
+        .ai-ghostbot-connect,
+        .ai-ghostbot-stop {
+            padding: 0.12rem 0.5rem;
+            font-size: 0.72rem;
+            background: transparent;
+            border: 1px solid var(--border-2);
+            color: var(--fg-muted);
+            border-radius: 3px;
+            cursor: pointer;
+        }
+        .ai-ghostbot-connect:hover { color: var(--fg); border-color: var(--fg-muted); }
+        .ai-ghostbot-connect:disabled { opacity: 0.45; cursor: not-allowed; }
+        .ai-ghostbot-stop { color: #f14c4c; }
+        .ai-ghostbot-stop:hover { color: #f14c4c; border-color: #f14c4c; }
+        .ai-ghostbot-hint {
+            font-size: 0.72rem;
+            color: var(--fg-muted);
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            min-width: 0;
+            flex: 1;
+        }
+        .ai-ghostbot-actions-row { gap: 0.35rem; }
         .ai-progress-detail {
             white-space: nowrap;
             overflow: hidden;
@@ -4182,6 +4324,8 @@
             align-self: flex-start;
             border-bottom-left-radius: 2px;
         }
+        /* Reserved-but-empty assistant bubble (position held during streaming). */
+        .ai-msg.ai-msg-hidden { display: none !important; }
         .ai-msg-markdown {
             max-width: 100%;
             line-height: 1.45;
@@ -4212,6 +4356,33 @@
             padding: 0;
             font-size: 0.78rem;
             line-height: 1.5;
+        }
+        /* Code block + copy button */
+        .ai-code-block { position: relative; }
+        .ai-code-block > pre { margin: 0.5em 0; }
+        .ai-code-copy {
+            position: absolute;
+            top: 0.5em;
+            right: 0.4em;
+            padding: 0.1rem 0.45rem;
+            font-size: 0.68rem;
+            color: var(--fg-muted);
+            background: var(--bg-3, rgba(127,127,127,0.15));
+            border: 1px solid var(--border-2);
+            border-radius: 3px;
+            cursor: pointer;
+            opacity: 0;
+            transition: opacity 0.12s;
+        }
+        .ai-code-block:hover .ai-code-copy,
+        .ai-code-copy:focus-visible { opacity: 1; }
+        .ai-code-copy:hover { color: var(--fg); border-color: var(--fg-muted); }
+        /* Doc-linkable command/keyword symbols in chat snippets */
+        .ai-symbols-linkable [data-fade-symbol] { cursor: pointer; }
+        .ai-symbols-linkable [data-fade-symbol]:hover {
+            text-decoration: underline;
+            text-decoration-style: dotted;
+            text-underline-offset: 2px;
         }
         .ai-msg-markdown strong { font-weight: 600; }
         .ai-msg-error {
@@ -4311,6 +4482,59 @@
             color: #f1655e;
         }
         .ai-post-edit-icon { font-weight: 600; }
+
+        /* Missing-asset callout (agent's end-of-turn asset usage check). */
+        .ai-asset-report {
+            align-self: flex-start;
+            display: inline-flex;
+            align-items: flex-start;
+            gap: 6px;
+            max-width: 100%;
+            padding: 0.35rem 0.6rem;
+            margin: 0.1rem 0;
+            border-radius: 6px;
+            font-size: 0.74rem;
+            background: rgba(204, 167, 0, 0.12);
+            border: 1px solid rgba(204, 167, 0, 0.35);
+            color: #cca700;
+        }
+        .ai-asset-report-icon { font-weight: 600; flex-shrink: 0; }
+        .ai-asset-report-text { color: var(--fg); opacity: 0.9; }
+        .ai-code-lint-list {
+            margin: 0.3rem 0 0;
+            padding-left: 1.2rem;
+            font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+            font-size: 0.72rem;
+            color: var(--fg);
+        }
+        .ai-code-lint-list li { margin: 0.1rem 0; }
+
+        /* End-of-turn next-step suggestion chips. */
+        .ai-suggestions {
+            display: flex;
+            flex-wrap: wrap;
+            align-items: center;
+            gap: 0.4rem;
+            margin: 0.3rem 0 0.2rem;
+        }
+        .ai-suggestions-label {
+            font-size: 0.72rem;
+            color: var(--fg-muted);
+        }
+        .ai-suggestion-chip {
+            font-size: 0.74rem;
+            padding: 0.25rem 0.65rem;
+            border-radius: 999px;
+            border: 1px solid var(--accent, #4a8cff);
+            background: color-mix(in srgb, var(--accent, #4a8cff) 12%, transparent);
+            color: var(--accent, #4a8cff);
+            cursor: pointer;
+            transition: background 0.12s;
+        }
+        .ai-suggestion-chip:hover:not(:disabled) {
+            background: color-mix(in srgb, var(--accent, #4a8cff) 24%, transparent);
+        }
+        .ai-suggestion-chip:disabled { opacity: 0.45; cursor: default; }
         .ai-docs-list li {
             font-family: ui-monospace, monospace;
             font-size: 0.74rem;
@@ -4430,6 +4654,13 @@
             overflow: hidden;
             font-size: 0.76rem;
         }
+        /* Internal "thinking" steps — dimmer + dashed to read as meta, not action. */
+        .ai-reasoning-row {
+            opacity: 0.82;
+            border-style: dashed;
+            font-style: italic;
+        }
+        .ai-reasoning-row .ai-tool-json { font-style: normal; }
         .ai-tool-header {
             display: flex;
             align-items: center;
@@ -4449,6 +4680,14 @@
         .ai-tool-header:not(:disabled):hover { background: var(--hover-bg); color: var(--fg); }
         .ai-tool-icon { flex-shrink: 0; }
         .ai-tool-label { flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+        .ai-tool-target {
+            font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+            font-size: 0.82em;
+            color: var(--fg-muted);
+            background: var(--bg);
+            padding: 0.02rem 0.3rem;
+            border-radius: 3px;
+        }
         .ai-tool-badge {
             flex-shrink: 0;
             font-size: 0.68rem;
@@ -4465,7 +4704,25 @@
         .ai-tool-badge-done { color: #4caf50; background: rgba(76, 175, 80, 0.12); }
         .ai-tool-badge-fail { color: #f14c4c; background: rgba(241, 76, 76, 0.12); }
         .ai-tool-chevron { font-size: 0.6rem; color: var(--fg-muted); flex-shrink: 0; }
-        .ai-tool-detail { background: var(--bg); border-top: 1px solid var(--border-2); }
+        .ai-tool-detail { background: var(--bg); border-top: 1px solid var(--border-2); max-height: 400px; overflow-y: auto; }
+        .ai-reasoning-links {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 0.3rem;
+            padding: 0.45rem 0.7rem;
+        }
+        .ai-reasoning-link {
+            font-family: ui-monospace, 'SF Mono', Menlo, monospace;
+            font-size: 0.72rem;
+            padding: 0.12rem 0.45rem;
+            border: 1px solid var(--border-2);
+            border-radius: 4px;
+            background: var(--bg-2, #252526);
+            color: var(--link-fg, #4daafc);
+            cursor: pointer;
+        }
+        .ai-reasoning-link:hover:not(:disabled) { background: var(--border-2); text-decoration: underline; }
+        .ai-reasoning-link:disabled { color: var(--fg-muted, #888); cursor: default; }
         .ai-tool-json {
             margin: 0;
             padding: 0.45rem 0.7rem;
@@ -4476,7 +4733,14 @@
             max-height: 400px;
             overflow-y: auto;
         }
-        .ai-tool-json-fail { color: #f14c4c; }
+        .ai-tool-json-fail { color: #f14c4c; white-space: pre-wrap; }
+        .ai-tool-detail-label {
+            padding: 0.3rem 0.7rem 0.1rem;
+            font-size: 0.66rem;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+            color: var(--fg-muted);
+        }
         /* JSON syntax highlighting */
         .ai-tool-json .json-k    { color: #9CDCFE; }   /* key   */
         .ai-tool-json .json-s    { color: #CE9178; }   /* string value */
@@ -4626,6 +4890,7 @@
         }
         .ai-diff-reject:disabled { opacity: 0.5; cursor: default; }
         .ai-input-row {
+            position: relative;
             display: flex;
             align-items: flex-end;
             gap: 0.4rem;
@@ -4633,6 +4898,45 @@
             border-top: 1px solid var(--border-2);
             background: var(--bg-2);
             flex-shrink: 0;
+        }
+        /* Slash-command autocomplete popup (anchored above the input row) */
+        .ai-slash-popup {
+            position: absolute;
+            left: 0.6rem;
+            right: 0.6rem;
+            bottom: calc(100% + 2px);
+            max-height: 240px;
+            overflow-y: auto;
+            background: var(--bg);
+            border: 1px solid var(--border-2);
+            border-radius: 6px;
+            box-shadow: 0 4px 16px rgba(0, 0, 0, 0.35);
+            padding: 0.25rem;
+            z-index: 40;
+        }
+        .ai-slash-popup[hidden] { display: none; }
+        .ai-slash-item {
+            display: flex;
+            align-items: baseline;
+            gap: 0.5rem;
+            padding: 0.3rem 0.5rem;
+            border-radius: 4px;
+            cursor: pointer;
+            white-space: nowrap;
+        }
+        .ai-slash-item[aria-selected="true"] { background: rgba(0, 127, 212, 0.22); }
+        .ai-slash-item:hover { background: rgba(127, 127, 127, 0.14); }
+        .ai-slash-item-name {
+            font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+            font-size: 0.78rem;
+            font-weight: 600;
+            color: var(--fg);
+        }
+        .ai-slash-item-desc {
+            font-size: 0.72rem;
+            color: var(--fg-muted);
+            overflow: hidden;
+            text-overflow: ellipsis;
         }
         .ai-input {
             flex: 1;
@@ -4772,6 +5076,10 @@
             background: var(--bg);
         }
         .ai-models-toolbar {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 0.5rem;
             padding: 0.35rem 0.7rem;
             background: var(--bg-2);
             border-bottom: 1px solid var(--border-2);
@@ -4781,6 +5089,42 @@
             color: var(--fg-muted);
             flex-shrink: 0;
         }
+        .ai-experimental-badge {
+            text-transform: none;
+            letter-spacing: 0;
+            font-size: 0.62rem;
+            font-weight: 600;
+            padding: 0.05rem 0.4rem;
+            border-radius: 999px;
+            color: #d9a441;
+            border: 1px solid #d9a44166;
+            background: #d9a4411a;
+        }
+        .ai-ghost-download {
+            display: flex;
+            align-items: center;
+            gap: 0.6rem;
+            padding: 0.6rem 0.7rem;
+            border-bottom: 1px solid var(--border-2);
+            background: var(--bg-2);
+            flex-shrink: 0;
+        }
+        .ai-ghost-download-text { display: flex; flex-direction: column; gap: 0.15rem; min-width: 0; }
+        .ai-ghost-download-text strong { font-size: 0.78rem; color: var(--fg); }
+        .ai-ghost-download-text span { font-size: 0.7rem; color: var(--fg-muted); line-height: 1.4; }
+        .ai-ghost-download-btn {
+            flex-shrink: 0;
+            align-self: flex-start;
+            padding: 0.35rem 0.7rem;
+            border-radius: 4px;
+            font-size: 0.74rem;
+            font-weight: 600;
+            white-space: nowrap;
+            text-decoration: none;
+            color: #fff;
+            background: var(--accent, #0e639c);
+        }
+        .ai-ghost-download-btn:hover { background: var(--accent-hover, #1177bb); }
         .ai-models-list {
             flex: 1;
             overflow-y: auto;
@@ -4804,6 +5148,7 @@
         .ai-model-status-ready  { color: #4caf50; }
         .ai-model-status-loading { color: #cca700; }
         .ai-model-status-cached  { color: #3794ff; }
+        .ai-model-status-error   { color: #f48771; }
         .ai-model-btn {
             padding: 0.2rem 0.6rem;
             font-size: 0.74rem;
@@ -5386,9 +5731,32 @@
                     </div>
                     <div class="ai-progress-bar"><div class="ai-progress-bar-fill"></div></div>
                 </div>
+                <div class="ai-ghostbot-bar" hidden>
+                    <div class="ai-ghostbot-row">
+                        <span class="ai-ghostbot-dot" aria-hidden="true"></span>
+                        <span class="ai-ghostbot-label">GhostBot</span>
+                        <span class="grow"></span>
+                        <input type="text" class="ai-ghostbot-code-input" placeholder="GhostBot code"
+                            maxlength="8" autocomplete="off" spellcheck="false" title="Code shown in the GhostBot desktop app" />
+                        <button type="button" class="ai-ghostbot-connect">Connect</button>
+                    </div>
+                    <div class="ai-ghostbot-row ai-ghostbot-actions-row">
+                        <span class="ai-ghostbot-hint"></span>
+                        <span class="grow"></span>
+                        <button type="button" class="ai-ghostbot-stop" title="End the GhostBot session" hidden>Stop</button>
+                    </div>
+                </div>
                 <div class="ai-messages"></div>
+                <div class="ai-genbar" hidden>
+                    <span class="ai-genbar-dot" aria-hidden="true"></span>
+                    <span class="ai-genbar-label">Thinking…</span>
+                    <span class="grow"></span>
+                    <span class="ai-genbar-stats"></span>
+                </div>
                 <div class="ai-input-row">
-                    <textarea class="ai-input" placeholder="Ask anything… (Shift+Enter for newline)" rows="1" disabled></textarea>
+                    <div class="ai-slash-popup" hidden role="listbox" aria-label="Slash commands"></div>
+                    <textarea class="ai-input" placeholder="Ask anything…  ·  /help for commands  ·  Shift+Enter = newline" rows="1" disabled></textarea>
+                    <button class="ai-mode-btn" title="Toggle how code edits are applied (also /mode)">Edits: Manual</button>
                     <button class="ai-send-btn" disabled>Send</button>
                     <button class="ai-stop-btn" hidden title="Stop generation">■ Stop</button>
                 </div>
@@ -5398,7 +5766,19 @@
         <!-- AI Models panel -->
         <div class="panel-cell" data-panel="ai-models">
             <div id="ai-models-pane">
-                <div class="ai-models-toolbar">Models</div>
+                <div class="ai-models-toolbar">
+                    <span>Models</span>
+                    <span class="ai-experimental-badge" title="AI features are experimental and may change.">Experimental</span>
+                </div>
+                <div class="ai-ghost-download">
+                    <div class="ai-ghost-download-text">
+                        <strong>Use Claude or a local model via GhostBot</strong>
+                        <span>GhostBot is a small desktop app that runs the AI and pairs with this
+                        Playground over a join code. Install it, then connect below.</span>
+                    </div>
+                    <a class="ai-ghost-download-btn" href="https://github.com/cdhanna/fadebasic/releases/latest"
+                       target="_blank" rel="noopener noreferrer">Download GhostBot</a>
+                </div>
                 <div class="ai-models-list"></div>
             </div>
         </div>

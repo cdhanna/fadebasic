@@ -8,10 +8,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [0.0.65]
 ### Added
 - `TEST` keyword and related mechanisms
-- `LEN` keyword for checking string and single dimension array length
+- `LEN` keyword for checking string and dimension array length
+- `DIMS` keyword for checking dimension count of array
+- `BYTES` keyword for checking byte size of things
 
 ### Changed
 - Commands that accept a typed `isParams` arg can be fulfilled with a fade array
+- Internal VM allocates less memory
+- Garbage collection migrated to mark-and-sweep instead of pure ref counting
 
 ### Fixed
 - boolean type inference works through binary operators

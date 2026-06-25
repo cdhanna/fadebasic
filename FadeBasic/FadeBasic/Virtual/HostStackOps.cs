@@ -52,9 +52,7 @@ namespace FadeBasic.Virtual
             // by the stack buffer; VmPtr.FromBytes copies it before
             // anything else can clobber.
             _ = vm.stack.Pop();
-            vm.stack.PopArraySpan(8, out var oldPtrSpan);
-            var oldPtr = VmPtr.FromBytes(oldPtrSpan);
-            vm.heap.TryDecrementRefCount(oldPtr);
+            vm.stack.PopArraySpan(8, out _); // discard the old ptr; the collector reclaims it once unreachable
 
             var size = value.Length * 4;
             var span = new byte[size];

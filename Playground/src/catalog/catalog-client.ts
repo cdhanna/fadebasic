@@ -270,6 +270,49 @@ export class CatalogClient {
     getFacets(): CatalogFacets | null { return this.facets; }
     getTagIndex(): CatalogTagIndex | null { return this.tagIndex; }
 
+    /** Keyword search over name/slug/description/tags, optionally constrained
+     *  by kind and a category of asset (image/audio/font). Mirrors the
+     *  substring + tag matching the Catalog panel uses, exposed so the AI
+     *  agent (and anything else) can query programmatically. Results are the
+     *  already-name-sorted entries, sliced to `limit`. */
+    search(query: string, opts: {
+        kind?: 'asset' | 'pack';
+        category?: 'image' | 'audio' | 'font';
+        tags?: string[];
+        limit?: number;
+    } = {}): CatalogEntry[] {
+        const q = query.trim().toLowerCase();
+        const limit = opts.limit ?? 12;
+        const wantTags = (opts.tags ?? []).map(t => t.toLowerCase());
+
+        const passesFilters = (e: CatalogEntry): boolean => {
+            if (opts.kind && e.kind !== opts.kind) return false;
+            if (opts.category && !e.mime.startsWith(`${opts.category}/`)) return false;
+            if (wantTags.length && !wantTags.every(t => e.tags.some(et => et.toLowerCase() === t))) return false;
+            return true;
+        };
+        const hayOf = (e: CatalogEntry) =>
+            `${e.name} ${e.slug} ${e.description ?? ''} ${e.tags.join(' ')}`.toLowerCase();
+
+        // 1. Full-phrase substring match.
+        let out = this.entries.filter(e => passesFilters(e) && (!q || hayOf(e).includes(q)));
+        // 2. Fall back to ANY-word match — models phrase queries loosely
+        //    ("spaceship sprite for my game") and the exact phrase rarely hits.
+        if (out.length === 0 && q) {
+            const words = q.split(/\s+/).filter(w => w.length > 2);
+            if (words.length) {
+                out = this.entries.filter(e => passesFilters(e) && words.some(w => hayOf(e).includes(w)));
+            }
+        }
+        return out.slice(0, limit);
+    }
+
+    /** A browse sample (no query) — entries matching just the filters, for
+     *  "show me what's available" when a search comes up empty. */
+    browse(opts: { kind?: 'asset' | 'pack'; category?: 'image' | 'audio' | 'font'; limit?: number } = {}): CatalogEntry[] {
+        return this.search('', opts);
+    }
+
     /** Resolve a dist-relative URL (or absolute, for hosting='remote') to its
      *  full fetchable form. */
     resolveUrl(distRelativeOrAbsolute: string): string {
@@ -330,6 +373,29 @@ export class CatalogClient {
         const res = await fetch(url);
         if (!res.ok) throw new Error(`fetch ${url} → HTTP ${res.status}`);
         return await res.json() as T;
+    }
+}
+
+/** Default in-project filename for a catalog asset: `<slug><ext>`. The
+ *  Catalog panel and the AI import tool share this so an asset lands at the
+ *  same path either way. */
+export function catalogFilename(entry: CatalogEntry): string {
+    return `${entry.slug}${guessCatalogExt(entry.mime, entry.url)}`;
+}
+
+export function guessCatalogExt(mime: string, url: string): string {
+    const m = /\.([a-z0-9]+)(?:\?|#|$)/i.exec(url);
+    if (m) return `.${m[1].toLowerCase()}`;
+    switch (mime) {
+        case 'image/png': return '.png';
+        case 'image/jpeg': return '.jpg';
+        case 'image/gif': return '.gif';
+        case 'image/webp': return '.webp';
+        case 'audio/wav': return '.wav';
+        case 'audio/mpeg': return '.mp3';
+        case 'audio/ogg': return '.ogg';
+        case 'application/zip': return '.zip';
+        default: return '';
     }
 }
 

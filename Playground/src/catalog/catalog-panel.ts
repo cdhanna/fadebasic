@@ -27,6 +27,7 @@
 
 import { unzip } from 'fflate';
 import type { CatalogClient, CatalogEntry, CatalogPackFile, CatalogPackManifest } from './catalog-client';
+import { catalogFilename } from './catalog-client';
 
 export interface CatalogPanelHandle {
     element: HTMLElement;
@@ -949,21 +950,5 @@ async function sha256Hex(bytes: Uint8Array): Promise<string> {
 }
 
 function filenameFor(entry: CatalogEntry): string {
-    return `${entry.slug}${guessExt(entry.mime, entry.url)}`;
-}
-
-function guessExt(mime: string, url: string): string {
-    const m = /\.([a-z0-9]+)(?:\?|#|$)/i.exec(url);
-    if (m) return `.${m[1].toLowerCase()}`;
-    switch (mime) {
-        case 'image/png': return '.png';
-        case 'image/jpeg': return '.jpg';
-        case 'image/gif': return '.gif';
-        case 'image/webp': return '.webp';
-        case 'audio/wav': return '.wav';
-        case 'audio/mpeg': return '.mp3';
-        case 'audio/ogg': return '.ogg';
-        case 'application/zip': return '.zip';
-        default: return '';
-    }
+    return catalogFilename(entry);
 }

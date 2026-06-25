@@ -1,0 +1,18 @@
+[[permission]]
+identifier = "ghostbot-commands"
+description = "GhostBot inference and model management commands"
+commands.allow = [
+  "list_models",
+  "list_downloadable_models",
+  "open_models_folder",
+  "load_model",
+  "unload_model",
+  "download_model",
+  "download_recommended_model",
+  "start_stream",
+  "abort_stream",
+  "get_setup_state",
+  "get_claude_config",
+  "set_claude_config",
+  "start_claude_stream",
+]

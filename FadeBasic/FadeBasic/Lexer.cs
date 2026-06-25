@@ -82,6 +82,8 @@ namespace FadeBasic
         KeywordMocks,
         KeywordCallCount,
         KeywordLen,
+        KeywordDims,
+        KeywordBytes,
 
         KeywordAs,
         KeywordTypeInteger,
@@ -276,6 +278,8 @@ namespace FadeBasic
                 ["xor"]          = LexemType.KeywordXor,
                 ["mod"]          = LexemType.OpMod,
                 ["len"]          = LexemType.KeywordLen,
+                ["dims"]         = LexemType.KeywordDims,
+                ["bytes"]        = LexemType.KeywordBytes,
             };
         }
         // private static Lexem LexemConstantBegin = new Lexem(LexemType.Constant);
@@ -379,6 +383,8 @@ namespace FadeBasic
             // (or `call somethingElse`) still get a VariableGeneral token.
             new Lexem(-2, LexemType.KeywordCallCount, new Regex("^call[ \\t]+count\\b")),
             new Lexem(-2, LexemType.KeywordLen, new Regex("^len\\b")),
+            new Lexem(-2, LexemType.KeywordDims, new Regex("^dims\\b")),
+            new Lexem(-2, LexemType.KeywordBytes, new Regex("^bytes\\b")),
 
             new Lexem(LexemType.KeywordGoto, new Regex("^goto")),
             new Lexem(LexemType.KeywordGoSub, new Regex("^gosub")),
@@ -1121,7 +1127,9 @@ namespace FadeBasic
                 // Don't rewrite a token that's already been tagged as a
                 // language keyword. Words like `len` collide with legacy
                 // host commands but the keyword wins.
-                if (token.type == LexemType.KeywordLen) continue;
+                if (token.type == LexemType.KeywordLen
+                    || token.type == LexemType.KeywordDims
+                    || token.type == LexemType.KeywordBytes) continue;
                 var curr = tree;
                 var j = i;
                 while (tokens[j].caseInsensitiveRaw != null && curr.sub.TryGetValue(tokens[j].caseInsensitiveRaw, out var next))

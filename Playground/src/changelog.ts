@@ -34,6 +34,22 @@ export const CHANGELOG: ChangelogEntry[] = [
     //     ],
     // },
         {
+            version: '0.4.2',
+            date: '2026-06-25',
+            added: [
+                'Commands and syntax have help.',
+                'abs() and sign() commands.',
+            ],
+            fixed: [
+                'Type ahead fixes.',
+                'Performance improvements.'
+            ],
+            changed: [
+                'Debug UI uses delta compression for better performance.',
+                'AI Chat uses local GhostBot download.'
+            ]
+        },
+        {
             version: '0.4.1',
             date: '2026-06-10',
             changed: [

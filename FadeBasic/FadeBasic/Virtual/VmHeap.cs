@@ -145,10 +145,15 @@ namespace FadeBasic.Virtual
 
         private Dictionary<int, Stack<VmPtr>> _lengthToPtrs;// = new Dictionary<int, Stack<int>>();
 
-        private Dictionary<VmPtr, int> _ptrToRefCount;
-
-        // reused by Sweep so freeing doesn't mutate _allocations mid-enumeration
+        // reused by SweepUnmarked so freeing doesn't mutate _allocations mid-enumeration
         private List<VmPtr> _sweepKillList;
+
+        /// <summary>
+        /// Number of allocations made since the last garbage collection.
+        /// The VM reads this at collection trigger points (pointer stores,
+        /// heap writes, allocs) to decide whether a collection is worth running.
+        /// </summary>
+        public int allocsSinceCollect;
 
         public int Allocations => _allocations.Count;
         
@@ -161,8 +166,8 @@ namespace FadeBasic.Virtual
             _cursor = new VmPtr();
             _allocations = new Dictionary<VmPtr, VmAllocation>();
             _lengthToPtrs = new Dictionary<int, Stack<VmPtr>>();
-            _ptrToRefCount = new Dictionary<VmPtr, int>();
             _sweepKillList = new List<VmPtr>();
+            allocsSinceCollect = 0;
         }
 
         public void Write(VmPtr ptr, int length, byte[] data)
@@ -235,8 +240,9 @@ namespace FadeBasic.Virtual
         
         public void Allocate(ref HeapTypeFormat format, int size, out VmPtr ptr)
         {
-            // TODO: assert that the size is less than the max array size. 
-            
+            // TODO: assert that the size is less than the max array size.
+            allocsSinceCollect++;
+
             // If there is something with the exact size we need, grab it!
             if (_lengthToPtrs.TryGetValue(size, out var availablePtrs) && availablePtrs.Count > 0)
             {
@@ -320,31 +326,21 @@ namespace FadeBasic.Virtual
             return _allocations.TryGetValue(ptr, out allocation);
         }
 
-        public void IncrementRefCount(ulong ptr) => IncrementRefCount(VmPtr.FromRaw(ptr));
-        public void IncrementRefCount(VmPtr ptr)
-        {
-            if (_ptrToRefCount.TryGetValue(ptr, out var refCount))
-            {
-                _ptrToRefCount[ptr] = refCount + 1;
-            }
-            else
-            {
-                _ptrToRefCount[ptr] = 1;
-            }
-        }
+        public bool IsAllocated(VmPtr ptr) => _allocations.ContainsKey(ptr);
 
-        public void Sweep()
+        /// <summary>
+        /// Free every allocation whose pointer is not in <paramref name="marked"/>.
+        /// The mark set is produced by <see cref="VirtualMachine.CollectGarbage"/>,
+        /// which traces reachability from the VM's registers, eval stack, and
+        /// interned strings. The heap itself has no notion of liveness.
+        /// </summary>
+        public void SweepUnmarked(HashSet<VmPtr> marked)
         {
             var killList = _sweepKillList ?? (_sweepKillList = new List<VmPtr>());
             killList.Clear();
             foreach (var allocation in _allocations)
             {
-                if (!_ptrToRefCount.TryGetValue(allocation.Key, out var refCount))
-                {
-                    refCount = 0;
-                }
-
-                if (refCount <= 0)
+                if (!marked.Contains(allocation.Key))
                 {
                     killList.Add(allocation.Key);
                 }
@@ -354,26 +350,8 @@ namespace FadeBasic.Virtual
             {
                 Free(killList[i]);
             }
-        }
 
-        public void TryDecrementRefCount(ulong ptr) => TryDecrementRefCount(VmPtr.FromRaw(ptr));
-
-        public void TryDecrementRefCount(VmPtr ptr)
-        {
-            if (_ptrToRefCount.TryGetValue(ptr, out var refCount))
-            {
-                _ptrToRefCount[ptr] = refCount - 1;
-
-                if (refCount == 1) 
-                {
-                    // the reference can be free'd
-                    // Free(key);
-                }
-            }
-            else
-            {
-                // ?
-            }
+            allocsSinceCollect = 0;
         }
     }
 }

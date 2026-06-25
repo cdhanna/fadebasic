@@ -3620,30 +3620,197 @@ namespace FadeBasic.Virtual
                     break;
                 case LenExpression lenExpr:
                 {
-                    // `len(<expr>)` — push the inner expression (an array
-                    // or string heap pointer), then LENGTH with the
-                    // element-size byte to divide the allocation size and
-                    // push the count.
                     if (lenExpr.inner == null) { AddPushInt(_buffer, 0); break; }
+
+                    // Array path: `len` is a structural query answered from
+                    // the rank-size registers the compiler maintains for
+                    // every array — never from the allocation's byte size
+                    // (which is wrong for struct elements and flattens
+                    // multi-dim arrays).
+                    if (lenExpr.inner is VariableRefNode lenVarRef
+                        && scope.TryGetArray(lenVarRef.variableName, out var lenArrayVar))
+                    {
+                        var rankCount = lenArrayVar.rankSizeRegisterAddresses.Length;
+                        if (lenExpr.dimension == null || lenExpr.dimension is LiteralIntExpression)
+                        {
+                            // constant dimension — read the rank register directly.
+                            // dimensions are zero-indexed, like array indexing.
+                            var d = lenExpr.dimension is LiteralIntExpression litDim ? litDim.value : 0;
+                            if (d < 0 || d >= rankCount)
+                            {
+                                // the visitor reports this as a parse error; guard
+                                // here for compile-without-check callers.
+                                throw new Exception($"Compiler: len dimension [{d}] out of range for array with [{rankCount}] dimensions");
+                            }
+                            PushLoad(_buffer, lenArrayVar.rankSizeRegisterAddresses[d], lenArrayVar.isGlobal);
+                            break;
+                        }
+
+                        // Runtime dimension: spill the index to a scratch
+                        // register so the expression evaluates exactly once,
+                        // bounds-check it in [0, rank) (out of range is a fatal
+                        // VM error, like an out-of-bounds array index), then
+                        // select the rank register branchlessly:
+                        // sum of (d == i) * size_i.
+                        Compile(lenExpr.dimension);
+                        CompileCast(TypeCodes.INT);
+                        var lenDimReg = scope.AllocateRegister();
+                        PushStore(_buffer, lenDimReg, isGlobal: false);
+
+                        // BOUNDS_CHECK pops ceiling then index
+                        PushLoad(_buffer, lenDimReg, isGlobal: false);
+                        AddPushInt(_buffer, rankCount);
+                        _buffer.Add(OpCodes.BOUNDS_CHECK);
+
+                        for (var i = 0; i < rankCount; i++)
+                        {
+                            PushLoad(_buffer, lenDimReg, isGlobal: false);
+                            AddPushInt(_buffer, i);
+                            _buffer.Add(OpCodes.EQ);
+                            PushLoad(_buffer, lenArrayVar.rankSizeRegisterAddresses[i], lenArrayVar.isGlobal);
+                            _buffer.Add(OpCodes.MUL);
+                            if (i > 0)
+                            {
+                                _buffer.Add(OpCodes.ADD);
+                            }
+                        }
+                        break;
+                    }
+
+                    // String path: push the string heap pointer, then LENGTH
+                    // divides the allocation byte size by the char size.
+                    // Fade chars are uint codepoints — 4 bytes each.
                     Compile(lenExpr.inner);
-                    var innerType = lenExpr.inner.ParsedType;
-                    byte elemSize;
-                    if (innerType.type == VariableType.String)
-                    {
-                        // Fade chars are uint codepoints — 4 bytes each.
-                        elemSize = TypeCodes.GetByteSize(TypeCodes.INT);
-                    }
-                    else
-                    {
-                        // Array: take the inner element type's byte size.
-                        // ParsedType.type for an array variable is its
-                        // element type (Integer for `dim x(...)`, etc).
-                        var elemTc = VmUtil.GetTypeCode(innerType.type);
-                        elemSize = TypeCodes.GetByteSize(elemTc);
-                    }
                     _buffer.Add(OpCodes.LENGTH);
-                    _buffer.Add(elemSize);
+                    _buffer.Add(TypeCodes.GetByteSize(TypeCodes.INT));
                     break;
+                }
+                case DimsExpression dimsExpr:
+                {
+                    // `dims(arr)` — the highest valid dimension index, i.e.
+                    // rank - 1, matching the zero-indexed `len(arr, k)` form:
+                    // `for d = 0 to dims(arr)` iterates every dimension. The
+                    // rank is compile-time knowledge, so this folds to a
+                    // constant.
+                    if (dimsExpr.inner is VariableRefNode dimsVarRef
+                        && scope.TryGetArray(dimsVarRef.variableName, out var dimsArrayVar))
+                    {
+                        AddPushInt(_buffer, dimsArrayVar.rankSizeRegisterAddresses.Length - 1);
+                        break;
+                    }
+                    // the visitor reports non-array args as parse errors;
+                    // push 0 so compile-without-check callers stay balanced.
+                    AddPushInt(_buffer, 0);
+                    break;
+                }
+                case BytesExpression bytesExpr:
+                {
+                    // `bytes(x)` — memory size in bytes.
+                    //  - type name / struct variable / scalar variable: constant
+                    //  - array / string variable: runtime allocation size via
+                    //    LENGTH with element size 1 (LENGTH *is* a runtime
+                    //    sizeof; the 1 makes it report raw bytes).
+                    if (bytesExpr.resolvedTypeName != null)
+                    {
+                        if (!_types.TryGetValue(bytesExpr.resolvedTypeName, out var bytesType))
+                        {
+                            throw new Exception("Compiler: bytes() references unknown type " + bytesExpr.resolvedTypeName);
+                        }
+                        AddPushInt(_buffer, bytesType.byteSize);
+                        break;
+                    }
+
+                    if (bytesExpr.inner is VariableRefNode bytesVarRef)
+                    {
+                        if (scope.TryGetArray(bytesVarRef.variableName, out var bytesArrayVar))
+                        {
+                            PushLoadPtr(_buffer, bytesArrayVar.registerAddress, bytesArrayVar.isGlobal);
+                            _buffer.Add(OpCodes.LENGTH);
+                            _buffer.Add((byte)1);
+                            break;
+                        }
+
+                        if (scope.TryGetVariable(bytesVarRef.variableName, out var bytesVar))
+                        {
+                            if (bytesVar.typeCode == TypeCodes.STRUCT)
+                            {
+                                if (!_types.TryGetValue(bytesVar.structType, out var bytesStructType))
+                                {
+                                    throw new Exception("Compiler: bytes() variable references unknown type " + bytesVar.structType);
+                                }
+                                AddPushInt(_buffer, bytesStructType.byteSize);
+                                break;
+                            }
+
+                            if (bytesVar.typeCode == TypeCodes.STRING)
+                            {
+                                Compile(bytesVarRef);
+                                _buffer.Add(OpCodes.LENGTH);
+                                _buffer.Add((byte)1);
+                                break;
+                            }
+
+                            AddPushInt(_buffer, TypeCodes.GetByteSize(bytesVar.typeCode));
+                            break;
+                        }
+
+                        // compile-without-check fallback: the identifier may
+                        // be a type name the visitor never resolved.
+                        if (_types.TryGetValue(bytesVarRef.variableName, out var bytesFallbackType))
+                        {
+                            AddPushInt(_buffer, bytesFallbackType.byteSize);
+                            break;
+                        }
+
+                        throw new Exception("Compiler: bytes() argument is neither a variable nor a type, " + bytesVarRef.variableName);
+                    }
+
+                    // General expression argument, e.g. `bytes(someCall())`.
+                    // The expression is evaluated (it may have side effects)
+                    // and its value discarded; the size comes from the
+                    // expression's parsed type.
+                    {
+                        var bytesInnerType = bytesExpr.inner?.ParsedType ?? TypeInfo.Unset;
+                        if (bytesExpr.inner == null)
+                        {
+                            AddPushInt(_buffer, 0);
+                            break;
+                        }
+
+                        if (bytesInnerType.type == VariableType.String)
+                        {
+                            // string-valued expression: the ptr lands on the
+                            // stack; LENGTH(1) reads the allocation byte size.
+                            Compile(bytesExpr.inner);
+                            _buffer.Add(OpCodes.LENGTH);
+                            _buffer.Add((byte)1);
+                            break;
+                        }
+
+                        if (bytesInnerType.type == VariableType.Struct
+                            && bytesInnerType.structName != null
+                            && _types.TryGetValue(bytesInnerType.structName, out var bytesExprStructType))
+                        {
+                            // struct-valued expression: the full struct data
+                            // plus a typecode byte is on the stack — pop all
+                            // of it, then push the compile-time size.
+                            Compile(bytesExpr.inner);
+                            for (var di = 0; di < bytesExprStructType.byteSize + 1; di++)
+                            {
+                                _buffer.Add(OpCodes.DISCARD);
+                            }
+                            AddPushInt(_buffer, bytesExprStructType.byteSize);
+                            break;
+                        }
+
+                        // scalar expression: evaluate, discard the typed value,
+                        // push the type's size.
+                        Compile(bytesExpr.inner);
+                        _buffer.Add(OpCodes.DISCARD_TYPED);
+                        var bytesScalarTc = VmUtil.GetTypeCode(bytesInnerType.type);
+                        AddPushInt(_buffer, TypeCodes.GetByteSize(bytesScalarTc));
+                        break;
+                    }
                 }
                 case CallCountExpression callCountExpr:
                 {

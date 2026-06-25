@@ -1,17 +1,37 @@
 import { z } from 'zod';
 import { defineTool } from './index';
+import { lspFixHint } from './lsp-fix-hint';
 
 export const createFile = defineTool({
     name: 'create_file',
     description:
         'Create a new workspace file with the given content. Fails if the file already exists ' +
-        '— use apply_edit to modify existing files. User approves before the file is written.',
+        '— use apply_edit to modify existing files. New .fbasic/.fade files are automatically ' +
+        'added to the project sources (fade.json) so they run. Prefer apply_edit on an existing ' +
+        'source file when adding runnable code, rather than creating a new file. User approves first.',
+    // Optional at the schema layer so a malformed call reaches execute() for
+    // an instructive error rather than a terse Zod stub. content aliases as
+    // newText (models reuse the apply_edit field name).
     schema: z.object({
-        path: z.string().describe('New filename'),
-        content: z.string().describe('Complete file content'),
+        path: z.string().optional().describe('New filename'),
+        content: z.string().optional().describe('Complete file content'),
+        newText: z.string().optional(),
     }),
     async execute(args, ctx) {
-        const { path, content } = args;
+        const path = args.path;
+        const content = args.content ?? args.newText;
+        if (!path || content === undefined) {
+            const missing = [!path && 'path', content === undefined && 'content'].filter(Boolean).join(', ');
+            return {
+                ok: false,
+                result: {
+                    error: `create_file is missing required argument(s): ${missing}.`,
+                    correctFormat:
+                        '<tool_call>{"name":"create_file","args":{"path":"new.fbasic","content":"print \\"hi\\""}}</tool_call>',
+                    hint: 'Put path and content inside "args". Retry now with the complete call.',
+                },
+            };
+        }
 
         // Reject if it already exists.
         try {
@@ -37,6 +57,7 @@ export const createFile = defineTool({
                         result: {
                             error: 'Code review rejected the new file',
                             review: review.feedback,
+                            hint: lspFixHint(review.feedback),
                         },
                     };
                 }
@@ -53,6 +74,30 @@ export const createFile = defineTool({
         }
 
         await ctx.workspace.write(path, content);
-        return { ok: true, result: { path, created: true } };
+
+        // A new .fbasic/.fade file does nothing unless it's in fade.json's
+        // `sources` — register it so the code actually compiles and runs.
+        let addedToSources = false;
+        if (/\.(fbasic|fade)$/i.test(path)) {
+            try {
+                const cfg = JSON.parse(await ctx.workspace.read('fade.json')) as { sources?: unknown };
+                if (Array.isArray(cfg.sources) && !cfg.sources.includes(path)) {
+                    cfg.sources.push(path);
+                    await ctx.workspace.write('fade.json', JSON.stringify(cfg, null, 2) + '\n');
+                    addedToSources = true;
+                }
+            } catch { /* no/unparseable fade.json — leave it */ }
+        }
+        return {
+            ok: true,
+            result: {
+                path,
+                created: true,
+                addedToSources,
+                note: addedToSources
+                    ? `Added ${path} to fade.json sources. Reload/re-run the project to pick it up.`
+                    : undefined,
+            },
+        };
     },
 });

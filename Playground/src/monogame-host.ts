@@ -193,6 +193,15 @@ class MonoGameHost {
     private armed = false;
     private nextCallId = 0;
     private pending = new Map<number, PendingCall>();
+    /** Canonical state for the per-frame debug-UI envelope, kept up to
+     *  date by merging deltas from the iframe's diff producer (the
+     *  'debug-ui-frame-delta' message handler below). The full
+     *  envelope is needed for the live-session relay path, which
+     *  broadcasts JSON bytes to observers; we re-serialize lazily
+     *  whenever onDebugUiFrame fires. Reset on iframe rebind so a
+     *  stale envelope from a previous program doesn't leak into the
+     *  next run. */
+    private canonicalDebugUiEnv: DebugUiFrameEnvelope | null = null;
     // True once the Playground page's own boot splash has finished hiding.
     // Stored so we can send 'pg-splash-hidden' to the iframe immediately
     // if it boots after the pg-splash has already gone.
@@ -277,6 +286,13 @@ class MonoGameHost {
             content.appendChild(frame);
         }
         this.iframe = frame;
+        // New iframe → reset the canonical debug-UI envelope so the
+        // next 'debug-ui-frame-delta' baseline starts clean. Without
+        // this, leftover state from a previous program could persist
+        // and confuse the merge if the new iframe's first delta is
+        // partial (shouldn't happen — the iframe sends baseline=true
+        // on its first emission — but defensive).
+        this.canonicalDebugUiEnv = null;
 
         // Single delegate that fans every iframe message out to the
         // pending-promise resolvers, the debug-event sink, or the floor.
@@ -303,6 +319,36 @@ class MonoGameHost {
         this.postToIframe({ type: 'bootstrap' });
         await armedPromise;
         this.armed = true;
+        // Replay the subscription state to the freshly-armed iframe so
+        // it knows whether the parent's Debug UI panel currently wants
+        // envelopes. Without this, the iframe defaults to subscribed=
+        // true (safe default) and sends frames even when the panel is
+        // hidden. The call is cheap (one postMessage) and idempotent.
+        this.flushDebugUiSubscribed();
+    }
+
+    /** Tell the iframe whether to bother sending per-frame debug-ui
+     *  envelopes. Called from main.ts whenever the dockview Debug UI
+     *  panel toggles visibility. The iframe stops sending postMessages
+     *  when `active === false` AND no in-iframe overlay panel is
+     *  mounted; the bigger win is that C# can poll `window.fadeDebugUi
+     *  .isSubscribed()` to skip the snapshot generation entirely
+     *  (the JS-side gate only saves transport + parse). */
+    setDebugUiSubscribed(active: boolean): void {
+        if (this.debugUiSubscribed === active) return;
+        this.debugUiSubscribed = active;
+        this.flushDebugUiSubscribed();
+    }
+
+    private debugUiSubscribed: boolean = true;
+    private flushDebugUiSubscribed(): void {
+        if (!this.iframe?.contentWindow) return;
+        try {
+            this.iframe.contentWindow.postMessage({
+                type: 'debug-ui-subscribe',
+                active: this.debugUiSubscribed,
+            }, '*');
+        } catch { /* ignore */ }
     }
 
     // Wait for a single message of the given type from the iframe and
@@ -384,8 +430,59 @@ class MonoGameHost {
                     // without re-serialising; observers reuse the same
                     // parseDebugUiEnvelope path.
                     this.onDebugUiFrame(env, rawJson);
+                    // Sync the canonical env so a later switch to the
+                    // delta protocol picks up from the right baseline.
+                    this.canonicalDebugUiEnv = env;
                 }
                 catch (err) { console.error('[monogame-host] onDebugUiFrame threw:', err); }
+            }
+            return;
+        }
+
+        // Same channel as 'debug-ui-frame', but the iframe ships only
+        // the fields that changed since the last emission (see the
+        // diff producer in monogame/index.html). Saves the parent's
+        // postMessage clone + JSON.parse cost for stable subfields —
+        // typically queue + entities, which don't change every frame
+        // even though metadata does. First emission carries baseline:
+        // true and represents a full envelope; subsequent emissions
+        // omit unchanged fields and we merge them into the canonical
+        // state below. If iframe and parent ever fall out of sync
+        // (shouldn't happen but defensive), the iframe will re-send a
+        // full baseline on its next gen change.
+        if (m.type === 'debug-ui-frame-delta') {
+            if (this.onDebugUiFrame) {
+                try {
+                    const delta = m.delta as (Partial<DebugUiFrameEnvelope> & { baseline?: boolean }) | undefined;
+                    if (!delta) return;
+                    let merged: DebugUiFrameEnvelope;
+                    if (delta.baseline || !this.canonicalDebugUiEnv) {
+                        merged = {
+                            gen: delta.gen ?? 0,
+                            queue: delta.queue ?? [],
+                            autoInspector: !!delta.autoInspector,
+                            metadata: delta.metadata ?? null,
+                            entities: delta.entities,
+                        };
+                    } else {
+                        merged = { ...this.canonicalDebugUiEnv };
+                        if ('gen' in delta && typeof delta.gen === 'number') merged.gen = delta.gen;
+                        if ('autoInspector' in delta) merged.autoInspector = !!delta.autoInspector;
+                        if ('queue' in delta && Array.isArray(delta.queue)) merged.queue = delta.queue;
+                        if ('metadata' in delta) merged.metadata = delta.metadata ?? null;
+                        if ('entities' in delta) merged.entities = delta.entities;
+                    }
+                    this.canonicalDebugUiEnv = merged;
+                    // Re-serialise the merged envelope for the collab
+                    // relay path. The iframe DIDN'T send us a usable
+                    // raw JSON since the delta is a subset, so we
+                    // rebuild it here. Cost is comparable to what the
+                    // iframe used to stringify per frame; net we still
+                    // win on the structured-clone + parent-parse side.
+                    const rawJson = JSON.stringify(merged);
+                    this.onDebugUiFrame(merged, rawJson);
+                }
+                catch (err) { console.error('[monogame-host] onDebugUiFrame (delta) threw:', err); }
             }
             return;
         }

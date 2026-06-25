@@ -437,6 +437,26 @@ describe('Agent (workspace context auto-injection)', () => {
         expect(sysMsg!.content).toContain('Files: (empty)');
     });
 
+    it('injects MonoGame runtime rules only for monogame projects', async () => {
+        const mk = async (type: 'web' | 'monogame') => {
+            const provider = new MockProvider([mockTurn.text('ok')]);
+            const agent = new Agent({
+                provider,
+                tools: createDefaultRegistry(),
+                toolContext: { workspace: new InMemoryWorkspace() },
+                getProjectType: () => type,
+                retriever: null,
+                evictor: null,
+            });
+            const collected = collectEvents(agent);
+            await agent.send('make a sprite move with the arrow keys');
+            await collected.until();
+            return provider.sentMessages[0].messages.find(m => m.role === 'system')!.content;
+        };
+        expect(await mk('monogame')).toContain('MONOGAME RUNTIME RULES');
+        expect(await mk('web')).not.toContain('MONOGAME RUNTIME RULES');
+    });
+
     it('truncates large file lists in workspace context', async () => {
         const provider = new MockProvider([mockTurn.text('ok')]);
         const files: Record<string, string> = {};
@@ -588,6 +608,88 @@ describe('Agent (auto-retrieval)', () => {
         expect(retrieved).toHaveLength(1);
         expect(retrieved[0].hits).toHaveLength(1);
         expect(retrieved[0].hits[0].chunk.id).toBe('A');
+    });
+
+    it('classifies capabilities and drives a search_docs research phase for code requests', async () => {
+        const provider = new MockProvider([
+            mockTurn.text('read the arrow keys\ndraw a sprite'),  // 1: capability classification
+            mockTurn.text('Here is the code.'),                    // 2: the actual answer
+        ]);
+        const retriever = makeMockRetriever([
+            { id: 'A', source: 'doc.md', heading: 'A', text: 'sprite', chars: 6, vector: normalize([1, 0, 0]) },
+        ]);
+        const agent = new Agent({
+            provider,
+            tools: createDefaultRegistry(),
+            toolContext: { workspace: new InMemoryWorkspace() },
+            retriever,
+            autoRetrievalK: 1,
+        });
+        const collected = collectEvents(agent);
+        await agent.send('write me a sprite demo with arrow keys');
+        await collected.until();
+
+        // The AI-classified plan drove a visible research step per capability.
+        const plan = collected.events.find(
+            (e): e is Extract<AgentEvent, { kind: 'plan_emitted' }> => e.kind === 'plan_emitted');
+        expect(plan?.plan.steps.map(s => s.description)).toEqual(['read the arrow keys', 'draw a sprite']);
+        expect(plan?.plan.steps.every(s => s.tool === 'search_docs')).toBe(true);
+        const searches = collected.events.filter(
+            e => e.kind === 'tool_call_start' && e.name === 'search_docs');
+        expect(searches).toHaveLength(2);
+    });
+
+    it('resolves "fix the code you showed" to the prior reply, not a file', async () => {
+        const provider = new MockProvider([mockTurn.text('Updated code coming up.')]);
+        const agent = new Agent({
+            provider,
+            tools: createDefaultRegistry(),
+            toolContext: { workspace: new InMemoryWorkspace({ 'main.fbasic': 'print "unrelated"' }) },
+            retriever: null,
+        });
+        // Seed a prior assistant reply that SHOWED code (never written to a file).
+        agent.setHistory([
+            { role: 'user', content: 'show me a loop' },
+            { role: 'assistant', content: 'Here:\n```fade\nfor i = 1 to 3\n  print i\nnext\n```' },
+        ]);
+        const collected = collectEvents(agent);
+        await agent.send('there is a bug in that code, can you fix it?');
+        await collected.until();
+
+        // It pinned the prior snippet into context and did NOT read main.fbasic.
+        const reads = collected.events.filter(e => e.kind === 'tool_call_start' && e.name === 'read_file');
+        expect(reads).toHaveLength(0);
+        const ctx = agent.getHistory().find(m =>
+            m.role === 'user' && m.content.includes('NOT saved in main.fbasic'));
+        expect(ctx?.content).toContain('for i = 1 to 3');
+    });
+
+    it('routes a debug request: reads the named file and fetches diagnostics', async () => {
+        const provider = new MockProvider([
+            mockTurn.text('INTENT: debug\nFILES: main.fbasic\nCAPABILITIES: none'),  // router
+            mockTurn.text('Fixed it.'),                                               // answer
+        ]);
+        const retriever = makeMockRetriever([
+            { id: 'A', source: 'doc.md', heading: 'A', text: 'x', chars: 1, vector: normalize([1, 0, 0]) },
+        ]);
+        const agent = new Agent({
+            provider,
+            tools: createDefaultRegistry(),
+            toolContext: { workspace: new InMemoryWorkspace({ 'main.fbasic': 'print x' }) },
+            retriever,
+            autoRetrievalK: 1,
+        });
+        const collected = collectEvents(agent);
+        await agent.send('fix the crash in my code');
+        await collected.until();
+
+        const plan = collected.events.find(
+            (e): e is Extract<AgentEvent, { kind: 'plan_emitted' }> => e.kind === 'plan_emitted');
+        expect(plan?.plan.steps.some(s => s.tool === 'read_file' && s.description === 'main.fbasic')).toBe(true);
+        const reads = collected.events.filter(e => e.kind === 'tool_call_start' && e.name === 'read_file');
+        expect(reads).toHaveLength(1);
+        const diags = collected.events.filter(e => e.kind === 'tool_call_start' && e.name === 'get_diagnostics');
+        expect(diags).toHaveLength(1);
     });
 
     it('injects retrieved chunks into the system prompt', async () => {
@@ -852,5 +954,229 @@ describe('Agent (apply_edit)', () => {
         const result = collected.events
             .find((e): e is Extract<AgentEvent, { kind: 'tool_call_result' }> => e.kind === 'tool_call_result');
         expect(result?.ok).toBe(false);
+    });
+});
+
+describe('Agent (end-of-turn analysis)', () => {
+    const BAD_SNIPPET = 'Try:\n```fade\nx = 0\nif a then\n  x = 1\nelseif b then\n  x = 2\nend if\n```';
+    const GOOD_SNIPPET = 'Fixed:\n```fade\nx = 0\nif a then\n  x = 1\nelse\n  if b then\n    x = 2\n  endif\nendif\n```';
+    // LSP mock: only the `elseif` form is an error; the corrected form compiles.
+    const elseifLsp = async (src: string) =>
+        /elseif/i.test(src)
+            ? [{ path: 's', severity: 'error' as const, line: 4, column: 1, endLine: 4, endColumn: 7, message: "'elseif' is not valid", code: '0100' }]
+            : [];
+
+    it('repairs a shown snippet in an isolated sub-agent and splices it back', async () => {
+        const provider = new MockProvider([
+            mockTurn.text(BAD_SNIPPET),  // 1: the main answer (invalid)
+            mockTurn.text(GOOD_SNIPPET), // 2: the repair sub-agent's corrected answer
+        ]);
+        const agent = new Agent({
+            provider,
+            tools: createDefaultRegistry(),
+            toolContext: { workspace: new InMemoryWorkspace(), lintFadeSnippet: elseifLsp },
+            retriever: null,
+        });
+        const collected = collectEvents(agent);
+        await agent.send('how do I branch?');
+        await collected.until();
+
+        // The repair ran in an ISOLATED context: its prompt is a fresh
+        // system+user pair (not the main conversation), and it emitted a revised
+        // answer that the UI swaps in.
+        const repairCall = provider.sentMessages[1];
+        expect(repairCall.messages).toHaveLength(2);                 // system + user only
+        expect(repairCall.messages[1].content).toContain('--- draft answer ---');
+        const revised = collected.events.find(
+            (e): e is Extract<AgentEvent, { kind: 'answer_revised' }> => e.kind === 'answer_revised');
+        expect(revised?.text).toBe(GOOD_SNIPPET);
+        // The fixed answer replaced the broken draft in history — no heal churn.
+        const lastAssistant = agent.getHistory().filter(m => m.role === 'assistant').at(-1);
+        expect(lastAssistant?.content).toBe(GOOD_SNIPPET);
+        expect(agent.getHistory().some(m => /--- draft answer ---/.test(m.content))).toBe(false);
+        // Final answer is clean → no passive lint shown to the user.
+        expect(collected.events.find(e => e.kind === 'code_lint')).toBeUndefined();
+    });
+
+    it('surfaces remaining errors after the heal budget is spent', async () => {
+        // Model never fixes it — after the heal passes are spent, the leftover
+        // errors are surfaced passively so the user isn't misled.
+        const provider = new MockProvider([
+            mockTurn.text(BAD_SNIPPET), mockTurn.text(BAD_SNIPPET), mockTurn.text(BAD_SNIPPET),
+        ]);
+        const agent = new Agent({
+            provider,
+            tools: createDefaultRegistry(),
+            toolContext: { workspace: new InMemoryWorkspace(), lintFadeSnippet: elseifLsp },
+            retriever: null,
+        });
+        const collected = collectEvents(agent);
+        await agent.send('how do I branch?');
+        await collected.until();
+
+        const lint = collected.events.find(
+            (e): e is Extract<AgentEvent, { kind: 'code_lint' }> => e.kind === 'code_lint');
+        expect(lint?.issues[0].message).toContain('elseif');
+    });
+
+    it('does NOT flag unknown-symbol on a one-line illustrative snippet', async () => {
+        const provider = new MockProvider([mockTurn.text('Use `sprite 1, x, y, 1` like so:\n```fade\nsprite 1, x, y, 1\n```')]);
+        const agent = new Agent({
+            provider,
+            tools: createDefaultRegistry(),
+            toolContext: {
+                workspace: new InMemoryWorkspace(),
+                lintFadeSnippet: async () => [
+                    { path: 's', severity: 'error' as const, line: 1, column: 1, endLine: 1, endColumn: 2, message: 'unknown symbol, x', code: '0200' },
+                ],
+            },
+            retriever: null,
+        });
+        const collected = collectEvents(agent);
+        await agent.send('show me sprite');
+        await collected.until();
+        expect(collected.events.find(e => e.kind === 'code_lint')).toBeUndefined();
+    });
+
+    it('reports a missing asset and suggests the catalog', async () => {
+        const provider = new MockProvider([
+            mockTurn.text('Here:\n```fade\ntexture 1, "Images/Ball"\nsprite 1, 0, 0, 1\n```'),
+        ]);
+        const workspace = new InMemoryWorkspace({ 'main.fbasic': 'rem', 'fade.json': '{}' });
+        const catalogCalls: Array<{ q: string }> = [];
+        const agent = new Agent({
+            provider,
+            tools: createDefaultRegistry(),
+            toolContext: {
+                workspace,
+                catalog: {
+                    async search(q) { catalogCalls.push({ q }); return []; },
+                    async import() { return { name: 'x', paths: [] }; },
+                },
+            },
+            retriever: null,
+        });
+
+        const collected = collectEvents(agent);
+        await agent.send('give me a ball sprite');
+        await collected.until();
+
+        const report = collected.events.find(
+            (e): e is Extract<AgentEvent, { kind: 'asset_report' }> => e.kind === 'asset_report');
+        expect(report?.missing.map(m => m.name)).toEqual(['Images/Ball']);
+
+        const suggestion = collected.events.find(
+            (e): e is Extract<AgentEvent, { kind: 'suggestion' }> => e.kind === 'suggestion');
+        expect(suggestion?.suggestions[0].title).toContain('Images/Ball');
+    });
+
+    it('suggests a docs lookup when the answer speculates about a real command', async () => {
+        const provider = new MockProvider([
+            mockTurn.text('The `sync` keyword is likely a command that flushes pending state.'),
+        ]);
+        const workspace = new InMemoryWorkspace();
+        const agent = new Agent({
+            provider,
+            tools: createDefaultRegistry(),
+            toolContext: { workspace },
+            retriever: null,
+            getCommandNames: async () => ['sync', 'print', 'texture'],
+        });
+
+        const collected = collectEvents(agent);
+        await agent.send('what does sync do?');
+        await collected.until();
+
+        const suggestion = collected.events.find(
+            (e): e is Extract<AgentEvent, { kind: 'suggestion' }> => e.kind === 'suggestion');
+        expect(suggestion?.suggestions.some(s => s.title.includes('sync'))).toBe(true);
+    });
+
+    it('does NOT add a docs-lookup chip when the answer is confident (but still offers forward steps)', async () => {
+        const provider = new MockProvider([
+            mockTurn.text('The print command writes text to the screen.'),
+        ]);
+        const agent = new Agent({
+            provider,
+            tools: createDefaultRegistry(),
+            toolContext: { workspace: new InMemoryWorkspace() },
+            retriever: null,
+            getCommandNames: async () => ['sync', 'print'],
+        });
+
+        const collected = collectEvents(agent);
+        await agent.send('what does print do?');
+        await collected.until();
+
+        const suggestion = collected.events.find(
+            (e): e is Extract<AgentEvent, { kind: 'suggestion' }> => e.kind === 'suggestion');
+        // Always pushes the conversation forward...
+        expect(suggestion).toBeDefined();
+        // ...but no "Look up the `X` command" chip when nothing was hedged.
+        expect(suggestion!.suggestions.some(s => s.title.startsWith('Look up'))).toBe(false);
+    });
+
+    it('always emits at least one forward suggestion', async () => {
+        const provider = new MockProvider([mockTurn.text('Here is some general advice.')]);
+        const agent = new Agent({
+            provider,
+            tools: createDefaultRegistry(),
+            toolContext: { workspace: new InMemoryWorkspace() },
+            retriever: null,
+        });
+        const collected = collectEvents(agent);
+        await agent.send('any tips?');
+        await collected.until();
+        const suggestion = collected.events.find(
+            (e): e is Extract<AgentEvent, { kind: 'suggestion' }> => e.kind === 'suggestion');
+        expect(suggestion!.suggestions.length).toBeGreaterThanOrEqual(1);
+    });
+});
+
+describe('Agent (docs for rejected edits)', () => {
+    it('looks up the real command docs when an edit is rejected', async () => {
+        const provider = new MockProvider([
+            // 'make the ship move left' is a code request, so the agent first
+            // runs the plan-and-research classification pass (consumes a turn).
+            mockTurn.text('move the ship left'),
+            mockTurn.streaming([
+                '<tool_call>{"name":"apply_edit","args":{"path":"main.fbasic","startLine":1,"endLine":1,"newText":"IF key down \\"left\\" THEN x = 1"}}</tool_call>',
+            ]),
+            mockTurn.text('let me reconsider.'),
+        ]);
+        const ws = new InMemoryWorkspace({ 'main.fbasic': 'rem' });
+        const searches: string[] = [];
+        const fakeRetriever = {
+            search: async (q: string) => {
+                searches.push(q);
+                return [{
+                    chunk: { id: 'c1', source: 'Language.md', heading: 'Input', text: 'keystate(code)', chars: 13 },
+                    score: 0.9,
+                }];
+            },
+        };
+        const agent = new Agent({
+            provider,
+            tools: createDefaultRegistry(),
+            toolContext: {
+                workspace: ws,
+                reviewEdit: async () => ({ approved: false, feedback: 'L1: [0147] No overload for command (147)' }),
+                confirmEdit: async () => true,
+            },
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            retriever: fakeRetriever as any,
+            getProjectType: () => 'web',
+        });
+
+        const collected = collectEvents(agent);
+        await agent.send('make the ship move left');
+        await collected.until();
+
+        // It searched docs for the command the model used inside the edit.
+        expect(searches).toContain('key down');
+        const docs = collected.events.find(
+            (e): e is Extract<AgentEvent, { kind: 'docs_retrieved' }> =>
+                e.kind === 'docs_retrieved' && e.query.includes('key down'));
+        expect(docs).toBeDefined();
     });
 });

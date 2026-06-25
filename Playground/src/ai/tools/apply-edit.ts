@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { defineTool } from './index';
+import { lspFixHint } from './lsp-fix-hint';
 
 export const applyEdit = defineTool({
     name: 'apply_edit',
@@ -7,14 +8,48 @@ export const applyEdit = defineTool({
         'Replace a range of lines in a file. startLine and endLine are 1-indexed, inclusive. ' +
         'Use this instead of rewriting whole files — much more reliable. ' +
         'User approves the diff before it is written.',
+    // The protocol teaches the attribute form (start=/end=), so models often
+    // pass those names — or string numbers — when they use JSON instead.
+    // Accept the aliases and coerce, rather than rejecting with an opaque
+    // "Invalid arguments" the model then loops on. Canonical names win.
+    // Everything is optional at the SCHEMA layer so a malformed first call
+    // (common: the model emits `{"name":"apply_edit"}` with no args) reaches
+    // execute() and gets an instructive error showing the exact format —
+    // instead of a terse Zod "expected string, received undefined" stub it
+    // then loops on. execute() does the real required-field validation.
     schema: z.object({
-        path: z.string().describe('Filename to edit'),
-        startLine: z.number().int().min(1).describe('First line to replace (1-indexed, inclusive)'),
-        endLine: z.number().int().min(1).describe('Last line to replace (1-indexed, inclusive)'),
-        newText: z.string().describe('Replacement text (may contain newlines)'),
+        path: z.string().optional().describe('Filename to edit'),
+        startLine: z.coerce.number().int().min(1).optional().describe('First line to replace (1-indexed, inclusive)'),
+        endLine: z.coerce.number().int().min(1).optional().describe('Last line to replace (1-indexed, inclusive)'),
+        newText: z.string().optional().describe('Replacement text (may contain newlines)'),
+        // Accepted aliases:
+        start: z.coerce.number().int().min(1).optional(),
+        end: z.coerce.number().int().min(1).optional(),
+        content: z.string().optional(),
     }),
     async execute(args, ctx) {
-        const { path, startLine, endLine, newText } = args;
+        const path = args.path;
+        const startLine = args.startLine ?? args.start;
+        const endLine = args.endLine ?? args.end;
+        const newText = args.newText ?? args.content;
+        if (!path || startLine === undefined || endLine === undefined || newText === undefined) {
+            const missing = [
+                !path && 'path',
+                startLine === undefined && 'startLine',
+                endLine === undefined && 'endLine',
+                newText === undefined && 'newText',
+            ].filter(Boolean).join(', ');
+            return {
+                ok: false,
+                result: {
+                    error: `apply_edit is missing required argument(s): ${missing}.`,
+                    got: Object.keys(args),
+                    correctFormat:
+                        '<tool_call>{"name":"apply_edit","args":{"path":"main.fbasic","startLine":2,"endLine":2,"newText":"print \\"hi\\""}}</tool_call>',
+                    hint: 'Put ALL of path, startLine, endLine, and newText inside "args". Retry now with the complete call.',
+                },
+            };
+        }
 
         let rawOldContent: string;
         try {
@@ -73,6 +108,7 @@ export const applyEdit = defineTool({
                         result: {
                             error: 'Code review rejected the edit',
                             review: review.feedback,
+                            hint: lspFixHint(review.feedback),
                         },
                     };
                 }

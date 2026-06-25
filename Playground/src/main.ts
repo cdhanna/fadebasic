@@ -94,7 +94,7 @@ import {
     LEGACY_BINARY_PREVIEW_ID_PREFIX,
     isBinaryFileName,
 } from './binary-preview';
-import { CatalogClient } from './catalog/catalog-client';
+import { CatalogClient, catalogFilename } from './catalog/catalog-client';
 import { createCatalogPanel } from './catalog/catalog-panel';
 import { patchXnbForKni } from './xnb/xnb-previews';
 import {
@@ -124,7 +124,7 @@ const EMPTY_CONTENT_PLAN: MonoGameContentPlan = {
     defaultCompression: 'auto',
     entries: [],
 };
-import { mountHelpPanel } from './help';
+import { mountHelpPanel, extractCommandNameFromHover } from './help';
 import { monoGameHost, parseDebugUiEnvelope } from './monogame-host';
 import { mountSharedCursors, type SharedCursorHandle } from './shared-cursor';
 import { createLocalDebugAdapter } from './debug/local-adapter';
@@ -2823,7 +2823,15 @@ async function bootstrap() {
             lineComment: '`',
             blockComment: ['remstart', 'remend'],
         },
-        wordPattern: /[a-zA-Z_][a-zA-Z0-9_$#.()]*/,
+        // `.`, `(`, `)` deliberately excluded — `.` is the member-
+        // access operator (struct field), not a word char, and treating
+        // it as one made Monaco's matcher glue `ballPos.` together as
+        // the current word, then filter every Field item out of the
+        // dropdown because `x`/`y` don't match a `ballPos.` prefix.
+        // Standard convention across languages: `$#` are name sigils,
+        // letters/digits/underscores form the identifier, `.()` are
+        // syntax.
+        wordPattern: /[a-zA-Z_][a-zA-Z0-9_$#]*/,
         brackets: [['(', ')']],
         autoClosingPairs: [
             { open: '(', close: ')' },
@@ -3264,9 +3272,12 @@ async function bootstrap() {
                 // see that shape, append a deep-link to the Help tab
                 // (markdown link with a Monaco command URI). Trusted
                 // markdown lets Monaco invoke our registered command.
-                const m = /^\s*###\s+([^\n]+)/.exec(value);
-                if (m) {
-                    const cmdName = m[1].trim();
+                // The same helper backs the right-click "Help" action
+                // and Ctrl/Cmd-click resolver so all three editor
+                // affordances parse the hover the same way (tested in
+                // help.test.ts → extractCommandNameFromHover).
+                const cmdName = extractCommandNameFromHover(value);
+                if (cmdName) {
                     const args = encodeURIComponent(JSON.stringify(cmdName));
                     value = value + `\n\n[View in Help →](command:fade.openHelp?${args})`;
                     contents.push({ value, isTrusted: true });
@@ -3322,6 +3333,32 @@ async function bootstrap() {
                 position.lineNumber, word.startColumn,
                 position.lineNumber, word.endColumn,
             );
+            // Struct-field-after-dot: the fade `wordPattern` includes `.`,
+            // so `getWordUntilPosition` at `ballPos.|` returns `ballPos.`
+            // as the "current word". Monaco then fuzzy-matches the typed
+            // word against each item label — `x` and `y` don't match
+            // `ballPos.` so every Field item is silently filtered out
+            // and Monaco falls back to its built-in word-from-document
+            // suggestions. Detect the trailing dot and clamp the range
+            // to an empty span at the cursor so accepting `x` produces
+            // `ballPos.x` (not `x` replacing `ballPos.`); also set
+            // filterText to label so the matcher sees the empty post-
+            // dot prefix and admits every field. We override for ALL
+            // items returned by the LSP in this position — when the
+            // previous char is `.`, the AST guarantees the response is
+            // field-only (see TryGetStructFieldCompletionsAfterDot).
+            const colBeforeCursor = position.column - 2; // 0-based char index
+            const lineRaw = model.getLineContent(position.lineNumber);
+            const prevChar = colBeforeCursor >= 0 && colBeforeCursor < lineRaw.length
+                ? lineRaw[colBeforeCursor]
+                : '';
+            const afterDot = prevChar === '.';
+            const dotRange = afterDot
+                ? new monaco.Range(
+                    position.lineNumber, position.column,
+                    position.lineNumber, position.column,
+                )
+                : null;
             // For multi-word command completions (label contains a space),
             // accepting the suggestion must replace the ENTIRE typed
             // prefix, not just the last word. Otherwise `set sprite|` +
@@ -3369,11 +3406,13 @@ async function bootstrap() {
                     // so Monaco's matcher uses `label` instead, which
                     // restores all the variable/function suggestions
                     // that were silently disappearing.
-                    filterText: it.filterText ? it.filterText : undefined,
+                    filterText: afterDot
+                        ? it.label
+                        : (it.filterText ? it.filterText : undefined),
                     insertTextRules: it.insertTextFormat === 2
                         ? monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet
                         : monaco.languages.CompletionItemInsertTextRule.None,
-                    range: rangeForLabel(it.label),
+                    range: dotRange ?? rangeForLabel(it.label),
                     command: it.triggerParameterHints
                         ? { id: 'editor.action.triggerParameterHints', title: '' }
                         : undefined,
@@ -6178,6 +6217,36 @@ async function bootstrap() {
     if (debugUiHandle) {
         (window as any).__fadeDebugUiHandle = debugUiHandle;
     }
+
+    // Tell the iframe (and via window.fadeDebugUi.isSubscribed(), the
+    // C# DebugUISystem) when our Debug UI dock tab is actually visible.
+    // When hidden — user is looking at another tab in the same group —
+    // the iframe short-circuits fadeDebugUi.frame() to avoid the
+    // postMessage + parent parse, and C# can skip the snapshot work
+    // entirely. Big win for breakout-style games where the snapshot
+    // reflection cost dominates frame time.
+    //
+    // The dock panel may not be adopted yet at this point (layout
+    // restore runs slightly later). Try once now, retry inside a
+    // setTimeout for the post-layout-restore case.
+    function wireDebugUiSubscription(): boolean {
+        const panel = dockApi.getPanel('debug-ui');
+        if (!panel) return false;
+        const sync = () => {
+            try { monoGameHost.setDebugUiSubscribed(panel.api.isVisible); }
+            catch (e) { console.warn('[debug-ui-subscribe] sync failed', e); }
+        };
+        panel.api.onDidVisibilityChange(sync);
+        sync();
+        return true;
+    }
+    if (!wireDebugUiSubscription()) {
+        // Dock layout hasn't placed the panel yet — try after the
+        // current microtask + a tick to let dockview finish its
+        // adoption pass.
+        setTimeout(() => { wireDebugUiSubscription(); }, 100);
+    }
+
     monoGameHost.onDebugUiFrame = (env, rawJson) => {
         debugUiIframeCount++;
         // Log whenever the queue length OR gen changes — captures the
@@ -8118,12 +8187,62 @@ async function bootstrap() {
     const helpCtl = mountHelpPanel({
         tokenizeSnippet: (source) => runner.tokenizeSnippet(source),
     });
-    // Open the Help tab + focus a specific command. Used by the hover
-    // provider's "View in Help →" link and by external probes via
-    // window.__fadeHelp.openCommand(name).
-    function openHelpForCommand(name: string): boolean {
+    // Make sure the Help dockview panel is present and active. If the
+    // user closed the tab entirely, openPanelById falls back through
+    // healLayout which re-adds it with its default position. Returns
+    // synchronously — getPanel('help') is available either way.
+    function ensureHelpPanelOpen(): void {
+        const panel = dockApi.getPanel('help');
+        if (panel) {
+            try { panel.api.setActive(); } catch { /* ignore */ }
+            return;
+        }
+        // Panel missing — re-add via the same path the View menu uses.
+        try { openPanelById('help'); } catch (e) { console.warn('[fade] failed to open help panel', e); }
         try { dockApi.getPanel('help')?.api?.setActive(); } catch { /* ignore */ }
-        return helpCtl.selectCommand(name);
+    }
+
+    // Open the Help tab + focus a specific command. Used by the hover
+    // provider's "View in Help →" link, the right-click context menu
+    // action, the Ctrl/Cmd-click handler in the editor, and external
+    // probes via window.__fadeHelp.openCommand(name).
+    //
+    // fbasic source is case-insensitive but the help index is keyed by
+    // the LSP's single canonical casing, which can be lower (`print`),
+    // mixed (`setColor`), or anything else the C# command descriptor
+    // emits. Resolving the user-typed word to that canonical name
+    // requires a case-insensitive lookup against the index — a plain
+    // toLowerCase() fallback misses camelCase names. helpCtl.
+    // findCommandName does that resolution; selectCommand then runs
+    // against the canonical name so the TOC item actually highlights
+    // and scrolls into view.
+    function openHelpForCommand(name: string): boolean {
+        ensureHelpPanelOpen();
+        const canonical = helpCtl.findCommandName(name);
+        if (!canonical) return false;
+        return helpCtl.selectCommand(canonical);
+    }
+
+    // Fallback for editor clicks on tokens that aren't commands —
+    // language keywords like `if`, `for`, `dim`, `function`. The help
+    // index has no entry for those (it lists commands only), but the
+    // language docs (FadeBook/Language.md etc.) describe them. We don't
+    // have a hard-coded keyword→anchor map; instead we route through
+    // the help panel's global search, which spans both the command
+    // reference and all loaded docs. The user sees ranked matches and
+    // picks the right one (initGlobalSearch already auto-selects the
+    // top result so it's one keystroke away when it's the obvious hit).
+    //
+    // Returns true when we filled the search box (regardless of whether
+    // results were found — searching is the right action even when it
+    // turns up empty, so the user sees that there's no doc coverage
+    // rather than the click silently dropping).
+    function searchHelpForKeyword(word: string): boolean {
+        const q = word.trim();
+        if (!q) return false;
+        ensureHelpPanelOpen();
+        helpCtl.searchFor(q);
+        return true;
     }
     // Fire-and-forget on ready — the LSP worker has the workspace
     // populated by the time runner.ready resolves, so this returns
@@ -8176,11 +8295,47 @@ async function bootstrap() {
         },
         currentProject: () => workspace.currentProject(),
     };
+    // Agent access to the asset Catalog — search + import, sharing the
+    // singleton client and the same import path the Catalog tab uses
+    // (catalog-imports/, then renderFileList + syncAssetsToRuntime).
+    const aiCatalogApi = {
+        async search(query: string, opts: { kind?: 'asset' | 'pack'; category?: 'image' | 'audio' | 'font'; tags?: string[]; limit?: number } = {}) {
+            await sharedCatalogClient.load();
+            return sharedCatalogClient.search(query, opts).map(e => ({
+                id: e.id,
+                name: e.name,
+                kind: e.kind,
+                mime: e.mime,
+                tags: e.tags,
+                description: e.description,
+                bytes: e.bytes,
+                license: e.license,
+            }));
+        },
+        async import(id: number) {
+            await sharedCatalogClient.load();
+            const entry = sharedCatalogClient.getEntry(id);
+            if (!entry) throw new Error(`No catalog entry with id ${id}`);
+            if (entry.kind === 'pack') {
+                throw new Error('Packs must be imported from the Catalog tab so you can pick which files to include.');
+            }
+            const path = `catalog-imports/${catalogFilename(entry)}`;
+            const bytes = await sharedCatalogClient.fetchBytes(entry);
+            await workspace.writeBytes(path, bytes);
+            await renderFileList(workspace);
+            try { await syncAssetsToRuntime(); } catch (e) {
+                console.error('[fade] catalog import (agent): syncAssetsToRuntime failed', e);
+            }
+            return { name: entry.name, paths: [path] };
+        },
+    };
+
     mountAiChat(
         document.getElementById('ai-chat-pane')!.parentElement!,
         aiWorkspaceAdapter,
         {
             diagnostics: monacoDiagnosticsProvider,
+            catalog: aiCatalogApi,
             // Re-read on every retrieval so a project-type switch mid-chat
             // (web → monogame or back) is picked up without a remount.
             getProjectType: () => currentProject?.type,
@@ -8194,6 +8349,16 @@ async function bootstrap() {
                     if (url) window.open(url, '_blank', 'noopener');
                 }
             },
+            // Clicking/right-clicking a command or keyword in a chat snippet
+            // opens its docs in the Help panel: command first, then language
+            // keyword, then a docs search so the click is never a dead end.
+            openSymbolDocs: async (symbol) => {
+                try { dockApi.getPanel('help')?.api?.setActive(); } catch { /* ignore */ }
+                const name = helpCtl.findCommandName(symbol);
+                if (name) { helpCtl.selectCommand(name); return; }
+                const jumped = await helpCtl.jumpToKeyword(symbol);
+                if (!jumped) helpCtl.searchFor(symbol);
+            },
             validateEditContent: createProjectAwareLspEditValidator({
                 projectLspUri: PROJECT_LSP_URI,
                 readProjectSources: readProjectSourcesSync,
@@ -8205,6 +8370,23 @@ async function bootstrap() {
             }),
             getCommandNames: () => runner.listCommandDocs().then(
                 docs => docs.map(d => d.name).filter(Boolean).sort(),
+            ),
+            // A command returns a value iff its signature isn't `void…` (the sig
+            // format is "<ReturnType>R<params>"). Used by the review pass to flag
+            // value-returning commands called without parentheses.
+            getValueReturningCommands: () => runner.listCommandDocs().then(
+                docs => docs.filter(d => d.signature && !/^\s*void/i.test(d.signature))
+                    .map(d => d.name).filter(Boolean),
+            ),
+            // Full per-command docs (name + raw sig + rendered markdown) so the
+            // coder node can inject the EXACT signatures/params for the commands
+            // a given program will use — not just the bare name list.
+            getCommandDocs: () => runner.listCommandDocs().then(
+                docs => docs.filter(d => d.name).map(d => ({
+                    name: d.name,
+                    signature: d.signature ?? '',
+                    markdown: d.markdown ?? '',
+                })),
             ),
         },
     );
@@ -12083,6 +12265,103 @@ async function bootstrap() {
         },
     });
 
+    // Resolve the position to a canonical fbasic command name by
+    // going through the LSP's hover. The LSP knows about multi-word
+    // commands (`position sprite`, `set color`, etc.) and returns the
+    // full canonical phrase regardless of which sub-word the cursor
+    // is on. Monaco's model.getWordAtPosition alone can't do this —
+    // it would only yield ONE word, missing every multi-word command.
+    // The hover provider above already uses this same path; we route
+    // through the shared extractCommandNameFromHover helper so the
+    // parse stays consistent (and unit-tested in help.test.ts).
+    async function resolveCommandAtPosition(
+        model: monaco.editor.ITextModel,
+        position: monaco.Position,
+    ): Promise<string | null> {
+        const uri = model.uri.toString();
+        const mapped = toLspPosition(uri, position.lineNumber - 1, position.column - 1);
+        try {
+            const hover = await runner.getHover(lspUriFor(uri), mapped.line, mapped.character);
+            if (!hover) return null;
+            return extractCommandNameFromHover(hover.contents);
+        } catch { return null; }
+    }
+
+    // Right-click → "Help". Three-tier resolution:
+    //   1. Ask the LSP for the canonical command name at this position.
+    //      Handles multi-word commands (`position sprite`) which
+    //      getWordAtPosition can't see. If hit → openHelpForCommand
+    //      navigates the Help tab to that command entry.
+    //   2. Otherwise check the cursor's word against the keyword→
+    //      Language.md heading map. If it matches a known fbasic
+    //      keyword (`if`, `for`, `dim`, `function`, ...) we jump
+    //      straight to the documented section in the language guide.
+    //   3. Final fallback: drop the word into the help panel's global
+    //      search. Lets the user surface anything we haven't mapped
+    //      explicitly (e.g. doc names, user-coined identifiers).
+    // The Help panel re-opens itself if the user had closed it, so
+    // right-click always produces visible feedback.
+    editor.addAction({
+        id: 'fade.helpForCommand',
+        label: 'Help',
+        contextMenuGroupId: 'navigation',
+        contextMenuOrder: 2.5,
+        precondition: 'editorLangId == fade',
+        run: async (ed) => {
+            const pos = ed.getPosition();
+            if (!pos) return;
+            const model = ed.getModel();
+            if (!model) return;
+            const name = await resolveCommandAtPosition(model, pos);
+            if (name && openHelpForCommand(name)) return;
+            const word = model.getWordAtPosition(pos)?.word;
+            if (!word) return;
+            ensureHelpPanelOpen();
+            if (await helpCtl.jumpToKeyword(word)) return;
+            searchHelpForKeyword(word);
+        },
+    });
+
+    // Ctrl-click (Cmd-click on Mac) on a command → open help. Monaco's
+    // built-in Ctrl-click triggers go-to-definition via the registered
+    // DefinitionProvider, which for BUILT-IN commands returns null
+    // (they have no source location) — the built-in path is a no-op
+    // there and this handler fills the gap. For USER-DEFINED symbols
+    // (functions, labels), go-to-definition succeeds AND this
+    // handler also fires, but resolveCommandAtPosition returns null
+    // for non-commands (the LSP doesn't emit a `### name` hover for
+    // user-defined symbols) so nothing extra happens. Net effect:
+    // Ctrl-click on `position sprite` opens help, Ctrl-click on
+    // `myFunction` still jumps to source.
+    //
+    // We listen on mousedown so we react around the same time as the
+    // built-in go-to-definition. Filter for actual content (not the
+    // gutter / overview ruler / etc.) and require Ctrl or Meta
+    // without Alt (Alt-click is column-selection).
+    editor.onMouseDown(async (e) => {
+        const evt = e.event;
+        if (evt.altKey) return;
+        if (!evt.ctrlKey && !evt.metaKey) return;
+        if (e.target?.type !== monaco.editor.MouseTargetType.CONTENT_TEXT) return;
+        const pos = e.target.position;
+        if (!pos) return;
+        // Same `editor!` pattern as the gutter-glyph onMouseDown above
+        // — TS can't narrow the outer let-binding through the closure
+        // but at runtime addAction etc. already established editor is
+        // non-null in this scope.
+        const model = editor!.getModel();
+        if (!model) return;
+        const name = await resolveCommandAtPosition(model, pos);
+        if (name && openHelpForCommand(name)) return;
+        // Same three-tier fallback as the right-click action:
+        //   command → keyword map → free-text search.
+        const word = model.getWordAtPosition(pos)?.word;
+        if (!word) return;
+        ensureHelpPanelOpen();
+        if (await helpCtl.jumpToKeyword(word)) return;
+        searchHelpForKeyword(word);
+    });
+
     debugContinueBtn.addEventListener('click', async () => {
         await dbg.continue();
         debugPaused = false;
@@ -12629,6 +12908,17 @@ async function bootstrap() {
     (window as any).__fadeRunnerHelpers = {
         listTests: ({ source }: { source: string }) => runner.listTests(source),
         runTests: ({ source, name }: { source: string; name?: string }) => runner.runTests(source, name),
+        // Direct LSP completion query — used by probes to verify the
+        // C# side returns the expected items independent of Monaco's
+        // filter/sorting pipeline. Pass the same URI Monaco uses on the
+        // model (it's mapped to the LSP-side uri internally by callers).
+        getCompletions: ({ uri, line, character }: { uri: string; line: number; character: number }) =>
+            runner.getCompletions(uri, line, character),
+        // Force-push a doc snapshot to the LSP. Probes can use this to
+        // make sure the worker's view matches the model before querying.
+        setDocument: ({ uri, source }: { uri: string; source: string }) => {
+            runner.setDocument(uri, source);
+        },
         project: {
             // Refresh fade.json state synchronously and report the resolved
             // source concat. Used by playwright probes to validate ordering

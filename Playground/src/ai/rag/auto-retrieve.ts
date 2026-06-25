@@ -6,10 +6,25 @@
 export function needsCommandDocs(query: string): boolean {
     const q = query.toLowerCase().trim();
     if (q.length < 8) return false;
-    if (/\b(how do i|how to|what is|what does|which command|what command)\b/.test(q)
-        && /\b(command|fade|fbasic|api|syntax|function)\b/.test(q)) {
-        return true;
-    }
+
+    // Questions about a specific source file route to read_file, not docs —
+    // unless they're clearly also asking how a command/feature works (handled
+    // by the broader match below, which a file reference alone won't trigger).
+    const fileSpecific = /\.fbasic\b/.test(q) || /\b(my|the|this) (file|code|project)\b/.test(q);
+
+    // "Explain a language feature to me" phrasings — broad on purpose: small
+    // models phrase these many ways ("how the X works", "tell me about",
+    // "tricks for", "what's the deal with").
+    const asksAbout =
+        /\b(how (do|does|to|the|can|would|should)\b|how\b[^.?]*\bworks?\b|what(?:'s| is| are| does)\b|which command|what command|tell me about|explain\b|describe how|syntax (of|for)|tricks?\b|gotchas?\b|pitfalls?\b|best practices?\b)/.test(q);
+
+    // Fade / language-feature signal (broad nouns + explicit language mention).
+    const fadeTopic =
+        /\b(fade|fbasic)\b/.test(q)
+        || /\b(command|api|syntax|function|statement|keyword|expression|operator|directive|scope|type|loop|array|struct|module|defer|select|case)\b/.test(q);
+
+    if (asksAbout && fadeTopic && !fileSpecific) return true;
+
     if (/\b(draw|sprite|shader|texture|sound|input|keyboard|mouse|collision|vector)\b/.test(q)
         && /\b(how|what|use|call|command)\b/.test(q)) {
         return true;

@@ -58,6 +58,70 @@ const BASE_ICE_CONFIG: RTCConfiguration = {
     ],
 };
 
+/** Explicit signaling-tracker list for every trystero room we open (live
+ *  collab + GhostBot pairing). Two reasons not to rely on the defaults:
+ *  1. trystero only connects to the FIRST THREE of its four built-in
+ *     trackers (relayRedundancy = 3) — and the first one,
+ *     tracker.webtorrent.dev, has been dead/flaky for a while, so the
+ *     default rendezvous effectively hangs on openwebtorrent + a flaky
+ *     btorrent.xyz. files.fm (often the most stable) never got used.
+ *  2. Tracker health is volatile; an explicit list uses ALL of them.
+ *  Keep this overlapping with trystero's defaults so peers running older
+ *  builds still meet us on at least one common tracker.
+ *  Keep in sync with TRACKER_RELAY_URLS in ghostBot/src/ice-config.ts. */
+export const TRACKER_RELAY_URLS = [
+    'wss://tracker.openwebtorrent.com',
+    'wss://tracker.files.fm:7073/announce',
+    'wss://tracker.btorrent.xyz',
+    'wss://tracker.webtorrent.dev',
+];
+
+/** Signaling relays for the GhostBot pairing room (trystero/nostr strategy).
+ *  We moved GhostBot off the WebTorrent trackers because that ecosystem has
+ *  decayed to ~2 reliably-live trackers — if a peer's open trackers don't
+ *  overlap the other's, discovery silently never happens (the "stuck on
+ *  Looking for Playground" symptom). The Nostr relay network is far healthier
+ *  (10+/12 sampled live). This list is the intersection of trystero's curated
+ *  nostr defaults (which are known to accept the ephemeral signaling events)
+ *  and relays verified live. BOTH peers must use the SAME list — keep in sync
+ *  with GHOST_NOSTR_RELAYS in ghostBot/src/ice-config.ts.
+ *  Live collab stays on trystero/torrent (it pairs Chrome↔Chrome instantly). */
+export const GHOST_NOSTR_RELAYS = [
+    'wss://relay.snort.social',
+    'wss://nostr.mom',
+    'wss://nostr.data.haus',
+    'wss://nfdb.noswhere.com',
+    'wss://relay.fountain.fm',
+    'wss://strfry.openhoofd.nl',
+    'wss://nostr.vulpem.com',
+];
+
+/** How long simple-peer waits for ICE gathering to *signal complete* before
+ *  sending the offer/answer anyway. trystero forces `trickle: false`, so the
+ *  SDP can't go out until this fires — and simple-peer's default is a brutal
+ *  5000ms (@thaunknown/simple-peer ICECOMPLETE_TIMEOUT). Chrome emits the
+ *  end-of-candidates signal in a few hundred ms so it never waits; WKWebView
+ *  (GhostBot's Tauri webview) is unreliable about emitting it and routinely
+ *  eats the full 5s — that's the "slow and random" Chrome↔GhostBot pairing.
+ *  Capping at 1500ms still captures host (instant) + STUN srflx (~100-300ms
+ *  from Google) candidates, so remote connectivity is preserved while
+ *  same-machine pairing drops from ~5s to ~1s. Lower it further if you only
+ *  ever pair on the same machine/LAN (host candidates are immediate). */
+export const ICE_COMPLETE_TIMEOUT_MS = 1500;
+
+/** Trystero 0.20 quirk: the `rtcConfig` value handed to joinRoom is spread
+ *  directly into simple-peer's option object (trystero/src/peer.js), and
+ *  simple-peer reads the RTCConfiguration from its `config` key. Passing a
+ *  bare RTCConfiguration is silently ignored — simple-peer falls back to its
+ *  built-in defaults (Google + Twilio STUN), which is why custom ICE servers
+ *  (including the localStorage TURN escape hatch) never took effect. Nest the
+ *  configuration under `config` so it actually applies. The same spread lets
+ *  us pass simple-peer's own `iceCompleteTimeout` option through unpatched.
+ *  Keep in sync with toTrysteroRtcConfig in ghostBot/src/ice-config.ts. */
+export function toTrysteroRtcConfig(config: RTCConfiguration): RTCConfiguration {
+    return { config, iceCompleteTimeout: ICE_COMPLETE_TIMEOUT_MS } as unknown as RTCConfiguration;
+}
+
 export type IceMode = 'stun-only' | 'custom';
 
 export interface IceSelection {

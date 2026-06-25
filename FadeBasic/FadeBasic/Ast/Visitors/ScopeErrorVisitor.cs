@@ -1521,6 +1521,29 @@ namespace FadeBasic.Ast.Visitors
         }
 
 
+        /// <summary>
+        /// Recognizes compile-time integer constants, including negated
+        /// literals (`-1` parses as Negate(Literal(1)), not a literal).
+        /// Used to validate constant `len(arr, k)` dimensions statically.
+        /// </summary>
+        static bool TryGetConstantInt(IExpressionNode expr, out int value)
+        {
+            switch (expr)
+            {
+                case LiteralIntExpression lit:
+                    value = lit.value;
+                    return true;
+                case UnaryOperationExpression unary
+                    when unary.operationType == UnaryOperationType.Negate
+                         && unary.rhs is LiteralIntExpression negLit:
+                    value = -negLit.value;
+                    return true;
+                default:
+                    value = 0;
+                    return false;
+            }
+        }
+
         public static void EnsureVariablesAreDefined(this IExpressionNode expr, Scope scope, EnsureTypeContext ctx)
         {
             switch (expr)
@@ -1756,6 +1779,79 @@ namespace FadeBasic.Ast.Visitors
                         {
                             lenExpr.inner.Errors.Add(new ParseError(lenExpr.inner,
                                 ErrorCodes.LenInvalidType));
+                        }
+
+                        if (lenExpr.dimension != null)
+                        {
+                            lenExpr.dimension.EnsureVariablesAreDefined(scope, ctx);
+
+                            // the dimension form is array-only — strings have
+                            // no dimensions, so `len(x$, 2)` is a compile error.
+                            if (!innerType.unset && !innerType.IsArray)
+                            {
+                                lenExpr.dimension.Errors.Add(new ParseError(lenExpr.dimension,
+                                    ErrorCodes.LenDimensionOnNonArray));
+                            }
+                            else if (innerType.IsArray
+                                     && TryGetConstantInt(lenExpr.dimension, out var constDim)
+                                     && (constDim < 0 || constDim >= innerType.rank))
+                            {
+                                // dimensions are zero-indexed, matching array
+                                // indexing: valid range is [0, rank). Constant
+                                // dimensions validate at compile time; runtime
+                                // expressions bounds-check in the VM.
+                                lenExpr.dimension.Errors.Add(new ParseError(lenExpr.dimension,
+                                    ErrorCodes.LenDimensionOutOfRange));
+                            }
+                        }
+                    }
+                    break;
+                case DimsExpression dimsExpr:
+                    // `dims(arr)` always evaluates to an int — the array's rank.
+                    dimsExpr.ParsedType = TypeInfo.Int;
+                    if (dimsExpr.inner != null)
+                    {
+                        dimsExpr.inner.EnsureVariablesAreDefined(scope, ctx);
+                        var dimsInnerType = dimsExpr.inner.ParsedType;
+                        if (!dimsInnerType.unset && !dimsInnerType.IsArray)
+                        {
+                            dimsExpr.inner.Errors.Add(new ParseError(dimsExpr.inner,
+                                ErrorCodes.DimsInvalidType));
+                        }
+                    }
+                    break;
+                case BytesExpression bytesExpr:
+                    // `bytes(x)` always evaluates to an int. The argument is
+                    // either a bare identifier — a variable (of any type) or a
+                    // declared type name, with variables shadowing type names —
+                    // or any value-producing expression (the expression is
+                    // evaluated, and its type's byte size is the result).
+                    bytesExpr.ParsedType = TypeInfo.Int;
+                    if (bytesExpr.inner is VariableRefNode bytesVarRef)
+                    {
+                        if (scope.TryGetSymbol(bytesVarRef.variableName, out _))
+                        {
+                            bytesExpr.inner.EnsureVariablesAreDefined(scope, ctx);
+                        }
+                        else if (scope.TryGetType(bytesVarRef.variableName, out _))
+                        {
+                            bytesExpr.resolvedTypeName = bytesVarRef.variableName;
+                        }
+                        else
+                        {
+                            bytesExpr.inner.Errors.Add(new ParseError(bytesExpr.inner,
+                                ErrorCodes.BytesUnknownSymbol));
+                        }
+                    }
+                    else if (bytesExpr.inner != null)
+                    {
+                        bytesExpr.inner.EnsureVariablesAreDefined(scope, ctx);
+                        var bytesInnerType = bytesExpr.inner.ParsedType;
+                        if (!bytesInnerType.unset && bytesInnerType.type == VariableType.Void)
+                        {
+                            // a void expression has no value and no size
+                            bytesExpr.inner.Errors.Add(new ParseError(bytesExpr.inner,
+                                ErrorCodes.BytesInvalidArgument));
                         }
                     }
                     break;

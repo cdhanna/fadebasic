@@ -7,6 +7,9 @@ export const TOOLS_CAPABILITY_BLOCK =
     + '- apply_edit / create_file — propose code changes (user approves the diff)\n'
     + '- get_diagnostics — LSP errors/warnings for any file\n'
     + '- search_docs — Fade language documentation (REQUIRED before using unfamiliar commands)\n'
+    + '- search_catalog / browse_catalog / import_catalog_asset — find & add free sprites, sounds '
+    + 'and fonts. If search_catalog finds nothing, call browse_catalog to list real entries and '
+    + 'pick the closest yourself (ask before importing)\n'
     + 'Never tell the user you "cannot access" or "don\'t have" their source code. '
     + 'Call read_file (or list_files first) and answer from the result.\n'
     + 'Never invent Fade command names — call search_docs when unsure.';

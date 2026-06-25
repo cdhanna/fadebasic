@@ -363,13 +363,22 @@ namespace FadeBasic
             //  or we need to generate it, which may cause a cascade of calls and
             //  generate the type info for whole method swaths.
 
-            // first, identify all return statements
+            // first, identify all return statements. Track parse errors in the
+            // same walk — a structurally broken function (e.g. an unterminated
+            // `if` swallowed the `endfunction` while the user is mid-edit) must
+            // not be treated as returning void.
             var returnStatements = new List<FunctionReturnStatement>();
+            var hasParseErrors = false;
             function.Visit(child =>
             {
                 if (child is FunctionReturnStatement exit)
                 {
                     returnStatements.Add(exit);
+                }
+
+                if (child is AstNode childNode && childNode.HasErrors)
+                {
+                    hasParseErrors = true;
                 }
             });
             if (function.hasNoReturnExpression)
@@ -377,18 +386,23 @@ namespace FadeBasic
                 // this implies there is an implicit VOID return type
                 SetFunctionType(function, TypeInfo.Void, function);
             }
-            
+
             // then, each return statement needs to be checked.
             //  it is possible that any return statement could
             //  result in a recursive call to this same method.
 
             if (returnStatements.Count == 0)
             {
+                // poison rather than default: a broken function's return type
+                // is UNKNOWN, and Unset is assignable to everything — so the
+                // single structural error doesn't cascade into a type error
+                // at every call site.
+                var inferred = hasParseErrors ? TypeInfo.Unset : TypeInfo.Void;
                 functionReturnTypeTable[function.name] = new List<TypeInfo>
                 {
-                    TypeInfo.Void
+                    inferred
                 };
-                return TypeInfo.Void;
+                return inferred;
             }
             foreach (var exit in returnStatements)
             {
@@ -2885,9 +2899,15 @@ namespace FadeBasic
                         looking = false;
                         break;
                     default:
+                        if (IsEnclosingBlockTerminator(nextToken.type))
+                        {
+                            errors.Add(new ParseError(forToken, ErrorCodes.ForStatementMissingNext));
+                            looking = false;
+                            break;
+                        }
                         var member = ParseStatement(statements);
                         statements.Add(member);
-                        break; 
+                        break;
                 }
             }
 
@@ -2959,12 +2979,28 @@ namespace FadeBasic
                         looking = false;
                         break;
                     default:
+                        if (IsEnclosingBlockTerminator(nextToken.type))
+                        {
+                            error = new ParseError(repeatToken, ErrorCodes.RepeatStatementMissingUntil);
+                            looking = false;
+                            break;
+                        }
                         var member = ParseStatement(statements);
                         statements.Add(member);
-                        break; 
+                        break;
                 }
             }
-            var condition = ParseWikiExpression();
+            IExpressionNode condition;
+            if (error != null)
+            {
+                // the repeat never found its `until` — don't try to parse a
+                // condition out of whatever token terminated the block.
+                condition = new LiteralIntExpression(repeatToken, 0);
+            }
+            else
+            {
+                condition = ParseWikiExpression();
+            }
 
             var repeatStatement = new RepeatUntilStatement
             {
@@ -3006,6 +3042,12 @@ namespace FadeBasic
                         looking = false;
                         break;
                     default:
+                        if (IsEnclosingBlockTerminator(nextToken.type))
+                        {
+                            error = new ParseError(whileToken, ErrorCodes.WhileStatementMissingEndWhile);
+                            looking = false;
+                            break;
+                        }
                         var member = ParseStatement(statements);
                         statements.Add(member);
                         break; 
@@ -3274,9 +3316,18 @@ namespace FadeBasic
                                 statements = negativeStatements;
                                 break;
                             default:
+                                if (IsEnclosingBlockTerminator(nextToken.type))
+                                {
+                                    // a closer for an enclosing block: this if is
+                                    // unterminated. Stop here without consuming so
+                                    // the enclosing construct still matches.
+                                    error = new ParseError(ifToken, ErrorCodes.IfStatementMissingEndIf);
+                                    looking = false;
+                                    break;
+                                }
                                 var member = ParseStatement(statements);
                                 statements.Add(member);
-                                break; 
+                                break;
                         }
                     }
 
@@ -3291,6 +3342,40 @@ namespace FadeBasic
 
         }
         
+        /// <summary>
+        /// Tokens that close (or begin) an enclosing construct. When a block
+        /// body parser encounters one of these, the current block is
+        /// unterminated — the parser emits the block's missing-closer error
+        /// and stops WITHOUT consuming the token, so the enclosing
+        /// construct's parser can still match it. This keeps a mid-edit `if`
+        /// from swallowing the rest of the file: the enclosing function/loop
+        /// stays intact and the user sees a single error on the unfinished
+        /// block instead of a cascade.
+        /// </summary>
+        static bool IsEnclosingBlockTerminator(LexemType type)
+        {
+            switch (type)
+            {
+                case LexemType.KeywordEndIf:
+                case LexemType.KeywordEndFunction:
+                case LexemType.KeywordFunction:
+                case LexemType.KeywordNext:
+                case LexemType.KeywordEndWhile:
+                case LexemType.KeywordUntil:
+                case LexemType.KeywordEndType:
+                case LexemType.KeywordEndSelect:
+                case LexemType.KeywordEndCase:
+                case LexemType.KeywordCase:
+                case LexemType.KeywordEndTest:
+                case LexemType.KeywordEndRunto:
+                case LexemType.KeywordEndMock:
+                case LexemType.KeywordEndDefer:
+                    return true;
+                default:
+                    return false;
+            }
+        }
+
         private GotoStatement ParseGoto(Token gotoToken)
         {
             var next = _stream.Advance();
@@ -4140,11 +4225,13 @@ namespace FadeBasic
             {
                 case LexemType.KeywordLen:
                 {
-                    // `len(<expr>)` — returns array element count or string
-                    // character count as an int. Parens are required for
-                    // clarity (matches the BASIC family's usual `LEN(x)`
-                    // form). The inner expression's type (array or string)
-                    // determines element size at compile time.
+                    // `len(<expr>)` — string character count, or array
+                    // dimension size, as an int. `len(arr, k)` selects the
+                    // k-th dimension (1-based); without `k`, dimension 1.
+                    // Parens are required for clarity (matches the BASIC
+                    // family's usual `LEN(x)` form). The visitor enforces
+                    // that only arrays/strings appear here, and that the
+                    // dimension form is array-only.
                     var lenTok = _stream.Advance();
                     if (_stream.Peek.type != LexemType.ParenOpen)
                     {
@@ -4161,17 +4248,102 @@ namespace FadeBasic
                         outputExpression = badLen;
                         break;
                     }
+                    IExpressionNode lenDimension = null;
+                    if (_stream.Peek.type == LexemType.ArgSplitter)
+                    {
+                        _stream.Advance(); // consume `,`
+                        if (!TryParseExpression(out lenDimension))
+                        {
+                            var badLen = new LenExpression(lenTok, lenInner.EndToken, lenInner);
+                            badLen.Errors.Add(new ParseError(lenTok, ErrorCodes.LenMissingExpression));
+                            outputExpression = badLen;
+                            break;
+                        }
+                    }
                     if (_stream.Peek.type != LexemType.ParenClose)
                     {
                         var badLen = new LenExpression(lenTok, lenInner.EndToken, lenInner);
+                        badLen.dimension = lenDimension;
                         badLen.Errors.Add(new ParseError(lenTok, ErrorCodes.LenMissingCloseParen));
                         outputExpression = badLen;
                         break;
                     }
                     var closeTok = _stream.Advance();
                     var lenExpr = new LenExpression(lenTok, closeTok, lenInner);
+                    lenExpr.dimension = lenDimension;
                     lenExpr.ParsedType = TypeInfo.Int;
                     outputExpression = lenExpr;
+                    break;
+                }
+                case LexemType.KeywordDims:
+                {
+                    // `dims(<arr>)` — the number of dimensions (rank) of an
+                    // array, as an int. Compile-time constant; exists so code
+                    // can iterate dimensions generically with `len(arr, k)`.
+                    var dimsTok = _stream.Advance();
+                    if (_stream.Peek.type != LexemType.ParenOpen)
+                    {
+                        var badDims = new DimsExpression(dimsTok, dimsTok, null);
+                        badDims.Errors.Add(new ParseError(dimsTok, ErrorCodes.DimsMissingParens));
+                        outputExpression = badDims;
+                        break;
+                    }
+                    _stream.Advance(); // consume `(`
+                    if (!TryParseExpression(out var dimsInner))
+                    {
+                        var badDims = new DimsExpression(dimsTok, dimsTok, null);
+                        badDims.Errors.Add(new ParseError(dimsTok, ErrorCodes.DimsMissingExpression));
+                        outputExpression = badDims;
+                        break;
+                    }
+                    if (_stream.Peek.type != LexemType.ParenClose)
+                    {
+                        var badDims = new DimsExpression(dimsTok, dimsInner.EndToken, dimsInner);
+                        badDims.Errors.Add(new ParseError(dimsTok, ErrorCodes.DimsMissingCloseParen));
+                        outputExpression = badDims;
+                        break;
+                    }
+                    var dimsClose = _stream.Advance();
+                    var dimsExpr = new DimsExpression(dimsTok, dimsClose, dimsInner);
+                    dimsExpr.ParsedType = TypeInfo.Int;
+                    outputExpression = dimsExpr;
+                    break;
+                }
+                case LexemType.KeywordBytes:
+                {
+                    // `bytes(<var-or-type>)` — memory size of a value in
+                    // bytes, as an int. Struct/scalar variables and type
+                    // names fold to constants; arrays and strings read the
+                    // allocation size at runtime. The visitor resolves
+                    // whether the identifier names a variable or a type
+                    // (variables shadow type names).
+                    var bytesTok = _stream.Advance();
+                    if (_stream.Peek.type != LexemType.ParenOpen)
+                    {
+                        var badBytes = new BytesExpression(bytesTok, bytesTok, null);
+                        badBytes.Errors.Add(new ParseError(bytesTok, ErrorCodes.BytesMissingParens));
+                        outputExpression = badBytes;
+                        break;
+                    }
+                    _stream.Advance(); // consume `(`
+                    if (!TryParseExpression(out var bytesInner))
+                    {
+                        var badBytes = new BytesExpression(bytesTok, bytesTok, null);
+                        badBytes.Errors.Add(new ParseError(bytesTok, ErrorCodes.BytesMissingExpression));
+                        outputExpression = badBytes;
+                        break;
+                    }
+                    if (_stream.Peek.type != LexemType.ParenClose)
+                    {
+                        var badBytes = new BytesExpression(bytesTok, bytesInner.EndToken, bytesInner);
+                        badBytes.Errors.Add(new ParseError(bytesTok, ErrorCodes.BytesMissingCloseParen));
+                        outputExpression = badBytes;
+                        break;
+                    }
+                    var bytesClose = _stream.Advance();
+                    var bytesExpr = new BytesExpression(bytesTok, bytesClose, bytesInner);
+                    bytesExpr.ParsedType = TypeInfo.Int;
+                    outputExpression = bytesExpr;
                     break;
                 }
                 case LexemType.KeywordCallCount:

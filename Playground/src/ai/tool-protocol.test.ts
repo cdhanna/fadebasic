@@ -78,11 +78,24 @@ describe('ToolCallStreamParser', () => {
         expect(text).toBe(' ok');
     });
 
-    it('handles an unclosed tag gracefully on end()', () => {
+    it('salvages a valid tool_call that is missing its closing tag', () => {
+        // Small models often stop right after the JSON (end-of-turn token)
+        // without emitting </tool_call>. The body is valid, so recover it.
         const p = new ToolCallStreamParser();
-        const out = feedAll(p, ['<tool_call>{"name":"a","args":{}}']);
+        const out = feedAll(p, ['<tool_call>{"name":"read_file","args":{"path":"main.fbasic"}}']);
+        const calls = out.filter(e => e.kind === 'tool_call') as Array<{ name: string; args: { path: string } }>;
+        expect(calls).toHaveLength(1);
+        expect(calls[0].name).toBe('read_file');
+        expect(calls[0].args.path).toBe('main.fbasic');
         const text = out.filter(e => e.kind === 'text').map(e => (e as { delta: string }).delta).join('');
-        expect(text).toContain('unclosed <tool_call>');
+        expect(text).not.toContain('unclosed');
+    });
+
+    it('reports a parse error for an unclosed AND malformed tool_call body', () => {
+        const p = new ToolCallStreamParser();
+        const out = feedAll(p, ['<tool_call>{"name":"a", not json']);
+        const errors = out.filter(e => e.kind === 'tool_parse_error');
+        expect(errors).toHaveLength(1);
     });
 
     it('accepts arguments alias', () => {

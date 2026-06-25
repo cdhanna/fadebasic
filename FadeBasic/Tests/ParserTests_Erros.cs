@@ -3247,10 +3247,11 @@ repeat
         var parser = MakeParser(input);
         var prog = parser.ParseProgram();
 
+        // exactly one error — the missing `until` must not cascade into a
+        // second "expression missing" error from parsing a condition at EOF.
         var errors = prog.GetAllErrors();
-        Assert.That(errors.Count, Is.EqualTo(2)); 
+        Assert.That(errors.Count, Is.EqualTo(1));
         Assert.That(errors[0].Display, Is.EqualTo($"[1:0] - {ErrorCodes.RepeatStatementMissingUntil}"));
-        Assert.That(errors[1].Display, Is.EqualTo($"[1:7] - {ErrorCodes.ExpressionMissing}"));
     }
     
     

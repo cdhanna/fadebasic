@@ -49,3 +49,5 @@ msbuild.wrn
 
 # BenchmarkDotNet output
 **/BenchmarkDotNet.Artifacts/
+
+node_modules/

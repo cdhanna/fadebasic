@@ -15,7 +15,7 @@ import type {
     RoomStatus,
     Unsubscribe,
 } from './transport';
-import { selectWorkingIceConfig } from './ice-probe';
+import { selectWorkingIceConfig, toTrysteroRtcConfig, TRACKER_RELAY_URLS } from './ice-probe';
 
 const ACTION = 'y';  // Trystero requires a 12-byte-or-less action ID
 
@@ -39,7 +39,8 @@ class TrysteroRoom implements CollabRoom {
             {
                 appId: opts.appId,
                 password: opts.password,
-                rtcConfig,
+                rtcConfig: toTrysteroRtcConfig(rtcConfig),
+                relayUrls: TRACKER_RELAY_URLS,
             },
             opts.roomId,
         );

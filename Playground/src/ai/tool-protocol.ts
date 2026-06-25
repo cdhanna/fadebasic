@@ -97,10 +97,25 @@ export class BlockStreamParser {
     end(): ProtocolEvent[] {
         const out: ProtocolEvent[] = [];
         if (this.inTag !== null) {
-            out.push({ kind: 'text', delta: `\n[unclosed <${this.inTag}>: ${this.buffer}]\n` });
+            // Smaller models frequently emit a complete, valid <tool_call>
+            // body but stop before the closing </tool_call> (they hit an
+            // end-of-turn token right after the JSON). Rather than discard a
+            // perfectly good call as "[unclosed …]" text, try to parse the
+            // buffered body — if it's a usable tool_call/plan, salvage it.
+            const salvaged = this.parseBody(this.inTag, this.buffer, this.inTagAttrs);
+            const wasTag = this.inTag;
             this.buffer = '';
             this.inTag = null;
             this.inTagAttrs = null;
+            if (salvaged && (salvaged.kind === 'tool_call' || salvaged.kind === 'plan')) {
+                out.push(salvaged);
+            } else if (salvaged && salvaged.kind === 'tool_parse_error') {
+                // Genuinely malformed — surface as a parse error so the agent
+                // can nudge a retry, not as confusing inline text.
+                out.push(salvaged);
+            } else {
+                out.push({ kind: 'text', delta: `\n[unclosed <${wasTag}>]\n` });
+            }
         } else if (this.buffer.length > 0) {
             out.push({ kind: 'text', delta: this.buffer });
             this.buffer = '';
@@ -416,9 +431,11 @@ export function getFewShotTurns(): Msg[] {
         },
         {
             role: 'assistant',
-            content: '<tool_call name="apply_edit" path="examples/sample.fbasic" start="2" end="2">\n'
-                + '  return w * h * 2\n'
-                + '</tool_call>',
+            // JSON form — same shape as every other tool. ALL args go inside
+            // "args". (The attribute form is also accepted for big multi-line
+            // edits, but JSON is shown here so the model has a complete
+            // template and never emits a name-only call.)
+            content: '<tool_call>{"name":"apply_edit","args":{"path":"examples/sample.fbasic","startLine":2,"endLine":2,"newText":"  return w * h * 2"}}</tool_call>',
         },
         {
             role: 'user',
@@ -438,12 +455,15 @@ You communicate using <tool_call> blocks to inspect or modify the workspace.
   <tool_call>{"name":"read_file","args":{"path":"main.fbasic"}}</tool_call>
   <tool_call>{"name":"list_files","args":{}}</tool_call>
 
-**Write tools** — use attributes + raw body (avoids JSON escaping for multiline code):
+**Write tools** — same JSON form. EVERY argument goes inside "args"; escape
+newlines in code as \\n. Never emit a tool_call with just a name and no args.
+  <tool_call>{"name":"apply_edit","args":{"path":"main.fbasic","startLine":5,"endLine":5,"newText":"print \\"hello\\""}}</tool_call>
+  <tool_call>{"name":"create_file","args":{"path":"new.fbasic","content":"print \\"new\\""}}</tool_call>
+
+For a LARGE multi-line edit you may instead use the attribute form (avoids
+escaping every newline):
   <tool_call name="apply_edit" path="main.fbasic" start="5" end="5">
   print "hello"
-  </tool_call>
-  <tool_call name="create_file" path="new.fbasic">
-  print "new"
   </tool_call>
 
 After \`</tool_call>\`, STOP. The runtime executes the tool and returns

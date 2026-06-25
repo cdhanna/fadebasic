@@ -115,7 +115,7 @@ tuna_opt_string 3 `an empty optional does not need to allocate
         vm.sweepInterval = 1; // GC tests exercise the sweep-on-every-store path
 
         vm.Execute2(0);
-        vm.heap.Sweep();
+        vm.CollectGarbage();
 
         Assert.That(vm.heap.Allocations, Is.EqualTo(allocationCount));
     }
@@ -154,7 +154,7 @@ q3 = x3.z
         vm.sweepInterval = 1; // this test guards against stale copies of freed memory
 
         vm.Execute2(0);
-        vm.heap.Sweep();
+        vm.CollectGarbage();
 
         var v = vm.dataRegisters[6];
         var v2 = vm.dataRegisters[7];
@@ -194,7 +194,7 @@ next
         vm.sweepInterval = 1; // GC tests exercise the sweep-on-every-store path
 
         vm.Execute2(0);
-        vm.heap.Sweep();
+        vm.CollectGarbage();
 
         Assert.That(vm.heap.Allocations, Is.EqualTo(allocationCount));
     }
