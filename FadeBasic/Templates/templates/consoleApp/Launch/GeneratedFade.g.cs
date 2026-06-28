@@ -1,16 +1,17 @@
 // This is a generated file. Do not edit directly.
 
 using System;
+using System.Collections.Generic;
 using FadeBasic;
 using FadeBasic.Launch;
 using FadeBasic.Virtual;
 
-public class GeneratedFade : ILaunchable
+public partial class GeneratedFade : ITestLaunchable
 {
     
-    public static void Main(string[] args)
+    public static int Main(string[] args)
     {
-        Launcher.Run<GeneratedFade>();
+        return Launcher.Main<GeneratedFade>(args);
     }
 
 
@@ -21,6 +22,8 @@ public class GeneratedFade : ILaunchable
     public CommandCollection CommandCollection => _collection;
 
     public DebugData DebugData => _debugData;
+
+    public IReadOnlyList<TestManifestEntry> TestManifest => _testManifest;
 
     #region method table
     private static readonly CommandCollection _collection = new CommandCollection(
@@ -35,6 +38,11 @@ public class GeneratedFade : ILaunchable
 
     #region bytecode
     protected byte[] _byteCode = LaunchUtil.Unpack64(encodedByteCode);
-    protected const string encodedByteCode = "IAAAAAEA////fwkJAQABAAAAAQABAAAADgEA////fxV7InR5cGVzIjp7fSwiZnVuY3Rpb25zIjp7fSwic3RyaW5ncyI6W3sidmFsdWUiOiJoZWxsbyB3b3JsZCIsImluZGV4UmVmZXJlbmNlcyI6WzRdfV19";
+    protected const string encodedByteCode = "NgAAAAEL////f////38JCQEAAQAAAAEAAwAAAA4BAB0AAAA/EQEALQAAACUVNzcBAP///38VeyJ0eXBlcyI6e30sImZ1bmN0aW9ucyI6e30sInN0cmluZ3MiOlt7InZhbHVlIjoiaGVsbG8gd29ybGQiLCJpbmRleFJlZmVyZW5jZXMiOls0XX1dLCJtYXhSZWdpc3RlckFkZHJlc3NTZXJpYWxpemVyIjoiMSJ9";
+    #endregion
+
+    #region testManifest
+    protected IReadOnlyList<TestManifestEntry> _testManifest = LaunchUtil.UnpackTestManifest(encodedTestManifest);
+    protected const string encodedTestManifest = "eyJlbnRyaWVzIjpbXX0=";
     #endregion
 }

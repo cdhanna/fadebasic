@@ -2,11 +2,31 @@
   <PropertyGroup>
     <TargetFramework>net8.0</TargetFramework>
     <OutputType>Exe</OutputType>
+    <!--
+      To make `dotnet test` discover and run every Fade `test ... endtest`
+      block, add a single line to the ItemGroup below:
+
+          <PackageReference Include="FadeBasic.Testing" Version="..." />
+
+      The package's own props default <FadeEnableTesting>true</FadeEnableTesting>
+      and set every required MTP knob (IsTestProject, the platform runner
+      flags, suppressing the auto-Main, etc.). The build auto-writes a
+      global.json next to this csproj on first build, opting `dotnet test`
+      into Microsoft.Testing.Platform — that file is required because the
+      runner choice is made at CLI parse time before any project loads, and
+      there is no csproj equivalent.
+
+      To opt out for a project that inherited the reference (e.g., from a
+      Directory.Build.props), set <FadeEnableTesting>false</FadeEnableTesting>.
+
+      The project remains an Exe — `dotnet run` keeps working — so a single
+      csproj answers both `dotnet run` and `dotnet test`.
+    -->
   </PropertyGroup>
   <ItemGroup>
-    <PackageReference Include="FadeBasic.Build" Version="1.0.0" />
-    <PackageReference Include="FadeBasic.Lang.Core" Version="1.0.0" />
-    <PackageReference Include="FadeBasic.Lib.Standard" Version="1.0.0" />
+    <PackageReference Include="FadeBasic.Build" Version="0.0.2.595" />
+    <PackageReference Include="FadeBasic.Lang.Core" Version="0.0.2.595" />
+    <PackageReference Include="FadeBasic.Lib.Standard" Version="0.0.2.595" />
     <FadeCommand Include="FadeBasic.Lib.Standard" FullName="FadeBasic.Lib.Standard.ConsoleCommands" />
     <FadeCommand Include="FadeBasic.Lib.Standard" FullName="FadeBasic.Lib.Standard.StandardCommands" />
     <FadeSource Include="main.fbasic" />

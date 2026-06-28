@@ -29,6 +29,7 @@
                     relative-to-action="XDebugger.AttachToProcess"
                     anchor="after"/>
     </action>
+
   </actions>
   <change-notes><![CDATA[<p>Initial release: LSP wiring, DAP run configuration, settings page.</p>]]></change-notes>
   <!-- LSP (`com.intellij.modules.lsp`) requires Rider / platform 2025.2+ -->
