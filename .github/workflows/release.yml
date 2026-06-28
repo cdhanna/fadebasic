@@ -41,7 +41,11 @@ on:
 run-name:  Release ${{ inputs.majorSemver }}.${{ inputs.minorSemver }}.${{ inputs.patchSemver }} by @${{ github.actor }}
 jobs:
   release:
-    timeout-minutes: 10
+    # Generous: this job does a pre-test build (full install.sh), the test run,
+    # the Rider gradle build+publish, then another full install.sh (build + pack
+    # + Blazor WASM publish + nuget push) and the VS Code publish. 10 minutes
+    # routinely times out at the build-script step.
+    timeout-minutes: 40
     runs-on: ubuntu-latest
     permissions:
       contents: write
