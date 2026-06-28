@@ -179,8 +179,9 @@ namespace FadeBasic.TestAdapter
 
             var candidates = types
                 .Where(t => t != null
-                            && !t.IsAbstract
-                            && !t.IsInterface
+                            && t.IsPublic            // top-level public; the generated launchable always is.
+                            && !t.IsAbstract         // (excludes nested/private types such as a test
+                            && !t.IsInterface        //  project's own ITestLaunchable test doubles.)
                             && typeof(ITestLaunchable).IsAssignableFrom(t)
                             && t.GetConstructor(Type.EmptyTypes) != null)
                 .ToList();
