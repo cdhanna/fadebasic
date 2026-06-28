@@ -57,6 +57,12 @@ namespace FadeBasic.Virtual
     {
         public int fromIns;
         public int toIns;
+        // True when this frame was pushed by a test launcher's GOSUB
+        // (JUMP_HISTORY_LAUNCH). Launcher frames are control-flow plumbing
+        // — they exist so a test's `from`-chain can run as a sequence of
+        // GOSUBs — and shouldn't appear in user-facing stack traces. The
+        // RETURN opcode still pops them; only stack-trace capture filters.
+        public bool isLauncherFrame;
     }
 
     public struct VirtualRuntimeError
@@ -64,6 +70,11 @@ namespace FadeBasic.Virtual
         public VirtualRuntimeErrorType type;
         public int insIndex;
         public string message;
+        // Snapshot of the VM's methodStack at the moment the error was raised
+        // (innermost frame first). Resolution to source locations is done by
+        // a downstream consumer that has access to DebugData. Empty when the
+        // error happened with no function calls in flight.
+        public JumpHistoryData[] callStack;
     }
 
     public enum VirtualRuntimeErrorType
@@ -74,7 +85,8 @@ namespace FadeBasic.Virtual
         INVALID_ADDRESS,
         INVALID_MEMORY_COPY,
         CANNOT_TOKENIZE_WITHOUT_HIGHER_CONTEXT,
-        EXPLODE
+        EXPLODE,
+        ASSERT_FAILED
     }
 
     public class TokenReplacement
@@ -109,7 +121,25 @@ namespace FadeBasic.Virtual
         
         public FastStack<byte> stack = new FastStack<byte>(256);
         public VmHeap heap;
-        
+
+        /// <summary>
+        /// How many heap allocations may happen between garbage collections.
+        /// Collection triggers are checked at pointer stores, heap writes, and
+        /// allocs; a collection only runs when at least this many allocations
+        /// occurred since the last one. 1 collects at every opportunity — the
+        /// most aggressive behavior, which the GC tests rely on. The default
+        /// amortizes the O(live allocations) trace cost while keeping
+        /// unreachable memory short-lived.
+        /// </summary>
+        public int sweepInterval = DEFAULT_SWEEP_INTERVAL;
+        public const int DEFAULT_SWEEP_INTERVAL = 64;
+
+        // scratch state for CollectGarbage, reused across collections
+        private HashSet<VmPtr> _gcMarks;
+        private Stack<VmPtr> _gcWork;
+        private List<VmPtr> _internedPtrs;
+
+
         public HostMethodTable hostMethods;
         public FastStack<JumpHistoryData> methodStack; // TODO: This could also store the index of the scope-stack at the time of the push; so that a debugger could know the scope at the frame.
 
@@ -129,10 +159,97 @@ namespace FadeBasic.Virtual
 
         public List<TokenReplacement> tokenReplacements;
 
+        /// <summary>
+        /// Stack of pending runto frames. Each frame records the target program
+        /// address the test asked to advance to, and the test-side instruction
+        /// the VM should resume at when that target is hit.
+        /// </summary>
+        public FastStack<RuntoFrame> runtoStack = new FastStack<RuntoFrame>(4);
+
+        /// <summary>
+        /// Where the program should resume from on the next `runto`. On the very
+        /// first `runto`, this points at the program's main entry (instructionIndex
+        /// after interned-data setup, i.e. 4). On subsequent runtos, this is the
+        /// saved IP from the most recent RUNTO_YIELD.
+        /// </summary>
+        public int programResumeIP;
+
+        /// <summary>
+        /// Set when an `assert` fails during test execution. Null means the test
+        /// has not failed any assertions (yet). The test runner inspects this
+        /// after Execute() returns to determine pass/fail.
+        /// </summary>
+        public TestFailure assertionFailure;
+
+        /// <summary>
+        /// True when this VM is running a test entry point. The test runner sets
+        /// this before <c>Execute</c> so a failed `assert` (anywhere — even in
+        /// main-program code reached via runto) records a TestFailure and halts
+        /// instead of throwing a runtime exception. When false, a failed assert
+        /// triggers a normal VM runtime error, identical to divide-by-zero etc.
+        /// </summary>
+        public bool isTestExecution;
+
+        public class TestFailure
+        {
+            public string sourceText;   // Captured text of the asserted expression.
+            public int instructionIndex; // IP at the moment of failure (for source-mapping).
+            public string reason;       // Optional reason string from `assert <cond>, "<reason>"`. Empty when not provided.
+            // Snapshot of methodStack at the moment of failure. Innermost frame
+            // first (top of stack). Each entry's fromIns is the call site of
+            // that frame; toIns is the function's entry address. Empty when the
+            // assert fired at the test entry level with no function calls in
+            // between. Used to build a source-mapped call stack for the failure
+            // report; resolution happens in the test runner, not the VM.
+            public JumpHistoryData[] callStack = System.Array.Empty<JumpHistoryData>();
+        }
+
+        /// <summary>
+        /// Per-VM mock registrations. Keyed by host method id (the index into
+        /// <see cref="HostMethodTable.methods"/>). On CALL_HOST the dispatcher
+        /// consults this table first; if a registration exists, it pops the
+        /// command's args via metadata and synthesizes the mock behavior in
+        /// place of the real call.
+        /// </summary>
+        public Dictionary<int, MockBehavior> mockTable;
+
+        /// <summary>
+        /// Per-VM host-call counter. Incremented on every CALL_HOST (mocked or
+        /// not) when <see cref="isTestExecution"/> is true. Read by the
+        /// <c>call count &lt;command&gt;</c> expression so tests can assert
+        /// how often a command was invoked. Keyed by host method id, same as
+        /// <see cref="mockTable"/>. Null until the first increment.
+        /// </summary>
+        public Dictionary<int, int> hostCallCounts;
+
+        public class MockBehavior
+        {
+            // 0 = void (skip), 1 = returns (push value), 2 = forbid (assert-fail),
+            // 3 = body (run bytecode block — Phase B onward).
+            public byte kind;
+            // For kind = Returns: the typed return value to push.
+            public byte returnTypeCode;
+            public byte[] returnBytes;
+            // For kind = Forbid: optional user-supplied reason text (empty
+            // when the user wrote `forbid` with no reason) and the address
+            // of the assert-unwind trampoline so a forbid failure can drain
+            // defers the same way an assert failure does.
+            public string forbidReason;
+            public int forbidTrampolineAddr;
+            // For kind = Body: bytecode address of the mock body. CALL_HOST
+            // pushes methodStack and jumps here. The body itself pushes a
+            // scope, binds args from the stack as locals, runs user code,
+            // pops scope, and RETURNs to the caller.
+            public int bodyAddr;
+        }
+
         public VirtualMachine(IEnumerable<byte> program) : this(program.ToArray())
         {
         }
-        public VirtualMachine(byte[] program)
+        public VirtualMachine(byte[] program) : this(program, 4)
+        {
+        }
+        public VirtualMachine(byte[] program, int entryPointAddress)
         {
             this.program = program;
             shouldThrowRuntimeException = true;
@@ -140,11 +257,12 @@ namespace FadeBasic.Virtual
             scopeStack = new FastStack<VirtualScope>(16);
             methodStack = new FastStack<JumpHistoryData>(16);
             heap = new VmHeap(128);
-            
-            instructionIndex = 4;
+
+            instructionIndex = entryPointAddress;
+            programResumeIP = 4;
             internedDataInstructionIndex = BitConverter.ToInt32(program, 0);
 
-            
+
             ReadInternedData();
             globalScope = scope = new VirtualScope(internedData.maxRegisterAddress);
             scopeStack.Push(globalScope);
@@ -152,6 +270,155 @@ namespace FadeBasic.Virtual
             // scopeStack.Push(scope);
         }
 
+
+        /// <summary>
+        /// Tracing garbage collection: compute the set of reachable heap
+        /// allocations and free everything else.
+        ///
+        /// Roots:
+        ///  - interned strings (pinned for the lifetime of the VM)
+        ///  - every register in every live scope whose type code or flags say
+        ///    it holds a heap pointer (over-approximated on purpose; a stale
+        ///    flag can only retain garbage, never free a live object)
+        ///  - the eval stack, scanned conservatively: any 8-byte window whose
+        ///    bytes match a live allocation's pointer is treated as a
+        ///    reference. This keeps mid-expression temporaries alive, e.g. a
+        ///    concat result sitting on the stack while a called function runs.
+        ///
+        /// Reachability then flows through heap data: arrays of strings,
+        /// struct string fields, and nested structs are traced via each
+        /// allocation's HeapTypeFormat and the interned type table.
+        /// </summary>
+        public void CollectGarbage()
+        {
+            var marks = _gcMarks ?? (_gcMarks = new HashSet<VmPtr>());
+            var work = _gcWork ?? (_gcWork = new Stack<VmPtr>());
+            marks.Clear();
+            work.Clear();
+
+            if (_internedPtrs != null)
+            {
+                for (var i = 0; i < _internedPtrs.Count; i++)
+                {
+                    GcMark(_internedPtrs[i]);
+                }
+            }
+
+            GcMarkScope(ref globalScope);
+            GcMarkScope(ref scope);
+            for (var i = 0; i < scopeStack.ptr; i++)
+            {
+                GcMarkScope(ref scopeStack.buffer[i]);
+            }
+
+            // conservative eval-stack scan: pointers are stored as
+            // [bucket int][memory int], the same layout VmPtr.GetBytes writes.
+            for (var i = 0; i + 8 <= stack.ptr; i++)
+            {
+                var candidate = new VmPtr
+                {
+                    bucketPtr = BitConverter.ToInt32(stack.buffer, i),
+                    memoryPtr = BitConverter.ToInt32(stack.buffer, i + 4),
+                };
+                GcMark(candidate);
+            }
+
+            while (work.Count > 0)
+            {
+                GcTrace(work.Pop());
+            }
+
+            heap.SweepUnmarked(marks);
+        }
+
+        void GcMark(VmPtr ptr)
+        {
+            if (heap.IsAllocated(ptr) && _gcMarks.Add(ptr))
+            {
+                _gcWork.Push(ptr);
+            }
+        }
+
+        void GcMarkScope(ref VirtualScope vScope)
+        {
+            if (vScope.dataRegisters == null) return;
+            for (var r = 0; r < vScope.dataRegisters.Length; r++)
+            {
+                var tc = vScope.typeRegisters[r];
+                if (tc == TypeCodes.STRING || tc == TypeCodes.STRUCT || tc == TypeCodes.PTR_HEAP
+                    || VirtualScope.IsPtr(vScope.flags[r]))
+                {
+                    GcMark(VmPtr.FromRaw(vScope.dataRegisters[r]));
+                }
+            }
+        }
+
+        void GcTrace(VmPtr ptr)
+        {
+            if (!heap.TryGetAllocation(ptr, out var allocation)) return;
+            var format = allocation.format;
+
+            if (format.IsArray(out _))
+            {
+                switch (format.typeCode)
+                {
+                    case TypeCodes.STRING:
+                    {
+                        // string elements are 8-byte heap pointers
+                        heap.ReadSpan(ptr, allocation.length, out var span);
+                        for (var offset = 0; offset + 8 <= allocation.length; offset += 8)
+                        {
+                            GcMark(VmPtr.FromBytes(span.Slice(offset)));
+                        }
+                        break;
+                    }
+                    case TypeCodes.STRUCT:
+                    {
+                        // struct elements are stored inline, one type-sized slot each
+                        if (!typeTable.TryGetValue(format.typeId, out var elementType) || elementType.byteSize <= 0)
+                            break;
+                        heap.ReadSpan(ptr, allocation.length, out var span);
+                        for (var offset = 0; offset + elementType.byteSize <= allocation.length; offset += elementType.byteSize)
+                        {
+                            GcTraceStructFields(span, offset, elementType);
+                        }
+                        break;
+                    }
+                }
+                return;
+            }
+
+            if (format.typeCode == TypeCodes.STRUCT && typeTable.TryGetValue(format.typeId, out var structType))
+            {
+                heap.ReadSpan(ptr, allocation.length, out var structSpan);
+                GcTraceStructFields(structSpan, 0, structType);
+            }
+            // strings and scalar arrays are leaves
+        }
+
+        void GcTraceStructFields(ReadOnlySpan<byte> span, int baseOffset, InternedType type)
+        {
+            foreach (var kvp in type.fields)
+            {
+                var field = kvp.Value;
+                switch (field.typeCode)
+                {
+                    case TypeCodes.STRING:
+                        if (baseOffset + field.offset + 8 <= span.Length)
+                        {
+                            GcMark(VmPtr.FromBytes(span.Slice(baseOffset + field.offset)));
+                        }
+                        break;
+                    case TypeCodes.STRUCT:
+                        // nested structs are inline; recurse into their fields
+                        if (typeTable.TryGetValue(field.typeId, out var fieldType))
+                        {
+                            GcTraceStructFields(span, baseOffset + field.offset, fieldType);
+                        }
+                        break;
+                }
+            }
+        }
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         private byte Advance() => program[instructionIndex++];
@@ -215,9 +482,9 @@ namespace FadeBasic.Virtual
             {
                 var size = str.value.Length * TypeCodes.GetByteSize(TypeCodes.INT);
                 heap.AllocateString(size, out var ptr);
-                
-                // this interned string should never be free'd, because we don't know when it will need to be accessed. 
-                heap.IncrementRefCount(ptr); 
+
+                // this interned string should never be free'd, because we don't know when it will need to be accessed.
+                (_internedPtrs ?? (_internedPtrs = new List<VmPtr>())).Add(ptr);
                 var span = new byte[size];
                 for (var i = 0; i < str.value.Length; i++)
                 {
@@ -283,6 +550,25 @@ namespace FadeBasic.Virtual
                      i += incrementer)
                 {
                     cycles++;
+
+                    // Runto max-cycles enforcement. Only the topmost frame ticks,
+                    // so nested runtos each get their own independent budget and
+                    // an outer frame's budget pauses while an inner runto is active.
+                    if (runtoStack.Count > 0)
+                    {
+                        ref var runtoTop = ref runtoStack.buffer[runtoStack.ptr - 1];
+                        if (--runtoTop.cyclesRemaining < 0)
+                        {
+                            assertionFailure = new TestFailure
+                            {
+                                sourceText = "RUNTO exceeded max cycles",
+                                instructionIndex = instructionIndex
+                            };
+                            instructionIndex = int.MaxValue;
+                            break;
+                        }
+                    }
+
                     var ins = Advance();
                     switch (ins)
                     {
@@ -307,24 +593,9 @@ namespace FadeBasic.Virtual
                             break;
                         case OpCodes.POP_SCOPE:
 
-                            
-                            { // clear all references from scope...
-                                var vScope = scopeStack.Peek();
-                                for (var scopeIndex = 0;
-                                     scopeIndex < vScope.insIndexes.Length;
-                                     scopeIndex++)
-                                {
-                                    // var isPtr = vScope.typeRegisters[scopeIndex] == TypeCodes.STRUCT ||
-                                    //             vScope.typeRegisters[scopeIndex] == TypeCodes.STRING;
-                                    var isPtr = VirtualScope.IsPtr(vScope.flags[scopeIndex]);
-                                    var ptr = vScope.dataRegisters[scopeIndex];
-                                    if (isPtr && vScope.insIndexes[scopeIndex] > 0)
-                                    {
-                                        heap.TryDecrementRefCount(ptr);
-                                    }
-                                }
-                            }
-
+                            // popping the scope is what makes its registers
+                            // unreachable; the tracing collector reclaims
+                            // anything they were the last reference to.
                             scopeStack.Pop();
                             scope = scopeStack.buffer[scopeStack.ptr - 1];
                             break;
@@ -390,6 +661,26 @@ namespace FadeBasic.Virtual
                             }
                             stack.PushSpanAndType(new ReadOnlySpan<byte>(BitConverter.GetBytes(jumpSite)), TypeCodes.INT, TypeCodes.GetByteSize(TypeCodes.INT));
                             break;
+                        case OpCodes.PUSH_SCOPE_DEPTH:
+                            // Push current scope-stack depth as a typed int. Depth 1 = global only.
+                            stack.PushSpanAndType(
+                                new ReadOnlySpan<byte>(BitConverter.GetBytes(scopeStack.Count)),
+                                TypeCodes.INT, TypeCodes.GetByteSize(TypeCodes.INT));
+                            break;
+                        case OpCodes.CALL_COUNT:
+                        {
+                            // Inline 4-byte command id; push that command's
+                            // host-call count as a typed int. Unknown command
+                            // ids (never invoked) push 0.
+                            var cmdId = BitConverter.ToInt32(program, instructionIndex);
+                            instructionIndex += 4;
+                            var count = 0;
+                            hostCallCounts?.TryGetValue(cmdId, out count);
+                            stack.PushSpanAndType(
+                                new ReadOnlySpan<byte>(BitConverter.GetBytes(count)),
+                                TypeCodes.INT, TypeCodes.GetByteSize(TypeCodes.INT));
+                            break;
+                        }
                         case OpCodes.PUSH_DEFER:
                             // read the place we should jump to when the scope is popped. 
                             VmUtil.ReadAsInt(ref stack, out var a);
@@ -406,6 +697,18 @@ namespace FadeBasic.Virtual
                                 fromIns = instructionIndex
                             }) ;
                             logger?.Log($"[VM] JUMP HISTORY FROM=[{instructionIndex}] TO=[{insPtr}]");
+                            instructionIndex = insPtr;
+                            break;
+                        case OpCodes.JUMP_HISTORY_LAUNCH:
+                            // Identical to JUMP_HISTORY but tags the frame as
+                            // launcher-pushed so CaptureCallStack filters it.
+                            VmUtil.ReadAsInt(ref stack, out insPtr);
+                            methodStack.Push(new JumpHistoryData
+                            {
+                                toIns = insPtr,
+                                fromIns = instructionIndex,
+                                isLauncherFrame = true
+                            });
                             instructionIndex = insPtr;
                             break;
                         case OpCodes.RETURN:
@@ -632,23 +935,16 @@ namespace FadeBasic.Virtual
 
                             VmUtil.ReadSpanAsUInt(ref stack, out data);
 
-                            if (scope.insIndexes[addr] > 0)
-                            {
-                                heap.TryDecrementRefCount(scope.dataRegisters[addr]);
-                            }
-                        
                             scope.dataRegisters[addr] = data;
                             scope.typeRegisters[addr] = typeCode;
-                            scope.insIndexes[addr] = instructionIndex - 1; // minus one because the instruction has already been advanced. 
+                            scope.insIndexes[addr] = instructionIndex - 1; // minus one because the instruction has already been advanced.
                             scope.flags[addr] = VirtualScope.FLAG_PTR;
-                            
-                            heap.IncrementRefCount(data);
-                            
-                            // TODO: this is not a very good balance of efficiency... 
-                            //       the sweeping is costly, and maybe it makes sense to
-                            //       do it only every now and then, not on EVERY assign
-                            heap.Sweep(); 
-                            
+
+                            if (heap.allocsSinceCollect >= sweepInterval)
+                            {
+                                CollectGarbage();
+                            }
+
                             break;
                         case OpCodes.STORE_PTR_GLOBAL:
 
@@ -657,19 +953,16 @@ namespace FadeBasic.Virtual
 
                             VmUtil.ReadSpanAsUInt(ref stack, out data);
 
-                            if (globalScope.insIndexes[addr] > 0)
-                            {
-                                heap.TryDecrementRefCount(globalScope.dataRegisters[addr]);
-                            }
-                        
                             globalScope.dataRegisters[addr] = data;
                             globalScope.typeRegisters[addr] = typeCode;
-                            globalScope.insIndexes[addr] = instructionIndex - 1; // minus one because the instruction has already been advanced. 
+                            globalScope.insIndexes[addr] = instructionIndex - 1; // minus one because the instruction has already been advanced.
                             globalScope.flags[addr] = VirtualScope.FLAG_PTR | VirtualScope.FLAG_GLOBAL;
-                            
-                            heap.IncrementRefCount(data);
-                            heap.Sweep(); 
-                            
+
+                            if (heap.allocsSinceCollect >= sweepInterval)
+                            {
+                                CollectGarbage();
+                            }
+
                             break;
                         case OpCodes.STORE_GLOBAL:
                             VmUtil.ReadRegAddress(program, ref instructionIndex, out addr);
@@ -748,9 +1041,17 @@ namespace FadeBasic.Virtual
                             break;
                         case OpCodes.WRITE:
                             VmUtil.WriteToHeap(ref stack, ref heap, false);
+                            if (heap.allocsSinceCollect >= sweepInterval)
+                            {
+                                CollectGarbage();
+                            }
                             break;
                         case OpCodes.WRITE_PTR:
                             VmUtil.WriteToHeap(ref stack, ref heap, true);
+                            if (heap.allocsSinceCollect >= sweepInterval)
+                            {
+                                CollectGarbage();
+                            }
                             break;
                         case OpCodes.BOUNDS_CHECK:
                             VmUtil.ReadAsInt(ref stack, out var ceilingValue);
@@ -767,23 +1068,371 @@ namespace FadeBasic.Virtual
                             
                             break;
                         case OpCodes.READ:
-                            
+                        {
                             VmUtil.ReadAsVmPtr(ref stack, out var readPtr);
                             VmUtil.ReadAsInt(ref stack, out var readLength);
-                            heap.Read(readPtr, readLength, out aBytes);
-                            stack.PushSpan(aBytes, readLength);
+                            heap.ReadSpan(readPtr, readLength, out var readSpan);
+                            stack.PushSpan(readSpan, readLength);
                             break;
+                        }
                         // case OpCodes.LENGTH:
                         //     VmUtil.ReadAsInt(ref stack, out var readLengthPtr);
                         //     heap.GetAllocationSize(readLengthPtr, out var readAllocLength);
                         //     VmUtil.PushSpan(ref stack, BitConverter.GetBytes(readAllocLength), TypeCodes.INT);
                         //     break;
                         case OpCodes.CALL_HOST:
-                            
                             VmUtil.ReadAsInt(ref stack, out var hostMethodPtr);
                             hostMethods.FindMethod(hostMethodPtr, out var method);
-                            HostMethodUtil.Execute(method, this);
-                            
+
+                            // Per-command invocation counting. We tally every
+                            // CALL_HOST in test mode regardless of mock state
+                            // so `call count <cmd>` works even before any
+                            // mock is installed. Outside test mode the count
+                            // is unused, so skip the dictionary work.
+                            if (isTestExecution)
+                            {
+                                hostCallCounts ??= new Dictionary<int, int>();
+                                hostCallCounts.TryGetValue(hostMethodPtr, out var prevCount);
+                                hostCallCounts[hostMethodPtr] = prevCount + 1;
+                            }
+
+                            if (mockTable != null && mockTable.TryGetValue(hostMethodPtr, out var mock))
+                            {
+                                if (mock.kind == 3)
+                                {
+                                    // Phase B: mock body is a bytecode block.
+                                    // The args are still on the stack — the
+                                    // body itself pops and binds them as
+                                    // locals in a fresh scope. We push the
+                                    // method-call return frame so the body's
+                                    // RETURN lands us back here.
+                                    methodStack.Push(new JumpHistoryData
+                                    {
+                                        fromIns = instructionIndex,
+                                        toIns = mock.bodyAddr
+                                    });
+                                    instructionIndex = mock.bodyAddr;
+                                    break;
+                                }
+
+                                // Legacy path (Phase A): pop the args off the
+                                // stack as the real executor would, then
+                                // synthesize the behavior.
+                                if (method.args != null)
+                                {
+                                    for (var ai = method.args.Length - 1; ai >= 0; ai--)
+                                    {
+                                        if (method.args[ai].isVmArg) continue;
+                                        VmUtil.ReadValueAny(this, default, out _, out _, out _, allowOptional: true);
+                                    }
+                                }
+
+                                if (mock.kind == 1)
+                                {
+                                    // returns: push the recorded value
+                                    VmUtil.PushSpan(ref stack, mock.returnBytes, mock.returnTypeCode);
+                                }
+                                else if (mock.kind == 2)
+                                {
+                                    // Forbid: same shape as a failing assert.
+                                    // Capture the call stack, build a TestFailure
+                                    // carrying the user's reason (if supplied),
+                                    // and redirect to the unwind trampoline so
+                                    // defers in every live scope drain before
+                                    // the test runner reports the result.
+                                    // Re-entrancy guard: if a prior failure is
+                                    // already recorded (e.g., a deferred body
+                                    // re-fires forbid or assert), just halt
+                                    // and keep the first failure.
+                                    if (assertionFailure != null)
+                                    {
+                                        instructionIndex = int.MaxValue;
+                                        break;
+                                    }
+                                    assertionFailure = new TestFailure
+                                    {
+                                        sourceText = "forbidden command was called: " + method.name,
+                                        reason = mock.forbidReason ?? "",
+                                        instructionIndex = instructionIndex,
+                                        callStack = CaptureCallStack()
+                                    };
+                                    instructionIndex = mock.forbidTrampolineAddr > 0
+                                        ? mock.forbidTrampolineAddr
+                                        : int.MaxValue;
+                                }
+                                // kind == 0 (void): nothing else to do; args are gone
+                            }
+                            else
+                            {
+                                HostMethodUtil.Execute(method, this);
+                            }
+
+                            break;
+
+                        case OpCodes.CALL_HOST_REAL:
+                        {
+                            // `passthrough` inside a mock body: dispatch
+                            // to the real command, never to the mock. We
+                            // don't bump hostCallCounts here because the
+                            // outer CALL_HOST that routed into the mock
+                            // already counted this invocation.
+                            //
+                            // Scope dance: the body's PUSH_SCOPE made the
+                            // mock body's locals the current scope. The
+                            // real host writes ref args via
+                            // `vm.dataRegisters[addr]` (current scope), so
+                            // for PTR_REG addresses that point to the
+                            // caller's registers to land correctly, we
+                            // need the caller's scope to BE the current
+                            // scope during the call. Temporarily pop the
+                            // body scope, run the host, then put it back.
+                            // Body-local arrays remain valid because
+                            // VirtualScope.dataRegisters is a managed
+                            // reference and survives the by-value copy.
+                            VmUtil.ReadAsInt(ref stack, out var realHostMethodPtr);
+                            hostMethods.FindMethod(realHostMethodPtr, out var realMethod);
+
+                            var savedBodyScope = scopeStack.buffer[scopeStack.ptr - 1];
+                            scopeStack.ptr--;
+                            scope = scopeStack.buffer[scopeStack.ptr - 1];
+
+                            HostMethodUtil.Execute(realMethod, this);
+
+                            scopeStack.buffer[scopeStack.ptr] = savedBodyScope;
+                            scopeStack.ptr++;
+                            scope = savedBodyScope;
+                            break;
+                        }
+
+                        case OpCodes.GATHER_ARRAY:
+                        {
+                            // Inverse of SPREAD_ARRAY. Inline element type
+                            // byte; stack has `[..., elemN, ..., elem1, count]`
+                            // (count on top — same shape a `params` arg
+                            // produces). Pops count, then pops `count`
+                            // typed values, materializes a heap block,
+                            // pushes the PTR_HEAP.
+                            var gatherElemTc = Advance();
+                            var gatherElemSize = TypeCodes.GetByteSize(gatherElemTc);
+                            VmUtil.ReadAsInt(ref stack, out var gatherCount);
+                            var gatherBytes = new byte[gatherCount * gatherElemSize];
+                            for (var gi = 0; gi < gatherCount; gi++)
+                            {
+                                // Each element has [data_bytes][type_byte];
+                                // pop type, then data. We trust the type
+                                // matches what the inline byte says (caller
+                                // sets it from the params arg metadata).
+                                stack.Pop(); // discard type code
+                                for (var gb = gatherElemSize - 1; gb >= 0; gb--)
+                                {
+                                    gatherBytes[gi * gatherElemSize + gb] = stack.Pop();
+                                }
+                            }
+                            var gatherFormat = new HeapTypeFormat
+                            {
+                                typeCode = gatherElemTc,
+                                typeFlags = HeapTypeFormat.CreateArrayFlag(1)
+                            };
+                            heap.Allocate(ref gatherFormat, gatherBytes.Length, out var gatherPtr);
+                            heap.Write(gatherPtr, gatherBytes.Length, gatherBytes);
+                            var gatherPtrBytes = VmPtr.GetBytes(ref gatherPtr);
+                            VmUtil.PushSpan(ref stack, gatherPtrBytes, TypeCodes.PTR_HEAP);
+                            break;
+                        }
+                        case OpCodes.LENGTH:
+                        {
+                            // Inline 1-byte element size. Pops a heap ptr
+                            // (or STRING-typed heap ptr — interned strings
+                            // are tagged STRING after their CAST), reads
+                            // the allocation size, divides by the element
+                            // size, pushes the count as an int.
+                            var lenElemSize = Advance();
+                            stack.Pop(); // discard the type code (PTR_HEAP, STRING, etc.)
+                            var lenPtrBytes = new byte[8];
+                            for (var lb = 7; lb >= 0; lb--) lenPtrBytes[lb] = stack.Pop();
+                            var lenPtr = VmPtr.FromBytes(lenPtrBytes);
+                            heap.TryGetAllocationSize(lenPtr, out var lenBytes);
+                            var lenCount = lenElemSize > 0 ? lenBytes / lenElemSize : 0;
+                            VmUtil.PushSpan(ref stack,
+                                BitConverter.GetBytes(lenCount),
+                                TypeCodes.INT);
+                            break;
+                        }
+                        case OpCodes.SPREAD_ARRAY:
+                        {
+                            // Pops a Fade-array heap ptr, then pushes each
+                            // element as a typed value (in reverse, so the
+                            // first element ends up second-from-top), then
+                            // pushes the element count as an int. The
+                            // overall stack shape after this matches what a
+                            // `params` arg expects from the host-method
+                            // dispatcher: [..., elemN, ..., elem1, count].
+                            var spreadElemTc = Advance();
+                            var spreadElemSize = TypeCodes.GetByteSize(spreadElemTc);
+                            VmUtil.ReadAsVmPtr(ref stack, out var spreadPtr);
+                            heap.TryGetAllocationSize(spreadPtr, out var spreadBytes);
+                            var spreadCount = spreadElemSize > 0 ? spreadBytes / spreadElemSize : 0;
+                            if (spreadCount > 0)
+                            {
+                                heap.ReadSpan(spreadPtr, spreadBytes, out var spreadSpan);
+                                // Push elements LIFO so the receiver reads
+                                // them back in declaration order — same as
+                                // an inline `Foo(1,2,3)` call would produce.
+                                for (var ei = spreadCount - 1; ei >= 0; ei--)
+                                {
+                                    VmUtil.PushSpan(ref stack, spreadSpan.Slice(ei * spreadElemSize, spreadElemSize), spreadElemTc);
+                                }
+                            }
+                            VmUtil.PushSpan(ref stack,
+                                BitConverter.GetBytes(spreadCount),
+                                TypeCodes.INT);
+                            break;
+                        }
+                        case OpCodes.STORE_REF:
+                        {
+                            // Inline 4-byte register address (a body-local).
+                            // Stack at dispatch (top → bottom):
+                            //   ptr type code (1 byte), 8 bytes register addr.
+                            // Unlike STORE_PTR, the type comes from the
+                            // stack — necessary because VM-state typeCode
+                            // has been clobbered by intervening opcodes.
+                            VmUtil.ReadRegAddress(program, ref instructionIndex, out var refStoreAddr);
+                            var ptrTc = stack.Pop();
+                            var ptrBytes = new byte[8];
+                            for (var sb = 7; sb >= 0; sb--) ptrBytes[sb] = stack.Pop();
+                            var ptrData = BitConverter.ToUInt64(ptrBytes, 0);
+                            scope.dataRegisters[refStoreAddr] = ptrData;
+                            scope.typeRegisters[refStoreAddr] = ptrTc;
+                            scope.flags[refStoreAddr] = VirtualScope.FLAG_PTR;
+                            break;
+                        }
+                        case OpCodes.LOAD_REF:
+                        {
+                            // Inline 4-byte register address (a body-local
+                            // holding a PTR_REG / PTR_GLOBAL_REG). Read
+                            // through that pointer into the caller's scope
+                            // (or global) and push the typed value found
+                            // there. The body's PUSH_SCOPE pushed a new
+                            // scope after CALL_HOST routed here, so the
+                            // caller's scope sits one slot below current.
+                            VmUtil.ReadRegAddress(program, ref instructionIndex, out var refReadAddr);
+                            var refRegAddr2 = scope.dataRegisters[refReadAddr];
+                            var refPtrType2 = scope.typeRegisters[refReadAddr];
+
+                            ulong valData;
+                            byte valType;
+                            if (refPtrType2 == TypeCodes.PTR_GLOBAL_REG)
+                            {
+                                valData = globalScope.dataRegisters[refRegAddr2];
+                                valType = globalScope.typeRegisters[refRegAddr2];
+                            }
+                            else
+                            {
+                                ref var callerScope2 = ref scopeStack.buffer[scopeStack.ptr - 2];
+                                valData = callerScope2.dataRegisters[refRegAddr2];
+                                valType = callerScope2.typeRegisters[refRegAddr2];
+                            }
+                            var valSize = TypeCodes.GetByteSize(valType);
+                            var valBytes = BitConverter.GetBytes(valData);
+                            stack.PushSpanAndType(new ReadOnlySpan<byte>(valBytes), valType, valSize);
+                            break;
+                        }
+                        case OpCodes.WRITE_REF:
+                        {
+                            // Inline 4-byte register address (a body-local
+                            // holding the caller's ref pointer). Pops a
+                            // typed value from the stack and writes it
+                            // through the pointer into the caller's scope.
+                            VmUtil.ReadRegAddress(program, ref instructionIndex, out var refLocalAddr);
+
+                            // Body-local holds: dataRegister = 8 bytes of
+                            // the caller's register address, typeRegister =
+                            // PTR_REG or PTR_GLOBAL_REG.
+                            var refRegAddr = scope.dataRegisters[refLocalAddr];
+                            var refPtrTypeCode = scope.typeRegisters[refLocalAddr];
+
+                            // Peek the value's type code from the stack
+                            // before reading the data, so we can stamp it
+                            // back into the caller's register.
+                            var valTypeCode = stack.buffer[stack.ptr - 1];
+                            VmUtil.ReadSpanAsUInt(ref stack, out var refData);
+
+                            if (refPtrTypeCode == TypeCodes.PTR_GLOBAL_REG)
+                            {
+                                globalScope.dataRegisters[refRegAddr] = refData;
+                                globalScope.typeRegisters[refRegAddr] = valTypeCode;
+                            }
+                            else
+                            {
+                                // PTR_REG: write into the caller's scope.
+                                // The body's PUSH_SCOPE pushed a new scope on
+                                // top after CALL_HOST routed here, so the
+                                // caller's scope sits one slot below.
+                                ref var callerScope = ref scopeStack.buffer[scopeStack.ptr - 2];
+                                callerScope.dataRegisters[refRegAddr] = refData;
+                                callerScope.typeRegisters[refRegAddr] = valTypeCode;
+                            }
+                            break;
+                        }
+                        case OpCodes.MOCK_INSTALL:
+                        {
+                            // Stack at dispatch (bottom→top): bodyAddr (int), commandId (int).
+                            VmUtil.ReadAsInt(ref stack, out var installCmdId);
+                            VmUtil.ReadAsInt(ref stack, out var installBodyAddr);
+                            mockTable ??= new Dictionary<int, MockBehavior>();
+                            mockTable[installCmdId] = new MockBehavior
+                            {
+                                kind = 3,
+                                bodyAddr = installBodyAddr
+                            };
+                            break;
+                        }
+                        case OpCodes.MOCK_VOID:
+                        {
+                            VmUtil.ReadAsInt(ref stack, out var voidId);
+                            mockTable ??= new Dictionary<int, MockBehavior>();
+                            mockTable[voidId] = new MockBehavior { kind = 0 };
+                            break;
+                        }
+                        case OpCodes.MOCK_RETURNS:
+                        {
+                            // Stack top: typed return value; below: commandId.
+                            VmUtil.ReadSpan(ref stack, out var retType, out var retSpan);
+                            var retBytes = retSpan.ToArray();
+                            VmUtil.ReadAsInt(ref stack, out var retId);
+                            mockTable ??= new Dictionary<int, MockBehavior>();
+                            mockTable[retId] = new MockBehavior
+                            {
+                                kind = 1,
+                                returnTypeCode = retType,
+                                returnBytes = retBytes
+                            };
+                            break;
+                        }
+                        case OpCodes.MOCK_FORBID:
+                        {
+                            // Stack at dispatch (bottom→top):
+                            //   reason (string), trampolineAddr (int), commandId (int)
+                            VmUtil.ReadAsInt(ref stack, out var forbidId);
+                            VmUtil.ReadAsInt(ref stack, out var forbidTrampoline);
+                            var forbidReason = PopAssertString();
+                            mockTable ??= new Dictionary<int, MockBehavior>();
+                            mockTable[forbidId] = new MockBehavior
+                            {
+                                kind = 2,
+                                forbidReason = forbidReason,
+                                forbidTrampolineAddr = forbidTrampoline
+                            };
+                            break;
+                        }
+                        case OpCodes.MOCK_CLEAR:
+                        {
+                            VmUtil.ReadAsInt(ref stack, out var clearId);
+                            mockTable?.Remove(clearId);
+                            break;
+                        }
+                        case OpCodes.MOCK_CLEAR_ALL:
+                            mockTable?.Clear();
                             break;
                         
                         case OpCodes.NOOP:
@@ -859,6 +1508,98 @@ namespace FadeBasic.Virtual
                             break;
                         case OpCodes.BREAKPOINT:
                             break;
+                        case OpCodes.RUNTO:
+                            // Stack at dispatch: [..., maxCycles, target]. Pop target first.
+                            VmUtil.ReadAsInt(ref stack, out var runtoTarget);
+                            VmUtil.ReadAsInt(ref stack, out var runtoMaxCycles);
+                            // The test-resume IP is the very next instruction after this RUNTO.
+                            // (instructionIndex has already been incremented past the RUNTO opcode.)
+                            runtoStack.Push(new RuntoFrame
+                            {
+                                targetAddr = runtoTarget,
+                                testResumeIp = instructionIndex,
+                                cyclesRemaining = runtoMaxCycles
+                            });
+                            // Switch execution to wherever the program is currently paused.
+                            instructionIndex = programResumeIP;
+                            break;
+                        case OpCodes.RUNTO_YIELD:
+                            // The compiler emits RUNTO_YIELD after every label that's a runto target.
+                            // We're exactly one instruction past the label here. If the runtoStack top
+                            // matches our address, yield back to the test. Otherwise fall through.
+                            //
+                            // The "match" is: the target address that the test asked for == the address
+                            // immediately AFTER the RUNTO_YIELD opcode (i.e., the body of the program
+                            // resuming at the next real instruction). The compiler records the target
+                            // as that post-yield address.
+                            if (runtoStack.Count > 0 && runtoStack.buffer[runtoStack.ptr - 1].targetAddr == instructionIndex)
+                            {
+                                var frame = runtoStack.Pop();
+                                // Save where the program is now so the next runto can resume from here.
+                                programResumeIP = instructionIndex;
+                                instructionIndex = frame.testResumeIp;
+                            }
+                            // else fall through; this label wasn't the targeted one.
+                            break;
+                        case OpCodes.ASSERT_FAIL:
+                        {
+                            // Data stack at dispatch (bottom → top):
+                            //   reason (string), sourceText (string), trampolineAddr (int)
+                            // Strings come from the LiteralStringExpression path
+                            // ([8 ptr bytes][STRING type code]); interned strings get
+                            // CAST to STRING after the PTR push, variable refs push the
+                            // same shape with a heap ptr. We accept either STRING or
+                            // PTR_HEAP. trampolineAddr is the compiler-baked address of
+                            // the assert-unwind trampoline, used in test mode only.
+                            VmUtil.ReadAsInt(ref stack, out var trampolineAddr);
+                            var text = PopAssertString();
+                            var reasonText = PopAssertString();
+                            if (isTestExecution)
+                            {
+                                // Re-entrancy guard: if a deferred body that we're
+                                // running as part of unwinding contains its own
+                                // failing assert, keep the first failure and halt
+                                // instead of restarting the trampoline.
+                                if (assertionFailure != null)
+                                {
+                                    instructionIndex = int.MaxValue;
+                                    break;
+                                }
+                                // Test-mode: record the failure (this path is also
+                                // taken when a test runtos into main-program code
+                                // that hits an assert) and redirect to the trampoline
+                                // so defers in every live scope get drained. Capture
+                                // the call chain now; the trampoline doesn't pop
+                                // methodStack, but a stable snapshot decouples
+                                // downstream consumers from VM state.
+                                assertionFailure = new TestFailure
+                                {
+                                    sourceText = text,
+                                    reason = reasonText,
+                                    instructionIndex = instructionIndex,
+                                    callStack = CaptureCallStack()
+                                };
+                                instructionIndex = trampolineAddr;
+                            }
+                            else
+                            {
+                                // Main-program execution: a failed assert is a
+                                // hard runtime error, on par with divide-by-zero.
+                                // Defers do NOT run; trampolineAddr is ignored.
+                                var hasReason = !string.IsNullOrEmpty(reasonText);
+                                var message = hasReason
+                                    ? $"assert failed: {text} — {reasonText}"
+                                    : $"assert failed: {text}";
+                                TriggerRuntimeError(new VirtualRuntimeError
+                                {
+                                    insIndex = instructionIndex,
+                                    type = VirtualRuntimeErrorType.ASSERT_FAILED,
+                                    message = message
+                                });
+                                instructionIndex = int.MaxValue;
+                            }
+                            break;
+                        }
                         default:
                             throw new Exception("Unknown op code: " + ins);
                     }
@@ -883,13 +1624,85 @@ namespace FadeBasic.Virtual
         
         public int test = 0;
 
+        public struct RuntoFrame
+        {
+            public int targetAddr;
+            public int testResumeIp;
+            public int cyclesRemaining;
+        }
+
         void TriggerRuntimeError(VirtualRuntimeError error)
         {
+            // Stamp a call-stack snapshot onto the error unless the caller
+            // already provided one. This gives every runtime-error consumer
+            // (test runner, future crash reporter, DAP) the same shape used
+            // for assert-mode failures.
+            if (error.callStack == null)
+            {
+                error.callStack = CaptureCallStack();
+            }
             this.error = error;
             if (shouldThrowRuntimeException)
             {
                 throw new VirtualRuntimeException(error);
             }
+        }
+
+        /// <summary>
+        /// Snapshot the current methodStack into a stable array. Index 0 is the
+        /// innermost (most recent) call; the last entry is the outermost.
+        /// Used by ASSERT_FAIL test-mode and TriggerRuntimeError to attach a
+        /// call-chain to the error, decoupled from later VM state changes.
+        /// </summary>
+        public JumpHistoryData[] CaptureCallStack()
+        {
+            var depth = methodStack.Count;
+            // Two-pass so we know the visible count up front and can size
+            // the array exactly. Launcher frames are filtered — they're
+            // internal control flow, not user-visible calls.
+            var visible = 0;
+            for (var i = 0; i < depth; i++)
+            {
+                if (!methodStack.buffer[i].isLauncherFrame) visible++;
+            }
+            var copy = new JumpHistoryData[visible];
+            var write = 0;
+            for (var i = 0; i < depth; i++)
+            {
+                var src = methodStack.buffer[depth - 1 - i];
+                if (src.isLauncherFrame) continue;
+                copy[write++] = src;
+            }
+            return copy;
+        }
+
+        // Pop one Fade string off the data stack and materialize it as a C# string.
+        // Used by ASSERT_FAIL. The compiler pushes strings as [8 ptr bytes][type code]
+        // and either STRING or PTR_HEAP type codes may appear here. Returns "" if
+        // the pointer is null or the read fails.
+        private string PopAssertString()
+        {
+            stack.Pop(); // type code; accepted unconditionally
+            var ptrBytes = new byte[8];
+            for (var b = 7; b >= 0; b--) ptrBytes[b] = stack.Pop();
+            var ptr = VmPtr.FromBytes(ptrBytes);
+            try
+            {
+                if (heap.TryGetAllocationSize(ptr, out var len) && len > 0)
+                {
+                    heap.Read(ptr, len, out var bytes);
+                    // Fade strings are stored as 4-bytes-per-char (uint codepoints).
+                    var charCount = len / 4;
+                    var chars = new char[charCount];
+                    for (var c = 0; c < charCount; c++)
+                    {
+                        chars[c] = (char)BitConverter.ToUInt32(bytes, c * 4);
+                    }
+                    return new string(chars);
+                }
+            }
+            catch { /* best-effort recovery; fall through */ }
+            return "";
         }
     }
 

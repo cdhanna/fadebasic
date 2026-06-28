@@ -36,10 +36,16 @@ namespace FadeBasic.Lib.Standard
             return color;
         }
 
+        // Hosts that need an interruptible wait — most importantly the
+        // WebRuntime, which has to let the user click "pause" mid-debug
+        // without waiting for Thread.Sleep to unblock — can swap this
+        // delegate. The default keeps existing behavior verbatim.
+        public static System.Action<int> WaitImpl = ms => Thread.Sleep(ms);
+
         [FadeBasicCommand("wait ms")]
         public static void Wait(int milliseconds)
         {
-            Thread.Sleep(milliseconds);
+            WaitImpl(milliseconds);
         }
 
     }

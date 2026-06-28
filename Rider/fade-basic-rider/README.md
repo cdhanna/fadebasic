@@ -28,7 +28,7 @@ You need **either** LSP.dll **or** LSP.csproj for the language server to start w
 From this directory:
 
 ```bash
-export JAVA_HOME="<path-to-jdk-17+>"
+export JAVA_HOME="/Applications/IntelliJ IDEA.app/Contents/jbr/Contents/Home"
 ./gradlew runIde
 ```
 

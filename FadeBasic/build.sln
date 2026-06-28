@@ -1,5 +1,6 @@
 ﻿
 Microsoft Visual Studio Solution File, Format Version 12.00
+# 
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "FadeBasic", "FadeBasic\FadeBasic.csproj", "{57007F64-F4ED-4979-BC09-1F58502953A2}"
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "CommandSourceGenerator", "CommandSourceGenerator\CommandSourceGenerator.csproj", "{E7702D0D-11F7-43E6-9574-C4DF0C1410A7}"
@@ -13,6 +14,12 @@ EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "FadeBuildTasks", "FadeBuildTasks\FadeBuildTasks.csproj", "{A39FDBD7-CB19-4237-AE9E-6EDE5DAC1023}"
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "FadeBasic.Lib.Standard", "FadeBasic.Lib.Standard\FadeBasic.Lib.Standard.csproj", "{C83538B6-7BA1-471C-B1F8-EE658166ABE0}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "FadeBasic.Testing", "FadeBasic.Testing\FadeBasic.Testing.csproj", "{EFFB7814-CAB3-4AC5-9010-53845FAAE795}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "FadeBasic.TestAdapter", "FadeBasic.TestAdapter\FadeBasic.TestAdapter.csproj", "{378913B6-568C-46A3-848F-25EFF4605358}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "FadeBasic.Lib.Web", "FadeBasic.Lib.Web\FadeBasic.Lib.Web.csproj", "{A51EA3F2-ED0A-47FA-8DCA-41731FC0818C}"
 EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
@@ -49,5 +56,17 @@ Global
 		{C83538B6-7BA1-471C-B1F8-EE658166ABE0}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{C83538B6-7BA1-471C-B1F8-EE658166ABE0}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{C83538B6-7BA1-471C-B1F8-EE658166ABE0}.Release|Any CPU.Build.0 = Release|Any CPU
+		{EFFB7814-CAB3-4AC5-9010-53845FAAE795}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{EFFB7814-CAB3-4AC5-9010-53845FAAE795}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{EFFB7814-CAB3-4AC5-9010-53845FAAE795}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{EFFB7814-CAB3-4AC5-9010-53845FAAE795}.Release|Any CPU.Build.0 = Release|Any CPU
+		{378913B6-568C-46A3-848F-25EFF4605358}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{378913B6-568C-46A3-848F-25EFF4605358}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{378913B6-568C-46A3-848F-25EFF4605358}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{378913B6-568C-46A3-848F-25EFF4605358}.Release|Any CPU.Build.0 = Release|Any CPU
+		{A51EA3F2-ED0A-47FA-8DCA-41731FC0818C}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{A51EA3F2-ED0A-47FA-8DCA-41731FC0818C}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{A51EA3F2-ED0A-47FA-8DCA-41731FC0818C}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{A51EA3F2-ED0A-47FA-8DCA-41731FC0818C}.Release|Any CPU.Build.0 = Release|Any CPU
 	EndGlobalSection
 EndGlobal

@@ -61,9 +61,10 @@ public class TextDocumentSyncHandler : TextDocumentSyncHandlerBase
     {
         var fullText = request.ContentChanges.FirstOrDefault().Text;
         _docs.SetSourceDocument(request.TextDocument.Uri, fullText);
-        // Range = new Range(
 
-        _compiler.Update(request.TextDocument.Uri);
+        // debounced: diagnostics are recomputed and published only after the
+        // user pauses typing, so transient mid-edit states never flash errors.
+        _compiler.UpdateDebounced(request.TextDocument.Uri);
         // try
         // {
         //     var tokenizer = new Lexer();

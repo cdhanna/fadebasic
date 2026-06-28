@@ -1,0 +1,40 @@
+[package]
+name = "ghostbot"
+version = "0.1.0"
+description = "Local llama.cpp inference bridge for Fade Playground"
+authors = ["Fade"]
+edition = "2021"
+
+[lib]
+name = "ghostbot_lib"
+crate-type = ["lib", "cdylib", "staticlib"]
+
+[build-dependencies]
+tauri-build = { version = "2.0", features = [] }
+
+[dependencies]
+tauri = { version = "2.0", features = [] }
+tauri-plugin-shell = "2.0"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "2"
+tokio = { version = "1", features = ["rt-multi-thread", "sync", "macros", "fs", "io-util"] }
+reqwest = { version = "0.12", features = ["stream", "json"] }
+futures-util = "0.3"
+dirs = "6"
+encoding_rs = "0.8"
+time = "=0.3.36"
+open = "5"
+
+[target.'cfg(target_os = "macos")'.dependencies]
+llama-cpp-2 = { version = "0.1.146", default-features = false, features = ["metal", "openmp"] }
+
+[target.'cfg(not(target_os = "macos"))'.dependencies]
+llama-cpp-2 = { version = "0.1.146", default-features = false, features = ["openmp"] }
+
+[dev-dependencies]
+image = "0.25"
+
+[profile.release]
+lto = true
+codegen-units = 1

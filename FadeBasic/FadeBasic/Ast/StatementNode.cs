@@ -18,10 +18,7 @@ namespace FadeBasic.Ast
             return "noop";
         }
 
-        public override IEnumerable<IAstVisitable> IterateChildNodes()
-        {
-            yield break;
-        }
+        protected override void VisitChildren(Action<IAstVisitable> onVisit, Action<IAstVisitable> onExit) { }
     }
 
     public class TypeDefinitionMember : AstNode, IAstVisitable, IHasTriviaNode
@@ -41,10 +38,10 @@ namespace FadeBasic.Ast
             return $"{name} as {type}";
         }
 
-        public override IEnumerable<IAstVisitable> IterateChildNodes()
+        protected override void VisitChildren(Action<IAstVisitable> onVisit, Action<IAstVisitable> onExit)
         {
-            yield return name;
-            yield return type;
+            name?.Visit(onVisit, onExit);
+            type?.Visit(onVisit, onExit);
         }
 
         public string Trivia { get; set; }
@@ -66,11 +63,10 @@ namespace FadeBasic.Ast
             return $"type {name.variableName} {string.Join(",", declarations.Select(x => x.ToString()))}";
         }
 
-        public override IEnumerable<IAstVisitable> IterateChildNodes()
+        protected override void VisitChildren(Action<IAstVisitable> onVisit, Action<IAstVisitable> onExit)
         {
-            yield return name;
-            foreach (var decl in declarations)
-                yield return decl;
+            name?.Visit(onVisit, onExit);
+            foreach (var decl in declarations) decl?.Visit(onVisit, onExit);
         }
     }
 
@@ -82,10 +78,7 @@ namespace FadeBasic.Ast
             return "end";
         }
 
-        public override IEnumerable<IAstVisitable> IterateChildNodes()
-        {
-            yield break;
-        }
+        protected override void VisitChildren(Action<IAstVisitable> onVisit, Action<IAstVisitable> onExit) { }
     }
     
     public class GotoStatement : AstNode, IStatementNode
@@ -101,10 +94,184 @@ namespace FadeBasic.Ast
             return $"goto {label}";
         }
 
-        public override IEnumerable<IAstVisitable> IterateChildNodes()
+        protected override void VisitChildren(Action<IAstVisitable> onVisit, Action<IAstVisitable> onExit) { }
+    }
+
+    public class AssertStatement : AstNode, IStatementNode
+    {
+        public IExpressionNode condition;
+        // Source-text snapshot of the asserted expression at the time of parsing.
+        // For macro-expanded sites this is the post-substitution text. The runtime
+        // uses this to format failure messages.
+        public string sourceText;
+
+        // Optional second arg: a string expression giving a human-readable reason
+        // surfaced in the failure report. Null when not supplied.
+        public IExpressionNode reason;
+
+        public AssertStatement(Token startToken, Token endToken, IExpressionNode condition, string sourceText)
+            : base(startToken, endToken)
         {
-            yield break;
+            this.condition = condition;
+            this.sourceText = sourceText;
         }
+
+        protected override string GetString()
+        {
+            if (reason != null) return $"assert {condition}, {reason}";
+            return $"assert {condition}";
+        }
+
+        protected override void VisitChildren(Action<IAstVisitable> onVisit, Action<IAstVisitable> onExit)
+        {
+            condition?.Visit(onVisit, onExit);
+            reason?.Visit(onVisit, onExit);
+        }
+    }
+
+    public class RuntoStatement : AstNode, IStatementNode
+    {
+        public string targetLabel;
+        public Token targetLabelToken;
+
+        // Optional clauses parsed from the block form (`runto :name ... endrunto`).
+        // Recorded for forward-compatibility; not yet wired into the runtime.
+        public IExpressionNode maxCyclesExpression;
+
+        public RuntoStatement(Token startToken, Token endToken, Token labelToken)
+            : base(startToken, endToken)
+        {
+            targetLabelToken = labelToken;
+            targetLabel = labelToken.caseInsensitiveRaw;
+        }
+
+        protected override string GetString()
+        {
+            if (maxCyclesExpression != null)
+            {
+                return $"runto {targetLabel} max-cycles {maxCyclesExpression}";
+            }
+            return $"runto {targetLabel}";
+        }
+
+        protected override void VisitChildren(Action<IAstVisitable> onVisit, Action<IAstVisitable> onExit)
+        {
+            maxCyclesExpression?.Visit(onVisit, onExit);
+        }
+    }
+
+    /// <summary>
+    /// `returns <expr>` inside a mock body. Sets the return value the mocked
+    /// command produces when called. Only valid inside a mock block; the
+    /// scope-error visitor enforces that.
+    /// </summary>
+    public class MockExitMockStatement : AstNode, IStatementNode
+    {
+        public IExpressionNode expression;
+
+        public MockExitMockStatement(Token startToken, Token endToken) : base(startToken, endToken)
+        {
+        }
+
+        protected override string GetString()
+        {
+            return $"returns {expression}";
+        }
+
+        protected override void VisitChildren(Action<IAstVisitable> onVisit, Action<IAstVisitable> onExit)
+        {
+            expression?.Visit(onVisit, onExit);
+        }
+    }
+
+    /// <summary>
+    /// `forbid [<reason>]` inside a mock body. Causes the test to fail when
+    /// the mocked command is called. The optional reason string surfaces in
+    /// the failure report (mirrors `assert <cond>, "reason"`).
+    /// </summary>
+    public class MockForbidStatement : AstNode, IStatementNode
+    {
+        public IExpressionNode reason; // null when no reason was supplied
+
+        public MockForbidStatement(Token startToken, Token endToken) : base(startToken, endToken)
+        {
+        }
+
+        protected override string GetString()
+        {
+            return reason != null ? $"forbid {reason}" : "forbid";
+        }
+
+        protected override void VisitChildren(Action<IAstVisitable> onVisit, Action<IAstVisitable> onExit)
+        {
+            reason?.Visit(onVisit, onExit);
+        }
+    }
+
+    public class MockStatement : AstNode, IStatementNode
+    {
+        // The full command name, e.g. "screen width". Stored as the source text
+        // of the command-name token (already normalized by the lexer's
+        // CommandNameTree pass).
+        public string commandName;
+        public Token commandNameToken;
+        // Optional parameter names — `mock find pattern, list` binds the
+        // command's args to locals named `pattern` and `list` inside the body.
+        // Empty means anonymous (args are popped off the stack but not
+        // accessible). The count must match the command's non-VmArg arg count
+        // when names are given; the visitor enforces that.
+        public List<VariableRefNode> parameters = new List<VariableRefNode>();
+        // Optional fall-through return expression on `endmock <expr>` — the
+        // value the body produces when execution reaches the closing
+        // `endmock` without an earlier `exitmock`. Mirrors `endfunction
+        // <expr>` for functions. Null when the user wrote bare `endmock`.
+        public IExpressionNode endmockExpression;
+        // Body of the mock block. Compiled as a mini-function the VM
+        // dispatches to at CALL_HOST time: a scope is pushed, parameters
+        // bound from the call's args, then body statements run. `returns`
+        // (MockExitMockStatement) sets the return value; `forbid`
+        // (MockForbidStatement) fails the test. Other test-block statements
+        // (static print, local, if/then, assert) are legal here too.
+        // An empty body on a void command means "suppress the call."
+        public List<IStatementNode> body = new List<IStatementNode>();
+
+        public MockStatement(Token startToken, Token endToken) : base(startToken, endToken)
+        {
+        }
+
+        protected override string GetString()
+        {
+            var paramStr = parameters.Count > 0
+                ? " " + string.Join(",", parameters.Select(p => p.variableName))
+                : "";
+            return $"mock {commandName}{paramStr} ({string.Join(",", body.Select(s => s.ToString()))})";
+        }
+
+        protected override void VisitChildren(Action<IAstVisitable> onVisit, Action<IAstVisitable> onExit)
+        {
+            foreach (var p in parameters) p?.Visit(onVisit, onExit);
+            foreach (var stmt in body) stmt?.Visit(onVisit, onExit);
+            endmockExpression?.Visit(onVisit, onExit);
+        }
+    }
+
+    public class ClearMockStatement : AstNode, IStatementNode
+    {
+        // Null means "clear all mocks" (`clear mocks`).
+        // Non-null is a specific command name (`clear mock screen width`).
+        public string commandName;
+        public Token commandNameToken;
+
+        public ClearMockStatement(Token startToken, Token endToken) : base(startToken, endToken)
+        {
+        }
+
+        protected override string GetString()
+        {
+            return commandName == null ? "clear mocks" : $"clear mock {commandName}";
+        }
+
+        protected override void VisitChildren(Action<IAstVisitable> onVisit, Action<IAstVisitable> onExit) { }
     }
 
     public class MacroSubstitutionExpression : AstNode, IExpressionNode
@@ -118,10 +285,9 @@ namespace FadeBasic.Ast
             return $"subst ({innerExpression})";
         }
 
-        public override IEnumerable<IAstVisitable> IterateChildNodes()
+        protected override void VisitChildren(Action<IAstVisitable> onVisit, Action<IAstVisitable> onExit)
         {
-            if (innerExpression != null)
-                yield return innerExpression;
+            innerExpression?.Visit(onVisit, onExit);
         }
     }
 
@@ -153,9 +319,9 @@ namespace FadeBasic.Ast
             return $"tokenize ({string.Join(",", substitutions.Select(x => x.ToString()))})";
         }
 
-        public override IEnumerable<IAstVisitable> IterateChildNodes()
+        protected override void VisitChildren(Action<IAstVisitable> onVisit, Action<IAstVisitable> onExit)
         {
-            foreach (var statement in substitutions) yield return statement;
+            foreach (var statement in substitutions) statement?.Visit(onVisit, onExit);
         }
     }
 
@@ -171,9 +337,9 @@ namespace FadeBasic.Ast
             return $"expr {expression}";
         }
 
-        public override IEnumerable<IAstVisitable> IterateChildNodes()
+        protected override void VisitChildren(Action<IAstVisitable> onVisit, Action<IAstVisitable> onExit)
         {
-            yield return expression;
+            expression?.Visit(onVisit, onExit);
         }
     }
     
@@ -189,10 +355,7 @@ namespace FadeBasic.Ast
             return $"ret";
         }
 
-        public override IEnumerable<IAstVisitable> IterateChildNodes()
-        {
-            yield break;
-        }
+        protected override void VisitChildren(Action<IAstVisitable> onVisit, Action<IAstVisitable> onExit) { }
     }
 
 
@@ -209,10 +372,7 @@ namespace FadeBasic.Ast
             return $"gosub {label}";
         }
 
-        public override IEnumerable<IAstVisitable> IterateChildNodes()
-        {
-            yield break;
-        }
+        protected override void VisitChildren(Action<IAstVisitable> onVisit, Action<IAstVisitable> onExit) { }
     }
 
     
@@ -237,9 +397,9 @@ namespace FadeBasic.Ast
             return $"call {command.name}{argString}";
         }
 
-        public override IEnumerable<IAstVisitable> IterateChildNodes()
+        protected override void VisitChildren(Action<IAstVisitable> onVisit, Action<IAstVisitable> onExit)
         {
-            foreach (var arg in args) yield return arg;
+            foreach (var arg in args) arg?.Visit(onVisit, onExit);
         }
     }
 
@@ -258,10 +418,10 @@ namespace FadeBasic.Ast
             return $"= {variable},{expression}";
         }
 
-        public override IEnumerable<IAstVisitable> IterateChildNodes()
+        protected override void VisitChildren(Action<IAstVisitable> onVisit, Action<IAstVisitable> onExit)
         {
-            yield return variable;
-            yield return expression;
+            variable?.Visit(onVisit, onExit);
+            expression?.Visit(onVisit, onExit);
         }
 
         public string Trivia { get; set; }
@@ -278,10 +438,7 @@ namespace FadeBasic.Ast
             return "break";
         }
 
-        public override IEnumerable<IAstVisitable> IterateChildNodes()
-        {
-            yield break;
-        }
+        protected override void VisitChildren(Action<IAstVisitable> onVisit, Action<IAstVisitable> onExit) { }
     }
 
     public class SkipLoopStatement : AstNode, IStatementNode
@@ -295,10 +452,7 @@ namespace FadeBasic.Ast
             return "skip";
         }
 
-        public override IEnumerable<IAstVisitable> IterateChildNodes()
-        {
-            yield break;
-        }
+        protected override void VisitChildren(Action<IAstVisitable> onVisit, Action<IAstVisitable> onExit) { }
     }
 
     public class DoLoopStatement : AstNode, IStatementNode
@@ -315,9 +469,9 @@ namespace FadeBasic.Ast
             return $"do ({string.Join(",", statements.Select(x => x.ToString()))})";
         }
 
-        public override IEnumerable<IAstVisitable> IterateChildNodes()
+        protected override void VisitChildren(Action<IAstVisitable> onVisit, Action<IAstVisitable> onExit)
         {
-            foreach (var statement in statements) yield return statement;
+            foreach (var statement in statements) statement?.Visit(onVisit, onExit);
         }
     }
     
@@ -348,14 +502,13 @@ namespace FadeBasic.Ast
             return $"for {variableNode},{startValueExpression},{endValueExpression},{stepValueExpression},({string.Join(",", statements.Select(x => x.ToString()))})";
         }
 
-        public override IEnumerable<IAstVisitable> IterateChildNodes()
+        protected override void VisitChildren(Action<IAstVisitable> onVisit, Action<IAstVisitable> onExit)
         {
-            yield return variableNode;
-            yield return startValueExpression;
-            yield return endValueExpression;
-            yield return stepValueExpression;
-            foreach (var statement in statements) yield return statement;
-
+            variableNode?.Visit(onVisit, onExit);
+            startValueExpression?.Visit(onVisit, onExit);
+            endValueExpression?.Visit(onVisit, onExit);
+            stepValueExpression?.Visit(onVisit, onExit);
+            foreach (var statement in statements) statement?.Visit(onVisit, onExit);
         }
     }
     
@@ -369,10 +522,10 @@ namespace FadeBasic.Ast
             return $"while {condition} {string.Join(",", statements.Select(x => x.ToString()))}";
         }
         
-        public override IEnumerable<IAstVisitable> IterateChildNodes()
+        protected override void VisitChildren(Action<IAstVisitable> onVisit, Action<IAstVisitable> onExit)
         {
-            yield return condition;
-            foreach (var statement in statements) yield return statement;
+            condition?.Visit(onVisit, onExit);
+            foreach (var statement in statements) statement?.Visit(onVisit, onExit);
         }
     }
     
@@ -386,10 +539,10 @@ namespace FadeBasic.Ast
             return $"repeat {condition} {string.Join(",", statements.Select(x => x.ToString()))}";
         }
 
-        public override IEnumerable<IAstVisitable> IterateChildNodes()
+        protected override void VisitChildren(Action<IAstVisitable> onVisit, Action<IAstVisitable> onExit)
         {
-            yield return condition;
-            foreach (var statement in statements) yield return statement;
+            condition?.Visit(onVisit, onExit);
+            foreach (var statement in statements) statement?.Visit(onVisit, onExit);
         }
     }
 
@@ -410,12 +563,11 @@ namespace FadeBasic.Ast
             return $"switch {expression} ({string.Join(",", statements.Select(x => x.ToString()))})";
         }
 
-        public override IEnumerable<IAstVisitable> IterateChildNodes()
+        protected override void VisitChildren(Action<IAstVisitable> onVisit, Action<IAstVisitable> onExit)
         {
-            yield return expression;
-            if (cases != null) foreach (var caseInstance in cases)
-                yield return caseInstance;
-            yield return defaultCase;
+            expression?.Visit(onVisit, onExit);
+            if (cases != null) foreach (var caseInstance in cases) caseInstance?.Visit(onVisit, onExit);
+            defaultCase?.Visit(onVisit, onExit);
         }
     }
 
@@ -428,12 +580,10 @@ namespace FadeBasic.Ast
             return $"case {string.Join(",", values.Select(x => x.ToString()))} ({string.Join(",", statements.Select((x => x.ToString())))})";
         }
 
-        public override IEnumerable<IAstVisitable> IterateChildNodes()
+        protected override void VisitChildren(Action<IAstVisitable> onVisit, Action<IAstVisitable> onExit)
         {
-            foreach (var value in values)
-                yield return value;
-            foreach (var statement in statements)
-                yield return statement;
+            foreach (var value in values) value?.Visit(onVisit, onExit);
+            foreach (var statement in statements) statement?.Visit(onVisit, onExit);
         }
     }
 
@@ -445,10 +595,9 @@ namespace FadeBasic.Ast
             return $"case default ({string.Join(",", statements.Select((x => x.ToString())))})";
         }
 
-        public override IEnumerable<IAstVisitable> IterateChildNodes()
+        protected override void VisitChildren(Action<IAstVisitable> onVisit, Action<IAstVisitable> onExit)
         {
-            foreach (var statement in statements)
-                yield return statement;
+            foreach (var statement in statements) statement?.Visit(onVisit, onExit);
         }
     }
 
@@ -482,13 +631,11 @@ namespace FadeBasic.Ast
             return $"if {condition} ({string.Join(",", positiveStatements)}){negativeStr}";
         }
 
-        public override IEnumerable<IAstVisitable> IterateChildNodes()
+        protected override void VisitChildren(Action<IAstVisitable> onVisit, Action<IAstVisitable> onExit)
         {
-            yield return condition;
-            foreach (var statement in positiveStatements)
-                yield return statement;
-            foreach (var statement in negativeStatements)
-                yield return statement;
+            condition?.Visit(onVisit, onExit);
+            foreach (var statement in positiveStatements) statement?.Visit(onVisit, onExit);
+            foreach (var statement in negativeStatements) statement?.Visit(onVisit, onExit);
         }
     }
 
@@ -505,10 +652,7 @@ namespace FadeBasic.Ast
             return $"rem{comment}";
         }
 
-        public override IEnumerable<IAstVisitable> IterateChildNodes()
-        {
-            yield break;
-        }
+        protected override void VisitChildren(Action<IAstVisitable> onVisit, Action<IAstVisitable> onExit) { }
     }
 
     /// <summary>
@@ -537,10 +681,9 @@ namespace FadeBasic.Ast
             return $"defer ({string.Join(",", statements.Select(x => x.ToString()))})";
         }
 
-        public override IEnumerable<IAstVisitable> IterateChildNodes()
+        protected override void VisitChildren(Action<IAstVisitable> onVisit, Action<IAstVisitable> onExit)
         {
-            foreach (var statement in statements)
-                yield return statement;
+            foreach (var statement in statements) statement?.Visit(onVisit, onExit);
         }
     }
 

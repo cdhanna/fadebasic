@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Linq;
@@ -21,10 +22,10 @@ namespace FadeBasic.Ast
             return $"redim {variable},({string.Join(",", ranks.Select(x => x.ToString()))})";
         }
 
-        public override IEnumerable<IAstVisitable> IterateChildNodes()
+        protected override void VisitChildren(Action<IAstVisitable> onVisit, Action<IAstVisitable> onExit)
         {
-            yield return variable;
-            if (ranks != null) foreach (var rank in ranks) yield return rank;
+            variable?.Visit(onVisit, onExit);
+            if (ranks != null) foreach (var rank in ranks) rank?.Visit(onVisit, onExit);
         }
         public string Trivia { get; set; }
     }
@@ -145,11 +146,11 @@ namespace FadeBasic.Ast
             return $"dim {scopeType.ToString().ToLowerInvariant()},{variable},{type},({string.Join(",", ranks.Select(x => x.ToString()))})";
         }
 
-        public override IEnumerable<IAstVisitable> IterateChildNodes()
+        protected override void VisitChildren(Action<IAstVisitable> onVisit, Action<IAstVisitable> onExit)
         {
-            yield return type;
-            if (ranks != null) foreach (var rank in ranks) yield return rank;
-            if (initializerExpression != null) yield return initializerExpression;
+            type?.Visit(onVisit, onExit);
+            if (ranks != null) foreach (var rank in ranks) rank?.Visit(onVisit, onExit);
+            initializerExpression?.Visit(onVisit, onExit);
         }
 
         public string Trivia { get; set; }

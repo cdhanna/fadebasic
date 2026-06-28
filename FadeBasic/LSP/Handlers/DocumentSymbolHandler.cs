@@ -1,75 +1,104 @@
+// Document outline — thin adapter over FadeBasic.LSP.Core.Handlers.DocumentSymbolHandler.
+//
+// ─── Behavioral audit (pre-refactor native vs Core) ─────────────────────
+//
+// Pre-refactor native: enumerated *every* lexer token whose type wasn't
+//   OpEqual / LiteralInt and dumped one DocumentSymbol per token, with the
+//   token kind inferred from LexemType (Variable/String/Number/Key). This
+//   produced an extremely noisy outline — every identifier, keyword, and
+//   string literal in the file showed up as a separate symbol. It also
+//   re-read the file from disk on every request (TODO comment acknowledged
+//   this as a hack).
+//
+// Core: walks the parsed AST and emits structured outline entries —
+//   FunctionStatement (with nested LabelDeclarationNode children),
+//   top-level DeclarationStatement, TypeDefinitionStatement, LabelDeclarationNode.
+//   Each entry has a full-extent Range (covers the body) and a
+//   SelectionRange (just the name token), which is what VSCode's
+//   breadcrumbs and outline view expect.
+//
+// Behavioral diff (intentional):
+//   * No more per-token noise — only meaningful symbols.
+//   * Range now covers the full body of a function/type/label rather than
+//     a single token.
+//   * No file IO — Core reads from the in-memory parse tree.
+
 using System.Collections.Generic;
-using System.IO;
 using System.Threading;
 using System.Threading.Tasks;
 using FadeBasic;
-using OmniSharp.Extensions.LanguageServer.Protocol;
+using LSP.Services;
 using OmniSharp.Extensions.LanguageServer.Protocol.Client.Capabilities;
 using OmniSharp.Extensions.LanguageServer.Protocol.Document;
 using OmniSharp.Extensions.LanguageServer.Protocol.Models;
-using FadeBasic;
+using CoreDocSymbolHandler = FadeBasic.LSP.Core.Handlers.DocumentSymbolHandler;
+using CoreDocSymbol = FadeBasic.LSP.Core.LspDocumentSymbol;
+using LspSymbolKind = FadeBasic.LSP.Core.LspSymbolKind;
+using Range = OmniSharp.Extensions.LanguageServer.Protocol.Models.Range;
 
 namespace LSP.Handlers;
 
 public class DocumentSymbolHandler : IDocumentSymbolHandler
 {
-    public static SymbolKind Convert(LexemType type)
+    private readonly CompilerService _compiler;
+
+    public DocumentSymbolHandler(CompilerService compiler)
     {
-        switch (type)
-        {
-            case LexemType.OpEqual:
-                return SymbolKind.Operator;
-
-            case LexemType.VariableGeneral:
-                return SymbolKind.Variable;
-            
-            case LexemType.LiteralString:
-                return SymbolKind.String;
-
-            case LexemType.LiteralReal:
-            case LexemType.LiteralInt:
-                return SymbolKind.Number;
-            default:
-                return SymbolKind.Key;
-        }
+        _compiler = compiler;
     }
-    
-    
-    public async Task<SymbolInformationOrDocumentSymbolContainer?> Handle(DocumentSymbolParams request, CancellationToken cancellationToken)
+
+    public Task<SymbolInformationOrDocumentSymbolContainer?> Handle(DocumentSymbolParams request, CancellationToken cancellationToken)
     {
-        // TODO: get this data from the sync handler
-        var content = await File.ReadAllTextAsync(DocumentUri.GetFileSystemPath(request), cancellationToken);
+        var empty = new SymbolInformationOrDocumentSymbolContainer(new List<SymbolInformationOrDocumentSymbol>());
+        if (!_compiler.TryGetProjectsFromSource(request.TextDocument.Uri, out var units) || units.Count == 0)
+            return Task.FromResult<SymbolInformationOrDocumentSymbolContainer?>(empty);
 
-        var lexer = new Lexer();
-        var tokens = lexer.Tokenize(content);
-        var symbols = new List<SymbolInformationOrDocumentSymbol>();
+        var doc = CoreAdapter.ToDocument(units[0], request.TextDocument.Uri.ToString());
+        var coreSyms = CoreDocSymbolHandler.Compute(doc);
 
-        foreach (var token in tokens)
+        var result = new List<SymbolInformationOrDocumentSymbol>(coreSyms.Count);
+        foreach (var s in coreSyms) result.Add(new SymbolInformationOrDocumentSymbol(Convert(s)));
+        return Task.FromResult<SymbolInformationOrDocumentSymbolContainer?>(
+            new SymbolInformationOrDocumentSymbolContainer(result));
+    }
+
+    private static DocumentSymbol Convert(CoreDocSymbol s)
+    {
+        var children = new List<DocumentSymbol>();
+        if (s.Children != null)
+            foreach (var c in s.Children) children.Add(Convert(c));
+
+        return new DocumentSymbol
         {
-            if (token.raw == null) continue;
+            Name = s.Name ?? string.Empty,
+            Detail = s.Detail ?? string.Empty,
+            Kind = ToSymbolKind(s.Kind),
+            Range = new Range(
+                s.Range.Start.Line, s.Range.Start.Character,
+                s.Range.End.Line, s.Range.End.Character),
+            SelectionRange = new Range(
+                s.SelectionRange.Start.Line, s.SelectionRange.Start.Character,
+                s.SelectionRange.End.Line, s.SelectionRange.End.Character),
+            Children = new Container<DocumentSymbol>(children),
+        };
+    }
 
-            switch (token.type)
-            {
-                case LexemType.OpEqual:
-                case LexemType.LiteralInt:
-                    continue;
-                default:
-                    break;
-            }
-            
-            var symbol = new DocumentSymbol
-            {
-                Detail = token.raw,
-                Kind = Convert(token.type),
-                SelectionRange = new Range(token.lineNumber, token.charNumber, token.lineNumber, token.charNumber + token.Length),
-                Range = new Range(token.lineNumber, token.charNumber, token.lineNumber, token.charNumber + token.Length),
-                Name = token.raw
-            };
-            
-            symbols.Add(symbol);
-        }
-        
-        return symbols;
+    private static SymbolKind ToSymbolKind(LspSymbolKind kind)
+    {
+        return kind switch
+        {
+            LspSymbolKind.Function => SymbolKind.Function,
+            LspSymbolKind.Variable => SymbolKind.Variable,
+            LspSymbolKind.Constant => SymbolKind.Constant,
+            LspSymbolKind.Struct   => SymbolKind.Struct,
+            LspSymbolKind.Method   => SymbolKind.Method,
+            LspSymbolKind.Interface => SymbolKind.Interface,
+            LspSymbolKind.Key      => SymbolKind.Key,
+            LspSymbolKind.Class    => SymbolKind.Class,
+            LspSymbolKind.String   => SymbolKind.String,
+            LspSymbolKind.Number   => SymbolKind.Number,
+            _ => SymbolKind.Variable,
+        };
     }
 
     public DocumentSymbolRegistrationOptions GetRegistrationOptions(DocumentSymbolCapability capability,
@@ -78,7 +107,6 @@ public class DocumentSymbolHandler : IDocumentSymbolHandler
         return new DocumentSymbolRegistrationOptions
         {
             DocumentSelector = TextDocumentSelector.ForLanguage(FadeBasicConstants.FadeBasicLanguage),
-
         };
     }
 }

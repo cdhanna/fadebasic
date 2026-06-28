@@ -1,0 +1,54 @@
+{
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "$id": "https://fade.dev/schema/fade.json",
+    "title": "Fade Project (fade.json)",
+    "description": "Project manifest for a Fade Playground workspace. Replaces csproj inside the Playground. The file is required at the root of every project folder and may be edited, but cannot be deleted or renamed by the UI.",
+    "type": "object",
+    "required": ["name", "type", "sources"],
+    "additionalProperties": false,
+    "properties": {
+        "name": {
+            "type": "string",
+            "description": "Display name for the project.",
+            "minLength": 1
+        },
+        "author": {
+            "type": "string",
+            "description": "Optional author / owner string."
+        },
+        "type": {
+            "type": "string",
+            "description": "Project flavor. 'web' runs in the WebRuntime worker (console-style commands). 'monogame' runs in the WebRuntime.MonoGame canvas runtime (KNI-backed graphics).",
+            "enum": ["web", "monogame"]
+        },
+        "commandDlls": {
+            "type": "array",
+            "description": "Command assemblies to load into the runtime. Each entry names an assembly and the specific class within it to instantiate. Mirrors the <FadeCommand Include='...' FullName='...' /> MSBuild item.",
+            "items": {
+                "type": "object",
+                "required": ["assembly", "class"],
+                "additionalProperties": false,
+                "properties": {
+                    "assembly": {
+                        "type": "string",
+                        "description": "Assembly name (no .dll extension), e.g. 'FadeBasic.Lib.Web'."
+                    },
+                    "class": {
+                        "type": "string",
+                        "description": "Fully-qualified class name within the assembly, e.g. 'FadeBasic.Lib.Web.WebCommands'."
+                    }
+                }
+            },
+            "default": []
+        },
+        "sources": {
+            "type": "array",
+            "description": "Ordered list of .fbasic source files belonging to this project. ORDER MATTERS — sources are concatenated in this order before compilation, matching the native Fade SDK build path. Each entry is a workspace-relative filename.",
+            "items": {
+                "type": "string",
+                "pattern": "^[\\w.\\-/]+\\.(fbasic|fb)$"
+            },
+            "minItems": 1
+        }
+    }
+}

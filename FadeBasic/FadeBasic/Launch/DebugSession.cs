@@ -29,7 +29,7 @@ namespace FadeBasic.Launch
             public string processName;
             public int processId;
             public string processWindowTitle;
-            public void ProcessJson(IJsonOperation op)
+            public void ProcessJson<T>(ref T op) where T : IJsonOperation
             {
                 op.IncludeField(nameof(port), ref port);
                 op.IncludeField(nameof(processId), ref processId);
@@ -56,6 +56,17 @@ namespace FadeBasic.Launch
 
         protected bool requestedExit;
         protected bool started;
+
+        /// <summary>
+        /// When true, reaching end-of-program does not automatically fire
+        /// <c>REV_REQUEST_EXITED</c> to the connected debug client. Hosts that
+        /// drive the VM through multiple programs in one process (e.g. a test
+        /// runner that <see cref="Restart"/>s between tests, or any consumer
+        /// that wants to keep the debugger session alive across program
+        /// completions) should set this. An explicit <see cref="requestedExit"/>
+        /// or socket close still terminates the session normally.
+        /// </summary>
+        public bool suppressExitOnProgramEnd;
         protected Task _serverTask;
         protected Task _processingTask;
 
@@ -182,21 +193,74 @@ namespace FadeBasic.Launch
 
         public void Restart(VirtualMachine nextVm, DebugData nextDebugData, CommandCollection commandCollection)
         {
-            // put this as a message so that the read-loop causes an interupt in the running VM. 
-            //  otherwise, the existing VM will get stuck in a read-loop.
-            receivedMessages.Enqueue(new MockResetMessage()
+            // Suspend the current VM first so anything currently executing it
+            // (on this thread or otherwise) drops out before we swap. Restart()
+            // is expected to be called from the same thread that drives the VM
+            // (via StartDebugging), so by the time we return the swap is in
+            // effect for the caller's next tick.
+            _vm?.Suspend();
+
+            // Swap synchronously. The previous design enqueued a
+            // MockResetMessage and let the read-loop perform the swap when
+            // ReadMessage was next called from inside StartDebugging. That
+            // failed when the prior VM had reached end-of-program: the inner
+            // exec loop's `instructionIndex < program.Length` guard short-
+            // circuited, ReadMessage was never invoked, and the swap message
+            // sat in the queue forever — leaving _vm pointing at the dead VM
+            // while the caller's _vm field already pointed at the new one.
+            ApplyRestart(nextVm, nextDebugData, commandCollection);
+        }
+
+        // Shared swap path used by Restart() and the (now-defensive) inbound
+        // REV_REQUEST_RESTART message handler. Mutates _vm and the surrounding
+        // state on the calling thread; safe because the only writers of these
+        // fields are the message-processing loop and Restart(), both invoked
+        // from the same VM-driving thread.
+        private void ApplyRestart(VirtualMachine nextVm, DebugData nextDebugData, CommandCollection nextCommands)
+        {
+            _vm = nextVm;
+            _vm.shouldThrowRuntimeException = false;
+            _vm.logger = logger;
+
+            _commandCollection = nextCommands;
+            _dbg = nextDebugData;
+
+            instructionMap = new IndexCollection(_dbg.statementTokens);
+            variableDb = new DebugVariableDatabase(_vm, _dbg, logger);
+
+            logger.Log("RESTARTING debug session... version=" + typeof(DebugSession).Assembly.GetName().Version);
+            foreach (var token in _dbg.statementTokens)
             {
-                type = DebugMessageType.REV_REQUEST_RESTART,
-                nextDebugData = nextDebugData,
-                nextMachine = nextVm,
-                nextCommands = commandCollection
-            });
-            
-            // flip some state so the program does not run, until hello is received. 
+                var json = JsonableExtensions.Jsonify(token);
+                logger.Log(json);
+            }
+
+            // reset state variables
+            pauseRequestedByMessageId = 0;
+            resumeRequestedByMessageId = 0;
+            currentInsLookupOffset = 0;
+            stepNextMessage = null;
+            stepIntoMessage = null;
+            stepOutMessage = null;
+            stepStackDepth = 0;
+            stepOverFromToken = null;
+            stepInFromToken = null;
+            stepOutFromToken = null;
+            breakpointTokens.Clear();
+            hitBreakpointToken = null;
+
+            // Gate the new VM behind a fresh PROTO_HELLO from any connected
+            // debugger so a mid-step client doesn't continue executing against
+            // stale program state.
             debuggerSaidHello = 0;
             debuggerReset = 1;
-            
-            _vm.Suspend();
+
+            // tell the DAP Host that we are planning to reboot!
+            outboundMessages.Enqueue(new DebugMessage()
+            {
+                id = GetNextMessageId(),
+                type = DebugMessageType.REV_REQUEST_RESTART
+            });
         }
 
         public void StartServer()
@@ -219,13 +283,20 @@ namespace FadeBasic.Launch
 
         public void ShutdownServer()
         {
-            logger.Log("Starting server shutdown...");
+            // No-op when the server was never started (e.g., a DebugSession
+            // constructed for in-process debugging without a network listener,
+            // or a test host that creates the session but skips StartServer).
+            // Without this guard _cts is null and the Cancel() below NREs on
+            // dispose paths.
+            if (!started) return;
+
+            logger?.Log("Starting server shutdown...");
             while (didClientConnect && outboundMessages.Count > 0)
             {
                 Thread.Sleep(10); // wait for messages to go away...
             }
-            logger.Log("Messages done...");
-            _cts.Cancel();
+            logger?.Log("Messages done...");
+            _cts?.Cancel();
         }
 
         protected bool didClientConnect = false;
@@ -306,17 +377,26 @@ namespace FadeBasic.Launch
             outboundMessages.Enqueue(message);
         }
 
-        protected void SendRuntimeErrorMessage(string message)
+        protected void SendRuntimeErrorMessage(string message, bool isSystem = false)
         {
             outboundMessages.Enqueue(new ExplodedMessage()
             {
                 id = GetNextMessageId(),
                 message = message,
+                isSystem = isSystem,
                 type = DebugMessageType.REV_REQUEST_EXPLODE
             });
         }
 
-        protected void SendExitedMessage()
+        /// <summary>
+        /// Tell the connected debug client that this session is exiting. Use
+        /// this from a host that has set <see cref="suppressExitOnProgramEnd"/>
+        /// (so the auto-fire at end-of-program is disabled) and needs to
+        /// emit the EXITED event explicitly when its overall lifetime ends —
+        /// e.g., a test runner after the last test, or any consumer that
+        /// drives multiple programs in one debug session.
+        /// </summary>
+        public void SendExitedMessage()
         {
             logger?.Debug("Sending exit message");
             var message = new DebugMessage()
@@ -338,48 +418,15 @@ namespace FadeBasic.Launch
                     switch (message.type)
                     {
                         case DebugMessageType.REV_REQUEST_RESTART:
-
-                            var mock = message as MockResetMessage;
-                            _vm = mock.nextMachine;
-                            _vm.shouldThrowRuntimeException = false;
-                            _vm.logger = logger;
-            
-                            _commandCollection = mock.nextCommands;
-            
-                            _dbg = mock.nextDebugData;
-            
-                            instructionMap = new IndexCollection(_dbg.statementTokens);
-                            variableDb = new DebugVariableDatabase(_vm, _dbg, logger);
-            
-                            logger.Log("RESTARTING debug session... version=" + typeof(DebugSession).Assembly.GetName().Version);
-                            foreach (var token in _dbg.statementTokens)
+                            // Defensive: Restart() now swaps synchronously and
+                            // does not enqueue this message, so this case is
+                            // unreachable from internal callers. Kept for any
+                            // external code that drives the message bus
+                            // directly.
+                            if (message is MockResetMessage mock)
                             {
-                                var json = JsonableExtensions.Jsonify(token);
-                                logger.Log(json);
+                                ApplyRestart(mock.nextMachine, mock.nextDebugData, mock.nextCommands);
                             }
-            
-                            // reset state variables 
-                         
-                            pauseRequestedByMessageId = 0;
-                            resumeRequestedByMessageId = 0;
-                            currentInsLookupOffset = 0;
-                            stepNextMessage = null;
-                            stepIntoMessage = null;
-                            stepOutMessage = null;
-                            stepStackDepth = 0;
-                            stepOverFromToken = null;
-                            stepInFromToken = null;
-                            stepOutFromToken = null;
-                            breakpointTokens.Clear();
-                            hitBreakpointToken = null;
-                            
-                            // tell the DAP Host that we are planning to reboot!
-                            outboundMessages.Enqueue(new DebugMessage()
-                            {
-                                id = GetNextMessageId(),
-                                type = DebugMessageType.REV_REQUEST_RESTART
-                            });
-                            
                             break;
                         case DebugMessageType.PROTO_HELLO:
                             hasConnectedDebugger = 1;
@@ -1877,9 +1924,17 @@ namespace FadeBasic.Launch
             }
             catch (Exception ex)
             {
-                logger.Error($"Unhandled VM exception during step: {ex.Message}");
+                // Log the full ToString() (type + message + stack) so the host can find
+                // the offending op handler. The Message alone hides where the cast
+                // (or other system-level fault) actually originated.
+                logger.Error($"Unhandled VM exception during step: {ex}");
                 pauseRequestedByMessageId = resumeRequestedByMessageId + 1;
-                SendRuntimeErrorMessage(ex.Message);
+                // Tag with the current ins= so the Playground can resolve a source
+                // line, and mark isSystem=true so the UI renders it as an internal
+                // fault rather than a "normal" Fade runtime error.
+                SendRuntimeErrorMessage(
+                    $"system-error. ins=[{_vm.instructionIndex}] {ex.Message}",
+                    isSystem: true);
                 activeStepMessage = null;
             }
         }
@@ -2047,9 +2102,17 @@ namespace FadeBasic.Launch
                     }
                     catch (Exception ex)
                     {
-                        logger.Error($"Unhandled VM exception during execution: {ex.Message}");
+                        // Full ToString() so the type + stack trace survive — the
+                        // bare Message (e.g. "Specified cast is not valid.") hides
+                        // which op handler actually faulted.
+                        logger.Error($"Unhandled VM exception during execution: {ex}");
                         pauseRequestedByMessageId = resumeRequestedByMessageId + 1;
-                        SendRuntimeErrorMessage(ex.Message);
+                        // Tag with the failing ins= so the Playground can paint a
+                        // line preview, and flag isSystem so the UI distinguishes
+                        // this from a structured Fade runtime error.
+                        SendRuntimeErrorMessage(
+                            $"system-error. ins=[{_vm.instructionIndex}] {ex.Message}",
+                            isSystem: true);
                         spent = 0;
                     }
                     budget -= spent;
@@ -2176,7 +2239,13 @@ namespace FadeBasic.Launch
 
 
             logger?.Debug("done with debug loop");
-            if (_vm.instructionIndex >= _vm.program.Length || requestedExit)
+            // Always honor an explicit requestedExit. End-of-program only
+            // fires EXITED when the host hasn't opted into managing program
+            // lifetime via suppressExitOnProgramEnd — without that opt-out,
+            // a test runner that swaps VMs between tests would tell the
+            // debugger "process exited" mid-session and lose the connection.
+            if (requestedExit ||
+                (_vm.instructionIndex >= _vm.program.Length && !suppressExitOnProgramEnd))
             {
                 SendExitedMessage();
             }
@@ -2231,7 +2300,7 @@ namespace FadeBasic.Launch
         public DebugMessageType type;
         
         
-        public virtual void ProcessJson(IJsonOperation op)
+        public virtual void ProcessJson<T>(ref T op) where T : IJsonOperation
         {
             op.IncludeField(nameof(id), ref id);
             op.IncludeField(nameof(type), ref type);
@@ -2243,10 +2312,17 @@ namespace FadeBasic.Launch
     public class ExplodedMessage : DebugMessage
     {
         public string message;
-        public override void ProcessJson(IJsonOperation op)
+        // True when this error originated from an unhandled .NET exception
+        // (e.g. InvalidCastException) rather than a VM-structured runtime
+        // error like divide-by-zero. The Playground renders these with a
+        // distinct chip so the user knows it's an internal/system fault,
+        // not an "expected" Fade runtime error they wrote.
+        public bool isSystem;
+        public override void ProcessJson<T>(ref T op)
         {
-            base.ProcessJson(op);
+            base.ProcessJson(ref op);
             op.IncludeField(nameof(message), ref message);
+            op.IncludeField(nameof(isSystem), ref isSystem);
         }
     }
 
@@ -2255,9 +2331,9 @@ namespace FadeBasic.Launch
         public int frameIndex;
         public string expression;
 
-        public override void ProcessJson(IJsonOperation op)
+        public override void ProcessJson<T>(ref T op)
         {
-            base.ProcessJson(op);
+            base.ProcessJson(ref op);
             op.IncludeField(nameof(frameIndex), ref frameIndex);
             op.IncludeField(nameof(expression), ref expression);
         }
@@ -2268,9 +2344,9 @@ namespace FadeBasic.Launch
         public int variableId;
         public int frameId;
         public string rhs;
-        public override void ProcessJson(IJsonOperation op)
+        public override void ProcessJson<T>(ref T op)
         {
-            base.ProcessJson(op);
+            base.ProcessJson(ref op);
             op.IncludeField(nameof(variableId), ref variableId);
             op.IncludeField(nameof(frameId), ref frameId);
             op.IncludeField(nameof(rhs), ref rhs);
@@ -2280,9 +2356,9 @@ namespace FadeBasic.Launch
     public class EvalResponse : DebugMessage
     {
         public DebugEvalResult result;
-        public override void ProcessJson(IJsonOperation op)
+        public override void ProcessJson<T>(ref T op)
         {
-            base.ProcessJson(op);
+            base.ProcessJson(ref op);
             op.IncludeField(nameof(result), ref result);
         }
     }
@@ -2292,9 +2368,9 @@ namespace FadeBasic.Launch
         public string reason;
         public int status;
 
-        public override void ProcessJson(IJsonOperation op)
+        public override void ProcessJson<T>(ref T op)
         {
-            base.ProcessJson(op);
+            base.ProcessJson(ref op);
             op.IncludeField(nameof(reason), ref reason);
             op.IncludeField(nameof(status), ref status);
         }
@@ -2304,9 +2380,9 @@ namespace FadeBasic.Launch
     {
         public List<DebugScope> scopes = new List<DebugScope>();
 
-        public override void ProcessJson(IJsonOperation op)
+        public override void ProcessJson<T>(ref T op)
         {
-            base.ProcessJson(op);
+            base.ProcessJson(ref op);
             op.IncludeField(nameof(scopes), ref scopes);
         }
     }
@@ -2317,7 +2393,7 @@ namespace FadeBasic.Launch
         public string scopeName;
         public string evalName;
         public List<DebugVariable> variables = new List<DebugVariable>();
-        public void ProcessJson(IJsonOperation op)
+        public void ProcessJson<T>(ref T op) where T : IJsonOperation
         {
             op.IncludeField(nameof(id), ref id);
             op.IncludeField(nameof(scopeName), ref scopeName);
@@ -2340,7 +2416,7 @@ namespace FadeBasic.Launch
         // json ignored on purpose. 
         public DebugRuntimeVariable runtimeVariable;
         
-        public void ProcessJson(IJsonOperation op)
+        public void ProcessJson<T>(ref T op) where T : IJsonOperation
         {
             op.IncludeField(nameof(id), ref id);
             op.IncludeField(nameof(name), ref name);
@@ -2356,9 +2432,9 @@ namespace FadeBasic.Launch
     {
         public List<DebugStackFrame> frames;
 
-        public override void ProcessJson(IJsonOperation op)
+        public override void ProcessJson<T>(ref T op)
         {
-            base.ProcessJson(op);
+            base.ProcessJson(ref op);
             op.IncludeField(nameof(frames), ref frames);
         }
     }
@@ -2366,9 +2442,9 @@ namespace FadeBasic.Launch
     public class HelloResponseMessage : DebugMessage
     {
         public int processId;
-        public override void ProcessJson(IJsonOperation op)
+        public override void ProcessJson<T>(ref T op)
         {
-            base.ProcessJson(op);
+            base.ProcessJson(ref op);
             op.IncludeField(nameof(processId), ref processId);
         }
     }

@@ -1,0 +1,90 @@
+<Project Sdk="Microsoft.NET.Sdk.BlazorWebAssembly">
+
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <AssemblyName>FadeBasic.Export.Web</AssemblyName>
+    <RootNamespace>FadeBasic.Export.Web</RootNamespace>
+
+    <!-- Dynamic Assembly.Load of game DLLs + Lib.Web means the trimmer can't
+         see all used types statically. TrimMode=copy trims unreferenced
+         assemblies but keeps full IL in referenced ones, which is safe for
+         our dynamic-load pattern and still removes unused BCL assemblies. -->
+    <PublishTrimmed>true</PublishTrimmed>
+    <TrimMode>copy</TrimMode>
+    <!-- Removes all ICU globalization data files (~2.5 MB). The LSP worker
+         doesn't need locale-sensitive ops. -->
+    <InvariantGlobalization>true</InvariantGlobalization>
+  </PropertyGroup>
+
+  <!-- NuGet package: FadeBasic.Export.Web
+       install.sh runs `dotnet publish` first to populate staging/wasm/,
+       then `dotnet pack` picks up those files as package content. -->
+  <PropertyGroup>
+    <PackageId>FadeBasic.Export.Web</PackageId>
+    <Title>FadeBasic Web Export</Title>
+    <Description>Adds dotnet publish support for exporting a FadeBasic project as a self-contained static web bundle (itch.io / static host).</Description>
+    <IsPackable>true</IsPackable>
+    <IncludeBuildOutput>false</IncludeBuildOutput>
+    <GeneratePackageOnBuild>false</GeneratePackageOnBuild>
+  </PropertyGroup>
+<!--  <ItemGroup>-->
+<!--    <TrimmerRootAssembly Include="System.Runtime" />-->
+<!--    <TrimmerRootAssembly Include="System.Memory" />-->
+<!--    <TrimmerRootAssembly Include="System.Runtime.InteropServices.JavaScript" />-->
+<!--  </ItemGroup>-->
+
+  <!-- WASM bundle staged by install.sh before pack. Lands in build/wasm/ inside the package. -->
+  <ItemGroup>
+    <None Include="build/FadeBasic.Export.Web.targets"
+          Pack="true"
+          PackagePath="build/FadeBasic.Export.Web.targets" />
+  </ItemGroup>
+
+  <!-- Only when packing, should we include the built wasm folder. -->
+  <ItemGroup Condition="'$(IsPack)'=='true'">
+    <None Include="$(FADE_WASM_ARTIFACT_DIR)/wwwroot/**"
+          Condition="Exists('$(FADE_WASM_ARTIFACT_DIR)/wwwroot')"
+          Pack="true"
+          PackagePath="build/wasm/%(RecursiveDir)%(Filename)%(Extension)" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- PrivateAssets=all: the consumer never compiles or runs any Blazor
+         code — the WASM bundle ships these inside _framework/ already. -->
+    <PackageReference Include="Microsoft.AspNetCore.Components.WebAssembly" Version="8.0.0" PrivateAssets="all" />
+    <PackageReference Include="Microsoft.AspNetCore.Components.WebAssembly.DevServer" Version="8.0.0" PrivateAssets="all" />
+  </ItemGroup>
+
+  <!-- PrivateAssets=all on every ProjectReference because this package is
+       content-only (IncludeBuildOutput=false above). Consumers don't compile
+       against anything we reference — they just get the WASM bundle + the
+       targets file. Without PrivateAssets, NuGet would advertise these as
+       transitive deps and require LSP.Core to be packed too. -->
+  <ItemGroup>
+    <ProjectReference Include="..\FadeBasic\FadeBasic.csproj" PrivateAssets="all" />
+    <ProjectReference Include="..\FadeBasic.Lib.Standard\FadeBasic.Lib.Standard.csproj" PrivateAssets="all" />
+    <!-- Note: Export.Web deliberately does NOT reference Lib.Web. The two
+         communicate through the generic HostCommandBridge delegate slots in
+         core FadeBasic — Lib.Web's commands fire the hooks, Export.Web's
+         FadeBridge registers handlers. This keeps the dependency direction
+         clean (libraries → host, not the other way around) so future Lib.*
+         projects can plug into the same cooperative-pump model without any
+         changes to Export.Web. Lib.Web.dll is loaded into the runtime
+         dynamically (Assembly.Load via FadeBridge.LoadAssembly), same as
+         the consumer's game DLL. -->
+    <ProjectReference Include="..\LSP.Core\FadeBasic.LSP.Core.csproj" PrivateAssets="all" />
+    <!-- ApplicationSupport gives us ProjectDocs + MarkdownDocParser so we
+         can reuse the same XML-doc → markdown pipeline the native LSP uses
+         (instead of re-implementing it here). Microsoft.Build refs inside
+         it use ExcludeAssets="runtime", so they don't ship to WASM. -->
+    <ProjectReference Include="..\ApplicationSupport\ApplicationSupport.csproj" PrivateAssets="all" />
+    <ProjectReference Include="..\CommandSourceGenerator\CommandSourceGenerator.csproj"
+                      OutputItemType="Analyzer"
+                      ReferenceOutputAssembly="false"
+                      PrivateAssets="all" />
+  </ItemGroup>
+
+</Project>

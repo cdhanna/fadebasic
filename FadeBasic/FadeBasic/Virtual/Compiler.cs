@@ -19,7 +19,7 @@ namespace FadeBasic.Virtual
         private string registerAddressSerializer;
         public bool isGlobal;
         
-        public void ProcessJson(IJsonOperation op)
+        public void ProcessJson<T>(ref T op) where T : IJsonOperation
         {
             op.IncludeField(nameof(byteSize), ref byteSize);
             op.IncludeField(nameof(typeCode), ref typeCode);
@@ -53,7 +53,7 @@ namespace FadeBasic.Virtual
         public bool isGlobal;
         public byte[] rankSizeRegisterAddresses; // an array where the index is the rank, and the value is the ptr to a register whose value holds the size of the rank
         public byte[] rankIndexScalerRegisterAddresses; // an array where the index is the rank, and the value is the ptr to a register whose value holds the multiplier factor for the rank's indexing
-        public void ProcessJson(IJsonOperation op)
+        public void ProcessJson<T>(ref T op) where T : IJsonOperation
         {
             op.IncludeField(nameof(byteSize), ref byteSize);
             op.IncludeField(nameof(typeCode), ref typeCode);
@@ -82,7 +82,7 @@ namespace FadeBasic.Virtual
         public int typeId;
         public int byteSize;
         public Dictionary<string, CompiledTypeMember> fields = new Dictionary<string, CompiledTypeMember>();
-        public void ProcessJson(IJsonOperation op)
+        public void ProcessJson<T>(ref T op) where T : IJsonOperation
         {
             op.IncludeField(nameof(typeName), ref typeName);
             op.IncludeField(nameof(typeId), ref typeId);
@@ -97,7 +97,7 @@ namespace FadeBasic.Virtual
         public byte TypeCode;
         public CompiledType Type;
         
-        public void ProcessJson(IJsonOperation op)
+        public void ProcessJson<T>(ref T op) where T : IJsonOperation
         {
             op.IncludeField(nameof(Offset), ref Offset);
             op.IncludeField(nameof(Length), ref Length);
@@ -109,7 +109,58 @@ namespace FadeBasic.Virtual
     public struct LabelReplacement
     {
         public int InstructionIndex;
+        // Region-prefixed label key (see Compiler.MakeLabelKey). Built
+        // at emit time from the current label region + the user-written
+        // label name so two tests / two functions with same-named labels
+        // resolve independently. Runto replacements use the main-body
+        // region prefix regardless of where the `runto X` was written.
         public string Label;
+    }
+
+    public class TestManifestEntry : IJsonable
+    {
+        public string name;
+        public int entryPointAddress;
+        public bool isAbstract;
+        public string fromParent; // null if no parent
+
+        // sourceLine/sourceChar are reported in the ORIGINATING file's coordinate
+        // space (1-based line numbers as the user sees them). The compiler
+        // initially stamps these in the concatenated-source space; a post-compile
+        // pass remaps them via SourceMap when one is available. The originating
+        // file path goes in <see cref="sourceFilePath"/>; null/empty means the
+        // file is unknown (no source map provided), and consumers should treat
+        // line/char as best-effort positions only.
+        public int sourceLine;
+        public int sourceChar;
+        public string sourceFilePath;
+
+        public void ProcessJson<T>(ref T op) where T : IJsonOperation
+        {
+            op.IncludeField(nameof(name), ref name);
+            op.IncludeField(nameof(entryPointAddress), ref entryPointAddress);
+            op.IncludeField(nameof(isAbstract), ref isAbstract);
+            op.IncludeField(nameof(fromParent), ref fromParent);
+            op.IncludeField(nameof(sourceLine), ref sourceLine);
+            op.IncludeField(nameof(sourceChar), ref sourceChar);
+            op.IncludeField(nameof(sourceFilePath), ref sourceFilePath);
+        }
+    }
+
+    /// <summary>
+    /// Serializable wrapper around the compiler's test manifest. Used by
+    /// <c>LaunchUtil.PackTestManifest</c> / <c>UnpackTestManifest</c> to bake
+    /// the manifest into the generated launchable so console-app builds can
+    /// support <c>--fade-test=name</c> at runtime.
+    /// </summary>
+    public class TestManifest : IJsonable
+    {
+        public List<TestManifestEntry> entries = new List<TestManifestEntry>();
+
+        public void ProcessJson<T>(ref T op) where T : IJsonOperation
+        {
+            op.IncludeField(nameof(entries), ref entries);
+        }
     }
 
     public struct FunctionCallReplacement
@@ -230,7 +281,7 @@ namespace FadeBasic.Virtual
         public ulong maxRegisterSize;
         private string maxRegisterSizeSerializer;
         
-        public void ProcessJson(IJsonOperation op)
+        public void ProcessJson<T>(ref T op) where T : IJsonOperation
         {
             op.IncludeField(nameof(scopeIndex), ref scopeIndex);
             op.IncludeField(nameof(maxRegisterSizeSerializer), ref maxRegisterSizeSerializer);
@@ -255,7 +306,7 @@ namespace FadeBasic.Virtual
         // public Dictionary<int, InternedScopeMetadata> scopeMetaDatas = new Dictionary<int, InternedScopeMetadata>();
         public ulong maxRegisterAddress;
         private string maxRegisterAddressSerializer;
-        public void ProcessJson(IJsonOperation op)
+        public void ProcessJson<T>(ref T op) where T : IJsonOperation
         {
             op.IncludeField(nameof(types), ref types);
             op.IncludeField(nameof(functions), ref functions);
@@ -279,7 +330,7 @@ namespace FadeBasic.Virtual
         public string value;
         public int[] indexReferences;
         
-        public void ProcessJson(IJsonOperation op)
+        public void ProcessJson<T>(ref T op) where T : IJsonOperation
         {
             op.IncludeField(nameof(value), ref value);
             op.IncludeField(nameof(indexReferences), ref indexReferences);
@@ -294,7 +345,7 @@ namespace FadeBasic.Virtual
         public int typeCode;
         public int typeId;
         public List<InternedFunctionParameter> parameters = new List<InternedFunctionParameter>();
-        public void ProcessJson(IJsonOperation op)
+        public void ProcessJson<T>(ref T op) where T : IJsonOperation
         {
             op.IncludeField(nameof(name), ref name);
             op.IncludeField(nameof(insIndex), ref insIndex);
@@ -312,7 +363,7 @@ namespace FadeBasic.Virtual
         public int typeCode;
         public int typeId;
         
-        public void ProcessJson(IJsonOperation op)
+        public void ProcessJson<T>(ref T op) where T : IJsonOperation
         {
             op.IncludeField(nameof(name), ref name);
             op.IncludeField(nameof(index), ref index);
@@ -327,7 +378,7 @@ namespace FadeBasic.Virtual
         public int byteSize;
         public int typeId;
         public Dictionary<string, InternedField> fields = new Dictionary<string, InternedField>();
-        public void ProcessJson(IJsonOperation op)
+        public void ProcessJson<T>(ref T op) where T : IJsonOperation
         {
             op.IncludeField(nameof(name), ref name);
             op.IncludeField(nameof(typeId), ref typeId);
@@ -343,7 +394,7 @@ namespace FadeBasic.Virtual
         public string typeName;
         public int typeId;
         
-        public void ProcessJson(IJsonOperation op)
+        public void ProcessJson<T>(ref T op) where T : IJsonOperation
         {
             op.IncludeField(nameof(offset), ref offset);
             op.IncludeField(nameof(length), ref length);
@@ -376,12 +427,59 @@ namespace FadeBasic.Virtual
         private Dictionary<string, int> _commandToPtr = new Dictionary<string, int>();
         private Stack<List<int>> _exitInstructionIndexes = new Stack<List<int>>();
         private Stack<List<int>> _skipInstructionIndexes = new Stack<List<int>>();
+        private readonly Stack<List<int>> _jumpIndexPool = new Stack<List<int>>();
+
+        private List<int> RentJumpList()
+        {
+            if (_jumpIndexPool.Count > 0) { var l = _jumpIndexPool.Pop(); l.Clear(); return l; }
+            return new List<int>();
+        }
+
+        private void ReturnJumpList(List<int> list) => _jumpIndexPool.Push(list);
 
         private List<LabelReplacement> _labelReplacements = new List<LabelReplacement>();
+        // Keyed by region-prefixed label name. Region is empty for main
+        // body, "test:<name>" inside a test body, "fn:<name>" inside a
+        // function body. Each region has its own label namespace so two
+        // tests / two functions can share label names without collision.
         private Dictionary<string, int> _labelToInstructionIndex = new Dictionary<string, int>();
+        // The region currently being compiled. Compile(LabelDeclarationNode)
+        // builds the key from this region; Compile(GotoStatement) /
+        // Compile(GoSubStatement) stamp the region-prefixed key into the
+        // emitted replacement so resolution stays scoped.
+        private string _currentLabelRegion = "";
+
+        // Compose a label dictionary key from a region + user-written
+        // label name. The `::` separator can't appear in either piece
+        // (region names are compiler-generated, label names are restricted
+        // to identifier characters) so the encoding is unambiguous.
+        private static string MakeLabelKey(string region, string label)
+            => (region ?? "") + "::" + label;
+
+        // For each `runto label` call site, record where in the bytecode the
+        // PUSH int placeholder lives so we can patch the resolved post-yield
+        // address (label_addr + 2) at the end of compilation.
+        private List<LabelReplacement> _runtoReplacements = new List<LabelReplacement>();
+
+        // Set of label names that any test references via `runto`. These get a
+        // RUNTO_YIELD opcode emitted right after the label's NOOP. Labels that
+        // aren't runto targets carry no overhead.
+        private HashSet<string> _runtoTargetLabels = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        // Manifest of compiled tests: name → entry-point address. Recorded as
+        // each test body is compiled. Surfaced via the public Manifest property
+        // and (later) emitted into the interned-data section.
+        private List<TestManifestEntry> _testManifest = new List<TestManifestEntry>();
+        public IReadOnlyList<TestManifestEntry> TestManifest => _testManifest;
 
         private List<FunctionCallReplacement> _functionCallReplacements = new List<FunctionCallReplacement>();
         private Dictionary<string, int> _functionTable = new Dictionary<string, int>();
+
+        // For each `assert` failure-branch emit site, record the buffer index of
+        // the placeholder PUSH int that should be patched with the assert-unwind
+        // trampoline's address. The trampoline is emitted once near program end;
+        // these get patched after that emission completes.
+        private List<int> _assertTrampolinePatches = new List<int>();
         
         private InternedData data = new InternedData();
         
@@ -433,38 +531,64 @@ namespace FadeBasic.Virtual
 
             // push a temporary value that will be replaced later.
             //  this value represents the ins-ptr where the interned-data lives.
-            var value = BitConverter.GetBytes(0);
-            for (var i = 0 ; i < value.Length; i ++)
-            {
-                _buffer.Add(value[i]);
-            }
-            
+            AppendInt32(_buffer, 0);
+
+            // Pre-pass: collect every label name referenced by a `runto` anywhere in
+            // the test corpus. These labels get a RUNTO_YIELD opcode emitted right
+            // after their NOOP. Labels not referenced get no overhead, and run builds
+            // with no tests skip this pass entirely (set stays empty).
+            CollectRuntoTargets(program);
+
             foreach (var typeDef in program.typeDefinitions)
             {
                 Compile(typeDef);
             }
-            
+
             foreach (var statement in program.statements)
             {
-            
+
                 Compile(statement);
             }
 
-            // prevent the execution from ever going to the functions. GOTO statements _should_ be illegal to jump into a function's scope. 
+            // prevent the execution from ever going to the functions. GOTO statements _should_ be illegal to jump into a function's scope.
             CompileEnd();
-            
+
             foreach (var function in program.functions)
             {
                 Compile(function);
             }
 
+            // Tests are compiled as additional, runnable bytecode regions after the
+            // program's functions but before interned data. Each test gets its own
+            // entry point recorded in the manifest. A test instance is launched via
+            // `new VirtualMachine(program, manifest.entryPointAddress)`.
+            //
+            // Two-phase emission so `from`-chains work without duplicating body
+            // bytecode: phase 1 lays down each test's body region (statements +
+            // RETURN, then any test-scoped functions) and records its start
+            // address; phase 2 lays down each test's launcher region (a flat
+            // sequence of JUMP_HISTORY → ancestor-body, ..., JUMP_HISTORY → self-
+            // body, HALT) and stamps the manifest with the launcher address.
+            // Running a test = jump to its launcher, which GOSUBs through the
+            // full chain in order, sharing the VM's scope/registers/mock-table.
+            var testBodyAddresses = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+            foreach (var test in program.tests)
+            {
+                CompileTestBody(test, testBodyAddresses);
+            }
+            foreach (var test in program.tests)
+            {
+                CompileTestLauncher(test, testBodyAddresses, program.tests);
+            }
+
+            // Emit the assert-unwind trampoline after tests, before interned
+            // data. ASSERT_FAIL sites pushed a placeholder for its address; the
+            // call below patches every site once the real address is known.
+            CompileAssertUnwindTrampoline();
+
             { // handle interned data
-                { // replace the jump ptr at index=0 to tell us where the data lives. 
-                    var internLocationBytes = BitConverter.GetBytes(_buffer.Count);
-                    for (var i = 0; i < internLocationBytes.Length; i++)
-                    {
-                        _buffer[0 + i] = internLocationBytes[i];
-                    }
+                { // replace the jump ptr at index=0 to tell us where the data lives.
+                    PatchInt32(_buffer, 0, _buffer.Count);
                 }
 
                 PushInternedData();
@@ -472,26 +596,190 @@ namespace FadeBasic.Virtual
             CompileJumpReplacements();
         }
 
+        private void CollectRuntoTargets(ProgramNode program)
+        {
+            void Visit(IAstVisitable node)
+            {
+                if (node is RuntoStatement runto)
+                {
+                    _runtoTargetLabels.Add(runto.targetLabel);
+                }
+            }
+            foreach (var test in program.tests)
+            {
+                test.Visit(Visit);
+            }
+        }
+
+        // Phase 1: emit a test's body region (statements + RETURN), then any
+        // test-scoped functions. Records the body's start address in
+        // `bodyAddresses` so phase 2 launchers can GOSUB to it. Manifest
+        // entry is added in phase 2 (so it points at the launcher, not the
+        // body) — but we tag the body's start instruction for debugger
+        // function-name resolution here.
+        private void CompileTestBody(TestNode test,
+            Dictionary<string, int> bodyAddresses)
+        {
+            var bodyStart = _buffer.Count;
+            if (test.name != null)
+            {
+                bodyAddresses[test.name] = bodyStart;
+            }
+
+            // Set the label region for this test so two tests with same-
+            // named labels don't collide at jump-replacement time. Restore
+            // on the way out — nested compile of test-scoped functions
+            // below will set their own regions over this.
+            var prevRegion = _currentLabelRegion;
+            _currentLabelRegion = "test:" + (test.name ?? "<anon>");
+
+            // Compile the test body. The dispatch in Compile(IStatementNode) skips
+            // FunctionStatement nodes — they're emitted separately below — so the
+            // body's own function declarations don't pollute the test's entry-point
+            // bytecode region.
+            foreach (var statement in test.testProgram.statements)
+            {
+                Compile(statement);
+            }
+
+            // RETURN instead of HALT: when invoked via the launcher's
+            // JUMP_HISTORY, this returns control so the next ancestor-or-
+            // self body in the chain can run.
+            //
+            // DEFER drains here are intentionally OMITTED. A `from`-child
+            // is semantically a continuation of its parent — parent's
+            // teardown (defer) statements should fire at the END of the
+            // chain, after the child's body, not at parent's RETURN.
+            // Defers register on the shared deferredJumps stack; the
+            // launcher's CompileEnd() drains them once after every body
+            // in the chain has run. Standalone tests get identical
+            // behavior — the launcher's drain runs after a single body.
+            _buffer.Add(OpCodes.RETURN);
+
+            // Restore the label region. Test-scoped functions emitted below
+            // re-set their own region inside Compile(FunctionStatement).
+            _currentLabelRegion = prevRegion;
+
+            // Now compile any test-scoped functions. They live alongside program
+            // functions in the bytecode blob and register themselves in the
+            // shared _functionTable, which means the test body can call them by
+            // name. (Stage 6 narrows visibility via the from-chain in a follow-up
+            // pass; for v1 they're globally addressable, which is permissive.)
+            foreach (var function in test.testProgram.functions)
+            {
+                Compile(function);
+            }
+        }
+
+        // Phase 2: emit a test's launcher region — what the manifest's
+        // entryPointAddress points to. Walks the from-chain (root → self,
+        // skipping any test whose body we don't have, which covers
+        // chain-broken cases the visitor already errored on) and emits a
+        // JUMP_HISTORY → body for each, finishing with a HALT.
+        //
+        // Each ancestor's body ends with RETURN, popping the launcher's
+        // pushed return frame so the next JUMP_HISTORY fires. State
+        // (registers, mock table, runto position) flows naturally between
+        // segments because they share the same VM context.
+        private void CompileTestLauncher(TestNode test,
+            Dictionary<string, int> bodyAddresses,
+            List<TestNode> allTests)
+        {
+            var launcherStart = _buffer.Count;
+            _testManifest.Add(new TestManifestEntry
+            {
+                name = test.name,
+                entryPointAddress = launcherStart,
+                isAbstract = test.isAbstract,
+                fromParent = test.fromParent,
+                sourceLine = test.startToken?.lineNumber ?? 0,
+                sourceChar = test.startToken?.charNumber ?? 0
+            });
+
+            var chain = ResolveTestFromChain(test, allTests);
+            foreach (var member in chain)
+            {
+                if (!bodyAddresses.TryGetValue(member.name ?? "", out var bodyAddr))
+                {
+                    // No body recorded — likely a cycle-broken test the
+                    // visitor already flagged. Skip it to avoid an unresolved
+                    // GOSUB target.
+                    continue;
+                }
+                AddPushInt(_buffer, bodyAddr);
+                _buffer.Add(OpCodes.JUMP_HISTORY_LAUNCH);
+            }
+            CompileEnd();
+        }
+
+        // Walk a test's from-chain from root to self. Bail with just
+        // [self] if we detect a cycle so we don't loop forever; the
+        // visitor's TestFromParentCycle error tells the user what's wrong.
+        // Unknown parents are similarly cut off — the chain stops where
+        // the name fails to resolve.
+        private List<TestNode> ResolveTestFromChain(TestNode test,
+            List<TestNode> allTests)
+        {
+            var byName = new Dictionary<string, TestNode>(StringComparer.OrdinalIgnoreCase);
+            foreach (var t in allTests)
+            {
+                if (t.name != null) byName[t.name] = t;
+            }
+
+            var chain = new List<TestNode> { test };
+            var visited = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            if (test.name != null) visited.Add(test.name);
+
+            var cursor = test;
+            while (cursor.fromParent != null
+                && byName.TryGetValue(cursor.fromParent, out var parent))
+            {
+                if (parent.name != null && !visited.Add(parent.name))
+                {
+                    // Cycle — bail. The chain we have so far isn't useful
+                    // (we'd loop), so prefer "self only" semantics.
+                    return new List<TestNode> { test };
+                }
+                chain.Add(parent);
+                cursor = parent;
+            }
+            chain.Reverse(); // root first
+            return chain;
+        }
+
         public void CompileJumpReplacements()
         {
-            
+
             // replace all label instructions...
             foreach (var replacement in _labelReplacements)
             {
-                // TODO: look up in labelTable
                 if (!_labelToInstructionIndex.TryGetValue(replacement.Label, out var location))
                 {
                     throw new Exception("Compiler: unknown label location " + replacement.Label);
                 }
 
-                var locationBytes = BitConverter.GetBytes(location);
-                for (var i = 0; i < locationBytes.Length; i++)
-                {
-                    // offset by 2, because of the opcode, and the type code
-                    _buffer[replacement.InstructionIndex + 2 + i] = locationBytes[i];
-                }
+                PatchInt32(_buffer, replacement.InstructionIndex + 2, location);
             }
-            
+
+            // replace all runto target placeholders. The runto target address is
+            // the byte AFTER the label's RUNTO_YIELD opcode (= label_addr + 2).
+            // RUNTO_YIELD checks `runtoStack.Peek().target == instructionIndex`,
+            // and instructionIndex at that point is post-RUNTO_YIELD, so we need
+            // to bake `label_addr + 2` into the PUSH int placeholder. Runto
+            // always targets MAIN-BODY labels regardless of where `runto X`
+            // was written, so the lookup uses the main-body region prefix.
+            foreach (var replacement in _runtoReplacements)
+            {
+                var mainKey = MakeLabelKey("", replacement.Label);
+                if (!_labelToInstructionIndex.TryGetValue(mainKey, out var location))
+                {
+                    throw new Exception("Compiler: unknown runto target label " + replacement.Label);
+                }
+
+                var postYieldAddr = location + 2; // skip the NOOP and the RUNTO_YIELD
+                PatchInt32(_buffer, replacement.InstructionIndex + 2, postYieldAddr);
+            }
+
             // replace all function instrunctions
             foreach (var replacement in _functionCallReplacements)
             {
@@ -500,11 +788,7 @@ namespace FadeBasic.Virtual
                     throw new Exception("Compiler: unknown function location " + replacement.FunctionName);
                 }
 
-                var locationBytes = BitConverter.GetBytes(location);
-                for (var i = 0; i < locationBytes.Length; i++)
-                {
-                    _buffer[replacement.InstructionIndex + 2 + i] = locationBytes[i];
-                }
+                PatchInt32(_buffer, replacement.InstructionIndex + 2, location);
             }
         }
 
@@ -716,6 +1000,24 @@ namespace FadeBasic.Virtual
                 case FunctionReturnStatement returnStatement:
                     Compile(returnStatement);
                     break;
+                case RuntoStatement runtoStatement:
+                    Compile(runtoStatement);
+                    break;
+                case AssertStatement assertStatement:
+                    Compile(assertStatement);
+                    break;
+                case MockStatement mockStatement:
+                    Compile(mockStatement);
+                    break;
+                case MockExitMockStatement mockReturnsStatement:
+                    Compile(mockReturnsStatement);
+                    break;
+                case MockForbidStatement mockForbidStatement:
+                    Compile(mockForbidStatement);
+                    break;
+                case ClearMockStatement clearMockStatement:
+                    Compile(clearMockStatement);
+                    break;
                 case ExpressionStatement expressionStatement:
                     Compile(expressionStatement);
                     break;
@@ -779,11 +1081,7 @@ namespace FadeBasic.Virtual
             _buffer.Add(OpCodes.DISCARD_TYPED);
             
             // fix the end value
-            var exitAddrBytes = BitConverter.GetBytes(loopEndAddress);
-            for (var i = 0; i < exitAddrBytes.Length; i++)
-            {
-                _buffer[replaceExitIndex + 2 + i] = exitAddrBytes[i];
-            }
+            PatchInt32(_buffer, replaceExitIndex + 2, loopEndAddress);
         }
         void CompilePopScope()
         {
@@ -826,18 +1124,9 @@ namespace FadeBasic.Virtual
             // this location is the place the defer should jump execution to. 
             var exitAddr = _buffer.Count;
             _buffer.Add(OpCodes.NOOP);
-            var exitAddrBytes = BitConverter.GetBytes(exitAddr);
-            for (var i = 0; i < exitAddrBytes.Length; i++)
-            {
-                _buffer[exitAddrIndex + 2 + i] = exitAddrBytes[i];
-            }
-            
+            PatchInt32(_buffer, exitAddrIndex + 2, exitAddr);
             // fix up the defer add
-            var deferAddrBytes = BitConverter.GetBytes(deferAddrValue);
-            for (var i = 0; i < deferAddrBytes.Length; i++)
-            {
-                _buffer[deferAddrIndex + 2 + i] = deferAddrBytes[i];
-            }
+            PatchInt32(_buffer, deferAddrIndex + 2, deferAddrValue);
         }
 
         void Compile(MacroTokenizeStatement tokenizeStatement)
@@ -938,14 +1227,8 @@ namespace FadeBasic.Virtual
 
             // this is the end of the tokenization substitutions block, so execution can safely jump here. 
             var exitAddr = _buffer.Count;
-            var exitAddrBytes = BitConverter.GetBytes(exitAddr);
             foreach (var exitIns in replacementIndexes)
-            {
-                for (var i = 0; i < exitAddrBytes.Length; i++)
-                {
-                    _buffer[exitIns + 2 + i] = exitAddrBytes[i];
-                }
-            }
+                PatchInt32(_buffer, exitIns + 2, exitAddr);
         }
 
         void CompileAsInvocation(ArrayIndexReference expr)
@@ -1016,7 +1299,13 @@ namespace FadeBasic.Virtual
 
             // push a new scope
             CompilePushScope();
-            
+
+            // Labels inside this function get their own region — two
+            // functions can share label names without resolving to each
+            // other's body. Restored at function end.
+            var prevRegion = _currentLabelRegion;
+            _currentLabelRegion = "fn:" + functionStatement.name;
+
             // now, we need to pull values off the stack and put them into variable declarations...
             // foreach (var arg in functionStatement.parameters)
             for (var i = functionStatement.parameters.Count - 1; i >= 0; i --) // read in reverse order due to stack
@@ -1065,12 +1354,13 @@ namespace FadeBasic.Virtual
             // at the end of the function, we need to jump home
             // pop a scope
             CompilePopScope();
-            
+
             // and then jump home
             _buffer.Add(OpCodes.RETURN);
-            
+
+            _currentLabelRegion = prevRegion;
         }
-        
+
         private void Compile(ExitLoopStatement exitLoopStatement)
         {
             // immediately jump to the exit...
@@ -1167,34 +1457,15 @@ namespace FadeBasic.Virtual
             // now do all the address replacements....
             for (var i = 0; i < switchStatement.cases.Count; i++)
             {
-                var indexes = pairInsIndexes[i];
                 var caseAddr = caseAddrValues[i];
-                var caseAddrBytes = BitConverter.GetBytes(caseAddr);
-                foreach (var index in indexes)
-                {
-                    for (var j = 0; j < caseAddrBytes.Length; j++)
-                    {
-                        _buffer[index + 2 + j] = caseAddrBytes[j];
-                    }
-                }
-            }
-            
-            // replace the default address at the start of the function
-            var defaultAddrBytes = BitConverter.GetBytes(defaultAddr);
-            for (var i = 0; i < defaultAddrBytes.Length; i++)
-            {
-                _buffer[defaultInsIndex + 2 + i] = defaultAddrBytes[i];
+                foreach (var index in pairInsIndexes[i])
+                    PatchInt32(_buffer, index + 2, caseAddr);
             }
 
-            // replace all the individual case statement's references to the jump exit
-            var exitAddrBytes = BitConverter.GetBytes(exitAddr);
+            PatchInt32(_buffer, defaultInsIndex + 2, defaultAddr);
+
             foreach (var exitIns in exitInsIndexes)
-            {
-                for (var i = 0; i < exitAddrBytes.Length; i++)
-                {
-                    _buffer[exitIns + 2 + i] = exitAddrBytes[i];
-                }
-            }
+                PatchInt32(_buffer, exitIns + 2, exitAddr);
         }
         
         private void Compile(ForStatement forStatement)
@@ -1265,51 +1536,35 @@ namespace FadeBasic.Virtual
             
             // keep track of the first index of the success
             var successJumpValue = _buffer.Count;
-            _exitInstructionIndexes.Push(new List<int>());
-            _skipInstructionIndexes.Push(new List<int>());
+            _exitInstructionIndexes.Push(RentJumpList());
+            _skipInstructionIndexes.Push(RentJumpList());
             foreach (var successStatement in forStatement.statements)
             {
                 Compile(successStatement);
             }
             var exitStatementIndexes = _exitInstructionIndexes.Pop();
             var skipStatementIndexes = _skipInstructionIndexes.Pop();
-            
-            // This is the location where Step updates and evaluation happens 
+
+            // This is the location where Step updates and evaluation happens
             // (important as skip should jump here, not to the very start)
             var stepLoopValue = _buffer.Count;
-            
+
             // now to update the value of x, we need to add the stepExpr to it.
             Compile(stepAssignment); // NOTE: there could be a bug here, because we are looping on a deterministic math operation, but simulating the interpolated variable
-            
+
             // jump back to the start
             AddPushInt(_buffer, forLoopValue);
             _buffer.Add(OpCodes.JUMP);
-            
+
             var endJumpValue = _buffer.Count;
-            
-            // now go back and fill in the success ptr
-            var successJumpBytes = BitConverter.GetBytes(successJumpValue);
-            var endJumpBytes = BitConverter.GetBytes(endJumpValue);
-            var stepLoopBytes = BitConverter.GetBytes(stepLoopValue);
-            
-            for (var i = 0; i < successJumpBytes.Length; i++)
-            {
-                // offset by 2, because of the opcode, and the type code
-                _buffer[successJumpIndex + 2 + i] = successJumpBytes[i];
-                _buffer[exitJumpIndex + 2 + i] = endJumpBytes[i];
-                _buffer[lteExitJumpIndex + 2 + i] = endJumpBytes[i];
-                
-                foreach (var index in exitStatementIndexes)
-                {
-                    _buffer[index + 2 + i] = endJumpBytes[i];
-                }
-                
-                // Update skip instructions to jump to the increment/evaluation part
-                foreach (var index in skipStatementIndexes)
-                {
-                    _buffer[index + 2 + i] = stepLoopBytes[i];
-                }
-            }
+
+            PatchInt32(_buffer, successJumpIndex + 2, successJumpValue);
+            PatchInt32(_buffer, exitJumpIndex + 2, endJumpValue);
+            PatchInt32(_buffer, lteExitJumpIndex + 2, endJumpValue);
+            foreach (var index in exitStatementIndexes) PatchInt32(_buffer, index + 2, endJumpValue);
+            foreach (var index in skipStatementIndexes) PatchInt32(_buffer, index + 2, stepLoopValue);
+            ReturnJumpList(exitStatementIndexes);
+            ReturnJumpList(skipStatementIndexes);
         }
          
         
@@ -1320,8 +1575,8 @@ namespace FadeBasic.Virtual
             
             // keep track of the first index of the success
             var successJumpValue = _buffer.Count;
-            _exitInstructionIndexes.Push(new List<int>());
-            _skipInstructionIndexes.Push(new List<int>());
+            _exitInstructionIndexes.Push(RentJumpList());
+            _skipInstructionIndexes.Push(RentJumpList());
             foreach (var successStatement in doLoopStatement.statements)
             {
                 Compile(successStatement);
@@ -1335,26 +1590,11 @@ namespace FadeBasic.Virtual
 
             var endJumpValue = _buffer.Count;
             _buffer.Add(OpCodes.NOOP);
-            
-            // now go back and fill in the success ptr
-            var successJumpBytes = BitConverter.GetBytes(successJumpValue);
-            var endJumpBytes = BitConverter.GetBytes(endJumpValue);
-            var whileLoopBytes = BitConverter.GetBytes(whileLoopValue);
-            
-            for (var i = 0; i < successJumpBytes.Length; i++)
-            {
-                // offset by 2, because of the opcode, and the type code
-                foreach (var index in exitStatementIndexes)
-                {
-                    _buffer[index + 2 + i] = endJumpBytes[i];
-                }
-                
-                // Update skip instructions to jump back to the beginning of the loop
-                foreach (var index in skipStatementIndexes)
-                {
-                    _buffer[index + 2 + i] = whileLoopBytes[i];
-                }
-            }
+
+            foreach (var index in exitStatementIndexes) PatchInt32(_buffer, index + 2, endJumpValue);
+            foreach (var index in skipStatementIndexes) PatchInt32(_buffer, index + 2, whileLoopValue);
+            ReturnJumpList(exitStatementIndexes);
+            ReturnJumpList(skipStatementIndexes);
         }
         
         
@@ -1363,57 +1603,33 @@ namespace FadeBasic.Virtual
             // first, keep track of the start of the while loop
             var startValue = _buffer.Count;
             
-            _exitInstructionIndexes.Push(new List<int>());
-            _skipInstructionIndexes.Push(new List<int>());
-            
+            _exitInstructionIndexes.Push(RentJumpList());
+            _skipInstructionIndexes.Push(RentJumpList());
+
             foreach (var successStatement in repeatStatement.statements)
             {
                 Compile(successStatement);
             }
             var exitStatementIndexes = _exitInstructionIndexes.Pop();
             var skipStatementIndexes = _skipInstructionIndexes.Pop();
-            
+
             // keep track of where the skip should go
             var skipJumpValue = _buffer.Count;
-            
-            // compile the condition expression
+
             Compile(repeatStatement.condition);
-            // cast the expression to an int
             _buffer.Add(OpCodes.CAST);
             _buffer.Add(TypeCodes.INT);
-            
-            // the semantics of the word, "until", mean we flip the condition value
             _buffer.Add(OpCodes.NOT);
-            
-            // then, insert the starting address
             AddPushInt(_buffer, startValue);
-            
-            // then, maybe jump to the start?
             _buffer.Add(OpCodes.JUMP_GT_ZERO);
-            
-            // if we didn't jump, then we are done!
-           
+
             var endJumpValue = _buffer.Count;
             _buffer.Add(OpCodes.NOOP);
-            
-            // now go back and fill in the jump addresses
-            var endJumpBytes = BitConverter.GetBytes(endJumpValue);
-            var skipValueBytes = BitConverter.GetBytes(skipJumpValue);
-            
-            for (var i = 0; i < endJumpBytes.Length; i++)
-            {
-                // offset by 2, because of the opcode, and the type code
-                foreach (var index in exitStatementIndexes)
-                {
-                    _buffer[index + 2 + i] = endJumpBytes[i];
-                }
-                
-                // Update skip instructions to jump back to the beginning of the loop
-                foreach (var index in skipStatementIndexes)
-                {
-                    _buffer[index + 2 + i] = skipValueBytes[i];
-                }
-            }
+
+            foreach (var index in exitStatementIndexes) PatchInt32(_buffer, index + 2, endJumpValue);
+            foreach (var index in skipStatementIndexes) PatchInt32(_buffer, index + 2, skipJumpValue);
+            ReturnJumpList(exitStatementIndexes);
+            ReturnJumpList(skipStatementIndexes);
         }
         
         
@@ -1458,44 +1674,28 @@ namespace FadeBasic.Virtual
             
             // keep track of the first index of the success
             var successJumpValue = _buffer.Count;
-            _exitInstructionIndexes.Push(new List<int>());
-            _skipInstructionIndexes.Push(new List<int>());
+            _exitInstructionIndexes.Push(RentJumpList());
+            _skipInstructionIndexes.Push(RentJumpList());
             foreach (var successStatement in whileStatement.statements)
             {
                 Compile(successStatement);
             }
             var exitStatementIndexes = _exitInstructionIndexes.Pop();
             var skipStatementIndexes = _skipInstructionIndexes.Pop();
-            
+
             // at the end of the successful statements, we need to jump back to the start
             AddPushInt(_buffer, whileLoopValue);
             _buffer.Add(OpCodes.JUMP);
 
             var endJumpValue = _buffer.Count;
             _buffer.Add(OpCodes.NOOP);
-            
-            // now go back and fill in the success ptr
-            var successJumpBytes = BitConverter.GetBytes(successJumpValue);
-            var endJumpBytes = BitConverter.GetBytes(endJumpValue);
-            var whileLoopBytes = BitConverter.GetBytes(whileLoopValue);
-            
-            for (var i = 0; i < successJumpBytes.Length; i++)
-            {
-                // offset by 2, because of the opcode, and the type code
-                _buffer[successJumpIndex + 2 + i] = successJumpBytes[i];
-                _buffer[exitJumpIndex + 2 + i] = endJumpBytes[i];
-                
-                foreach (var index in exitStatementIndexes)
-                {
-                    _buffer[index + 2 + i] = endJumpBytes[i];
-                }
-                
-                // Update skip instructions to jump back to the beginning of the loop
-                foreach (var index in skipStatementIndexes)
-                {
-                    _buffer[index + 2 + i] = whileLoopBytes[i];
-                }
-            }
+
+            PatchInt32(_buffer, successJumpIndex + 2, successJumpValue);
+            PatchInt32(_buffer, exitJumpIndex + 2, endJumpValue);
+            foreach (var index in exitStatementIndexes) PatchInt32(_buffer, index + 2, endJumpValue);
+            foreach (var index in skipStatementIndexes) PatchInt32(_buffer, index + 2, whileLoopValue);
+            ReturnJumpList(exitStatementIndexes);
+            ReturnJumpList(skipStatementIndexes);
         }
         
         private void Compile(IfStatement ifStatement)
@@ -1566,30 +1766,808 @@ namespace FadeBasic.Virtual
             var endJumpValue = _buffer.Count;
             // _buffer.Add(OpCodes.NOOP);
             
-            // now go back and fill in the success ptr
-            var successJumpBytes = BitConverter.GetBytes(successJumpValue);
-            var elseJumpBytes = BitConverter.GetBytes(elseJumpValue);
-            var endJumpBytes = BitConverter.GetBytes(endJumpValue);
-            for (var i = 0; i < successJumpBytes.Length; i++)
-            {
-                // offset by 2, because of the opcode, and the type code
-                //(successJumpBytes.Length -1) - i
-                _buffer[successJumpIndex + 2 + i] = successJumpBytes[i];
-                _buffer[elseJumpIndex + 2 + i] = elseJumpBytes[i];
-                _buffer[endJumpIndex + 2 + i] = endJumpBytes[i];
-            }
+            PatchInt32(_buffer, successJumpIndex + 2, successJumpValue);
+            PatchInt32(_buffer, elseJumpIndex + 2, elseJumpValue);
+            PatchInt32(_buffer, endJumpIndex + 2, endJumpValue);
         }
         
         private void Compile(LabelDeclarationNode labelStatement)
         {
-            // take note of instruction number... 
-            _labelToInstructionIndex[labelStatement.label] = _buffer.Count;
+            // take note of instruction number...
+            _labelToInstructionIndex[MakeLabelKey(_currentLabelRegion, labelStatement.label)] = _buffer.Count;
             _buffer.Add(OpCodes.NOOP);
+            // Emit RUNTO_YIELD only for labels that some test targets via `runto`.
+            // In `dotnet run` builds where no tests exist, this set is empty and
+            // there is zero per-label overhead.
+            if (_runtoTargetLabels.Contains(labelStatement.label))
+            {
+                _buffer.Add(OpCodes.RUNTO_YIELD);
+            }
+        }
+
+        private void Compile(RuntoStatement runtoStatement)
+        {
+            // Stack at RUNTO dispatch: [..., maxCycles, target]. Target is on top
+            // so the VM's existing pop order is preserved. Absent `max cycles`
+            // clause -> push int.MaxValue as the unbounded sentinel.
+            if (runtoStatement.maxCyclesExpression != null)
+            {
+                Compile(runtoStatement.maxCyclesExpression);
+            }
+            else
+            {
+                AddPushInt(_buffer, int.MaxValue);
+            }
+
+            // Target placeholder, patched in CompileJumpReplacements with the
+            // post-yield address (label_addr + 2).
+            _runtoReplacements.Add(new LabelReplacement
+            {
+                InstructionIndex = _buffer.Count,
+                Label = runtoStatement.targetLabel
+            });
+            AddPushInt(_buffer, int.MaxValue);
+            _buffer.Add(OpCodes.RUNTO);
+        }
+
+        private void Compile(AssertStatement assertStatement)
+        {
+            // Layout:
+            //   <evaluate condition>      ; pushes int (0 = false, !0 = true)
+            //   PUSH int <skipAddr>       ; placeholder for skip-on-pass target
+            //   JUMP_GT_ZERO              ; if value > 0, jump past failure block
+            //   <evaluate reason expr>    ; short-circuit: only runs on failure
+            //   <push source-text string ptr>
+            //   PUSH int <trampolineAddr> ; address the VM jumps to in test mode
+            //   ASSERT_FAIL               ; pops trampoline addr, source text, reason
+            //   :skipAddr (continue normally)
+
+            Compile(assertStatement.condition);
+
+            // Placeholder for the skip address; we patch it after emitting the
+            // failure branch so we know where the post-failure code starts.
+            var skipAddrIndex = _buffer.Count;
+            AddPushInt(_buffer, int.MaxValue);
+            _buffer.Add(OpCodes.JUMP_GT_ZERO);
+
+            // Failure branch — only reached when the condition is zero. Because
+            // this comes after JUMP_GT_ZERO, the reason expression is evaluated
+            // lazily: a side-effecting reason (a function call, etc.) only runs
+            // when the assertion actually fails.
+            //
+            // Push the optional reason string first so it sits below the source
+            // text on the stack, then push the source text, then fail. Literal
+            // strings are interned via the standard literal-string compile path;
+            // variable references compile to a heap-pointer push.
+            if (assertStatement.reason != null)
+            {
+                Compile(assertStatement.reason);
+            }
+            else
+            {
+                Compile(new LiteralStringExpression(assertStatement.startToken, ""));
+            }
+            Compile(new LiteralStringExpression(assertStatement.startToken, assertStatement.sourceText ?? ""));
+
+            // Push the trampoline address as a placeholder; ASSERT_FAIL reads it
+            // off the stack and (in test mode) jumps there to drain defers. We
+            // patch the real address after the trampoline is emitted.
+            var trampolinePatchIndex = _buffer.Count;
+            AddPushInt(_buffer, int.MaxValue);
+            _assertTrampolinePatches.Add(trampolinePatchIndex);
+
+            _buffer.Add(OpCodes.ASSERT_FAIL);
+
+            // Patch the skip address to point at the byte right after the failure
+            // branch. AddPushInt emits 2 prefix bytes (opcode + type) before the
+            // 4-byte int payload, so the int value lives at skipAddrIndex+2.
+            PatchInt32(_buffer, skipAddrIndex + 2, _buffer.Count);
+        }
+
+        /// <summary>
+        /// Emit the one-time "assert unwind trampoline" used when an assert
+        /// fails inside a test. The trampoline drains the current scope's
+        /// defers (LIFO), then walks up the scope stack, draining each scope's
+        /// defers in turn, until only the global scope is left. Then it halts.
+        ///
+        /// All assert failure sites push the trampoline's address onto the
+        /// stack and ASSERT_FAIL (in test mode) sets instructionIndex to it.
+        /// In non-test mode ASSERT_FAIL discards the address and crashes the
+        /// VM via TriggerRuntimeError instead, so the trampoline never runs.
+        /// </summary>
+        private void CompileAssertUnwindTrampoline()
+        {
+            // Skip emission entirely if no assert sites exist.
+            if (_assertTrampolinePatches.Count == 0) return;
+
+            var trampolineStart = _buffer.Count;
+
+            // ── Drain loop for the current scope's defers ────────────────
+            // Mirrors HandleDeferExit, but the return address pushed onto the
+            // data stack is `trampolineStart` itself, so a deferred body
+            // returns here and we pop the next defer.
+            AddPushInt(_buffer, trampolineStart);
+            _buffer.Add(OpCodes.POP_DEFER);   // pushes addr or 0
+            _buffer.Add(OpCodes.DUPE);
+            var drainEndPatchIndex = _buffer.Count;
+            AddPushInt(_buffer, int.MaxValue);
+            _buffer.Add(OpCodes.JUMP_ZERO);   // if addr==0, jump out of drain
+            _buffer.Add(OpCodes.JUMP);        // else jump to defer body
+
+            // ── after_drain: defer stack for current scope is empty ──────
+            var afterDrainAddr = _buffer.Count;
+            // Stack here is [trampolineStart, 0] from the JUMP_ZERO path.
+            _buffer.Add(OpCodes.DISCARD_TYPED);
+            _buffer.Add(OpCodes.DISCARD_TYPED);
+
+            // Decide whether to pop another scope. Halt when only global is left.
+            _buffer.Add(OpCodes.PUSH_SCOPE_DEPTH);   // depth
+            AddPushInt(_buffer, 1);                  // 1
+            _buffer.Add(OpCodes.GT);                 // pushes (depth > 1) ? 1 : 0
+
+            var popAndLoopPatchIndex = _buffer.Count;
+            AddPushInt(_buffer, int.MaxValue);       // address placeholder
+            _buffer.Add(OpCodes.JUMP_GT_ZERO);       // if depth > 1, loop back via pop_and_loop
+
+            // ── halt: only global scope remains; halt VM via overshoot ───
+            AddPushInt(_buffer, int.MaxValue);
+            _buffer.Add(OpCodes.JUMP);
+
+            // ── pop_and_loop: pop one scope, jump back to trampolineStart ─
+            var popAndLoopAddr = _buffer.Count;
+            _buffer.Add(OpCodes.POP_SCOPE);
+            AddPushInt(_buffer, trampolineStart);
+            _buffer.Add(OpCodes.JUMP);
+
+            // Back-patch the two forward references inside the trampoline.
+            PatchAddress(drainEndPatchIndex, afterDrainAddr);
+            PatchAddress(popAndLoopPatchIndex, popAndLoopAddr);
+
+            // Back-patch every assert site's trampoline-address placeholder.
+            foreach (var siteIndex in _assertTrampolinePatches)
+            {
+                PatchAddress(siteIndex, trampolineStart);
+            }
+        }
+
+        // Helper: write a 4-byte int into the body of an `AddPushInt(buffer, _)`
+        // placeholder (which lays out [opcode, typecode, b0, b1, b2, b3]).
+        private void PatchAddress(int placeholderIndex, int value)
+        {
+            PatchInt32(_buffer, placeholderIndex + 2, value);
+        }
+
+        // Emit CALL_COUNT with an inline 4-byte command id, pushing that
+        // command's invocation count onto the data stack.
+        private void EmitCallCountInline(int commandId)
+        {
+            _buffer.Add(OpCodes.CALL_COUNT);
+            AppendInt32(_buffer, commandId);
         }
 
         private void Compile(ReturnStatement _)
         {
             _buffer.Add(OpCodes.RETURN);
+        }
+
+        private List<int> ResolveMockCommandIds(string commandName)
+        {
+            // A mock targets every overload sharing the given name. Iterate the
+            // method table (which includes every overload) and gather the ids
+            // of those whose name matches case-insensitively.
+            var ids = new List<int>();
+            var methods = methodTable.methods;
+            for (var i = 0; i < methods.Length; i++)
+            {
+                if (string.Equals(methods[i].name, commandName,
+                        StringComparison.OrdinalIgnoreCase))
+                {
+                    ids.Add(i);
+                }
+            }
+            return ids;
+        }
+
+        private void Compile(MockStatement mockStatement)
+        {
+            var allCommandIds = ResolveMockCommandIds(mockStatement.commandName);
+            if (allCommandIds.Count == 0)
+            {
+                // Unknown command — the lexer would normally have caught this
+                // (CommandWord token doesn't form). Skip silently here.
+                return;
+            }
+
+            // Filter to overloads whose non-VmArg arg count matches the
+            // user-named param count. When the user gives zero names, the
+            // mock applies to every overload (the body's prelude pops every
+            // arg via DISCARD_TYPED, so any arg count is handled).
+            //
+            // Filtering is necessary because a single mock body's prelude
+            // is tied to one specific overload's signature — different
+            // overloads with different arg counts need different prelude
+            // bytecode, which is what the per-overload loop below emits.
+            var matchingIds = new List<int>();
+            foreach (var id in allCommandIds)
+            {
+                if (mockStatement.parameters.Count == 0)
+                {
+                    matchingIds.Add(id);
+                    continue;
+                }
+                var methodArgs = methodTable.methods[id].args ?? System.Array.Empty<CommandArgInfo>();
+                var realCount = 0;
+                for (var ai = 0; ai < methodArgs.Length; ai++)
+                {
+                    if (!methodArgs[ai].isVmArg) realCount++;
+                }
+                if (realCount == mockStatement.parameters.Count)
+                {
+                    matchingIds.Add(id);
+                }
+            }
+            if (matchingIds.Count == 0)
+            {
+                // The visitor surfaces this as a validation error; the
+                // compiler just bails on emitting any bytecode.
+                return;
+            }
+
+            // Per-overload: emit a separate body block tailored to that
+            // overload's signature, then install it for that overload's
+            // method id. Bodies share source statements but get independent
+            // register allocations because each body pushes its own
+            // CompilePushScope before binding args.
+            foreach (var commandId in matchingIds)
+            {
+                CompileMockBodyForOverload(mockStatement, commandId);
+            }
+        }
+
+        // Emit one mock-body block + install op for a single overload.
+        private void CompileMockBodyForOverload(MockStatement mockStatement, int commandId)
+        {
+            var argMethod = methodTable.methods[commandId];
+
+            // Skip-over JUMP so normal execution flows past this body.
+            var skipBodyPatchIndex = _buffer.Count;
+            AddPushInt(_buffer, int.MaxValue);
+            _buffer.Add(OpCodes.JUMP);
+
+            var bodyStart = _buffer.Count;
+            // Register in DebugData so call-stack frames inside this body
+            // get a sensible function name (the mocked command's name).
+            if (mockStatement.commandNameToken != null)
+            {
+                _dbg?.AddFunction(bodyStart, mockStatement.commandNameToken);
+            }
+            CompilePushScope();
+
+            // Build the list of real (non-VmArg) arg indices for this overload.
+            var commandArgs = argMethod.args ?? System.Array.Empty<CommandArgInfo>();
+            var realArgIndices = new List<int>();
+            for (var ai = 0; ai < commandArgs.Length; ai++)
+            {
+                if (!commandArgs[ai].isVmArg) realArgIndices.Add(ai);
+            }
+
+            // Per-ref-param bookkeeping used to emit writebacks at every
+            // body exit. Independent per overload.
+            var prevRefMap = _activeMockRefBindings;
+            _activeMockRefBindings = new List<MockRefBinding>();
+
+            // Args were pushed LIFO; pop in reverse to bind to user-named
+            // positions left-to-right. If the user gave no param names,
+            // DISCARD_TYPED keeps the stack clean.
+            for (var i = realArgIndices.Count - 1; i >= 0; i--)
+            {
+                var argInfo = commandArgs[realArgIndices[i]];
+                var paramIndex = i;
+                if (paramIndex < mockStatement.parameters.Count)
+                {
+                    var paramRef = mockStatement.parameters[paramIndex];
+                    if (argInfo.isParams)
+                    {
+                        // `params object[]` (ANY) named in the mock body
+                        // is rejected by the visitor (MockParamsObjectArrayUnnamable)
+                        // because the gathered array would need mixed-type
+                        // element storage. Skip the binding here so we
+                        // don't crash on SIZE_TABLE[ANY]; the visitor's
+                        // ParseError is what the user sees.
+                        if (argInfo.typeCode == TypeCodes.ANY)
+                        {
+                            // Drain count + values off the stack so later
+                            // bindings line up.
+                            _buffer.Add(OpCodes.DISCARD_TYPED); // count
+                            // We don't know how many were pushed at compile
+                            // time, so we can't drain values without a
+                            // loop. Bail — the program won't run correctly,
+                            // but the user has the validation error to fix.
+                            continue;
+                        }
+                        // Params arg. The caller pushed `[values..., count]`
+                        // on the stack. Materialize a Fade single-dimensional
+                        // array from those, bind it to a body-local that the
+                        // user can index and pass to `len`. Shape mirrors
+                        // `dim xs(N)` so existing array-access machinery
+                        // works without further changes.
+                        var paramsArrayVar = scope.CreateArray(
+                            paramRef.variableName, rankLength: 1,
+                            typeCode: argInfo.typeCode, isGlobal: false);
+                        // CreateArray just sizes the rank-arrays; we still
+                        // need to allocate distinct register slots for the
+                        // rank size and scaler — mirrors what the regular
+                        // `dim` codegen does (Compile(DeclarationStatement)).
+                        paramsArrayVar.rankSizeRegisterAddresses[0] = scope.AllocateRegister();
+                        paramsArrayVar.rankIndexScalerRegisterAddresses[0] = scope.AllocateRegister();
+
+                        // 1) DUPE the count so we can stash it in the
+                        //    rank-size register before GATHER consumes it.
+                        _buffer.Add(OpCodes.DUPE);
+                        PushStore(_buffer, paramsArrayVar.rankSizeRegisterAddresses[0], isGlobal: false);
+
+                        // 2) Rank-0 scaler is 1 for a 1-D array.
+                        AddPushInt(_buffer, 1);
+                        PushStore(_buffer, paramsArrayVar.rankIndexScalerRegisterAddresses[0], isGlobal: false);
+
+                        // 3) GATHER pops count + values and leaves a fresh
+                        //    PTR_HEAP on top. Store it into the array's
+                        //    main register.
+                        _buffer.Add(OpCodes.GATHER_ARRAY);
+                        _buffer.Add(argInfo.typeCode);
+                        PushStorePtr(_buffer, paramsArrayVar.registerAddress, isGlobal: false);
+                        continue;
+                    }
+                    if (argInfo.isRef)
+                    {
+                        // Ref param. Hidden ptr reg + user-visible value reg.
+                        var hiddenPtrName = "$$mockptr_" + paramRef.variableName;
+                        var hiddenRef = new VariableRefNode(paramRef.startToken, hiddenPtrName);
+                        var hiddenDecl = new DeclarationStatement
+                        {
+                            variableNode = hiddenRef,
+                            scopeType = DeclarationScopeType.Local,
+                            type = new TypeReferenceNode(VariableType.Integer, paramRef.startToken)
+                        };
+                        Compile(hiddenDecl);
+                        scope.TryGetVariable(hiddenPtrName, out var hiddenPtrVar);
+
+                        _buffer.Add(OpCodes.STORE_REF);
+                        AddPushULongNoTypeCode(_buffer, hiddenPtrVar.registerAddress);
+
+                        VmUtil.TryGetVariableType(argInfo.typeCode, out var valueType);
+                        var valueDecl = new DeclarationStatement
+                        {
+                            variableNode = paramRef,
+                            scopeType = DeclarationScopeType.Local,
+                            type = new TypeReferenceNode(valueType, paramRef.startToken)
+                        };
+                        Compile(valueDecl);
+                        scope.TryGetVariable(paramRef.variableName, out var valueVar);
+
+                        _buffer.Add(OpCodes.LOAD_REF);
+                        AddPushULongNoTypeCode(_buffer, hiddenPtrVar.registerAddress);
+                        _buffer.Add(OpCodes.CAST);
+                        _buffer.Add(argInfo.typeCode);
+                        CompileAssignmentLeftHandSide(paramRef);
+
+                        _activeMockRefBindings.Add(new MockRefBinding
+                        {
+                            paramName = paramRef.variableName,
+                            valueRegAddr = valueVar.registerAddress,
+                            ptrRegAddr = hiddenPtrVar.registerAddress,
+                            argTypeCode = argInfo.typeCode
+                        });
+                    }
+                    else
+                    {
+                        VmUtil.TryGetVariableType(argInfo.typeCode, out var paramType);
+                        var fakeDecl = new DeclarationStatement
+                        {
+                            variableNode = paramRef,
+                            scopeType = DeclarationScopeType.Local,
+                            type = new TypeReferenceNode(paramType, paramRef.startToken)
+                        };
+                        Compile(fakeDecl);
+                        _buffer.Add(OpCodes.CAST);
+                        _buffer.Add(argInfo.typeCode);
+                        CompileAssignmentLeftHandSide(paramRef);
+                    }
+                }
+                else
+                {
+                    _buffer.Add(OpCodes.DISCARD_TYPED);
+                }
+            }
+
+            // Active-mock context for nested compile of body statements.
+            var prevReturnTc = _activeMockReturnTypeCode;
+            var prevCmdName = _activeMockCommandName;
+            var prevHostId = _activeMockHostMethodId;
+            var prevParamBindings = _activeMockParamBindings;
+            var prevBypassIds = _activeMockBypassIds;
+            _activeMockReturnTypeCode = argMethod.returnType;
+            _activeMockCommandName = argMethod.name;
+            _activeMockHostMethodId = commandId;
+            // All overloads of the mocked command name route to real
+            // inside this body — gather their ids once. Compile of
+            // CommandStatement/CommandExpression checks this set.
+            _activeMockBypassIds = new HashSet<int>(
+                ResolveMockCommandIds(mockStatement.commandName));
+
+            // Build the ordered param-binding table used by
+            // PassthroughExpression: one entry per real (non-VmArg) arg,
+            // in declaration order, paired with the mock's body-local
+            // name (null when the mock didn't name that position).
+            _activeMockParamBindings = new List<MockParamBinding>();
+            for (var ri = 0; ri < realArgIndices.Count; ri++)
+            {
+                var argInfo = commandArgs[realArgIndices[ri]];
+                var paramName = (ri < mockStatement.parameters.Count)
+                    ? mockStatement.parameters[ri].variableName
+                    : null;
+                _activeMockParamBindings.Add(new MockParamBinding
+                {
+                    paramName = paramName,
+                    argTypeCode = argInfo.typeCode,
+                    isRef = argInfo.isRef,
+                    isParams = argInfo.isParams
+                });
+            }
+
+            foreach (var stmt in mockStatement.body)
+            {
+                Compile(stmt);
+            }
+
+            // endmock <expr> fall-through return value.
+            if (mockStatement.endmockExpression != null)
+            {
+                Compile(mockStatement.endmockExpression);
+                if (_activeMockReturnTypeCode != 0 && _activeMockReturnTypeCode != TypeCodes.VOID)
+                {
+                    _buffer.Add(OpCodes.CAST);
+                    _buffer.Add(_activeMockReturnTypeCode);
+                }
+            }
+
+            // Ref-arg writebacks before scope-pop (still need the binding map).
+            EmitMockRefWritebacks();
+
+            _activeMockReturnTypeCode = prevReturnTc;
+            _activeMockCommandName = prevCmdName;
+            _activeMockRefBindings = prevRefMap;
+            _activeMockHostMethodId = prevHostId;
+            _activeMockParamBindings = prevParamBindings;
+            _activeMockBypassIds = prevBypassIds;
+
+            CompilePopScope();
+            _buffer.Add(OpCodes.RETURN);
+
+            // Patch the skip-over JUMP to land past this body.
+            PatchAddress(skipBodyPatchIndex, _buffer.Count);
+
+            // Install the body for this specific overload's id.
+            AddPushInt(_buffer, bodyStart);
+            AddPushInt(_buffer, commandId);
+            _buffer.Add(OpCodes.MOCK_INSTALL);
+        }
+
+        // The active mock's return-type code, set while compiling a mock
+        // body. MockExitMockStatement reads this to cast the user's return
+        // expression to the right shape before pushing it on the stack and
+        // returning. Outside a mock-body compile, this is 0 (VOID).
+        private byte _activeMockReturnTypeCode;
+
+        private void Compile(MockExitMockStatement returnsStatement)
+        {
+            // `exitmock expr` inside a mock body: push the value, cast it to
+            // the command's declared return type, emit ref-arg writebacks,
+            // pop the body's scope and RETURN. The writebacks read each
+            // ref param's value-register (last write the user did) and
+            // store it back to the caller's variable via the saved ptr.
+            if (returnsStatement.expression != null)
+            {
+                Compile(returnsStatement.expression);
+                if (_activeMockReturnTypeCode != 0 && _activeMockReturnTypeCode != TypeCodes.VOID)
+                {
+                    _buffer.Add(OpCodes.CAST);
+                    _buffer.Add(_activeMockReturnTypeCode);
+                }
+            }
+            EmitMockRefWritebacks();
+            CompilePopScope();
+            _buffer.Add(OpCodes.RETURN);
+        }
+
+        private void Compile(MockForbidStatement forbidStatement)
+        {
+            // `forbid [reason]` inside a mock body: shape-compatible with
+            // ASSERT_FAIL. The body is already running inside a pushed scope
+            // (set up by the mock body prelude); the trampoline drains
+            // defers across every live scope and halts the test.
+            //
+            // Stack at ASSERT_FAIL (bottom→top):
+            //   reason, sourceText, trampolineAddr.
+            if (forbidStatement.reason != null)
+            {
+                Compile(forbidStatement.reason);
+            }
+            else
+            {
+                Compile(new LiteralStringExpression(forbidStatement.startToken, ""));
+            }
+            // Synthesize a sourceText that names the command being forbidden.
+            // Walk up to the enclosing MockStatement for the name; if we
+            // somehow have none, fall back to a generic message.
+            var cmdName = _activeMockCommandName ?? "<unknown>";
+            Compile(new LiteralStringExpression(forbidStatement.startToken,
+                "forbidden command was called: " + cmdName));
+            var trampolinePatchIndex = _buffer.Count;
+            AddPushInt(_buffer, int.MaxValue);
+            _assertTrampolinePatches.Add(trampolinePatchIndex);
+            _buffer.Add(OpCodes.ASSERT_FAIL);
+        }
+
+        // Command name of the mock currently being compiled. Read by
+        // MockForbidStatement so the failure message names the command.
+        private string _activeMockCommandName;
+
+        // Per-ref-param bookkeeping for the active mock-body compile.
+        // Populated by the body prelude with one entry per ref parameter,
+        // then read at every exit site (exitmock, endmock fall-through) to
+        // emit the writeback sequence. Empty when the active mock has no
+        // ref params (or when we're not inside a mock body).
+        private List<MockRefBinding> _activeMockRefBindings;
+
+        // Emit ref writebacks for every ref param in the current mock.
+        // Called from each body exit point: pushes nothing net onto the
+        // stack (each writeback loads the value reg and consumes it via
+        // WRITE_REF). Order is irrelevant — each binding writes to a
+        // distinct caller register.
+        private void EmitMockRefWritebacks()
+        {
+            if (_activeMockRefBindings == null) return;
+            foreach (var binding in _activeMockRefBindings)
+            {
+                // Load the value-register's current value.
+                PushLoad(_buffer, binding.valueRegAddr, isGlobal: false);
+                // CAST to the ref's underlying type — defensive in case the
+                // user did any unusual arithmetic that widened the type.
+                _buffer.Add(OpCodes.CAST);
+                _buffer.Add(binding.argTypeCode);
+                // Write through the saved pointer to the caller's register.
+                _buffer.Add(OpCodes.WRITE_REF);
+                AddPushULongNoTypeCode(_buffer, binding.ptrRegAddr);
+            }
+        }
+
+        struct MockRefBinding
+        {
+            public string paramName;
+            // Body-local register holding the value the user reads/writes.
+            // Typed as the arg's base type (int / float / etc).
+            public ulong valueRegAddr;
+            // Hidden body-local register holding the typed caller pointer
+            // (PTR_REG or PTR_GLOBAL_REG). Used by WRITE_REF at writeback.
+            public ulong ptrRegAddr;
+            // The command arg's underlying TypeCode (e.g. TypeCodes.INTEGER).
+            public byte argTypeCode;
+        }
+
+        // Per-arg binding info for the currently-compiling mock body — one
+        // entry per real (non-VmArg) command arg, in declaration order.
+        // PassthroughExpression iterates these to re-construct the call.
+        struct MockParamBinding
+        {
+            public string paramName;
+            public byte argTypeCode;
+            public bool isRef;
+            public bool isParams;
+        }
+
+        // Host-method id of the command currently being mocked. Read by
+        // PassthroughExpression to emit the CALL_HOST_REAL target. Zero
+        // outside a mock body.
+        private int _activeMockHostMethodId;
+
+        // Ordered list of bindings for the active mock body. Index matches
+        // the order in which args are pushed at a normal call site (which
+        // is also the order CALL_HOST_REAL expects).
+        private List<MockParamBinding> _activeMockParamBindings;
+
+        // `passthrough` inside a mock body — re-pushes the body's currently
+        // bound argument values, then dispatches to the real underlying
+        // command via CALL_HOST_REAL (which bypasses the mock table).
+        // Leaves the real command's return value (if any) on the stack;
+        // when used as a statement, the wrapping ExpressionStatement
+        // emits a DISCARD_TYPED.
+        //
+        // Args are re-built from body-locals in declaration order:
+        //   - value: LOAD <valReg> + CAST <argTc>
+        //   - ref:   flush user-side write through hidden ptr (LOAD val,
+        //            CAST, WRITE_REF <ptrReg>), then LOAD <ptrReg> so the
+        //            real host can read AND write through it.
+        //   - params: LOAD_PTR <arrReg> + SPREAD_ARRAY <argTc>.
+        //
+        // After the call we refresh each ref param's value-reg from the
+        // caller (which the real command may have updated) so subsequent
+        // body reads see the real output.
+        // Set of host-method ids that, when invoked inside the current
+        // mock body, should dispatch to the real host (CALL_HOST_REAL)
+        // instead of looking up the mock table. Populated per body with
+        // every overload id of the mocked command name. Null outside a
+        // mock body. Read at the top of Compile(CommandStatement) and
+        // Compile(CommandExpression) for the self-recursive rewrite.
+        private HashSet<int> _activeMockBypassIds;
+
+        // Compile a CommandStatement or CommandExpression whose target
+        // is the mocked command. Emits the same shape as a normal call
+        // (push each arg, then PUSH cmd-id, then CALL_HOST_REAL), but
+        // ref args route through the body's bound ref-param table so
+        // writes land in the caller's scope. After the call, refresh
+        // each refreshed ref's value-reg from the caller so later body
+        // reads see the real-output. Caller is responsible for emitting
+        // the final DISCARD when used as a statement (the regular
+        // CommandStatement compile already handles void-return discard).
+        private void CompileMockedCommandSelfCall(CommandInfo command,
+            List<IExpressionNode> args, int commandId, bool isStatement)
+        {
+            var refsRefreshed = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+            var argCounter = 0;
+            for (var i = 0; i < command.args.Length; i++)
+            {
+                var argDesc = command.args[i];
+                if (argDesc.isVmArg) continue;
+
+                if (argDesc.isParams)
+                {
+                    // Spread shape OR inline. Mirror the regular
+                    // CommandStatement params logic: if the only
+                    // remaining user arg is an array-typed expression,
+                    // compile it and SPREAD_ARRAY. Otherwise compile each
+                    // inline arg in reverse and push the count.
+                    var remaining = args.Count - argCounter;
+                    if (remaining == 1
+                        && args[argCounter].ParsedType.IsArray
+                        && args[argCounter].ParsedType.rank == 1)
+                    {
+                        Compile(args[argCounter]);
+                        _buffer.Add(OpCodes.SPREAD_ARRAY);
+                        _buffer.Add(argDesc.typeCode);
+                    }
+                    else
+                    {
+                        for (var j = args.Count - 1; j >= argCounter; j--)
+                        {
+                            Compile(args[j]);
+                        }
+                        AddPushInt(_buffer, args.Count - argCounter);
+                    }
+                    break;
+                }
+
+                if (argCounter >= args.Count)
+                {
+                    if (argDesc.isOptional)
+                    {
+                        AddPush(_buffer, new byte[] { }, TypeCodes.VOID);
+                        continue;
+                    }
+                    throw new Exception(
+                        "Compiler: self-recursive mock call missing required arg");
+                }
+
+                var userExpr = args[argCounter];
+
+                if (argDesc.isRef)
+                {
+                    // Visitor already required this to be a bound ref-param
+                    // name. Route through the binding so the host writes
+                    // into the caller's scope (where the original ref lives).
+                    string refName = (userExpr is VariableRefNode vn) ? vn.variableName : null;
+                    if (refName == null)
+                    {
+                        throw new Exception(
+                            "Compiler: self-recursive mock ref arg must be a variable ref by validation");
+                    }
+                    EmitMockedCallRefByBoundName(argDesc.typeCode, refName, refsRefreshed);
+                    argCounter++;
+                    continue;
+                }
+
+                // Value arg — compile the user's expression normally, cast.
+                Compile(userExpr);
+                if (argDesc.typeCode != TypeCodes.ANY)
+                {
+                    CompileCast(argDesc.typeCode);
+                }
+                argCounter++;
+            }
+
+            // Push the host method id and dispatch to the real command.
+            _buffer.Add(OpCodes.PUSH);
+            _buffer.Add(TypeCodes.INT);
+            AppendInt32(_buffer, commandId);
+            _buffer.Add(OpCodes.CALL_HOST_REAL);
+
+            // Refresh ref bindings that this call wrote through, so later
+            // body reads observe the real output. Untouched bindings stay
+            // as the user left them (preserves any pre-call user write).
+            if (_activeMockRefBindings != null)
+            {
+                foreach (var rb in _activeMockRefBindings)
+                {
+                    if (!refsRefreshed.Contains(rb.paramName)) continue;
+                    _buffer.Add(OpCodes.LOAD_REF);
+                    AddPushULongNoTypeCode(_buffer, rb.ptrRegAddr);
+                    _buffer.Add(OpCodes.CAST);
+                    _buffer.Add(rb.argTypeCode);
+                    var refNode = new VariableRefNode(null, rb.paramName);
+                    CompileAssignmentLeftHandSide(refNode);
+                }
+            }
+
+            // For void real-commands invoked at statement position there
+            // is nothing on the stack to discard. For value-returning
+            // ones at statement position, the regular CommandStatement
+            // caller doesn't emit a discard either — the value is left
+            // on the stack. Match that behavior here (the caller stack
+            // hygiene is the same as a normal CALL_HOST).
+        }
+
+        // Flush the body-visible value-reg through the hidden ptr (so
+        // the real host reads the user's latest write), then push the
+        // ptr itself as PTR_REG / PTR_GLOBAL_REG. Records the binding
+        // name in `refsRefreshed` so we know which value-regs to reload
+        // from the caller after the call.
+        private void EmitMockedCallRefByBoundName(byte argTypeCode,
+            string boundName, HashSet<string> refsRefreshed)
+        {
+            MockRefBinding refBinding = default;
+            var found = false;
+            if (_activeMockRefBindings != null)
+            {
+                foreach (var rb in _activeMockRefBindings)
+                {
+                    if (string.Equals(rb.paramName, boundName,
+                        StringComparison.OrdinalIgnoreCase))
+                    {
+                        refBinding = rb;
+                        found = true;
+                        break;
+                    }
+                }
+            }
+            if (!found)
+            {
+                throw new Exception(
+                    "Compiler: self-recursive mock call missing ref binding for " + boundName);
+            }
+            PushLoad(_buffer, refBinding.valueRegAddr, isGlobal: false);
+            _buffer.Add(OpCodes.CAST);
+            _buffer.Add(argTypeCode);
+            _buffer.Add(OpCodes.WRITE_REF);
+            AddPushULongNoTypeCode(_buffer, refBinding.ptrRegAddr);
+            PushLoad(_buffer, refBinding.ptrRegAddr, isGlobal: false);
+            refsRefreshed.Add(refBinding.paramName);
+        }
+
+        private void Compile(ClearMockStatement clearMockStatement)
+        {
+            if (clearMockStatement.commandName == null)
+            {
+                _buffer.Add(OpCodes.MOCK_CLEAR_ALL);
+                return;
+            }
+
+            var commandIds = ResolveMockCommandIds(clearMockStatement.commandName);
+            foreach (var commandId in commandIds)
+            {
+                AddPushInt(_buffer, commandId);
+                _buffer.Add(OpCodes.MOCK_CLEAR);
+            }
         }
 
         private void Compile(EndProgramStatement endProgramStatement)
@@ -1611,20 +2589,20 @@ namespace FadeBasic.Virtual
             _labelReplacements.Add(new LabelReplacement
             {
                 InstructionIndex = _buffer.Count,
-                Label = goSubStatement.label
+                Label = MakeLabelKey(_currentLabelRegion, goSubStatement.label)
             });
             AddPushInt(_buffer, int.MaxValue);
             _buffer.Add(OpCodes.JUMP_HISTORY);
-            
+
         }
-        
+
         private void Compile(GotoStatement gotoStatement)
         {
             // identify the instruction ID of the label
             _labelReplacements.Add(new LabelReplacement
             {
                 InstructionIndex = _buffer.Count,
-                Label = gotoStatement.label
+                Label = MakeLabelKey(_currentLabelRegion, gotoStatement.label)
             });
             AddPushInt(_buffer, int.MaxValue);
             _buffer.Add(OpCodes.JUMP);
@@ -1768,7 +2746,23 @@ namespace FadeBasic.Virtual
         }
 
         public void Compile(CommandStatement commandStatement)
-        { 
+        {
+            // Inside a mock body, a call to the mocked command itself
+            // (any overload) dispatches to the real host via
+            // CALL_HOST_REAL — the mock body is transparent to its own
+            // command. Ref args route through the body's bound ref-param
+            // table (validation enforced this) so writes land in the
+            // caller's scope through the scope-swap in CALL_HOST_REAL.
+            if (_activeMockBypassIds != null
+                && _commandToPtr.TryGetValue(
+                    commandStatement.command.UniqueName, out var bypassIdStmt)
+                && _activeMockBypassIds.Contains(bypassIdStmt))
+            {
+                CompileMockedCommandSelfCall(commandStatement.command,
+                    commandStatement.args, bypassIdStmt, isStatement: true);
+                return;
+            }
+
             // TODO: save local state?
             // put each expression on the stack.
             var argCounter = 0;
@@ -1778,14 +2772,39 @@ namespace FadeBasic.Virtual
 
                 if (commandStatement.command.args[i].isParams)
                 {
-                    
-                    // and then, compile the rest of the args
+                    // Spread shape: exactly one remaining arg, and it's an
+                    // array-typed expression matching the params element
+                    // type. Compile the array (which puts its heap ptr on
+                    // the stack), then SPREAD_ARRAY pushes each element +
+                    // count — the same shape as the inline loop below.
+                    var remaining = commandStatement.args.Count - argCounter;
+                    if (remaining == 1
+                        && commandStatement.args[argCounter].ParsedType.IsArray
+                        && commandStatement.args[argCounter].ParsedType.rank == 1)
+                    {
+                        Compile(commandStatement.args[argCounter]);
+                        _buffer.Add(OpCodes.SPREAD_ARRAY);
+                        // Use the array's actual element type, not the
+                        // descriptor's — for `params object[]` (TypeCodes.ANY)
+                        // the descriptor doesn't carry a usable byte size,
+                        // but the source array always has a concrete element
+                        // type the VM can size and tag per-element.
+                        var descTc = commandStatement.command.args[i].typeCode;
+                        var spreadTc = descTc == TypeCodes.ANY
+                            ? VmUtil.GetTypeCode(commandStatement.args[argCounter].ParsedType.type)
+                            : descTc;
+                        _buffer.Add(spreadTc);
+                        break;
+                    }
+
+                    // Inline-list shape (existing): compile each arg in
+                    // reverse, then push the count.
                     for (var j = commandStatement.args.Count - 1; j >= argCounter; j --)
                     {
                         var argExpr2 = commandStatement.args[j];
                         Compile(argExpr2);
                     }
-                    
+
                     // first, we need to tell the program how many arguments there are left in the set
                     // , which of course, is args - i.
                     AddPushInt(_buffer, commandStatement.args.Count - argCounter);
@@ -1852,12 +2871,7 @@ namespace FadeBasic.Virtual
             
             _buffer.Add(OpCodes.PUSH);
             _buffer.Add(TypeCodes.INT);
-            var bytes = BitConverter.GetBytes(commandAddress);
-            for (var i = 0 ; i < bytes.Length; i ++)
-            // for (var i = bytes.Length -1; i >= 0; i--)
-            {
-                _buffer.Add(bytes[i]);
-            }
+            AppendInt32(_buffer, commandAddress);
 
             _buffer.Add(OpCodes.CALL_HOST);
 
@@ -2480,13 +3494,18 @@ namespace FadeBasic.Virtual
              * If it is an array, then it lives in memory.
              */
 
+            // Note: assignment to a ref param inside a mock body is NOT
+            // special-cased here — the body's value register is a regular
+            // local. The writeback to the caller's variable happens at
+            // every body exit (exitmock + endmock fall-through) via the
+            // ref-binding list.
 
             if (assignmentStatement.variable is VariableRefNode leftRef &&
                 scope.TryGetVariable(leftRef.variableName, out var leftVar) && leftVar.typeCode == TypeCodes.STRUCT)
             {
                 // _buffer.Add(OpCodes.BREAKPOINT);
             }
-            
+
             // compile the rhs of the assignment...
             Compile(assignmentStatement.expression);
             CompileAssignmentLeftHandSide(assignmentStatement.variable);
@@ -2599,6 +3618,227 @@ namespace FadeBasic.Virtual
                         argMap = commandExpr.argMap
                     });
                     break;
+                case LenExpression lenExpr:
+                {
+                    if (lenExpr.inner == null) { AddPushInt(_buffer, 0); break; }
+
+                    // Array path: `len` is a structural query answered from
+                    // the rank-size registers the compiler maintains for
+                    // every array — never from the allocation's byte size
+                    // (which is wrong for struct elements and flattens
+                    // multi-dim arrays).
+                    if (lenExpr.inner is VariableRefNode lenVarRef
+                        && scope.TryGetArray(lenVarRef.variableName, out var lenArrayVar))
+                    {
+                        var rankCount = lenArrayVar.rankSizeRegisterAddresses.Length;
+                        if (lenExpr.dimension == null || lenExpr.dimension is LiteralIntExpression)
+                        {
+                            // constant dimension — read the rank register directly.
+                            // dimensions are zero-indexed, like array indexing.
+                            var d = lenExpr.dimension is LiteralIntExpression litDim ? litDim.value : 0;
+                            if (d < 0 || d >= rankCount)
+                            {
+                                // the visitor reports this as a parse error; guard
+                                // here for compile-without-check callers.
+                                throw new Exception($"Compiler: len dimension [{d}] out of range for array with [{rankCount}] dimensions");
+                            }
+                            PushLoad(_buffer, lenArrayVar.rankSizeRegisterAddresses[d], lenArrayVar.isGlobal);
+                            break;
+                        }
+
+                        // Runtime dimension: spill the index to a scratch
+                        // register so the expression evaluates exactly once,
+                        // bounds-check it in [0, rank) (out of range is a fatal
+                        // VM error, like an out-of-bounds array index), then
+                        // select the rank register branchlessly:
+                        // sum of (d == i) * size_i.
+                        Compile(lenExpr.dimension);
+                        CompileCast(TypeCodes.INT);
+                        var lenDimReg = scope.AllocateRegister();
+                        PushStore(_buffer, lenDimReg, isGlobal: false);
+
+                        // BOUNDS_CHECK pops ceiling then index
+                        PushLoad(_buffer, lenDimReg, isGlobal: false);
+                        AddPushInt(_buffer, rankCount);
+                        _buffer.Add(OpCodes.BOUNDS_CHECK);
+
+                        for (var i = 0; i < rankCount; i++)
+                        {
+                            PushLoad(_buffer, lenDimReg, isGlobal: false);
+                            AddPushInt(_buffer, i);
+                            _buffer.Add(OpCodes.EQ);
+                            PushLoad(_buffer, lenArrayVar.rankSizeRegisterAddresses[i], lenArrayVar.isGlobal);
+                            _buffer.Add(OpCodes.MUL);
+                            if (i > 0)
+                            {
+                                _buffer.Add(OpCodes.ADD);
+                            }
+                        }
+                        break;
+                    }
+
+                    // String path: push the string heap pointer, then LENGTH
+                    // divides the allocation byte size by the char size.
+                    // Fade chars are uint codepoints — 4 bytes each.
+                    Compile(lenExpr.inner);
+                    _buffer.Add(OpCodes.LENGTH);
+                    _buffer.Add(TypeCodes.GetByteSize(TypeCodes.INT));
+                    break;
+                }
+                case DimsExpression dimsExpr:
+                {
+                    // `dims(arr)` — the highest valid dimension index, i.e.
+                    // rank - 1, matching the zero-indexed `len(arr, k)` form:
+                    // `for d = 0 to dims(arr)` iterates every dimension. The
+                    // rank is compile-time knowledge, so this folds to a
+                    // constant.
+                    if (dimsExpr.inner is VariableRefNode dimsVarRef
+                        && scope.TryGetArray(dimsVarRef.variableName, out var dimsArrayVar))
+                    {
+                        AddPushInt(_buffer, dimsArrayVar.rankSizeRegisterAddresses.Length - 1);
+                        break;
+                    }
+                    // the visitor reports non-array args as parse errors;
+                    // push 0 so compile-without-check callers stay balanced.
+                    AddPushInt(_buffer, 0);
+                    break;
+                }
+                case BytesExpression bytesExpr:
+                {
+                    // `bytes(x)` — memory size in bytes.
+                    //  - type name / struct variable / scalar variable: constant
+                    //  - array / string variable: runtime allocation size via
+                    //    LENGTH with element size 1 (LENGTH *is* a runtime
+                    //    sizeof; the 1 makes it report raw bytes).
+                    if (bytesExpr.resolvedTypeName != null)
+                    {
+                        if (!_types.TryGetValue(bytesExpr.resolvedTypeName, out var bytesType))
+                        {
+                            throw new Exception("Compiler: bytes() references unknown type " + bytesExpr.resolvedTypeName);
+                        }
+                        AddPushInt(_buffer, bytesType.byteSize);
+                        break;
+                    }
+
+                    if (bytesExpr.inner is VariableRefNode bytesVarRef)
+                    {
+                        if (scope.TryGetArray(bytesVarRef.variableName, out var bytesArrayVar))
+                        {
+                            PushLoadPtr(_buffer, bytesArrayVar.registerAddress, bytesArrayVar.isGlobal);
+                            _buffer.Add(OpCodes.LENGTH);
+                            _buffer.Add((byte)1);
+                            break;
+                        }
+
+                        if (scope.TryGetVariable(bytesVarRef.variableName, out var bytesVar))
+                        {
+                            if (bytesVar.typeCode == TypeCodes.STRUCT)
+                            {
+                                if (!_types.TryGetValue(bytesVar.structType, out var bytesStructType))
+                                {
+                                    throw new Exception("Compiler: bytes() variable references unknown type " + bytesVar.structType);
+                                }
+                                AddPushInt(_buffer, bytesStructType.byteSize);
+                                break;
+                            }
+
+                            if (bytesVar.typeCode == TypeCodes.STRING)
+                            {
+                                Compile(bytesVarRef);
+                                _buffer.Add(OpCodes.LENGTH);
+                                _buffer.Add((byte)1);
+                                break;
+                            }
+
+                            AddPushInt(_buffer, TypeCodes.GetByteSize(bytesVar.typeCode));
+                            break;
+                        }
+
+                        // compile-without-check fallback: the identifier may
+                        // be a type name the visitor never resolved.
+                        if (_types.TryGetValue(bytesVarRef.variableName, out var bytesFallbackType))
+                        {
+                            AddPushInt(_buffer, bytesFallbackType.byteSize);
+                            break;
+                        }
+
+                        throw new Exception("Compiler: bytes() argument is neither a variable nor a type, " + bytesVarRef.variableName);
+                    }
+
+                    // General expression argument, e.g. `bytes(someCall())`.
+                    // The expression is evaluated (it may have side effects)
+                    // and its value discarded; the size comes from the
+                    // expression's parsed type.
+                    {
+                        var bytesInnerType = bytesExpr.inner?.ParsedType ?? TypeInfo.Unset;
+                        if (bytesExpr.inner == null)
+                        {
+                            AddPushInt(_buffer, 0);
+                            break;
+                        }
+
+                        if (bytesInnerType.type == VariableType.String)
+                        {
+                            // string-valued expression: the ptr lands on the
+                            // stack; LENGTH(1) reads the allocation byte size.
+                            Compile(bytesExpr.inner);
+                            _buffer.Add(OpCodes.LENGTH);
+                            _buffer.Add((byte)1);
+                            break;
+                        }
+
+                        if (bytesInnerType.type == VariableType.Struct
+                            && bytesInnerType.structName != null
+                            && _types.TryGetValue(bytesInnerType.structName, out var bytesExprStructType))
+                        {
+                            // struct-valued expression: the full struct data
+                            // plus a typecode byte is on the stack — pop all
+                            // of it, then push the compile-time size.
+                            Compile(bytesExpr.inner);
+                            for (var di = 0; di < bytesExprStructType.byteSize + 1; di++)
+                            {
+                                _buffer.Add(OpCodes.DISCARD);
+                            }
+                            AddPushInt(_buffer, bytesExprStructType.byteSize);
+                            break;
+                        }
+
+                        // scalar expression: evaluate, discard the typed value,
+                        // push the type's size.
+                        Compile(bytesExpr.inner);
+                        _buffer.Add(OpCodes.DISCARD_TYPED);
+                        var bytesScalarTc = VmUtil.GetTypeCode(bytesInnerType.type);
+                        AddPushInt(_buffer, TypeCodes.GetByteSize(bytesScalarTc));
+                        break;
+                    }
+                }
+                case CallCountExpression callCountExpr:
+                {
+                    // Resolve the command name to all overload ids; the count
+                    // is per-id, but `call count <name>` means "across all
+                    // overloads of <name>." Sum the per-id counts at runtime
+                    // by emitting CALL_COUNT for each id and adding the
+                    // results. For the common single-overload case this is
+                    // just one CALL_COUNT instruction. If the name doesn't
+                    // resolve to any command, push 0.
+                    var ids = callCountExpr.commandName != null
+                        ? ResolveMockCommandIds(callCountExpr.commandName)
+                        : new List<int>();
+                    if (ids.Count == 0)
+                    {
+                        AddPushInt(_buffer, 0);
+                    }
+                    else
+                    {
+                        EmitCallCountInline(ids[0]);
+                        for (var i = 1; i < ids.Count; i++)
+                        {
+                            EmitCallCountInline(ids[i]);
+                            _buffer.Add(OpCodes.ADD);
+                        }
+                    }
+                    break;
+                }
                 case LiteralStringExpression literalString:
                     // allocate some memory for a string...
                     var str = literalString.value;
@@ -2653,12 +3893,7 @@ namespace FadeBasic.Virtual
                 case LiteralRealExpression literalReal:
                     _buffer.Add(OpCodes.PUSH);
                     _buffer.Add(TypeCodes.REAL);
-                    var realValue = BitConverter.GetBytes(literalReal.value);
-                    // for (var i = realValue.Length - 1; i >= 0; i--)
-                    for (var i = 0 ; i < realValue.Length; i ++)
-                    {
-                        _buffer.Add(realValue[i]);
-                    }
+                    AppendFloat(_buffer, literalReal.value);
                     break;
                 case LiteralIntExpression literalInt:
                     // push the literal value
@@ -3003,12 +4238,7 @@ namespace FadeBasic.Virtual
                     {
                         // ignore the type code for the jump...
                         _buffer.Add(OpCodes.NOOP); 
-                        var successJumpBytes = BitConverter.GetBytes(endJumpValue);
-                        for (var i = 0; i < successJumpBytes.Length; i++)
-                        {
-                            // offset by 2, because of the opcode, and the type code
-                            _buffer[jumpIndex + 2 + i] = successJumpBytes[i];
-                        }
+                        PatchInt32(_buffer, jumpIndex + 2, endJumpValue);
                     }
                     
                     break;
@@ -3072,53 +4302,67 @@ namespace FadeBasic.Virtual
         {
             buffer.Add(OpCodes.PUSH);
             buffer.Add(TypeCodes.INT);
-            var value = BitConverter.GetBytes(x);
-            for (var i = 0; i < value.Length; i++)
-            // for (var i = value.Length - 1; i >= 0; i--)
-            {
-                buffer.Add(value[i]);
-            }
+            AppendInt32(buffer, x);
         }
 
-        
         private static void AddPushZeros(List<byte> buffer, byte typeCode, int howManyBytesOfZero)
         {
             buffer.Add(OpCodes.PUSH_ZEROS);
-            buffer.Add(typeCode);    
-            var value = BitConverter.GetBytes(howManyBytesOfZero);
-            for (var i = 0; i < value.Length; i++)
-            {
-                buffer.Add(value[i]);
-            }
+            buffer.Add(typeCode);
+            AppendInt32(buffer, howManyBytesOfZero);
         }
-        
+
         private static void AddPushULongNoTypeCode(List<byte> buffer, ulong x)
         {
-            var value = BitConverter.GetBytes(x);
-            for (var i = 0 ; i < value.Length; i ++)
-            {
-                buffer.Add(value[i]);
-            }
+            AppendUInt64(buffer, x);
         }
-        
+
         private static void AddPushUInt(List<byte> buffer, uint x, bool includeTypeCode=true)
         {
-            if (includeTypeCode)
-            {
-                buffer.Add(OpCodes.PUSH);
-            }
-            else
-            {
-                buffer.Add(OpCodes.PUSH_TYPELESS);
-            }
+            buffer.Add(includeTypeCode ? OpCodes.PUSH : OpCodes.PUSH_TYPELESS);
             buffer.Add(TypeCodes.INT);
+            AppendInt32(buffer, (int)x);
+        }
 
-            var value = BitConverter.GetBytes(x);
-            // for (var i = value.Length - 1; i >= 0; i--)
-            for (var i = 0 ; i < value.Length; i ++)
-            {
-                buffer.Add(value[i]);
-            }
+        private static void AppendInt32(List<byte> buffer, int value)
+        {
+            buffer.Add((byte)(value));
+            buffer.Add((byte)(value >> 8));
+            buffer.Add((byte)(value >> 16));
+            buffer.Add((byte)(value >> 24));
+        }
+
+        private static void AppendUInt64(List<byte> buffer, ulong value)
+        {
+            buffer.Add((byte)(value));
+            buffer.Add((byte)(value >> 8));
+            buffer.Add((byte)(value >> 16));
+            buffer.Add((byte)(value >> 24));
+            buffer.Add((byte)(value >> 32));
+            buffer.Add((byte)(value >> 40));
+            buffer.Add((byte)(value >> 48));
+            buffer.Add((byte)(value >> 56));
+        }
+
+        [System.Runtime.InteropServices.StructLayout(System.Runtime.InteropServices.LayoutKind.Explicit)]
+        private struct FloatIntUnion
+        {
+            [System.Runtime.InteropServices.FieldOffset(0)] public float Float;
+            [System.Runtime.InteropServices.FieldOffset(0)] public int Int;
+        }
+
+        private static void AppendFloat(List<byte> buffer, float value)
+        {
+            var u = new FloatIntUnion { Float = value };
+            AppendInt32(buffer, u.Int);
+        }
+
+        private static void PatchInt32(List<byte> buffer, int index, int value)
+        {
+            buffer[index]     = (byte)(value);
+            buffer[index + 1] = (byte)(value >> 8);
+            buffer[index + 2] = (byte)(value >> 16);
+            buffer[index + 3] = (byte)(value >> 24);
         }
     }
 }

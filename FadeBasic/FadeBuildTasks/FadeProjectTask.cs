@@ -22,6 +22,10 @@ namespace FadeBasic.Build
         public bool GenerateEntryPoint { get; set; } = true;
         public bool IgnoreSafetyChecks { get; set; } = false;
         public bool GenerateDebugData { get; set; }
+        // When true, the generated Main dispatches to Microsoft.Testing.Platform
+        // for `dotnet test` invocations and to Launcher.Main<T> otherwise.
+        // Wire this from the FadeEnableTesting MSBuild property.
+        public bool EnableTesting { get; set; } = false;
         
         [Required] public ITaskItem[] SourceFiles { get; set; }
         [Required] public ITaskItem[] Commands { get; set; }
@@ -165,7 +169,8 @@ namespace FadeBasic.Build
 
                 LaunchableGenerator.GenerateLaunchable(GeneratedClassName, GenerateFileLocation, unit,
                     commandCollection.collection, allClassNames, includeMain: GenerateEntryPoint,
-                    generateDebug: GenerateDebugData);
+                    generateDebug: GenerateDebugData,
+                    enableTesting: EnableTesting);
                 GeneratedFile = GenerateFileLocation;
                 return true;
             }

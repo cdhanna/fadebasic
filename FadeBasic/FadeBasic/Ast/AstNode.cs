@@ -163,7 +163,13 @@ namespace FadeBasic.Ast
         public Token StartToken => startToken;
         public Token EndToken => endToken;
 
-        public List<ParseError> Errors { get; set; } = new List<ParseError>();
+        private List<ParseError> _errors;
+        public List<ParseError> Errors
+        {
+            get => _errors ??= new List<ParseError>();
+            set => _errors = value;
+        }
+        public bool HasErrors => _errors != null && _errors.Count > 0;
         public Symbol DeclaredFromSymbol { get; set; }
         
         public TypeInfo ParsedType { get; set; } = TypeInfo.Unset;
@@ -200,61 +206,34 @@ namespace FadeBasic.Ast
         protected abstract string GetString();
 
 
-        public abstract IEnumerable<IAstVisitable> IterateChildNodes();
+        protected abstract void VisitChildren(Action<IAstVisitable> onVisit, Action<IAstVisitable> onExit);
 
         public void Where(Func<IAstVisitable, bool> predicate, List<IAstVisitable> buffer)
         {
-            if (predicate(this))
-            {
-                buffer.Add(this);
-            }
-            var nodes = IterateChildNodes();
-            foreach (var node in nodes)
-            {
-                if (node == null) continue;
-                var found = node.Where(predicate);
-                if (found != null)
-                {
-                    buffer.AddRange(found);
-                }
-            }
-
+            Visit(node => { if (predicate(node)) buffer.Add(node); });
         }
+
         public List<IAstVisitable> Where(Func<IAstVisitable, bool> predicate)
         {
             var output = new List<IAstVisitable>();
             Where(predicate, output);
             return output;
         }
+
         public IAstVisitable FindFirst(Func<IAstVisitable, bool> predicate)
         {
-            if (predicate(this))
-            {
-                return this;
-            }
-            var nodes = IterateChildNodes();
-            foreach (var node in nodes)
-            {
-                if (node == null) continue;
-                var found = node.FindFirst(predicate);
-                if (found != null)
-                {
-                    return found;
-                }
-            }
-
-            return null;
+            if (predicate(this)) return this;
+            IAstVisitable found = null;
+            VisitChildren(
+                node => { if (found == null && predicate(node)) found = node; },
+                null);
+            return found;
         }
-        
-        public void Visit(Action<IAstVisitable> onVisit, Action<IAstVisitable> onExit=null)
+
+        public void Visit(Action<IAstVisitable> onVisit, Action<IAstVisitable> onExit = null)
         {
             onVisit(this);
-            var nodes = IterateChildNodes();
-            foreach (var node in nodes)
-            {
-                if (node == null) continue;
-                node.Visit(onVisit, onExit);
-            }
+            VisitChildren(onVisit, onExit);
             onExit?.Invoke(this);
         }
     }
@@ -262,21 +241,10 @@ namespace FadeBasic.Ast
 
     public interface IAstVisitable : IAstNode
     {
-        IEnumerable<IAstVisitable> IterateChildNodes();
-
-        public void Visit(Action<IAstVisitable> onVisit, Action<IAstVisitable> onExit=null);
+        public void Visit(Action<IAstVisitable> onVisit, Action<IAstVisitable> onExit = null);
         public IAstVisitable FindFirst(Func<IAstVisitable, bool> predicate);
         public List<IAstVisitable> Where(Func<IAstVisitable, bool> predicate);
         public void Where(Func<IAstVisitable, bool> predicate, List<IAstVisitable> buffer);
-        // {
-        //     onVisit(this);
-        //     var nodes = IterateChildNodes();
-        //     foreach (var node in nodes)
-        //     {
-        //         if (node == null) continue;
-        //         node.Visit(onVisit);
-        //     }
-        // }
     }
 
     public static class ErrorVisitorExtensions
@@ -287,7 +255,7 @@ namespace FadeBasic.Ast
             
             visitable.Visit(child =>
             {
-                if (child.Errors != null && child.Errors.Count > 0)
+                if (child.HasErrors)
                     errors.AddRange(child.Errors);
             });
             return errors;

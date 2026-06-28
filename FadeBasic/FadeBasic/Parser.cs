@@ -28,7 +28,7 @@ namespace FadeBasic
         public Token End { get; }
 
         public ParserException(string message, Token start, Token end = null)
-            : base($"Parse Exception: {message} at {start.Location}-{end?.Location}({start.lexem.type})")
+            : base($"Parse Exception: {message} at {start.Location}-{end?.Location}({start.type})")
         {
             Message = message;
             Start = start;
@@ -75,6 +75,7 @@ namespace FadeBasic
         public Stack<SymbolTable> localVariables = new Stack<SymbolTable>();
         public TokenTable<(SymbolTable, string)> positionedVariables = new TokenTable<(SymbolTable, string)>();
         public Stack<string> currentFunctionName = new Stack<string>();
+        public Stack<string> currentRegionName = new Stack<string>();
         public Dictionary<string, Symbol> functionSymbolTable = new Dictionary<string, Symbol>();
         public Dictionary<string, FunctionStatement> functionTable = new Dictionary<string, FunctionStatement>();
         public Dictionary<string, List<TypeInfo>> functionReturnTypeTable = new Dictionary<string, List<TypeInfo>>();
@@ -82,7 +83,23 @@ namespace FadeBasic
         List<DelayedTypeCheck> delayedTypeChecks = new List<DelayedTypeCheck>();
 
         private int allowExitCounter;
-        
+
+        public bool IsInsideTest { get; set; }
+
+        // Reference to the program's CommandCollection, plumbed in by
+        // AddScopeRelatedErrors so visitors like the mock-body type-check
+        // can look up command metadata without re-threading commands
+        // through every signature.
+        public CommandCollection commands;
+
+        // Names that were preloaded from the parent program into a test scope
+        // (top-level locals + function-internal locals/params, see
+        // ScopeErrorVisitor.AddScopeRelatedErrors). They're in the local table
+        // so the base checker can resolve cross-scope references, but a test's
+        // own `local <name>` declaration is allowed to shadow them rather than
+        // erroring with SymbolAlreadyDeclared.
+        public HashSet<string> borrowedFromParent = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
         public Scope()
         {
             localVariables.Push(new SymbolTable());
@@ -203,7 +220,8 @@ namespace FadeBasic
                 
                 if (expr.operationType == OperationType.EqualTo)
                 {
-                    // the expression has a VOID type  
+                    // Comparison result is an int (BASIC uses int as boolean).
+                    expr.ParsedType = TypeInfo.FromVariableType(VariableType.Integer);
                     return;
                 }
 
@@ -345,13 +363,22 @@ namespace FadeBasic
             //  or we need to generate it, which may cause a cascade of calls and
             //  generate the type info for whole method swaths.
 
-            // first, identify all return statements
+            // first, identify all return statements. Track parse errors in the
+            // same walk — a structurally broken function (e.g. an unterminated
+            // `if` swallowed the `endfunction` while the user is mid-edit) must
+            // not be treated as returning void.
             var returnStatements = new List<FunctionReturnStatement>();
+            var hasParseErrors = false;
             function.Visit(child =>
             {
                 if (child is FunctionReturnStatement exit)
                 {
                     returnStatements.Add(exit);
+                }
+
+                if (child is AstNode childNode && childNode.HasErrors)
+                {
+                    hasParseErrors = true;
                 }
             });
             if (function.hasNoReturnExpression)
@@ -359,18 +386,23 @@ namespace FadeBasic
                 // this implies there is an implicit VOID return type
                 SetFunctionType(function, TypeInfo.Void, function);
             }
-            
+
             // then, each return statement needs to be checked.
             //  it is possible that any return statement could
             //  result in a recursive call to this same method.
 
             if (returnStatements.Count == 0)
             {
+                // poison rather than default: a broken function's return type
+                // is UNKNOWN, and Unset is assignable to everything — so the
+                // single structural error doesn't cascade into a type error
+                // at every call site.
+                var inferred = hasParseErrors ? TypeInfo.Unset : TypeInfo.Void;
                 functionReturnTypeTable[function.name] = new List<TypeInfo>
                 {
-                    TypeInfo.Void
+                    inferred
                 };
-                return TypeInfo.Void;
+                return inferred;
             }
             foreach (var exit in returnStatements)
             {
@@ -587,15 +619,23 @@ namespace FadeBasic
         
         public void AddDeclaration(DeclarationStatement declStatement, EnsureTypeContext ctx)
         {
-            
+
             var table = GetVariables(declStatement.scopeType);
             if (table.ContainsKey(declStatement.variable))
             {
-                // this is an error; we cannot declare a variable twice in the same scope.
-                declStatement.Errors.Add(new ParseError(declStatement.StartToken, ErrorCodes.SymbolAlreadyDeclared));
-                
-                // don't do anything with this.
-                return;
+                // A parent-program name preloaded into this test scope is
+                // allowed to be legitimately shadowed by the test's own
+                // declaration. Drop the borrowed symbol and proceed.
+                if (borrowedFromParent.Remove(declStatement.variable))
+                {
+                    table.Remove(declStatement.variable);
+                }
+                else
+                {
+                    // Real duplicate in the same scope -> hard error.
+                    declStatement.Errors.Add(new ParseError(declStatement.StartToken, ErrorCodes.SymbolAlreadyDeclared));
+                    return;
+                }
             }
 
             switch (declStatement.type)
@@ -781,9 +821,48 @@ namespace FadeBasic
             {
                 var arg = args[argIndex];
                 var descriptor = command.args[argMap[argIndex]];
-                            
-                            
+
                 arg.EnsureVariablesAreDefined(this, ctx);
+
+                // Special case: a single array-typed expression at a
+                // `params` arg position spreads the array onto the stack
+                // at compile time. Accept it here without the per-element
+                // type check; the compiler emits SPREAD_ARRAY. Mixing array
+                // with inline values at the same params position is an
+                // error.
+                if (descriptor.isParams && arg.ParsedType.IsArray)
+                {
+                    // Count how many args map to this same descriptor index.
+                    var sameDescriptorCount = 0;
+                    for (var j = 0; j < argMap.Count; j++)
+                    {
+                        if (argMap[j] == argMap[argIndex]) sameDescriptorCount++;
+                    }
+                    if (sameDescriptorCount > 1)
+                    {
+                        arg.Errors.Add(new ParseError(arg,
+                            ErrorCodes.ParamsCannotMixArrayWithInline));
+                        continue;
+                    }
+                    if (arg.ParsedType.rank != 1)
+                    {
+                        arg.Errors.Add(new ParseError(arg,
+                            ErrorCodes.ParamsArrayMustBeRankOne));
+                        continue;
+                    }
+                    // `params object[]` (TypeCodes.ANY) accepts any element
+                    // type — same tolerance the inline-arg path already
+                    // grants below. Without this, `print x$` where x$ is a
+                    // string array trips a 0262 mismatch.
+                    if (descriptor.typeCode != TypeCodes.ANY
+                        && arg.ParsedType.type != ConvertTypeCodeToVariableType(descriptor.typeCode))
+                    {
+                        arg.Errors.Add(new ParseError(arg,
+                            ErrorCodes.ParamsArrayElementTypeMismatch));
+                        continue;
+                    }
+                    continue;
+                }
 
                 if (TypeInfo.TryGetFromTypeCode(descriptor.typeCode, out var guessType))
                 {
@@ -803,8 +882,20 @@ namespace FadeBasic
                         err.message = err.message.Substring(0, err.message.Length - replace.Length ) + "any";
                     }
                 }
-                
+
             }
+        }
+
+        // Helper used by params-array validation: a TypeCode (the byte form
+        // commands use) → the AST VariableType. Returns Void for unmapped
+        // codes, which won't match a real array element type so still errors.
+        private static VariableType ConvertTypeCodeToVariableType(byte typeCode)
+        {
+            if (TypeInfo.TryGetFromTypeCode(typeCode, out var info))
+            {
+                return info.type;
+            }
+            return VariableType.Void;
         }
         
         public void AddCommand(CommandInfo command, List<IExpressionNode> args, List<int> argMap, EnsureTypeContext ctx)
@@ -943,6 +1034,7 @@ namespace FadeBasic
             if (options == null) options = ParseOptions.Default;
             
             var program = new ProgramNode(_stream.Current);
+            program.commands = _commands;
             program.Errors.AddRange(_stream.Errors);
             while (!_stream.IsEof)
             {
@@ -955,12 +1047,11 @@ namespace FadeBasic
                     case TypeDefinitionStatement typeStatement:
                         program.typeDefinitions.Add(typeStatement);
                         break;
+                    case TestNode testNode:
+                        program.tests.Add(testNode);
+                        break;
                     case LabelDeclarationNode labelStatement:
-                        program.labels.Add(new LabelDefinition
-                        {
-                            statementIndex = program.statements.Count + 1,
-                            node = labelStatement
-                        });
+                        program.labels.Add(labelStatement);
                         program.statements.Add(labelStatement);
                         break;
                     default:
@@ -1036,7 +1127,7 @@ namespace FadeBasic
                         typeReference.Errors.Insert(0, error);
                     }
                     var declStatement = new DeclarationStatement(scopeToken, new VariableRefNode(next), typeReference);
-                    if (_stream.Peek.lexem.type == LexemType.OpEqual)
+                    if (_stream.Peek.type == LexemType.OpEqual)
                     {
                         if (initializer != null)
                         {
@@ -1617,6 +1708,18 @@ namespace FadeBasic
                         return ParseFunction(token);
                     case LexemType.KeywordExitFunction:
                         return ParseExitFunction(token);
+                    case LexemType.KeywordTest:
+                        return ParseTest(token, isAbstract: false);
+                    case LexemType.KeywordAbstract:
+                        return ParseAbstractTest(token);
+                    case LexemType.KeywordRunto:
+                        return ParseRunto(token);
+                    case LexemType.KeywordAssert:
+                        return ParseAssert(token);
+                    case LexemType.KeywordMock:
+                        return ParseMock(token);
+                    case LexemType.KeywordClear:
+                        return ParseClearMock(token);
                     case LexemType.KeywordEnd:
                         return new EndProgramStatement(token);
                     case LexemType.KeywordExit:
@@ -1631,16 +1734,30 @@ namespace FadeBasic
                         return ParseDimStatement(token);
                     case LexemType.KeywordReDimArray:
                         return ParseRedimStatement(token);
+                    case LexemType.KeywordLen:
+                    {
+                        // `len(<expr>)` at statement level — value is
+                        // discarded but the form is still legal (matches
+                        // older `len(...)` host-command tests). Put the
+                        // token back so the standard expression parser
+                        // picks it up via its KeywordLen case.
+                        _stream.Restore(_stream.Save() - 1);
+                        if (TryParseExpression(out var lenAsExpr))
+                        {
+                            return new ExpressionStatement(lenAsExpr);
+                        }
+                        return new NoOpStatement();
+                    }
                     case LexemType.VariableReal:
                     case LexemType.VariableString:
                     case LexemType.VariableGeneral:
 
                         if (token.type == LexemType.VariableReal && token.Length == 1)
                         {
-                            // this is the special tokenize block case. 
+                            // this is the special tokenize block case.
                             return ParseTokenization(token);
                         }
-                        
+
                         var reference = ParseVariableReference(token);
                         
                         var secondToken = _stream.Peek;
@@ -1685,7 +1802,7 @@ namespace FadeBasic
                                 };
 
                                 var maybeEqual = _stream.Peek;
-                                if (maybeEqual.lexem.type == LexemType.OpEqual)
+                                if (maybeEqual.type == LexemType.OpEqual)
                                 {
                                     // ah, there is an assignment happening here too!
                                     _stream.Advance(); // discard the equal sign.
@@ -2386,6 +2503,160 @@ namespace FadeBasic
             };
         }
 
+        private static bool IsNameToken(Token token)
+        {
+            return token.type == LexemType.VariableGeneral
+                   || token.type == LexemType.VariableReal
+                   || token.type == LexemType.VariableString;
+        }
+
+        private IStatementNode ParseAbstractTest(Token abstractToken)
+        {
+            if (_stream.Peek.type != LexemType.KeywordTest)
+            {
+                var node = new TestNode
+                {
+                    name = "_",
+                    startToken = abstractToken,
+                    endToken = abstractToken,
+                    isAbstract = true,
+                    // empty test body so downstream visitors that recurse into
+                    // testProgram don't NRE on this error-recovery node.
+                    testProgram = new ProgramNode(abstractToken) { endToken = abstractToken },
+                };
+                node.Errors.Add(new ParseError(abstractToken, ErrorCodes.AbstractRequiresTest));
+                return node;
+            }
+            var testToken = _stream.Advance(); // consume `test`
+            return ParseTest(testToken, isAbstract: true, abstractToken: abstractToken);
+        }
+
+        private TestNode ParseTest(Token testToken, bool isAbstract, Token abstractToken = default)
+        {
+            var errors = new List<ParseError>();
+            var startToken = isAbstract ? abstractToken : testToken;
+
+            // parse the name
+            var nameToken = _stream.Peek;
+            if (!IsNameToken(nameToken))
+            {
+                nameToken = _stream.CreatePatchToken(LexemType.VariableGeneral, "_")[0];
+                errors.Add(new ParseError(testToken, ErrorCodes.TestMissingName));
+            }
+            else
+            {
+                _stream.Advance();
+            }
+
+            // optional from clause
+            string fromParent = null;
+            Token fromParentToken = default;
+            if (_stream.Peek.type == LexemType.KeywordFrom)
+            {
+                _stream.Advance(); // consume `from`
+                var parentToken = _stream.Peek;
+                if (!IsNameToken(parentToken))
+                {
+                    errors.Add(new ParseError(parentToken, ErrorCodes.TestFromMissingParent));
+                }
+                else
+                {
+                    _stream.Advance();
+                    fromParent = parentToken.caseInsensitiveRaw;
+                    fromParentToken = parentToken;
+                }
+            }
+
+            // now parse the body until endtest
+            var statements = new List<IStatementNode>();
+            var labels = new List<LabelDeclarationNode>();
+            var functions = new List<FunctionStatement>();
+            var looking = true;
+            while (looking)
+            {
+                var nextToken = _stream.Peek;
+                switch (nextToken.type)
+                {
+                    case LexemType.EOF:
+                        errors.Add(new ParseError(testToken, ErrorCodes.TestMissingEndTest));
+                        looking = false;
+                        break;
+
+                    case LexemType.EndStatement:
+                        _stream.Advance();
+                        break;
+
+                    case LexemType.KeywordEndTest:
+                        _stream.Advance();
+                        looking = false;
+                        break;
+
+                    case LexemType.KeywordTest:
+                    case LexemType.KeywordAbstract:
+                    {
+                        var illegalErr = new ParseError(nextToken, ErrorCodes.TestDefinedInsideTest);
+                        errors.Add(illegalErr);
+                        // recover: skip until matching endtest
+                        var depth = 1;
+                        _stream.Advance();
+                        while (depth > 0 && _stream.Peek.type != LexemType.EOF)
+                        {
+                            var t = _stream.Advance();
+                            if (t.type == LexemType.KeywordTest || t.type == LexemType.KeywordAbstract) depth++;
+                            else if (t.type == LexemType.KeywordEndTest) depth--;
+                        }
+                        break;
+                    }
+
+                    case LexemType.KeywordFunction:
+                    {
+                        var fnToken = _stream.Advance();
+                        var fn = ParseFunction(fnToken);
+                        fn.region = nameToken.raw;
+                        functions.Add(fn);
+                        // statements.Add(fn);
+                        break;
+                    }
+
+                    default:
+                    {
+                        var member = ParseStatement(statements);
+                        if (member is LabelDeclarationNode lbl)
+                        {
+                            labels.Add(lbl);
+                            statements.Add(member);
+                        }
+                        else
+                        {
+                            statements.Add(member);
+                        }
+                        break;
+                    }
+                }
+            }
+
+            // TODO: are you allowed to define custom types in a test? 
+            var testProgram = new ProgramNode(nameToken)
+            {
+                statements = statements,
+                functions = functions, 
+                labels = labels, 
+                endToken = _stream.Current,
+            };
+            return new TestNode
+            {
+                testProgram = testProgram,
+                Errors = errors,
+                name = nameToken.raw,
+                nameToken = nameToken,
+                isAbstract = isAbstract,
+                fromParent = fromParent,
+                fromParentToken = fromParentToken,
+                startToken = startToken,
+                endToken = _stream.Current
+            };
+        }
+
         private SwitchStatement ParseSwitchStatement(Token switchToken)
         {
             var expression = ParseWikiExpression();
@@ -2628,9 +2899,15 @@ namespace FadeBasic
                         looking = false;
                         break;
                     default:
+                        if (IsEnclosingBlockTerminator(nextToken.type))
+                        {
+                            errors.Add(new ParseError(forToken, ErrorCodes.ForStatementMissingNext));
+                            looking = false;
+                            break;
+                        }
                         var member = ParseStatement(statements);
                         statements.Add(member);
-                        break; 
+                        break;
                 }
             }
 
@@ -2702,12 +2979,28 @@ namespace FadeBasic
                         looking = false;
                         break;
                     default:
+                        if (IsEnclosingBlockTerminator(nextToken.type))
+                        {
+                            error = new ParseError(repeatToken, ErrorCodes.RepeatStatementMissingUntil);
+                            looking = false;
+                            break;
+                        }
                         var member = ParseStatement(statements);
                         statements.Add(member);
-                        break; 
+                        break;
                 }
             }
-            var condition = ParseWikiExpression();
+            IExpressionNode condition;
+            if (error != null)
+            {
+                // the repeat never found its `until` — don't try to parse a
+                // condition out of whatever token terminated the block.
+                condition = new LiteralIntExpression(repeatToken, 0);
+            }
+            else
+            {
+                condition = ParseWikiExpression();
+            }
 
             var repeatStatement = new RepeatUntilStatement
             {
@@ -2749,6 +3042,12 @@ namespace FadeBasic
                         looking = false;
                         break;
                     default:
+                        if (IsEnclosingBlockTerminator(nextToken.type))
+                        {
+                            error = new ParseError(whileToken, ErrorCodes.WhileStatementMissingEndWhile);
+                            looking = false;
+                            break;
+                        }
                         var member = ParseStatement(statements);
                         statements.Add(member);
                         break; 
@@ -2873,7 +3172,7 @@ namespace FadeBasic
 
         private MacroTokenizeStatement ParseTokenization(Token token)
         {
-            var isShortcut = token.lexem.type == LexemType.VariableReal;
+            var isShortcut = token.type == LexemType.VariableReal;
             
             var searching = true;
             var errors = new List<ParseError>();
@@ -3017,9 +3316,18 @@ namespace FadeBasic
                                 statements = negativeStatements;
                                 break;
                             default:
+                                if (IsEnclosingBlockTerminator(nextToken.type))
+                                {
+                                    // a closer for an enclosing block: this if is
+                                    // unterminated. Stop here without consuming so
+                                    // the enclosing construct still matches.
+                                    error = new ParseError(ifToken, ErrorCodes.IfStatementMissingEndIf);
+                                    looking = false;
+                                    break;
+                                }
                                 var member = ParseStatement(statements);
                                 statements.Add(member);
-                                break; 
+                                break;
                         }
                     }
 
@@ -3034,6 +3342,40 @@ namespace FadeBasic
 
         }
         
+        /// <summary>
+        /// Tokens that close (or begin) an enclosing construct. When a block
+        /// body parser encounters one of these, the current block is
+        /// unterminated — the parser emits the block's missing-closer error
+        /// and stops WITHOUT consuming the token, so the enclosing
+        /// construct's parser can still match it. This keeps a mid-edit `if`
+        /// from swallowing the rest of the file: the enclosing function/loop
+        /// stays intact and the user sees a single error on the unfinished
+        /// block instead of a cascade.
+        /// </summary>
+        static bool IsEnclosingBlockTerminator(LexemType type)
+        {
+            switch (type)
+            {
+                case LexemType.KeywordEndIf:
+                case LexemType.KeywordEndFunction:
+                case LexemType.KeywordFunction:
+                case LexemType.KeywordNext:
+                case LexemType.KeywordEndWhile:
+                case LexemType.KeywordUntil:
+                case LexemType.KeywordEndType:
+                case LexemType.KeywordEndSelect:
+                case LexemType.KeywordEndCase:
+                case LexemType.KeywordCase:
+                case LexemType.KeywordEndTest:
+                case LexemType.KeywordEndRunto:
+                case LexemType.KeywordEndMock:
+                case LexemType.KeywordEndDefer:
+                    return true;
+                default:
+                    return false;
+            }
+        }
+
         private GotoStatement ParseGoto(Token gotoToken)
         {
             var next = _stream.Advance();
@@ -3041,13 +3383,438 @@ namespace FadeBasic
             {
                 case LexemType.VariableGeneral:
                     return new GotoStatement(gotoToken, next);
-                    
+
                 default:
                     var patchToken = _stream.CreatePatchToken(LexemType.VariableGeneral, "_")[0];
                     var statement = new GotoStatement(gotoToken, patchToken);
                     statement.Errors.Add(new ParseError(gotoToken, ErrorCodes.GotoMissingLabel));
                     return statement;
             }
+        }
+
+        private AssertStatement ParseAssert(Token assertToken)
+        {
+            // Capture source text by snapshotting stream indices around the
+            // expression parse, then slicing the consumed tokens.
+            var startIdx = _stream.Save();
+            if (!TryParseExpression(out var expr))
+            {
+                var stmt = new AssertStatement(assertToken, assertToken, null, "");
+                stmt.Errors.Add(new ParseError(assertToken, ErrorCodes.AssertMissingExpression));
+                return stmt;
+            }
+            var endIdx = _stream.Save();
+            var sourceText = _stream.GetSourceText(startIdx, endIdx);
+
+            var stmtNode = new AssertStatement(assertToken, expr.EndToken, expr, sourceText);
+
+            // Optional second arg: `assert <cond>, <reason>` where <reason> is a
+            // string expression (literal or variable). Surfaced in failure reports.
+            if (_stream.Peek.type == LexemType.ArgSplitter)
+            {
+                _stream.Advance(); // consume comma
+                if (TryParseExpression(out var reasonExpr))
+                {
+                    stmtNode.reason = reasonExpr;
+                    stmtNode.endToken = reasonExpr.EndToken;
+                }
+                else
+                {
+                    stmtNode.Errors.Add(new ParseError(assertToken, ErrorCodes.AssertReasonMissingExpression));
+                }
+            }
+
+            return stmtNode;
+        }
+
+        private RuntoStatement ParseRunto(Token runtoToken)
+        {
+            // Forms:
+            //   inline:        `runto labelName`
+            //   inline-stack:  `runto labelName max cycles N` (clauses on same line)
+            //   block:         `runto labelName \n max cycles N \n endrunto`
+            // Clauses on the same line (separated by `:` or whitespace) bind to
+            // the runto without requiring `endrunto`. If the user crosses a newline
+            // and continues with another clause or writes `endrunto`, that's the
+            // block form and must close with `endrunto`.
+            var labelToken = _stream.Peek;
+            if (labelToken.type != LexemType.VariableGeneral)
+            {
+                var patchToken = _stream.CreatePatchToken(LexemType.VariableGeneral, "_")[0];
+                var stmt = new RuntoStatement(runtoToken, runtoToken, patchToken);
+                stmt.Errors.Add(new ParseError(runtoToken, ErrorCodes.RuntoMissingLabel));
+                return stmt;
+            }
+            _stream.Advance(); // consume label
+
+            var statement = new RuntoStatement(runtoToken, labelToken, labelToken);
+            Token endToken = labelToken;
+
+            // Phase 1: parse clauses on the same line. Colon separators (`:`)
+            // between the label and clauses, and between clauses, are honored;
+            // a real newline ends the inline form.
+            while (IsColonEndStatement(_stream.Peek)) _stream.Advance();
+            while (IsRuntoClauseStart(_stream.Peek.type))
+            {
+                ParseRuntoClause(statement, ref endToken);
+                while (IsColonEndStatement(_stream.Peek)) _stream.Advance();
+            }
+
+            // Phase 2: detect block form. If the next non-EndStatement token is
+            // a clause or `endrunto`, this is the multi-line block form and must
+            // be closed with `endrunto`.
+            var lookAhead = PeekPastEndStatements();
+            bool hasBlockBody = lookAhead.type == LexemType.KeywordEndRunto
+                                || IsRuntoClauseStart(lookAhead.type);
+
+            if (!hasBlockBody)
+            {
+                statement.endToken = endToken;
+                return statement;
+            }
+
+            // Consume the EndStatements before clauses.
+            while (_stream.Peek.type == LexemType.EndStatement) _stream.Advance();
+
+            // Parse clauses until endrunto or a hard boundary (EOF / endtest).
+            var looking = true;
+            while (looking)
+            {
+                var next = _stream.Peek;
+                switch (next.type)
+                {
+                    case LexemType.EOF:
+                    case LexemType.KeywordEndTest:
+                    case LexemType.KeywordTest:
+                    case LexemType.KeywordAbstract:
+                        statement.Errors.Add(new ParseError(runtoToken, ErrorCodes.RuntoMissingEndRunto));
+                        looking = false;
+                        break;
+
+                    case LexemType.EndStatement:
+                        _stream.Advance();
+                        break;
+
+                    case LexemType.KeywordEndRunto:
+                        endToken = _stream.Advance();
+                        looking = false;
+                        break;
+
+                    default:
+                        if (IsRuntoClauseStart(next.type))
+                        {
+                            ParseRuntoClause(statement, ref endToken);
+                        }
+                        else
+                        {
+                            // Unknown clause; skip token to avoid infinite loop.
+                            _stream.Advance();
+                        }
+                        break;
+                }
+            }
+
+            statement.endToken = endToken;
+            return statement;
+        }
+
+        private static bool IsRuntoClauseStart(LexemType type)
+        {
+            return type == LexemType.KeywordMaxCycles;
+        }
+
+        private void ParseRuntoClause(RuntoStatement statement, ref Token endToken)
+        {
+            var head = _stream.Peek;
+            switch (head.type)
+            {
+                case LexemType.KeywordMaxCycles:
+                {
+                    _stream.Advance(); // consume `max cycles`
+                    if (TryParseExpression(out var cyclesExpr))
+                    {
+                        statement.maxCyclesExpression = cyclesExpr;
+                        endToken = cyclesExpr.EndToken;
+                    }
+                    else
+                    {
+                        statement.Errors.Add(new ParseError(head, ErrorCodes.RuntoMaxCyclesMissingValue));
+                    }
+                    break;
+                }
+                default:
+                    // Caller is expected to gate on IsRuntoClauseStart.
+                    _stream.Advance();
+                    break;
+            }
+        }
+
+        private MockStatement ParseMock(Token mockToken)
+        {
+            // Block-only form:
+            //   mock <command name>
+            //       returns <expr>     ' optional, sets return value
+            //       forbid [<reason>]  ' optional, fails the test if called
+            //   endmock
+            //
+            // An empty body (`mock cmd\nendmock`) installs a void mock — the
+            // real command is suppressed. There is no inline / stacked / bare
+            // form: every mock requires its `endmock`. Frequency clauses
+            // (`once`, `times`, `always`) are gone — a mock stays installed
+            // until `clear mock <name>` (or `clear mocks`) removes it.
+            //
+            // The lexer's command-name pass merges multi-word command names
+            // into a single CommandWord token, so the name is one token.
+            var stmt = new MockStatement(mockToken, mockToken);
+
+            var nameToken = _stream.Peek;
+            if (nameToken.type == LexemType.CommandWord)
+            {
+                _stream.Advance();
+                stmt.commandName = nameToken.caseInsensitiveRaw;
+                stmt.commandNameToken = nameToken;
+                stmt.endToken = nameToken;
+            }
+            else
+            {
+                stmt.Errors.Add(new ParseError(mockToken, ErrorCodes.MockMissingCommandName));
+                return stmt;
+            }
+
+            // Optional parameter-name list — `mock find pattern, list` binds
+            // the command's args to locals named `pattern` and `list` inside
+            // the body. Two surface forms are accepted:
+            //   • bare:    `mock find pattern, list`
+            //   • parens:  `mock find(pattern, list)`
+            // Names are space- or comma-separated. A newline ends the bare
+            // form; the close paren ends the parens form. Names can be any
+            // variable token shape (general identifier, `s$` for string,
+            // `f#` for float) — the param's TYPE comes from the command's
+            // metadata, not the suffix; the suffix is just naming style.
+            var inParens = _stream.Peek.type == LexemType.ParenOpen;
+            if (inParens) _stream.Advance();
+            while (IsMockParamToken(_stream.Peek.type)
+                || _stream.Peek.type == LexemType.ArgSplitter)
+            {
+                if (_stream.Peek.type == LexemType.ArgSplitter)
+                {
+                    _stream.Advance();
+                    continue;
+                }
+                var paramToken = _stream.Advance();
+                stmt.parameters.Add(new VariableRefNode(paramToken));
+                stmt.endToken = paramToken;
+            }
+            if (inParens)
+            {
+                if (_stream.Peek.type == LexemType.ParenClose)
+                {
+                    stmt.endToken = _stream.Advance();
+                }
+                else
+                {
+                    stmt.Errors.Add(new ParseError(_stream.Peek,
+                        ErrorCodes.MockParamsMissingCloseParen));
+                }
+            }
+
+            // Drain end-of-statement separators between the name/params and the body.
+            while (_stream.Peek.type == LexemType.EndStatement) _stream.Advance();
+
+            // Body: `endtest`, `test`, `abstract`, and EOF are hard boundaries
+            // that emit MockMissingEndMock without consuming the boundary
+            // token — the surrounding test-body parser still sees its
+            // `endtest`.
+            var looking = true;
+            while (looking)
+            {
+                var next = _stream.Peek;
+                switch (next.type)
+                {
+                    case LexemType.EOF:
+                    case LexemType.KeywordEndTest:
+                    case LexemType.KeywordTest:
+                    case LexemType.KeywordAbstract:
+                        stmt.Errors.Add(new ParseError(mockToken, ErrorCodes.MockMissingEndMock));
+                        looking = false;
+                        break;
+
+                    case LexemType.EndStatement:
+                        _stream.Advance();
+                        break;
+
+                    case LexemType.KeywordEndMock:
+                    {
+                        stmt.endToken = next;
+                        _stream.Advance();
+                        // Optional fall-through return expression — `endmock
+                        // <expr>` matches `endfunction <expr>`. When the body
+                        // reaches its closing `endmock` without an earlier
+                        // `exitmock`, this expression becomes the return.
+                        if (!IsMockBodyTerminator(_stream.Peek.type))
+                        {
+                            var saved = _stream.Save();
+                            if (TryParseExpression(out var endExpr))
+                            {
+                                stmt.endmockExpression = endExpr;
+                                stmt.endToken = endExpr.EndToken;
+                            }
+                            else
+                            {
+                                _stream.Restore(saved);
+                            }
+                        }
+                        looking = false;
+                        break;
+                    }
+
+                    case LexemType.KeywordExitMock:
+                    {
+                        var head = _stream.Advance();
+                        var rs = new MockExitMockStatement(head, head);
+                        if (TryParseExpression(out var expr))
+                        {
+                            rs.expression = expr;
+                            rs.endToken = expr.EndToken;
+                        }
+                        else
+                        {
+                            rs.Errors.Add(new ParseError(head, ErrorCodes.MockReturnsMissingExpression));
+                        }
+                        stmt.body.Add(rs);
+                        break;
+                    }
+
+                    case LexemType.KeywordForbid:
+                    {
+                        var head = _stream.Advance();
+                        var fs = new MockForbidStatement(head, head);
+                        // Optional reason expression (string-typed). Same
+                        // shape as `assert <cond>, "reason"`. We attempt
+                        // to parse it; if the next token isn't expression-
+                        // shaped, fall through with no reason.
+                        if (!IsMockBodyTerminator(_stream.Peek.type))
+                        {
+                            var saved = _stream.Save();
+                            if (TryParseExpression(out var reasonExpr))
+                            {
+                                fs.reason = reasonExpr;
+                                fs.endToken = reasonExpr.EndToken;
+                            }
+                            else
+                            {
+                                _stream.Restore(saved);
+                            }
+                        }
+                        stmt.body.Add(fs);
+                        break;
+                    }
+
+                    default:
+                    {
+                        // Any test-block-legal statement is accepted inside
+                        // the mock body (locals, ifs, asserts, static
+                        // commands, plain assignments — including those that
+                        // target a ref parameter for write-through). Defer
+                        // to the generic statement parser; it'll surface its
+                        // own errors for anything truly malformed.
+                        var parsed = ParseStatement(stmt.body);
+                        if (parsed != null)
+                        {
+                            stmt.body.Add(parsed);
+                        }
+                        break;
+                    }
+                }
+            }
+
+            return stmt;
+        }
+
+        // True for tokens that can't start a `forbid` reason expression —
+        // used to decide whether to try parsing one or fall through.
+        private static bool IsMockBodyTerminator(LexemType type)
+        {
+            return type == LexemType.EndStatement
+                || type == LexemType.KeywordEndMock
+                || type == LexemType.KeywordExitMock
+                || type == LexemType.KeywordForbid
+                || type == LexemType.EOF
+                || type == LexemType.KeywordEndTest
+                || type == LexemType.KeywordTest;
+        }
+
+        // True for tokens that can appear as a mock parameter name. We
+        // accept the three Fade variable lexem types — general identifiers
+        // (no suffix), `s$` style string names, and `f#` style real names.
+        // The param's actual type comes from the command metadata, not the
+        // suffix on the name; this is purely about which lexer tokens we
+        // accept as identifier-like.
+        private static bool IsMockParamToken(LexemType type)
+        {
+            return type == LexemType.VariableGeneral
+                || type == LexemType.VariableString
+                || type == LexemType.VariableReal;
+        }
+
+        // True when the token is a colon-induced EndStatement (same line)
+        // rather than a newline-induced one. The lexer synthesizes newline
+        // EndStatements with empty/null `raw`; colon ones carry `raw = ":"`.
+        // Used by ParseRunto for its inline-clause form.
+        private static bool IsColonEndStatement(Token token)
+        {
+            return token != null
+                   && token.type == LexemType.EndStatement
+                   && token.raw == ":";
+        }
+
+        private ClearMockStatement ParseClearMock(Token clearToken)
+        {
+            // `clear mock <command name>` or `clear mocks`
+            var stmt = new ClearMockStatement(clearToken, clearToken);
+
+            var next = _stream.Peek;
+            if (next.type == LexemType.KeywordMocks)
+            {
+                _stream.Advance();
+                stmt.commandName = null; // means "clear all"
+                stmt.endToken = next;
+                return stmt;
+            }
+            if (next.type == LexemType.KeywordMock)
+            {
+                _stream.Advance();
+                var nameToken = _stream.Peek;
+                if (nameToken.type == LexemType.CommandWord)
+                {
+                    _stream.Advance();
+                    stmt.commandName = nameToken.caseInsensitiveRaw;
+                    stmt.commandNameToken = nameToken;
+                    stmt.endToken = nameToken;
+                }
+                else
+                {
+                    stmt.Errors.Add(new ParseError(clearToken, ErrorCodes.MockMissingCommandName));
+                }
+                return stmt;
+            }
+
+            stmt.Errors.Add(new ParseError(clearToken, ErrorCodes.ClearMockMissingTarget));
+            return stmt;
+        }
+
+        // Helper: peek past any EndStatement tokens to see what's next, without
+        // permanently advancing the stream.
+        private Token PeekPastEndStatements()
+        {
+            var saved = _stream.Save();
+            while (_stream.Peek.type == LexemType.EndStatement)
+            {
+                _stream.Advance();
+            }
+            var result = _stream.Peek;
+            _stream.Restore(saved);
+            return result;
         }
         private GoSubStatement ParseGoSub(Token gotoToken)
         {
@@ -3456,6 +4223,150 @@ namespace FadeBasic
             recovery = null;
             switch (token.type)
             {
+                case LexemType.KeywordLen:
+                {
+                    // `len(<expr>)` — string character count, or array
+                    // dimension size, as an int. `len(arr, k)` selects the
+                    // k-th dimension (1-based); without `k`, dimension 1.
+                    // Parens are required for clarity (matches the BASIC
+                    // family's usual `LEN(x)` form). The visitor enforces
+                    // that only arrays/strings appear here, and that the
+                    // dimension form is array-only.
+                    var lenTok = _stream.Advance();
+                    if (_stream.Peek.type != LexemType.ParenOpen)
+                    {
+                        var badLen = new LenExpression(lenTok, lenTok, null);
+                        badLen.Errors.Add(new ParseError(lenTok, ErrorCodes.LenMissingParens));
+                        outputExpression = badLen;
+                        break;
+                    }
+                    _stream.Advance(); // consume `(`
+                    if (!TryParseExpression(out var lenInner))
+                    {
+                        var badLen = new LenExpression(lenTok, lenTok, null);
+                        badLen.Errors.Add(new ParseError(lenTok, ErrorCodes.LenMissingExpression));
+                        outputExpression = badLen;
+                        break;
+                    }
+                    IExpressionNode lenDimension = null;
+                    if (_stream.Peek.type == LexemType.ArgSplitter)
+                    {
+                        _stream.Advance(); // consume `,`
+                        if (!TryParseExpression(out lenDimension))
+                        {
+                            var badLen = new LenExpression(lenTok, lenInner.EndToken, lenInner);
+                            badLen.Errors.Add(new ParseError(lenTok, ErrorCodes.LenMissingExpression));
+                            outputExpression = badLen;
+                            break;
+                        }
+                    }
+                    if (_stream.Peek.type != LexemType.ParenClose)
+                    {
+                        var badLen = new LenExpression(lenTok, lenInner.EndToken, lenInner);
+                        badLen.dimension = lenDimension;
+                        badLen.Errors.Add(new ParseError(lenTok, ErrorCodes.LenMissingCloseParen));
+                        outputExpression = badLen;
+                        break;
+                    }
+                    var closeTok = _stream.Advance();
+                    var lenExpr = new LenExpression(lenTok, closeTok, lenInner);
+                    lenExpr.dimension = lenDimension;
+                    lenExpr.ParsedType = TypeInfo.Int;
+                    outputExpression = lenExpr;
+                    break;
+                }
+                case LexemType.KeywordDims:
+                {
+                    // `dims(<arr>)` — the number of dimensions (rank) of an
+                    // array, as an int. Compile-time constant; exists so code
+                    // can iterate dimensions generically with `len(arr, k)`.
+                    var dimsTok = _stream.Advance();
+                    if (_stream.Peek.type != LexemType.ParenOpen)
+                    {
+                        var badDims = new DimsExpression(dimsTok, dimsTok, null);
+                        badDims.Errors.Add(new ParseError(dimsTok, ErrorCodes.DimsMissingParens));
+                        outputExpression = badDims;
+                        break;
+                    }
+                    _stream.Advance(); // consume `(`
+                    if (!TryParseExpression(out var dimsInner))
+                    {
+                        var badDims = new DimsExpression(dimsTok, dimsTok, null);
+                        badDims.Errors.Add(new ParseError(dimsTok, ErrorCodes.DimsMissingExpression));
+                        outputExpression = badDims;
+                        break;
+                    }
+                    if (_stream.Peek.type != LexemType.ParenClose)
+                    {
+                        var badDims = new DimsExpression(dimsTok, dimsInner.EndToken, dimsInner);
+                        badDims.Errors.Add(new ParseError(dimsTok, ErrorCodes.DimsMissingCloseParen));
+                        outputExpression = badDims;
+                        break;
+                    }
+                    var dimsClose = _stream.Advance();
+                    var dimsExpr = new DimsExpression(dimsTok, dimsClose, dimsInner);
+                    dimsExpr.ParsedType = TypeInfo.Int;
+                    outputExpression = dimsExpr;
+                    break;
+                }
+                case LexemType.KeywordBytes:
+                {
+                    // `bytes(<var-or-type>)` — memory size of a value in
+                    // bytes, as an int. Struct/scalar variables and type
+                    // names fold to constants; arrays and strings read the
+                    // allocation size at runtime. The visitor resolves
+                    // whether the identifier names a variable or a type
+                    // (variables shadow type names).
+                    var bytesTok = _stream.Advance();
+                    if (_stream.Peek.type != LexemType.ParenOpen)
+                    {
+                        var badBytes = new BytesExpression(bytesTok, bytesTok, null);
+                        badBytes.Errors.Add(new ParseError(bytesTok, ErrorCodes.BytesMissingParens));
+                        outputExpression = badBytes;
+                        break;
+                    }
+                    _stream.Advance(); // consume `(`
+                    if (!TryParseExpression(out var bytesInner))
+                    {
+                        var badBytes = new BytesExpression(bytesTok, bytesTok, null);
+                        badBytes.Errors.Add(new ParseError(bytesTok, ErrorCodes.BytesMissingExpression));
+                        outputExpression = badBytes;
+                        break;
+                    }
+                    if (_stream.Peek.type != LexemType.ParenClose)
+                    {
+                        var badBytes = new BytesExpression(bytesTok, bytesInner.EndToken, bytesInner);
+                        badBytes.Errors.Add(new ParseError(bytesTok, ErrorCodes.BytesMissingCloseParen));
+                        outputExpression = badBytes;
+                        break;
+                    }
+                    var bytesClose = _stream.Advance();
+                    var bytesExpr = new BytesExpression(bytesTok, bytesClose, bytesInner);
+                    bytesExpr.ParsedType = TypeInfo.Int;
+                    outputExpression = bytesExpr;
+                    break;
+                }
+                case LexemType.KeywordCallCount:
+                {
+                    // `call count <command>` is a single keyword followed by
+                    // a command name. The lexer matches `call[ \t]+count` as
+                    // one token — so `call` alone (e.g., a user variable
+                    // named `call`) stays a VariableGeneral.
+                    var ccTok = _stream.Advance();
+                    var cmdTok = _stream.Peek;
+                    if (cmdTok.type != LexemType.CommandWord)
+                    {
+                        var bad = new CallCountExpression(ccTok, ccTok, null);
+                        bad.Errors.Add(new ParseError(ccTok, ErrorCodes.CallCountMissingCommand));
+                        outputExpression = bad;
+                        break;
+                    }
+                    _stream.Advance(); // consume command name
+                    var ccExpr = new CallCountExpression(ccTok, cmdTok, cmdTok);
+                    ccExpr.ParsedType = TypeInfo.Int;
+                    outputExpression = ccExpr;
+                    break;
+                }
                 case LexemType.ConstantBracketOpen:
                     var open = _stream.Advance();
                     outputExpression = ParseSubstitution(open, withinTokenization);

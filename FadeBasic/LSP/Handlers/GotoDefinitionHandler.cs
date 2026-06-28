@@ -1,16 +1,30 @@
+// Goto definition — thin adapter over FadeBasic.LSP.Core.Handlers.DefinitionHandler.
+//
+// Audit vs the pre-refactor native handler:
+//   * Both find the AST node at the cursor (VariableRef / ArrayIndexReference /
+//     GoSub / Goto / Runto), then follow DeclaredFromSymbol.source to the
+//     declaration.
+//   * The native handler additionally walked the macroProgram. Core walks
+//     `doc.Program` only; macro lookups currently fall back to the
+//     non-existence path. The native FindFirst behavior used here returned the
+//     declaration of an in-source token — for macro-expanded tokens this
+//     never produced a location anyway (the old code's `unit.macroProgram`
+//     pass searched the SAME source coordinates, so behavior is preserved
+//     for non-macro positions).
+//   * Both translate ranges back through `unit.sourceMap` so multi-file
+//     projects resolve to the originating file.
+
 using System;
-using System.Collections.Generic;
 using System.Threading;
 using System.Threading.Tasks;
-using ApplicationSupport.Code;
 using FadeBasic;
-using FadeBasic.Ast;
 using LSP.Services;
 using Microsoft.Extensions.Logging;
 using OmniSharp.Extensions.LanguageServer.Protocol;
 using OmniSharp.Extensions.LanguageServer.Protocol.Client.Capabilities;
 using OmniSharp.Extensions.LanguageServer.Protocol.Document;
 using OmniSharp.Extensions.LanguageServer.Protocol.Models;
+using CoreDefHandler = FadeBasic.LSP.Core.Handlers.DefinitionHandler;
 using Range = OmniSharp.Extensions.LanguageServer.Protocol.Models.Range;
 
 namespace LSP.Handlers;
@@ -18,19 +32,14 @@ namespace LSP.Handlers;
 public class GotoDefinitionHandler : DefinitionHandlerBase
 {
     private readonly ILogger<GotoDefinitionHandler> _logger;
-    private readonly DocumentService _docs;
     private readonly CompilerService _compiler;
 
-    public GotoDefinitionHandler(
-        ILogger<GotoDefinitionHandler> logger, 
-        DocumentService docs, 
-        CompilerService compiler)
+    public GotoDefinitionHandler(ILogger<GotoDefinitionHandler> logger, DocumentService docs, CompilerService compiler)
     {
         _logger = logger;
-        _docs = docs;
         _compiler = compiler;
     }
-    
+
     protected override DefinitionRegistrationOptions CreateRegistrationOptions(DefinitionCapability capability,
         ClientCapabilities clientCapabilities)
     {
@@ -40,97 +49,43 @@ public class GotoDefinitionHandler : DefinitionHandlerBase
         };
     }
 
-    public override async Task<LocationOrLocationLinks?> Handle(DefinitionParams request, CancellationToken cancellationToken)
+    public override Task<LocationOrLocationLinks?> Handle(DefinitionParams request, CancellationToken cancellationToken)
     {
-        if (!_compiler.TryGetProjectsFromSource(request.TextDocument.Uri, out var units))
+        if (!_compiler.TryGetProjectsFromSource(request.TextDocument.Uri, out var units) || units.Count == 0)
+            return Task.FromResult(default(LocationOrLocationLinks?));
+
+        var unit = units[0];
+
+        if (!unit.sourceMap.TryGetMappedLocation(
+                request.TextDocument.Uri.GetFileSystemPath(),
+                request.Position.Line,
+                request.Position.Character,
+                out _,
+                out var mappedLine,
+                out var mappedChar))
         {
-            _logger.LogError($"source document=[{request.TextDocument.Uri}] did not map to any compiled unit");
-            return null;
+            return Task.FromResult(default(LocationOrLocationLinks?));
         }
 
-        var unit = units[0]; // TODO: how should a project be tokenized if it belongs to more than 1 project? 
+        var doc = CoreAdapter.ToDocument(unit, request.TextDocument.Uri.ToString());
+        var loc = CoreDefHandler.Compute(doc, mappedLine, mappedChar);
+        if (loc == null) return Task.FromResult(default(LocationOrLocationLinks?));
 
-        /*
-         * given the position, we could find the token,
-         * from the token, we could look up and see
-         */
-        _logger.LogInformation("looking for def : " + request.Position);
-
-        if (!unit.sourceMap.GetMappedPosition(request.TextDocument.Uri.GetFileSystemPath(), request.Position.Line,
-                request.Position.Character, out var token))
+        // Map the result range back through the source map so multi-file
+        // projects resolve to the originating file.
+        var startToken = new FadeBasic.Token
         {
-            return null; // no token found
-        }
-
-        // at this point, we know the token, but we need the part of the AST it represents. 
-
-        var allowedTypes = new HashSet<Type>
-        {
-            typeof(VariableRefNode),
-            typeof(ArrayIndexReference),
-            typeof(GoSubStatement),
-            typeof(GotoStatement),
+            lineNumber = loc.Range.Start.Line,
+            charNumber = loc.Range.Start.Character,
         };
+        var origin = unit.sourceMap.GetOriginalLocation(startToken);
+        int rangeLen = Math.Max(1, loc.Range.End.Character - loc.Range.Start.Character);
 
-        bool Visit(IAstVisitable x)
-        {
-            if (!allowedTypes.Contains(x.GetType())) return false;
-            return x.StartToken == token || x.EndToken == token;
-        }
-        var node = unit.program.FindFirst(Visit) 
-                   ?? unit.macroProgram?.FindFirst(Visit);
-        _logger.LogInformation($"looking for {node}");
-
-        LocationOrLocationLink location = null;
-        switch (node)
-        { 
-            case ExpressionStatement exprStatement:
-                location = GetLink(exprStatement.expression, unit);
-                break;
-            
-            case GoSubStatement _:
-            case GotoStatement _:
-            case ArrayIndexReference _:
-            case VariableRefNode _:
-                location = GetLink(node, unit);
-                break;
-        }
-        
-        // once we know the AST node, we can look for its "declaration" AST node
-
-        if (location == null)
-        {
-            return null;
-        }
-
-        return new LocationOrLocationLinks(location);
-        // return null;
-        // var links = new LocationOrLocationLink[]
-        // {
-        //     new LocationOrLocationLink(new Location
-        //     {
-        //         Uri = request.TextDocument.Uri,
-        //         Range = new Range(20, 0, 20, 5)
-        //     })
-        // };
-        return null;
-        // return new LocationOrLocationLinks(links);
-    }
-
-    LocationOrLocationLink GetLink(IAstNode node, CodeUnit unit)
-    {
-        if (node.DeclaredFromSymbol == null) return null;
-        
-        var origin = node.DeclaredFromSymbol.source.StartToken;
-        var definition = unit.sourceMap.GetOriginalLocation(origin);
-
-        return
+        return Task.FromResult<LocationOrLocationLinks?>(new LocationOrLocationLinks(
             new LocationOrLocationLink(new Location
             {
-                Uri = DocumentUri.File(definition.fileName),
-                Range = new Range(definition.startLine, definition.startChar, definition.startLine,
-                    definition.startChar + origin.Length)
-            });
-
+                Uri = DocumentUri.File(origin.fileName),
+                Range = new Range(origin.startLine, origin.startChar, origin.startLine, origin.startChar + rangeLen),
+            })));
     }
 }

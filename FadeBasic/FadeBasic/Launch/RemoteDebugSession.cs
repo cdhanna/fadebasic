@@ -285,7 +285,7 @@ namespace FadeBasic.Launch
         public int colNumber;
         public int status;
         
-        public void ProcessJson(IJsonOperation op)
+        public void ProcessJson<T>(ref T op) where T : IJsonOperation
         {
             op.IncludeField(nameof(lineNumber), ref lineNumber);
             op.IncludeField(nameof(colNumber), ref colNumber);
@@ -296,9 +296,9 @@ namespace FadeBasic.Launch
     public class RequestBreakpointMessage : DebugMessage
     {
         public List<Breakpoint> breakpoints;
-        public override void ProcessJson(IJsonOperation op)
+        public override void ProcessJson<T>(ref T op)
         {
-            base.ProcessJson(op);
+            base.ProcessJson(ref op);
             op.IncludeField(nameof(breakpoints), ref breakpoints);
         }
     }
@@ -306,9 +306,9 @@ namespace FadeBasic.Launch
     public class ResponseBreakpointMessage : DebugMessage
     {
         public List<Breakpoint> breakpoints;
-        public override void ProcessJson(IJsonOperation op)
+        public override void ProcessJson<T>(ref T op)
         {
-            base.ProcessJson(op);
+            base.ProcessJson(ref op);
             op.IncludeField(nameof(breakpoints), ref breakpoints);
         }
     }
@@ -317,9 +317,9 @@ namespace FadeBasic.Launch
     {
         public int frameIndex;
 
-        public override void ProcessJson(IJsonOperation op)
+        public override void ProcessJson<T>(ref T op)
         {
-            base.ProcessJson(op);
+            base.ProcessJson(ref op);
             op.IncludeField(nameof(frameIndex), ref frameIndex);
         }
     }
@@ -328,9 +328,9 @@ namespace FadeBasic.Launch
     {
         public int variableId;
 
-        public override void ProcessJson(IJsonOperation op)
+        public override void ProcessJson<T>(ref T op)
         {
-            base.ProcessJson(op);
+            base.ProcessJson(ref op);
             op.IncludeField(nameof(variableId), ref variableId);
         }
     }
@@ -345,7 +345,7 @@ namespace FadeBasic.Launch
 
         public DebugScope scope;
         
-        public void ProcessJson(IJsonOperation op)
+        public void ProcessJson<T>(ref T op) where T : IJsonOperation
         {
             op.IncludeField(nameof(id), ref id);
             op.IncludeField(nameof(value), ref value);
@@ -377,7 +377,7 @@ namespace FadeBasic.Launch
             this.colNumber = colNumber;
         }
 
-        public void ProcessJson(IJsonOperation op)
+        public void ProcessJson<T>(ref T op) where T : IJsonOperation
         {
             op.IncludeField(nameof(lineNumber), ref lineNumber);
             op.IncludeField(nameof(colNumber), ref colNumber);

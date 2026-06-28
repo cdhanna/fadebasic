@@ -43,6 +43,13 @@ namespace FadeBasic.Ast.Visitors
                         }
                         ApplyStatements(switchStatement.defaultCase?.statements);
                         break;
+                    case TestNode testStatement:
+                        foreach (var func in testStatement.testProgram.functions)
+                        {
+                            ApplyStatements(func.statements);
+                        }
+                        ApplyStatements(testStatement.testProgram.statements);
+                        break;
                 }
                 
             } 
@@ -137,6 +144,11 @@ namespace FadeBasic.Ast.Visitors
             foreach (var function in node.functions)
             {
                 ApplyStatements(function.statements);
+            }
+
+            foreach (var test in node.tests)
+            {
+                test.testProgram.AddInitializerSugar();
             }
         }
 

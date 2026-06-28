@@ -15,8 +15,9 @@
 
     <ItemGroup>
       <ProjectReference Include="..\FadeBasic\FadeBasic.csproj" />
+      <ProjectReference Include="..\LSP.Core\FadeBasic.LSP.Core.csproj" />
     </ItemGroup>
-    
+
     <ItemGroup>
         <EmbeddedResource Include="DocSite\index.html" LogicalName="docs/index.html"/>
         <EmbeddedResource Include="DocSite\styles.css" LogicalName="docs/styles.css"/>

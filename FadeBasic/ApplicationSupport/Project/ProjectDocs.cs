@@ -1,3 +1,5 @@
+using System;
+using System.Collections.Generic;
 using System.Text;
 using System.Xml.Linq;
 
@@ -310,21 +312,44 @@ public static class ProjectDocMethods
     public static ProjectDocs LoadDocs<T>(this List<CommandMetadata> metadatas, Action<string, System.Xml.XmlException> onDocParseError = null)
         where T : IDocParser, new()
     {
-        // Build command name -> group lookup so <see cref="x"/> can resolve links
+        // Two lookups so <see cref="X"/> can resolve from either the
+        // Fade-script call name (`"texture"`) OR the underlying C# method
+        // name (`"LoadTexture"`). The XML docs in our source use both forms
+        // freely; without the second map the C# names fall through to the
+        // inline-code fallback in MarkdownDocParser.ConvertSee and never
+        // produce a clickable link.
         var commandToGroup = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        var methodNameToCallName = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         foreach (var metadata in metadatas)
         {
             foreach (var command in metadata.commands)
             {
                 commandToGroup[command.callName] = metadata.className;
+                var shortMethodName = ExtractShortMethodName(command.methodName, command.sig);
+                if (!string.IsNullOrEmpty(shortMethodName) && !methodNameToCallName.ContainsKey(shortMethodName))
+                    methodNameToCallName[shortMethodName] = command.callName;
             }
         }
 
         var parser = new T();
+        // Fragment-style URL the playground intercepts in help.ts and routes
+        // through helpCtl.selectCommand. The browser treats `#…` as
+        // same-page navigation, so a stray middle-click / new-tab doesn't
+        // 404 against a path that nothing serves. The fragment's payload
+        // is URI-encoded so callNames with spaces (`"push asset"`) survive.
         parser.ResolveSeeRef = cref =>
         {
-            if (commandToGroup.TryGetValue(cref, out var group))
-                return "/command/" + group + "/" + cref;
+            if (string.IsNullOrEmpty(cref)) return null;
+            // Strip any trailing `(...)` so `<see cref="Sync()">` matches the
+            // bare `Sync` we have in the methodName map. The XML source uses
+            // both forms; both should link.
+            var key = cref;
+            var paren = key.IndexOf('(');
+            if (paren > 0) key = key.Substring(0, paren);
+            if (methodNameToCallName.TryGetValue(key, out var callName))
+                return "#fade-cmd:" + Uri.EscapeDataString(callName);
+            if (commandToGroup.ContainsKey(key))
+                return "#fade-cmd:" + Uri.EscapeDataString(key);
             return null;
         };
 
@@ -340,7 +365,14 @@ public static class ProjectDocMethods
             {
                 var doc = new CommandDocs();
                 group.commands.Add(doc);
-                docs.map[command.sig] = doc;
+                // Key by callName + sig — `command.sig` alone is only the
+                // type signature (e.g. "voidR9"), shared by every command
+                // with the same return type and arg shape. Without callName
+                // in the key, two commands with the same sig clobber each
+                // other in this map and Lookup returns the wrong CommandDocs
+                // (or none, if a later command overwrote the slot). Match
+                // CommandInfo.UniqueName on the lookup side.
+                docs.map[command.callName + command.sig] = doc;
                 doc.command = command;
                 doc.commandName = command.callName;
                 doc.methodDocs = ParseMethodDocs(parser, command.docString, ex =>
@@ -353,6 +385,25 @@ public static class ProjectDocMethods
         return docs;
     }
 
+    // The source generator emits `MethodName = "Call_<short>_<sig>"` per
+    // command. Crefs in the XML docs reference the underlying C# method
+    // ("Push", "LoadTexture") rather than the generated wrapper, so we
+    // strip the `Call_` prefix and `_<sig>` suffix to recover the short
+    // name we can match cref keys against.
+    internal static string ExtractShortMethodName(string methodName, string sig)
+    {
+        if (string.IsNullOrEmpty(methodName)) return null;
+        const string prefix = "Call_";
+        if (!methodName.StartsWith(prefix, StringComparison.Ordinal)) return methodName;
+        var stripped = methodName.Substring(prefix.Length);
+        if (!string.IsNullOrEmpty(sig))
+        {
+            var suffix = "_" + sig;
+            if (stripped.EndsWith(suffix, StringComparison.Ordinal))
+                stripped = stripped.Substring(0, stripped.Length - suffix.Length);
+        }
+        return stripped;
+    }
 }
 
 public class ProjectDocs

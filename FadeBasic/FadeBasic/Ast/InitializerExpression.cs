@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Generic;
 using System.Linq;
 
@@ -13,10 +14,9 @@ namespace FadeBasic.Ast
             return $"init ({string.Join(",", assignments.Select(x => x.ToString()))})";
         }
 
-        public override IEnumerable<IAstVisitable> IterateChildNodes()
+        protected override void VisitChildren(Action<IAstVisitable> onVisit, Action<IAstVisitable> onExit)
         {
-            foreach (var x in assignments)
-                yield return x;
+            foreach (var x in assignments) x?.Visit(onVisit, onExit);
         }
     }
 }

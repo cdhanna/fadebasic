@@ -187,22 +187,22 @@ namespace FadeBasic.Virtual
             switch (typeCode)
             {
                 case TypeCodes.INT:
-                    return BitConverter.ToInt32(span.ToArray(), 0).ToString();
+                    return MemoryMarshal.Read<int>(span).ToString();
                 case TypeCodes.WORD:
-                    return BitConverter.ToUInt16(span.ToArray(), 0).ToString();
+                    return MemoryMarshal.Read<ushort>(span).ToString();
                 case TypeCodes.DWORD:
-                    return BitConverter.ToUInt32(span.ToArray(), 0).ToString();
+                    return MemoryMarshal.Read<uint>(span).ToString();
                 case TypeCodes.DINT:
-                    return BitConverter.ToInt64(span.ToArray(), 0).ToString();
+                    return MemoryMarshal.Read<long>(span).ToString();
                 case TypeCodes.BOOL:
                     return span[0] == 0 ? "false" : "true";
                 case TypeCodes.BYTE:
                     return span[0].ToString();
                 case TypeCodes.REAL:
-                    var num = BitConverter.ToSingle(span.ToArray(), 0);
+                    var num = MemoryMarshal.Read<float>(span);
                     return num.ToString(CultureInfo.InvariantCulture);
                 case TypeCodes.DFLOAT:
-                    var num2 = BitConverter.ToDouble(span.ToArray(), 0);
+                    var num2 = MemoryMarshal.Read<double>(span);
                     return num2.ToString(CultureInfo.InvariantCulture);
                 case TypeCodes.STRING:
                     var address = VmPtr.FromBytes(span.ToArray());
@@ -346,7 +346,6 @@ namespace FadeBasic.Virtual
                     
                     vm.heap.Allocate(ref HeapTypeFormat.STRING_FORMAT, strBytes.Length, out strPtr);
                     vm.heap.Write(strPtr, strBytes.Length, strBytes);
-                    vm.heap.IncrementRefCount(strPtr);
                     vm.dataRegisters[address] = VmPtr.GetRaw(ref strPtr);
                     vm.typeRegisters[address] = typeCode;
                     break;
@@ -664,7 +663,7 @@ namespace FadeBasic.Virtual
                 throw new Exception("vm exception: expected an int");
             }
             ReadSpan(ref stack, TypeCodes.INT, out var span);
-            result = BitConverter.ToInt32(span.ToArray(), 0);
+            result = MemoryMarshal.Read<int>(span);
         }
 
         public static void ReadAsTypeFormat(ref FastStack<byte> stack, out HeapTypeFormat format)
@@ -672,7 +671,7 @@ namespace FadeBasic.Virtual
             stack.PopArraySpan(HeapTypeFormat.SIZE, out var span);
             format.typeFlags = span[0];
             format.typeCode = span[1];
-            format.typeId = BitConverter.ToInt32(span.ToArray(), 2);
+            format.typeId = MemoryMarshal.Read<int>(span.Slice(2));
         }
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
@@ -703,105 +702,179 @@ namespace FadeBasic.Virtual
                     stack.ptr -= size;
                     break;
                 default:
-                    
-                    var span = new ReadOnlySpan<byte>(stack.buffer, stack.ptr - size, size);
-            
-                    stack.ptr -= size;
-                    byte[] toLongConversionUtil = new byte[8];
 
-                    for (var i = 0; i < size; i++)
-                    {
-                        toLongConversionUtil[i] = 0;
-                    }
-                    for (var i = size - 1; i >= 0; i--)
-                    {
-                        toLongConversionUtil[i] = span[i];
-                    }
-                    value = BitConverter.ToUInt64(toLongConversionUtil, 0);
+                    var span = new ReadOnlySpan<byte>(stack.buffer, stack.ptr - size, size);
+
+                    stack.ptr -= size;
+                    Span<byte> toLongConversionUtil = stackalloc byte[8];
+                    toLongConversionUtil.Clear();
+                    span.CopyTo(toLongConversionUtil);
+                    value = MemoryMarshal.Read<ulong>(toLongConversionUtil);
                     break;
             }
         }
 
 
-        static void ConvertTwoBytes(byte[] aBytes, byte[] bBytes, out byte a, out byte b)
+        // Reusable result buffers for arithmetic/cast outputs. Ops hand back
+        // ReadOnlySpan views over these slots instead of allocating a fresh
+        // array per operation. The VM consumes every result (via PushSpan)
+        // before more than a couple are in flight — the worst case is two
+        // simultaneous casts in OpCodes.LOGICAL_2 — so a small ring of
+        // slots is sufficient.
+        const int ScratchSlots = 8; // must stay a power of two
+        [ThreadStatic] static byte[][] _scratch;
+        [ThreadStatic] static int _scratchIdx;
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        static byte[] NextScratch()
+        {
+            var ring = _scratch;
+            if (ring == null)
+            {
+                ring = new byte[ScratchSlots][];
+                for (var i = 0; i < ScratchSlots; i++) ring[i] = new byte[8];
+                _scratch = ring;
+            }
+            var idx = (_scratchIdx + 1) & (ScratchSlots - 1);
+            _scratchIdx = idx;
+            return ring[idx];
+        }
+
+        static ReadOnlySpan<byte> ScratchBytes(byte v)
+        {
+            var s = NextScratch();
+            s[0] = v;
+            return new ReadOnlySpan<byte>(s, 0, sizeof(byte));
+        }
+        static ReadOnlySpan<byte> ScratchBytes(short v)
+        {
+            var s = NextScratch();
+            MemoryMarshal.Write(s.AsSpan(), ref v);
+            return new ReadOnlySpan<byte>(s, 0, sizeof(short));
+        }
+        static ReadOnlySpan<byte> ScratchBytes(ushort v)
+        {
+            var s = NextScratch();
+            MemoryMarshal.Write(s.AsSpan(), ref v);
+            return new ReadOnlySpan<byte>(s, 0, sizeof(ushort));
+        }
+        static ReadOnlySpan<byte> ScratchBytes(int v)
+        {
+            var s = NextScratch();
+            MemoryMarshal.Write(s.AsSpan(), ref v);
+            return new ReadOnlySpan<byte>(s, 0, sizeof(int));
+        }
+        static ReadOnlySpan<byte> ScratchBytes(uint v)
+        {
+            var s = NextScratch();
+            MemoryMarshal.Write(s.AsSpan(), ref v);
+            return new ReadOnlySpan<byte>(s, 0, sizeof(uint));
+        }
+        static ReadOnlySpan<byte> ScratchBytes(long v)
+        {
+            var s = NextScratch();
+            MemoryMarshal.Write(s.AsSpan(), ref v);
+            return new ReadOnlySpan<byte>(s, 0, sizeof(long));
+        }
+        static ReadOnlySpan<byte> ScratchBytes(float v)
+        {
+            var s = NextScratch();
+            MemoryMarshal.Write(s.AsSpan(), ref v);
+            return new ReadOnlySpan<byte>(s, 0, sizeof(float));
+        }
+        static ReadOnlySpan<byte> ScratchBytes(double v)
+        {
+            var s = NextScratch();
+            MemoryMarshal.Write(s.AsSpan(), ref v);
+            return new ReadOnlySpan<byte>(s, 0, sizeof(double));
+        }
+        static ReadOnlySpan<byte> ScratchBytes(ref VmPtr ptr)
+        {
+            var s = NextScratch();
+            MemoryMarshal.Write(s.AsSpan(0, sizeof(int)), ref ptr.bucketPtr);
+            MemoryMarshal.Write(s.AsSpan(sizeof(int), sizeof(int)), ref ptr.memoryPtr);
+            return new ReadOnlySpan<byte>(s, 0, sizeof(int) * 2);
+        }
+
+        static void ConvertTwoBytes(ReadOnlySpan<byte> aBytes, ReadOnlySpan<byte> bBytes, out byte a, out byte b)
         {
             a = aBytes[0];
             b = bBytes[0];
         }
-        static void ConvertTwoWords(byte[] aBytes, byte[] bBytes, out ushort a, out ushort b)
+        static void ConvertTwoWords(ReadOnlySpan<byte> aBytes, ReadOnlySpan<byte> bBytes, out ushort a, out ushort b)
         {
-            a = BitConverter.ToUInt16(aBytes, 0);
-            b = BitConverter.ToUInt16(bBytes, 0);
+            a = MemoryMarshal.Read<ushort>(aBytes);
+            b = MemoryMarshal.Read<ushort>(bBytes);
         }
-        static void ConvertTwoDInts(byte[] aBytes, byte[] bBytes, out long a, out long b)
+        static void ConvertTwoDInts(ReadOnlySpan<byte> aBytes, ReadOnlySpan<byte> bBytes, out long a, out long b)
         {
-            a = BitConverter.ToInt64(aBytes, 0);
-            b = BitConverter.ToInt64(bBytes, 0);
+            a = MemoryMarshal.Read<long>(aBytes);
+            b = MemoryMarshal.Read<long>(bBytes);
         }
-        static void ConvertTwoDFloats(byte[] aBytes, byte[] bBytes, out double a, out double b)
+        static void ConvertTwoDFloats(ReadOnlySpan<byte> aBytes, ReadOnlySpan<byte> bBytes, out double a, out double b)
         {
-            a = BitConverter.ToDouble(aBytes, 0);
-            b = BitConverter.ToDouble(bBytes, 0);
+            a = MemoryMarshal.Read<double>(aBytes);
+            b = MemoryMarshal.Read<double>(bBytes);
         }
-        static void ConvertTwoInts(byte[] aBytes, byte[] bBytes, out int a, out int b)
+        static void ConvertTwoInts(ReadOnlySpan<byte> aBytes, ReadOnlySpan<byte> bBytes, out int a, out int b)
         {
-            a = BitConverter.ToInt32(aBytes, 0);
-            b = BitConverter.ToInt32(bBytes, 0);
+            a = MemoryMarshal.Read<int>(aBytes);
+            b = MemoryMarshal.Read<int>(bBytes);
         }
-        static void ConvertTwoDWords(byte[] aBytes, byte[] bBytes, out uint a, out uint b)
+        static void ConvertTwoDWords(ReadOnlySpan<byte> aBytes, ReadOnlySpan<byte> bBytes, out uint a, out uint b)
         {
-            a = BitConverter.ToUInt32(aBytes, 0);
-            b = BitConverter.ToUInt32(bBytes, 0);
+            a = MemoryMarshal.Read<uint>(aBytes);
+            b = MemoryMarshal.Read<uint>(bBytes);
         }
-        
-        static void ConvertTwoFloats(byte[] aBytes, byte[] bBytes, out float a, out float b)
+
+        static void ConvertTwoFloats(ReadOnlySpan<byte> aBytes, ReadOnlySpan<byte> bBytes, out float a, out float b)
         {
-            a = BitConverter.ToSingle(aBytes, 0);
-            b = BitConverter.ToSingle(bBytes, 0);
+            a = MemoryMarshal.Read<float>(aBytes);
+            b = MemoryMarshal.Read<float>(bBytes);
         }
         
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public static void Multiply(byte aTypeCode, ReadOnlySpan<byte> aSpan, ReadOnlySpan<byte> bSpan, out ReadOnlySpan<byte> c)
         {
-            byte[] a = aSpan.ToArray();
-            byte[] b = bSpan.ToArray();
+            var a = aSpan;
+            var b = bSpan;
             switch (aTypeCode)
             {
                 case TypeCodes.REAL:
                     ConvertTwoFloats(a, b, out var aReal, out var bReal);
                     float resultReal = (aReal * bReal);
-                    c = BitConverter.GetBytes(resultReal);
+                    c = ScratchBytes(resultReal);
                     break;
                 case TypeCodes.INT:
                     ConvertTwoInts(a, b, out var aInt, out var bInt);
                     int resultInt = (int)(aInt * bInt);
-                    c = BitConverter.GetBytes(resultInt);
+                    c = ScratchBytes(resultInt);
                     break;
                 case TypeCodes.DWORD:
                     ConvertTwoDWords(a, b, out var aDword, out var bDword);
                     uint resultDword = (uint)(aDword * bDword);
-                    c = BitConverter.GetBytes(resultDword);
+                    c = ScratchBytes(resultDword);
                     break;
                 case TypeCodes.WORD:
                     ConvertTwoWords(a, b, out var aWord, out var bWord);
                     ushort resultWord = (ushort)(aWord * bWord);
-                    c = BitConverter.GetBytes(resultWord);
+                    c = ScratchBytes(resultWord);
                     break;
                 case TypeCodes.DINT:
                     ConvertTwoDInts(a, b, out var aLong, out var bLong);
                     long resultLong = (long)(aLong * bLong);
-                    c = BitConverter.GetBytes(resultLong);
+                    c = ScratchBytes(resultLong);
                     break;
                 case TypeCodes.DFLOAT:
                     ConvertTwoDFloats(a, b, out var aDouble, out var bDouble);
                     double resultDouble = (double)(aDouble * bDouble);
-                    c = BitConverter.GetBytes(resultDouble);
+                    c = ScratchBytes(resultDouble);
                     break;
                 case TypeCodes.BOOL:
                 case TypeCodes.BYTE:
                     ConvertTwoBytes(a, b, out var aByte, out var bByte);
                     byte byteResult = (byte)(aByte * bByte);
-                    c = new byte[] { byteResult };
+                    c = ScratchBytes(byteResult);
                     break;
 
                 default:
@@ -813,40 +886,40 @@ namespace FadeBasic.Virtual
         public static void Power(byte aTypeCode, ReadOnlySpan<byte> aSpan, ReadOnlySpan<byte> bSpan, out ReadOnlySpan<byte> c, out bool isInvalid)
         {
             isInvalid = false;
-            byte[] a = aSpan.ToArray();
-            byte[] b = bSpan.ToArray();
+            var a = aSpan;
+            var b = bSpan;
             switch (aTypeCode)
             {
                 case TypeCodes.BOOL:
                 case TypeCodes.BYTE:
                     ConvertTwoBytes(a, b, out var aByte, out var bByte);
                     byte sumByte = (byte)Math.Pow(bByte, aByte);
-                    c = new byte[] { sumByte };
+                    c = ScratchBytes(sumByte);
                     break;
                 case TypeCodes.WORD:
                     ConvertTwoWords(a, b, out var aWord, out var bWord);
                     ushort sumShort = (ushort)Math.Pow(bWord, aWord);
-                    c = BitConverter.GetBytes(sumShort);
+                    c = ScratchBytes(sumShort);
                     break;
                 case TypeCodes.DWORD:
                     ConvertTwoDWords(a, b, out var aDword, out var bDword);
                     uint dWordResult = (uint)Math.Pow(bDword, aDword);
-                    c = BitConverter.GetBytes(dWordResult);
+                    c = ScratchBytes(dWordResult);
                     break;
                 case TypeCodes.DFLOAT:
                     ConvertTwoDFloats(a, b, out var aDFloat, out var bDFloat);
                     double dFloatResult = (double)Math.Pow(bDFloat, aDFloat);
-                    c = BitConverter.GetBytes(dFloatResult);
+                    c = ScratchBytes(dFloatResult);
                     break;
                 case TypeCodes.INT:
                     ConvertTwoInts(a, b, out var aInt, out var bInt);
                     int sumInt = (int)Math.Pow(bInt, aInt);
-                    c = BitConverter.GetBytes(sumInt);
+                    c = ScratchBytes(sumInt);
                     break;
                 case TypeCodes.DINT:
                     ConvertTwoDInts(a, b, out var aDInt, out var bDInt);
                     long dblInt = (long)Math.Pow(bDInt, aDInt);
-                    c = BitConverter.GetBytes(dblInt);
+                    c = ScratchBytes(dblInt);
                     break;
                 case TypeCodes.REAL:
                     ConvertTwoFloats(a, b, out var aReal, out var bReal);
@@ -855,7 +928,7 @@ namespace FadeBasic.Virtual
                     {
                         isInvalid = true;
                     }
-                    c = BitConverter.GetBytes(sumReal);
+                    c = ScratchBytes(sumReal);
                     break;
                 default:
                     throw new Exception("Unsupported power operation");
@@ -866,28 +939,28 @@ namespace FadeBasic.Virtual
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public static void Not(byte aTypeCode, ReadOnlySpan<byte> aSpan, out ReadOnlySpan<byte> c)
         {
-            var a = aSpan.ToArray();
+            var a = aSpan;
             switch (aTypeCode)
             {
                 case TypeCodes.BYTE:
                     byte aByte = a[0];
                     byte sumByte = (byte)(aByte > 0 ? 0 : 1);
-                    c = new byte[] { sumByte };
+                    c = ScratchBytes(sumByte);
                     break;
                 case TypeCodes.WORD:
-                    short aShort = BitConverter.ToInt16(a, 0);
+                    short aShort = MemoryMarshal.Read<short>(a);
                     short sumShort = (short)(aShort >0 ? 0 : 1);
-                    c = BitConverter.GetBytes(sumShort);
+                    c = ScratchBytes(sumShort);
                     break;
                 case TypeCodes.INT:
-                    int aInt = BitConverter.ToInt32(a, 0);
+                    int aInt = MemoryMarshal.Read<int>(a);
                     int sumInt = (int)(aInt > 0 ? 0 : 1);
-                    c = BitConverter.GetBytes(sumInt);
+                    c = ScratchBytes(sumInt);
                     break;
                 case TypeCodes.REAL:
-                    float aReal = BitConverter.ToSingle(a, 0);
+                    float aReal = MemoryMarshal.Read<float>(a);
                     float sumReal = (aReal > 0 ? 0 : 1);
-                    c = BitConverter.GetBytes(sumReal);
+                    c = ScratchBytes(sumReal);
                     break;
                 default:
                     throw new Exception("Unsupported not operation");
@@ -897,45 +970,45 @@ namespace FadeBasic.Virtual
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public static void GreaterThan(byte aTypeCode, ReadOnlySpan<byte> aSpan, ReadOnlySpan<byte> bSpan, out ReadOnlySpan<byte> c)
         {
-            var a = aSpan.ToArray();
-            var b = bSpan.ToArray();
+            var a = aSpan;
+            var b = bSpan;
             switch (aTypeCode)
             {
                 case TypeCodes.BOOL:
                 case TypeCodes.BYTE:
                     ConvertTwoBytes(a, b, out var aByte, out var bByte);
                     byte sumByte = (byte)(aByte > bByte ? 1 : 0);
-                    c = new byte[] { sumByte };
+                    c = ScratchBytes(sumByte);
                     break;
                 case TypeCodes.WORD:
                     ConvertTwoWords(a, b, out var aWord, out var bWord);
                     ushort sumShort = (ushort)(aWord > bWord ? 1 : 0);
-                    c = BitConverter.GetBytes(sumShort);
+                    c = ScratchBytes(sumShort);
                     break;
                 case TypeCodes.DWORD:
                     ConvertTwoDWords(a, b, out var aDWord, out var bDWord);
                     uint dWordResult = (uint)(aDWord > bDWord ? 1 : 0);
-                    c = BitConverter.GetBytes(dWordResult);
+                    c = ScratchBytes(dWordResult);
                     break;
                 case TypeCodes.INT:
                     ConvertTwoInts(a, b, out var aInt, out var bInt);
                     int sumInt = (int)(aInt > bInt ? 1 : 0);
-                    c = BitConverter.GetBytes(sumInt);
+                    c = ScratchBytes(sumInt);
                     break;
                 case TypeCodes.DINT:
                     ConvertTwoDInts(a, b, out var aDInt, out var bDInt);
                     long sumDInt = (long)(aDInt > bDInt ? 1 : 0);
-                    c = BitConverter.GetBytes(sumDInt);
+                    c = ScratchBytes(sumDInt);
                     break;
                 case TypeCodes.DFLOAT:
                     ConvertTwoDFloats(a, b, out var aDReal, out var bDReal);
                     double sumDReal = (aDReal > bDReal ? 1 : 0);
-                    c = BitConverter.GetBytes(sumDReal);
+                    c = ScratchBytes(sumDReal);
                     break;
                 case TypeCodes.REAL:
                     ConvertTwoFloats(a, b, out var aReal, out var bReal);
                     float sumReal = (aReal > bReal ? 1 : 0);
-                    c = BitConverter.GetBytes(sumReal);
+                    c = ScratchBytes(sumReal);
                     break;
                 default:
                     throw new Exception("Unsupported add operation");
@@ -944,45 +1017,45 @@ namespace FadeBasic.Virtual
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public static void GreaterThanOrEqualTo(byte aTypeCode, ReadOnlySpan<byte> aSpan, ReadOnlySpan<byte> bSpan, out ReadOnlySpan<byte> c)
         {
-            var a = aSpan.ToArray();
-            var b = bSpan.ToArray();
+            var a = aSpan;
+            var b = bSpan;
             switch (aTypeCode)
             {
                 case TypeCodes.BOOL:
                 case TypeCodes.BYTE:
                     ConvertTwoBytes(a, b, out var aByte, out var bByte);
                     byte sumByte = (byte)(aByte >= bByte ? 1 : 0);
-                    c = new byte[] { sumByte };
+                    c = ScratchBytes(sumByte);
                     break;
                 case TypeCodes.WORD:
                     ConvertTwoWords(a, b, out var aShort, out var bShort);
                     ushort sumShort = (ushort)(aShort >= bShort ? 1 : 0);
-                    c = BitConverter.GetBytes(sumShort);
+                    c = ScratchBytes(sumShort);
                     break;
                 case TypeCodes.DWORD:
                     ConvertTwoDWords(a, b, out var aDShort, out var bDShort);
                     uint sumDShort = (uint)(aDShort >= bDShort ? 1 : 0);
-                    c = BitConverter.GetBytes(sumDShort);
+                    c = ScratchBytes(sumDShort);
                     break;
                 case TypeCodes.INT:
                     ConvertTwoInts(a, b, out var aInt, out var bInt);
                     int sumInt = (int)(aInt >= bInt ? 1 : 0);
-                    c = BitConverter.GetBytes(sumInt);
+                    c = ScratchBytes(sumInt);
                     break;
                 case TypeCodes.DINT:
                     ConvertTwoDInts(a, b, out var aDInt, out var bDInt);
                     long sumDInt = (long)(aDInt >= bDInt ? 1 : 0);
-                    c = BitConverter.GetBytes(sumDInt);
+                    c = ScratchBytes(sumDInt);
                     break;
                 case TypeCodes.REAL:
                     ConvertTwoFloats(a, b, out var aReal, out var bReal);
                     float sumReal = (aReal >= bReal ? 1 : 0);
-                    c = BitConverter.GetBytes(sumReal);
+                    c = ScratchBytes(sumReal);
                     break;
                 case TypeCodes.DFLOAT:
                     ConvertTwoDFloats(a, b, out var aDReal, out var bDReal);
                     double sumDReal = (aDReal >= bDReal ? 1 : 0);
-                    c = BitConverter.GetBytes(sumDReal);
+                    c = ScratchBytes(sumDReal);
                     break;
                 default:
                     throw new Exception("Unsupported add operation");
@@ -993,8 +1066,8 @@ namespace FadeBasic.Virtual
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public static void EqualTo(ref FastStack<byte> stack, ref VmHeap heap, byte aTypeCode, ReadOnlySpan<byte> aSpan, ReadOnlySpan<byte> bSpan, out ReadOnlySpan<byte> c)
         {
-            var a = aSpan.ToArray();
-            var b = bSpan.ToArray();
+            var a = aSpan;
+            var b = bSpan;
             switch (aTypeCode)
             {
                 case TypeCodes.BOOL:
@@ -1012,21 +1085,21 @@ namespace FadeBasic.Virtual
                             break;
                         }
                     }
-                    c = BitConverter.GetBytes(equal);
+                    c = ScratchBytes(equal);
                     break;
                 case TypeCodes.REAL:
                     ConvertTwoFloats(a, b, out var aReal, out var bReal);
                     int sumReal = ((Math.Abs(bReal - aReal) <= float.Epsilon) ? 1 : 0);
-                    c = BitConverter.GetBytes(sumReal);
+                    c = ScratchBytes(sumReal);
                     break;
                 case TypeCodes.DFLOAT:
                     ConvertTwoDFloats(a, b, out var aDReal, out var bDReal);
                     double doubleResult = ((Math.Abs(bDReal - aDReal) <= double.Epsilon) ? 1 : 0);
-                    c = BitConverter.GetBytes(doubleResult);
+                    c = ScratchBytes(doubleResult);
                     break;
                 case TypeCodes.STRING:
-                    c = new byte[] { 0 };
-                    
+                    c = ScratchBytes((byte)0);
+
                     // read the data at a
                     // VmUtil.ReadAsInt();
 
@@ -1038,19 +1111,19 @@ namespace FadeBasic.Virtual
 
                     if (aSize != bSize)
                     {
-                        c = BitConverter.GetBytes(0);
+                        c = ScratchBytes(0);
                         break;
                     }
                     
                     heap.ReadSpan(aPtr, aSize, out var aMem);
                     heap.ReadSpan(bPtr, bSize, out var bMem);
 
-                    c = BitConverter.GetBytes(1);
+                    c = ScratchBytes(1);
                     for (var i = 0; i < aSize; i++)
                     {
                         if (aMem[i] != bMem[i])
                         {
-                            c = BitConverter.GetBytes(0);
+                            c = ScratchBytes(0);
                             break;
                         }
                     }
@@ -1065,8 +1138,8 @@ namespace FadeBasic.Virtual
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public static void Divide(byte aTypeCode, ReadOnlySpan<byte> aSpan, ReadOnlySpan<byte> bSpan, out ReadOnlySpan<byte> c, out bool isDivideByZero)
         {
-            byte[] a = aSpan.ToArray();
-            byte[] b = bSpan.ToArray();
+            var a = aSpan;
+            var b = bSpan;
             c = a;
             isDivideByZero = false;
             switch (aTypeCode)
@@ -1080,7 +1153,7 @@ namespace FadeBasic.Virtual
                         return;
                     }
                     byte sumByte = (byte)(bByte / aByte);
-                    c = new byte[] { sumByte };
+                    c = ScratchBytes(sumByte);
                     break;
                 case TypeCodes.DWORD:
                     ConvertTwoDWords(a, b, out var aDword, out var bDword);
@@ -1090,7 +1163,7 @@ namespace FadeBasic.Virtual
                         return;
                     }
                     uint resultDword = (uint)(bDword / aDword);
-                    c = BitConverter.GetBytes(resultDword);
+                    c = ScratchBytes(resultDword);
                     break;
                 case TypeCodes.WORD:
                     ConvertTwoWords(a, b, out var aShort, out var bShort);
@@ -1100,7 +1173,7 @@ namespace FadeBasic.Virtual
                         return;
                     }
                     ushort sumShort = (ushort)(bShort / aShort);
-                    c = BitConverter.GetBytes(sumShort);
+                    c = ScratchBytes(sumShort);
                     break;
                 case TypeCodes.INT:
                     ConvertTwoInts(a, b, out var aInt, out var bInt);
@@ -1110,7 +1183,7 @@ namespace FadeBasic.Virtual
                         return;
                     }
                     int sumInt = (int)(bInt / aInt);
-                    c = BitConverter.GetBytes(sumInt);
+                    c = ScratchBytes(sumInt);
                     break;
                 case TypeCodes.DINT:
                     ConvertTwoDInts(a, b, out var aDInt, out var bDInt);
@@ -1120,7 +1193,7 @@ namespace FadeBasic.Virtual
                         return;
                     }
                     long sumDInt = (long)(bDInt / aDInt);
-                    c = BitConverter.GetBytes(sumDInt);
+                    c = ScratchBytes(sumDInt);
                     break;
                 case TypeCodes.REAL:
                     ConvertTwoFloats(a, b, out var aReal, out var bReal);
@@ -1130,7 +1203,7 @@ namespace FadeBasic.Virtual
                         return;
                     }
                     float sumReal = (bReal / aReal);
-                    c = BitConverter.GetBytes(sumReal);
+                    c = ScratchBytes(sumReal);
                     break;
                 case TypeCodes.DFLOAT:
                     ConvertTwoDFloats(a, b, out var aDReal, out var bDReal);
@@ -1140,7 +1213,7 @@ namespace FadeBasic.Virtual
                         return;
                     }
                     double sumDReal = (bDReal / aDReal);
-                    c = BitConverter.GetBytes(sumDReal);
+                    c = ScratchBytes(sumDReal);
                     break;
                 default:
                     throw new Exception("Unsupported divide operation");
@@ -1150,45 +1223,45 @@ namespace FadeBasic.Virtual
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public static void Mod(byte aTypeCode, ReadOnlySpan<byte> aSpan, ReadOnlySpan<byte> bSpan, out ReadOnlySpan<byte> c)
         {
-            byte[] a = aSpan.ToArray();
-            byte[] b = bSpan.ToArray();
+            var a = aSpan;
+            var b = bSpan;
             switch (aTypeCode)
             {
                 case TypeCodes.BOOL:
                 case TypeCodes.BYTE:
                     ConvertTwoBytes(a, b, out var aByte, out var bByte);
                     byte sumByte = (byte)(bByte % aByte);
-                    c = new byte[] { sumByte };
+                    c = ScratchBytes(sumByte);
                     break;
                 case TypeCodes.WORD:
                     ConvertTwoWords(a, b, out var aWord, out var bWord);
                     ushort sumShort = (ushort)(bWord % aWord);
-                    c = BitConverter.GetBytes(sumShort);
+                    c = ScratchBytes(sumShort);
                     break;
                 case TypeCodes.DWORD:
                     ConvertTwoDWords(a, b, out var aDword, out var bDword);
                     uint dwordResult = (uint)(bDword % aDword);
-                    c = BitConverter.GetBytes(dwordResult);
+                    c = ScratchBytes(dwordResult);
                     break;
                 case TypeCodes.INT:
                     ConvertTwoInts(a, b, out var aInt, out var bInt);
                     int sumInt = (int)(bInt % aInt);
-                    c = BitConverter.GetBytes(sumInt);
+                    c = ScratchBytes(sumInt);
                     break;
                 case TypeCodes.DINT:
                     ConvertTwoDInts(a, b, out var aDInt, out var bDInt);
                     long sumDInt = (long)(bDInt % aDInt);
-                    c = BitConverter.GetBytes(sumDInt);
+                    c = ScratchBytes(sumDInt);
                     break;
                 case TypeCodes.REAL:
                     ConvertTwoFloats(a, b, out var aReal, out var bReal);
                     float sumReal = (bReal % aReal);
-                    c = BitConverter.GetBytes(sumReal);
+                    c = ScratchBytes(sumReal);
                     break;
                 case TypeCodes.DFLOAT:
                     ConvertTwoDFloats(a, b, out var aDReal, out var bDReal);
                     double sumDReal = (bDReal % aDReal);
-                    c = BitConverter.GetBytes(sumDReal);
+                    c = ScratchBytes(sumDReal);
                     break;
                 default:
                     throw new Exception("Unsupported mod operation");
@@ -1199,15 +1272,15 @@ namespace FadeBasic.Virtual
         public static void Nand(ref VmHeap heap, byte aTypeCode, ReadOnlySpan<byte> aSpan, ReadOnlySpan<byte> bSpan,
             out ReadOnlySpan<byte> c)
         {
-            byte[] a = aSpan.ToArray();
-            byte[] b = bSpan.ToArray();
+            var a = aSpan;
+            var b = bSpan;
             switch (aTypeCode)
             {
                 case TypeCodes.INT:
-                    int aInt = BitConverter.ToInt32(a, 0);
-                    int bInt = BitConverter.ToInt32(b, 0);
+                    int aInt = MemoryMarshal.Read<int>(a);
+                    int bInt = MemoryMarshal.Read<int>(b);
                     int result = ~(aInt & bInt);
-                    c = BitConverter.GetBytes(result);
+                    c = ScratchBytes(result);
                     break;
                 default:
                     throw new Exception($"Unsupported NAND operation typecode=[{aTypeCode}]");
@@ -1221,15 +1294,15 @@ namespace FadeBasic.Virtual
             ReadOnlySpan<byte> bSpan,
             out ReadOnlySpan<byte> c)
         {
-            byte[] a = aSpan.ToArray();
-            byte[] b = bSpan.ToArray();
+            var a = aSpan;
+            var b = bSpan;
             switch (aTypeCode)
             {
                 case TypeCodes.INT:
-                    int aInt = BitConverter.ToInt32(a, 0);
-                    int bInt = BitConverter.ToInt32(b, 0);
+                    int aInt = MemoryMarshal.Read<int>(a);
+                    int bInt = MemoryMarshal.Read<int>(b);
                     int result = (aInt & bInt);
-                    c = BitConverter.GetBytes(result);
+                    c = ScratchBytes(result);
                     break;
                 default:
                     throw new Exception($"Unsupported Bitwise AND operation typecode=[{aTypeCode}]");
@@ -1243,15 +1316,15 @@ namespace FadeBasic.Virtual
             ReadOnlySpan<byte> bSpan,
             out ReadOnlySpan<byte> c)
         {
-            byte[] a = aSpan.ToArray();
-            byte[] b = bSpan.ToArray();
+            var a = aSpan;
+            var b = bSpan;
             switch (aTypeCode)
             {
                 case TypeCodes.INT:
-                    int aInt = BitConverter.ToInt32(a, 0);
-                    int bInt = BitConverter.ToInt32(b, 0);
+                    int aInt = MemoryMarshal.Read<int>(a);
+                    int bInt = MemoryMarshal.Read<int>(b);
                     int result = (aInt | bInt);
-                    c = BitConverter.GetBytes(result);
+                    c = ScratchBytes(result);
                     break;
                 default:
                     throw new Exception($"Unsupported Bitwise Or operation typecode=[{aTypeCode}]");
@@ -1265,8 +1338,8 @@ namespace FadeBasic.Virtual
             ReadOnlySpan<byte> bSpan,
             out ReadOnlySpan<byte> c)
         {
-            byte[] a = aSpan.ToArray();
-            byte[] b = bSpan.ToArray();
+            var a = aSpan;
+            var b = bSpan;
             int aInt = 0;
             int bInt = 0;
             int result = 0;
@@ -1276,13 +1349,13 @@ namespace FadeBasic.Virtual
                     aInt = a[0];
                     bInt = b[0];
                     result = (aInt ^ bInt);
-                    c = new ReadOnlySpan<byte>(new byte[] { (byte) result});
+                    c = ScratchBytes((byte) result);
                     break;
                 case TypeCodes.INT:
-                    aInt = BitConverter.ToInt32(a, 0);
-                    bInt = BitConverter.ToInt32(b, 0);
+                    aInt = MemoryMarshal.Read<int>(a);
+                    bInt = MemoryMarshal.Read<int>(b);
                     result = (aInt ^ bInt);
-                    c = BitConverter.GetBytes(result);
+                    c = ScratchBytes(result);
                     break;
                 default:
                     throw new Exception($"Unsupported Bitwise XOR operation typecode=[{aTypeCode}]");
@@ -1297,15 +1370,15 @@ namespace FadeBasic.Virtual
             ReadOnlySpan<byte> bSpan,
             out ReadOnlySpan<byte> c)
         {
-            byte[] a = aSpan.ToArray();
-            byte[] b = bSpan.ToArray();
+            var a = aSpan;
+            var b = bSpan;
             switch (aTypeCode)
             {
                 case TypeCodes.INT:
-                    int aInt = BitConverter.ToInt32(a, 0);
-                    int bInt = BitConverter.ToInt32(b, 0);
+                    int aInt = MemoryMarshal.Read<int>(a);
+                    int bInt = MemoryMarshal.Read<int>(b);
                     int result = (bInt << aInt);
-                    c = BitConverter.GetBytes(result);
+                    c = ScratchBytes(result);
                     break;
                 default:
                     throw new Exception($"Unsupported Bitwise Leftshift operation typecode=[{aTypeCode}]");
@@ -1319,15 +1392,15 @@ namespace FadeBasic.Virtual
             ReadOnlySpan<byte> bSpan,
             out ReadOnlySpan<byte> c)
         {
-            byte[] a = aSpan.ToArray();
-            byte[] b = bSpan.ToArray();
+            var a = aSpan;
+            var b = bSpan;
             switch (aTypeCode)
             {
                 case TypeCodes.INT:
-                    int aInt = BitConverter.ToInt32(a, 0);
-                    int bInt = BitConverter.ToInt32(b, 0);
+                    int aInt = MemoryMarshal.Read<int>(a);
+                    int bInt = MemoryMarshal.Read<int>(b);
                     int result = (bInt >> aInt);
-                    c = BitConverter.GetBytes(result);
+                    c = ScratchBytes(result);
                     break;
                 default:
                     throw new Exception($"Unsupported Bitwise Rightshift operation typecode=[{aTypeCode}]");
@@ -1341,13 +1414,13 @@ namespace FadeBasic.Virtual
             ReadOnlySpan<byte> aSpan, 
             out ReadOnlySpan<byte> c)
         {
-            byte[] a = aSpan.ToArray();
+            var a = aSpan;
             switch (aTypeCode)
             {
                 case TypeCodes.INT:
-                    int aInt = BitConverter.ToInt32(a, 0);
+                    int aInt = MemoryMarshal.Read<int>(a);
                     int result = ~aInt;
-                    c = BitConverter.GetBytes(result);
+                    c = ScratchBytes(result);
                     break;
                 default:
                     throw new Exception($"Unsupported Bitwise NOT operation typecode=[{aTypeCode}]");
@@ -1357,8 +1430,8 @@ namespace FadeBasic.Virtual
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public static void Add(ref VmHeap heap, byte aTypeCode, ReadOnlySpan<byte> aSpan, ReadOnlySpan<byte> bSpan, out ReadOnlySpan<byte> c)
         {
-            byte[] a = aSpan.ToArray();
-            byte[] b = bSpan.ToArray();
+            var a = aSpan;
+            var b = bSpan;
             switch (aTypeCode)
             {
                 case TypeCodes.STRUCT:
@@ -1377,7 +1450,7 @@ namespace FadeBasic.Virtual
                         bucketPtr = ptrA.bucketPtr,
                         memoryPtr = ptrA.memoryPtr + ptrB.memoryPtr
                     };
-                    c = VmPtr.GetBytes(ref ptrC);
+                    c = ScratchBytes(ref ptrC);
                     break;
                 case TypeCodes.STRING:
                     /*
@@ -1396,43 +1469,43 @@ namespace FadeBasic.Virtual
                     heap.Copy(bPtr, sumPtr, bLength);
                     heap.Copy(aPtr, sumPtr + bLength, aLength);
 
-                    c = VmPtr.GetBytes(ref sumPtr);
+                    c = ScratchBytes(ref sumPtr);
                     break;
                 case TypeCodes.BOOL:
                 case TypeCodes.BYTE:
                     ConvertTwoBytes(a, b, out var aByte, out var bByte);
                     byte sumByte = (byte)(aByte + bByte);
-                    c = new byte[] { sumByte };
+                    c = ScratchBytes(sumByte);
                     break;
                 case TypeCodes.DWORD:
                     ConvertTwoDWords(a, b, out var aUint, out var bUint);
                     uint sunUInt = (uint)(aUint + bUint);
-                    c = BitConverter.GetBytes(sunUInt);
+                    c = ScratchBytes(sunUInt);
                     break;
                 case TypeCodes.WORD:
                     ConvertTwoWords(a, b, out var aShort, out var bShort);
                     ushort sumShort = (ushort)(aShort + bShort);
-                    c = BitConverter.GetBytes(sumShort);
+                    c = ScratchBytes(sumShort);
                     break;
                 case TypeCodes.INT:
                     ConvertTwoInts(a, b, out var aInt, out var bInt);
                     int sumInt = (int)(aInt + bInt);
-                    c = BitConverter.GetBytes(sumInt);
+                    c = ScratchBytes(sumInt);
                     break;
                 case TypeCodes.DINT:
                     ConvertTwoDInts(a, b, out var aDInt, out var bDInt);
                     long sumDInt = (long)(aDInt + bDInt);
-                    c = BitConverter.GetBytes(sumDInt);
+                    c = ScratchBytes(sumDInt);
                     break;
                 case TypeCodes.REAL:
                     ConvertTwoFloats(a, b, out var aReal, out var bReal);
                     float sumReal = (aReal + bReal);
-                    c = BitConverter.GetBytes(sumReal);
+                    c = ScratchBytes(sumReal);
                     break;
                 case TypeCodes.DFLOAT:
                     ConvertTwoDFloats(a, b, out var aDReal, out var bDReal);
                     double sumDReal = (aDReal + bDReal);
-                    c = BitConverter.GetBytes(sumDReal);
+                    c = ScratchBytes(sumDReal);
                     break;
                 default:
                     throw new Exception($"Unsupported add operation typecode=[{aTypeCode}]");
@@ -1451,55 +1524,55 @@ namespace FadeBasic.Virtual
             switch (currentTypeCode)
             {
                 case TypeCodes.DINT:
-                    var actualDInt = BitConverter.ToInt64(span.ToArray(), 0);
+                    var actualDInt = MemoryMarshal.Read<long>(span);
                     switch (typeCode)
                     {
                         case TypeCodes.REAL:
-                            outputSpan = BitConverter.GetBytes((float)actualDInt);
+                            outputSpan = ScratchBytes((float)actualDInt);
                             break;
                         case TypeCodes.DFLOAT:
-                            outputSpan = BitConverter.GetBytes((double)actualDInt);
+                            outputSpan = ScratchBytes((double)actualDInt);
                             break;
                         case TypeCodes.WORD:
-                            outputSpan = BitConverter.GetBytes((ushort)actualDInt);
+                            outputSpan = ScratchBytes((ushort)actualDInt);
                             break;
                         case TypeCodes.DWORD:
-                            outputSpan = BitConverter.GetBytes((uint)actualDInt);
+                            outputSpan = ScratchBytes((uint)actualDInt);
                             break;
                         case TypeCodes.INT:
-                            outputSpan = BitConverter.GetBytes((int)actualDInt);
+                            outputSpan = ScratchBytes((int)actualDInt);
                             break;
                         case TypeCodes.BYTE:
                         case TypeCodes.BOOL:
-                            outputSpan = BitConverter.GetBytes((byte)actualDInt);
+                            outputSpan = ScratchBytes((byte)actualDInt);
                             break;
                         default:
                             throw new NotImplementedException($"cast from int to typeCode=[{typeCode}] is not supported yet.");
                     }
                     break;
                 case TypeCodes.DFLOAT:
-                    var actualDbl = BitConverter.ToDouble(span.ToArray(), 0);
+                    var actualDbl = MemoryMarshal.Read<double>(span);
 
                     switch (typeCode)
                     {
                         case TypeCodes.REAL:
-                            outputSpan = BitConverter.GetBytes((float)actualDbl);
+                            outputSpan = ScratchBytes((float)actualDbl);
                             break;
                         case TypeCodes.WORD:
-                            outputSpan = BitConverter.GetBytes((ushort)actualDbl);
+                            outputSpan = ScratchBytes((ushort)actualDbl);
                             break;
                         case TypeCodes.DWORD:
-                            outputSpan = BitConverter.GetBytes((uint)actualDbl);
+                            outputSpan = ScratchBytes((uint)actualDbl);
                             break;
                         case TypeCodes.INT:
-                            outputSpan = BitConverter.GetBytes((int)actualDbl);
+                            outputSpan = ScratchBytes((int)actualDbl);
                             break;
                         case TypeCodes.DINT:
-                            outputSpan = BitConverter.GetBytes((long)actualDbl);
+                            outputSpan = ScratchBytes((long)actualDbl);
                             break;
                         case TypeCodes.BYTE:
                         case TypeCodes.BOOL:
-                            outputSpan = BitConverter.GetBytes((byte)actualDbl);
+                            outputSpan = ScratchBytes((byte)actualDbl);
                             break;
                         default:
                             throw new NotImplementedException($"cast from int to typeCode=[{typeCode}] is not supported yet.");
@@ -1509,14 +1582,14 @@ namespace FadeBasic.Virtual
                     switch (typeCode)
                     {
                         case TypeCodes.DINT:
-                            var intVersion = BitConverter.ToInt32(span.ToArray(), 0);
+                            var intVersion = MemoryMarshal.Read<int>(span);
                             var castLong = (long)intVersion;
-                            outputSpan = new ReadOnlySpan<byte>(BitConverter.GetBytes(castLong));
+                            outputSpan = ScratchBytes(castLong);
                             break;
                         case TypeCodes.DWORD:
-                            var actualDword = BitConverter.ToUInt32(span.ToArray(), 0);
+                            var actualDword = MemoryMarshal.Read<uint>(span);
                             var castDword = (uint)actualDword;
-                            outputSpan = new ReadOnlySpan<byte>(BitConverter.GetBytes(castDword));
+                            outputSpan = ScratchBytes(castDword);
                             break;
                         case TypeCodes.WORD:
                             outputSpan = span.Slice(0, 2);
@@ -1527,12 +1600,12 @@ namespace FadeBasic.Virtual
                             outputSpan = span.Slice(0, 1);
                             break;
                         case TypeCodes.REAL:
-                            var actual = BitConverter.ToInt32(span.ToArray(), 0);
+                            var actual = MemoryMarshal.Read<int>(span);
                             var castFloat = (float)actual;
-                            outputSpan = new ReadOnlySpan<byte>(BitConverter.GetBytes(castFloat));
+                            outputSpan = ScratchBytes(castFloat);
                             break;
                         case TypeCodes.DFLOAT:
-                            var actualDFloat = BitConverter.ToInt32(span.ToArray(), 0);
+                            var actualDFloat = MemoryMarshal.Read<int>(span);
                             var castDbl = (double)actualDFloat;
                             outputSpan = new ReadOnlySpan<byte>(BitConverter.GetBytes(castDbl));
                             break;
@@ -1540,12 +1613,12 @@ namespace FadeBasic.Virtual
                         case TypeCodes.STRUCT:
                         case TypeCodes.STRING:
                             // assume that int pointers are all in the same bucket
-                            var mem = BitConverter.ToInt32(span.ToArray(), 0);
+                            var mem = MemoryMarshal.Read<int>(span);
                             var ptr = new VmPtr
                             {
                                 memoryPtr = mem
                             };
-                            outputSpan = VmPtr.GetBytes(ref ptr);
+                            outputSpan = ScratchBytes(ref ptr);
                             break;
                         default:
                             throw new NotImplementedException($"cast from int to typeCode=[{typeCode}] is not supported yet.");
@@ -1553,27 +1626,27 @@ namespace FadeBasic.Virtual
 
                     break;
                 case TypeCodes.REAL:
-                    var actualFloat = BitConverter.ToSingle(span.ToArray(), 0);
+                    var actualFloat = MemoryMarshal.Read<float>(span);
                     switch (typeCode)
                     {
                         case TypeCodes.INT:
-                            outputSpan = BitConverter.GetBytes((int)actualFloat);
+                            outputSpan = ScratchBytes((int)actualFloat);
                             break;
                         case TypeCodes.DINT:
-                            outputSpan = BitConverter.GetBytes((long)actualFloat);
+                            outputSpan = ScratchBytes((long)actualFloat);
                             break;
                         case TypeCodes.WORD:
-                            outputSpan = BitConverter.GetBytes((ushort)actualFloat);
+                            outputSpan = ScratchBytes((ushort)actualFloat);
                             break;
                         case TypeCodes.DWORD:
-                            outputSpan = BitConverter.GetBytes((uint)actualFloat);
+                            outputSpan = ScratchBytes((uint)actualFloat);
                             break;
                         case TypeCodes.DFLOAT:
-                            outputSpan = BitConverter.GetBytes((double)actualFloat);
+                            outputSpan = ScratchBytes((double)actualFloat);
                             break;
                         case TypeCodes.BOOL:
                         case TypeCodes.BYTE:
-                            outputSpan = BitConverter.GetBytes((byte)actualFloat);
+                            outputSpan = ScratchBytes((byte)actualFloat);
                             break;
                         default:
                             throw new NotImplementedException($"cast from float to typeCode=[{typeCode}] is not supported yet.");
@@ -1588,22 +1661,22 @@ namespace FadeBasic.Virtual
                             outputSpan = span;
                             break;
                         case TypeCodes.DFLOAT:
-                            outputSpan = BitConverter.GetBytes((double)span[0]);
+                            outputSpan = ScratchBytes((double)span[0]);
                             break;
                         case TypeCodes.REAL:
-                            outputSpan = BitConverter.GetBytes((float)span[0]);
+                            outputSpan = ScratchBytes((float)span[0]);
                             break;
                         case TypeCodes.INT:
-                            outputSpan = BitConverter.GetBytes((int)span[0]);
+                            outputSpan = ScratchBytes((int)span[0]);
                             break;
                         case TypeCodes.DINT:
-                            outputSpan = BitConverter.GetBytes((long)span[0]);
+                            outputSpan = ScratchBytes((long)span[0]);
                             break;
                         case TypeCodes.DWORD:
-                            outputSpan = BitConverter.GetBytes((uint)span[0]);
+                            outputSpan = ScratchBytes((uint)span[0]);
                             break;
                         case TypeCodes.WORD:
-                            outputSpan = BitConverter.GetBytes((ushort)span[0]);
+                            outputSpan = ScratchBytes((ushort)span[0]);
                             break;
                         default:
                             throw new NotImplementedException($"cast from byte to typeCode=[{typeCode}] is not supported yet.");
@@ -1611,54 +1684,54 @@ namespace FadeBasic.Virtual
 
                     break;
                 case TypeCodes.WORD:
-                    ushort actualWord = BitConverter.ToUInt16(span.ToArray(), 0);
+                    ushort actualWord = MemoryMarshal.Read<ushort>(span);
                     switch (typeCode)
                     {
                         case TypeCodes.INT:
-                            outputSpan = BitConverter.GetBytes((int)actualWord);
+                            outputSpan = ScratchBytes((int)actualWord);
                             break;
                         case TypeCodes.DINT:
-                            outputSpan = BitConverter.GetBytes((long)actualWord);
+                            outputSpan = ScratchBytes((long)actualWord);
                             break;
                         case TypeCodes.DWORD:
-                            outputSpan = BitConverter.GetBytes((uint)actualWord);
+                            outputSpan = ScratchBytes((uint)actualWord);
                             break;
                         case TypeCodes.DFLOAT:
-                            outputSpan = BitConverter.GetBytes((double)actualWord);
+                            outputSpan = ScratchBytes((double)actualWord);
                             break;
                         case TypeCodes.REAL:
-                            outputSpan = BitConverter.GetBytes((float)actualWord);
+                            outputSpan = ScratchBytes((float)actualWord);
                             break;
                         case TypeCodes.BOOL:
                         case TypeCodes.BYTE:
-                            outputSpan = BitConverter.GetBytes((byte)actualWord);
+                            outputSpan = ScratchBytes((byte)actualWord);
                             break;
                         default:
                             throw new NotImplementedException($"cast from byte to typeCode=[{typeCode}] is not supported yet.");
                     }
                     break;
                 case TypeCodes.DWORD:
-                    uint actualDWord = BitConverter.ToUInt32(span.ToArray(), 0);
+                    uint actualDWord = MemoryMarshal.Read<uint>(span);
                     switch (typeCode)
                     {
                         case TypeCodes.INT:
-                            outputSpan = BitConverter.GetBytes((int)actualDWord);
+                            outputSpan = ScratchBytes((int)actualDWord);
                             break;
                         case TypeCodes.DINT:
-                            outputSpan = BitConverter.GetBytes((long)actualDWord);
+                            outputSpan = ScratchBytes((long)actualDWord);
                             break;
                         case TypeCodes.WORD:
-                            outputSpan = BitConverter.GetBytes((ushort)actualDWord);
+                            outputSpan = ScratchBytes((ushort)actualDWord);
                             break;
                         case TypeCodes.DFLOAT:
-                            outputSpan = BitConverter.GetBytes((double)actualDWord);
+                            outputSpan = ScratchBytes((double)actualDWord);
                             break;
                         case TypeCodes.REAL:
-                            outputSpan = BitConverter.GetBytes((float)actualDWord);
+                            outputSpan = ScratchBytes((float)actualDWord);
                             break;
                         case TypeCodes.BOOL:
                         case TypeCodes.BYTE:
-                            outputSpan = BitConverter.GetBytes((byte)actualDWord);
+                            outputSpan = ScratchBytes((byte)actualDWord);
                             break;
                         default:
                             throw new NotImplementedException($"cast from byte to typeCode=[{typeCode}] is not supported yet.");
@@ -1679,7 +1752,7 @@ namespace FadeBasic.Virtual
                     switch (typeCode)
                     {
                         // case TypeCodes.INT:
-                        //     var intVersion = BitConverter.ToInt32(span.ToArray(), 0);
+                        //     var intVersion = MemoryMarshal.Read<int>(span);
                         //     var ptr = new VmPtr
                         //     {
                         //         memoryPtr = intVersion
@@ -1750,8 +1823,8 @@ namespace FadeBasic.Virtual
 
         public static void GetMinMax(byte aTypeCode, ReadOnlySpan<byte> aSpan, ReadOnlySpan<byte> bSpan, out bool needFlip)
         {
-            var a = aSpan.ToArray();
-            var b = bSpan.ToArray();
+            var a = aSpan;
+            var b = bSpan;
             switch (aTypeCode)
             {
 
@@ -1761,18 +1834,18 @@ namespace FadeBasic.Virtual
                     needFlip = aByte > bByte;
                     break;
                 case TypeCodes.WORD:
-                    short aShort = BitConverter.ToInt16(a, 0);
-                    short bShort = BitConverter.ToInt16(b, 0);
+                    short aShort = MemoryMarshal.Read<short>(a);
+                    short bShort = MemoryMarshal.Read<short>(b);
                     needFlip = aShort > bShort;
                     break;
                 case TypeCodes.INT:
-                    int aInt = BitConverter.ToInt32(a, 0);
-                    int bInt = BitConverter.ToInt32(b, 0);
+                    int aInt = MemoryMarshal.Read<int>(a);
+                    int bInt = MemoryMarshal.Read<int>(b);
                     needFlip = aInt > bInt;
                     break;
                 case TypeCodes.REAL:
-                    float aReal = BitConverter.ToSingle(a, 0);
-                    float bReal = BitConverter.ToSingle(b, 0);
+                    float aReal = MemoryMarshal.Read<float>(a);
+                    float bReal = MemoryMarshal.Read<float>(b);
                     needFlip = aReal > bReal;
                     break;
                 default:

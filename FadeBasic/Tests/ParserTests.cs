@@ -383,14 +383,14 @@ print x";
     [Test]
     public void CallHostStatement()
     {
-        var input = @"callTest";
+        var input = @"callDemo";
         var tokenStream = new TokenStream(_lexer.Tokenize(input, TestCommands.CommandsForTesting));
         var parser = new Parser(tokenStream, TestCommands.CommandsForTesting);
         var prog = parser.ParseProgram();
         
         Assert.That(prog.statements.Count, Is.EqualTo(1));
         var code = prog.ToString();
-        Assert.That(code, Is.EqualTo("((call callTest))"));
+        Assert.That(code, Is.EqualTo("((call callDemo))"));
     }
     
     
@@ -713,7 +713,7 @@ x = 1
     
     
     [Test]
-    public void AnasUnfunTest()
+    public void AnasUnfunDemo()
     {
         var input = @"
 x = 1 + 2 > 3
@@ -724,6 +724,22 @@ x = 1 + 2 > 3
         Assert.That(prog.statements.Count, Is.EqualTo(1));
         var code = prog.ToString();
         Assert.That(code, Is.EqualTo("((= (ref x),(?> (+ (1),(2)),(3))))"));
+    }
+    
+    
+    [Test]
+    public void TestBlock_Function()
+    {
+        var input = @"
+test block
+    x()
+    function x()
+    endfunction
+endtest
+";
+        var parser = MakeParser(input);
+        var prog = parser.ParseProgram();
+        prog.AssertNoParseErrors();
     }
     
     
@@ -761,7 +777,7 @@ e as egg = default ` reset the object
     }
 
     [Test]
-    public void Initializers_Test()
+    public void Initializers_Demo()
     {
         var input = @"
 type egg
@@ -2058,7 +2074,7 @@ x = a.b + len(a.c)
         var code = prog.ToString();
         Console.WriteLine(code);
         Assert.That(code, Is.EqualTo(@"(
-(= (ref x),(+ ((ref a).(ref b)),(xcall len ((ref a).(ref c)))))
+(= (ref x),(+ ((ref a).(ref b)),(len ((ref a).(ref c)))))
 )".ReplaceLineEndings("")));
     }
 

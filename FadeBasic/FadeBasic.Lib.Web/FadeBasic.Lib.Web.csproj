@@ -1,0 +1,22 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+    <Import Project="../NugetPackage.props"/>
+
+    <PropertyGroup>
+        <TargetFramework>net8.0</TargetFramework>
+        <AssemblyName>FadeBasic.Lib.Web</AssemblyName>
+        <PackageId>FadeBasic.Lib.Web</PackageId>
+        <Title>FadeBasic Web Command Library</Title>
+        <Description>Browser-specific FadeBasic commands (print, prompt$, alert, etc.) for web export builds.</Description>
+        <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+        <GenerateDocumentationFile>true</GenerateDocumentationFile>
+    </PropertyGroup>
+
+    <ItemGroup>
+        <ProjectReference Include="..\FadeBasic\FadeBasic.csproj" />
+        <ProjectReference Include="..\CommandSourceGenerator\CommandSourceGenerator.csproj"
+                          OutputItemType="Analyzer"
+                          ReferenceOutputAssembly="false" />
+    </ItemGroup>
+
+</Project>

@@ -1,0 +1,59 @@
+<Project>
+  <!--
+    Imported automatically by MSBuild when FadeBasic.Export.Web is referenced.
+    $(MSBuildThisFileDirectory) resolves to the build/ folder inside the restored
+    NuGet package cache, where the pre-built WebRuntime WASM bundle lives under wasm/.
+  -->
+
+  <PropertyGroup>
+    <FadeWebExportWasmDir>$(MSBuildThisFileDirectory)wasm\</FadeWebExportWasmDir>
+    <FadeWebExportOutDir Condition="'$(FadeWebExportOutDir)' == ''">$(PublishDir)web\</FadeWebExportOutDir>
+  </PropertyGroup>
+
+  <Target Name="FadeWebExport" AfterTargets="Publish">
+    <Message Text="[FadeBasic.Export.Web] assembling web export → $(FadeWebExportOutDir)" Importance="high" />
+
+    <MakeDir Directories="$(FadeWebExportOutDir)" />
+    <MakeDir Directories="$(FadeWebExportOutDir)game\" />
+
+    <!-- Copy the pre-built WebRuntime WASM bundle shipped inside this package -->
+    <ItemGroup>
+      <_FadeWasmFiles Include="$(FadeWebExportWasmDir)**\*" />
+    </ItemGroup>
+    <Copy SourceFiles="@(_FadeWasmFiles)"
+          DestinationFiles="@(_FadeWasmFiles->'$(FadeWebExportOutDir)%(RecursiveDir)%(Filename)%(Extension)')"
+          SkipUnchangedFiles="true" />
+
+    <!-- Game DLLs: the consumer's compiled output (their ILaunchable + all
+         transitive deps like FadeBasic.Lib.Web.dll) lands in $(OutDir). Ship
+         every DLL in a sibling game/ folder so the runtime can Assembly.Load
+         them at boot. $(TargetName) names the assembly that carries the
+         generated ILaunchable, which fade-manifest.json points the loader at. -->
+    <ItemGroup>
+      <_FadeGameDlls Include="$(OutDir)*.dll" />
+    </ItemGroup>
+    <Copy SourceFiles="@(_FadeGameDlls)"
+          DestinationFolder="$(FadeWebExportOutDir)game\"
+          SkipUnchangedFiles="true" />
+
+    <!-- Build the list of dep DLLs (everything except the entry assembly).
+         The launcher pre-loads these so transitive references resolve before
+         ILaunchable is instantiated — static hosts (itch.io) can't list dirs. -->
+    <ItemGroup>
+      <_FadeDepDlls Include="@(_FadeGameDlls)" Condition="'%(Filename)' != '$(TargetName)'" />
+    </ItemGroup>
+    <PropertyGroup>
+      <_FadeDepsJson>@(_FadeDepDlls->'&quot;%(Filename)%(Extension)&quot;', ',')</_FadeDepsJson>
+    </PropertyGroup>
+
+    <!-- fade-manifest.json — exportFormat is the loader contract version;
+         entryAssembly is the DLL inside game/ that exposes ILaunchable;
+         deps lists every other DLL the launcher must pre-load. -->
+    <WriteLinesToFile
+      File="$(FadeWebExportOutDir)fade-manifest.json"
+      Lines='{"fadeBasic":"$(Version)","exportFormat":"1","entryAssembly":"$(TargetName).dll","deps":[$(_FadeDepsJson)]}'
+      Overwrite="true" />
+
+    <Message Text="[FadeBasic.Export.Web] done. Upload the contents of $(FadeWebExportOutDir) to itch.io." Importance="high" />
+  </Target>
+</Project>

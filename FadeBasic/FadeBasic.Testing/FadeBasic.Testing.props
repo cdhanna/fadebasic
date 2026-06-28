@@ -1,0 +1,115 @@
+<Project>
+
+    <!--
+        Imported automatically when a project references FadeBasic.Testing.
+        Owns *all* testing-flavored MSBuild config so that:
+          - FadeBasic.Build stays focused on Fade source compilation.
+          - The mere presence of a FadeBasic.Testing PackageReference is the
+            opt-in to `dotnet test` integration. No second flag needed in
+            the consumer's csproj.
+        A consumer that wants the package on hand but doesn't want it to
+        change build behavior can opt back out with:
+            <FadeEnableTesting>false</FadeEnableTesting>
+    -->
+
+    <PropertyGroup>
+        <!-- Default-on. The user's csproj PropertyGroup is evaluated AFTER
+             package props imports, so an explicit false in the csproj wins. -->
+        <FadeEnableTesting Condition="'$(FadeEnableTesting)'==''">True</FadeEnableTesting>
+
+        <!-- VSTest mode (default). Required for IDE Test Explorer in all of
+             Rider, VS Code C# Dev Kit, and Visual Studio. Also works for
+             `dotnet test` on the CLI without any further config.
+
+             - IsTestProject=true is REQUIRED. Without it both `dotnet test`
+               and IDE adapters silently skip the project ("Skipping running
+               test for project: To run tests with dotnet test add
+               IsTestProject=true").
+             - GenerateProgramFile=false suppresses Microsoft.NET.Test.Sdk's
+               auto-emitted Main. The Fade-generated GeneratedFade.Main is
+               the real entry; a parallel one trips CS8892 and breaks
+               dispatch.
+        -->
+        <IsTestProject Condition="'$(FadeEnableTesting)'=='True'">true</IsTestProject>
+        <GenerateProgramFile Condition="'$(FadeEnableTesting)'=='True'">false</GenerateProgramFile>
+
+        <!-- MTP runner (opt-in). Default OFF because Rider 2024.x/2025.x
+             does not fully support the Microsoft.Testing.Platform protocol
+             yet (see RIDER-129745). When enabled, `dotnet test` from the
+             CLI runs through MTP instead of VSTest — gives you nicer
+             progress reporting and the FadeTestFramework path. But Rider
+             will silently fail to discover tests if MTP is on, even though
+             VS Code and `dotnet test` work. Set FadeUseMtpRunner=true in
+             your csproj to opt in (and ensure your global.json declares
+             "test": { "runner": "Microsoft.Testing.Platform" }).
+        -->
+        <FadeUseMtpRunner Condition="'$(FadeUseMtpRunner)'==''">False</FadeUseMtpRunner>
+        <EnableMicrosoftTestingPlatform Condition="'$(FadeEnableTesting)'=='True' and '$(FadeUseMtpRunner)'=='True'">true</EnableMicrosoftTestingPlatform>
+        <UseMicrosoftTestingPlatformRunner Condition="'$(FadeEnableTesting)'=='True' and '$(FadeUseMtpRunner)'=='True'">true</UseMicrosoftTestingPlatformRunner>
+        <GenerateTestingPlatformEntryPoint Condition="'$(FadeEnableTesting)'=='True' and '$(FadeUseMtpRunner)'=='True'">false</GenerateTestingPlatformEntryPoint>
+
+        <!-- Migration aid: warn if the deprecated NUnit-fixture flag is still
+             set. Surfaced by the warning target in FadeBasic.Testing.targets.
+             FadeBasic.Build no longer carries this — the deprecation is
+             a testing concern. -->
+        <_FadeNUnitFlagDeprecated Condition="'$(FadeGenerateNUnitFixture)'=='True'">true</_FadeNUnitFlagDeprecated>
+    </PropertyGroup>
+
+    <!-- IDE Test Explorer integration (Stage 11H — see TEST_ADAPTER.md):
+         Microsoft.Testing.Platform alone covers `dotnet test` from the CLI,
+         but VS Code's C# Dev Kit, Rider, and Visual Studio Test Explorer
+         go through VSTest TPv2 and do not currently understand MTP-native
+         frameworks. The FadeBasic.TestAdapter assembly is bundled inside
+         this nupkg's build/_common/ folder and we copy it into the
+         consumer's bin directly, where VSTest's filename-based discovery
+         (*.TestAdapter.dll) finds it.
+
+         Why bundle rather than ship as a separate transitive package:
+         a <PackageReference> added inside a package's own props isn't
+         honored consistently by `dotnet restore` (timing problem — restore
+         runs before package-provided props evaluate). Verified against the
+         net8 SDK 17.x line: FadeBasic.TestAdapter would be packed but never
+         restored to the consumer.
+
+         The <Link> attributes flatten the deployment from
+         bin/<TFM>/_common/* to bin/<TFM>/* — VSTest only scans the bin
+         root for *.TestAdapter.dll. -->
+    <ItemGroup Condition="'$(FadeEnableTesting)' == 'True'">
+        <None Include="$(MSBuildThisFileDirectory)_common\FadeBasic.TestAdapter.dll"
+              Condition="Exists('$(MSBuildThisFileDirectory)_common\FadeBasic.TestAdapter.dll')">
+            <Link>FadeBasic.TestAdapter.dll</Link>
+            <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+            <Pack>false</Pack>
+            <Visible>false</Visible>
+        </None>
+        <None Include="$(MSBuildThisFileDirectory)_common\FadeBasic.TestAdapter.pdb"
+              Condition="Exists('$(MSBuildThisFileDirectory)_common\FadeBasic.TestAdapter.pdb')">
+            <Link>FadeBasic.TestAdapter.pdb</Link>
+            <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+            <Pack>false</Pack>
+            <Visible>false</Visible>
+        </None>
+    </ItemGroup>
+
+    <!-- Microsoft.NET.Test.Sdk is what flips IDE Test Explorer into "scan
+         this project's bin for adapters" mode AND ships testhost.dll +
+         Newtonsoft.Json into the consumer's bin so vstest.console can run.
+         It is referenced as a direct PackageReference in
+         FadeBasic.Testing.csproj (so it's a real nuspec dependency); a
+         package-props PackageReference doesn't flow runtime assets, only
+         compile-time references — `dotnet test` then aborts because
+         testhost.deps.json's Newtonsoft.Json reference can't be resolved. -->
+
+    <!-- MTP runner support is opt-in. When the consumer sets
+         FadeUseMtpRunner=true, also bring in Microsoft.Testing.Platform.MSBuild
+         which provides the MSBuild integration that makes `dotnet test`
+         route through MTP instead of VSTest. We MUST NOT include this in
+         VSTest mode: on .NET 10 SDK the package's targets hard-error with
+         "Testing with VSTest target is no longer supported by
+         Microsoft.Testing.Platform" when EnableMicrosoftTestingPlatform=false,
+         which would break `dotnet test` for everyone defaulting to VSTest. -->
+    <ItemGroup Condition="'$(FadeEnableTesting)' == 'True' and '$(FadeUseMtpRunner)' == 'True'">
+        <PackageReference Include="Microsoft.Testing.Platform.MSBuild" Version="2.2.1" />
+    </ItemGroup>
+
+</Project>

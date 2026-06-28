@@ -11,17 +11,17 @@ namespace Tests
     {
         public static readonly CommandCollection CommandsForTesting = new CommandCollection(new TestCommands());
 
-        [FadeBasicCommand("macroFuncTest", FadeBasicCommandUsage.Macro)]
+        [FadeBasicCommand("macroFuncDemo", FadeBasicCommandUsage.Macro)]
         public static void Example(int x, ref int id)
         {
             id = x * 2;
         }
-        [FadeBasicCommand("macro return test", FadeBasicCommandUsage.Macro)]
+        [FadeBasicCommand("macro return demo", FadeBasicCommandUsage.Macro)]
         public static int Example()
         {
             return 42;
         }
-        [FadeBasicCommand("macroReturnTest", FadeBasicCommandUsage.Macro)]
+        [FadeBasicCommand("macroReturnDemo", FadeBasicCommandUsage.Macro)]
         public static int Example2()
         {
             return 42;
@@ -126,13 +126,13 @@ namespace Tests
         [FadeBasicCommand("wait ms")]
         public static void WiatMs(int amount)
         {
-            
+            waitMsCallCount++;
         }
         //
-        [FadeBasicCommand("callTest")]
+        [FadeBasicCommand("callDemo")]
         public static void CallTest()
         {
-            
+
         }
         [FadeBasicCommand("add")]
         public static int AddTest(int a, int b)
@@ -168,6 +168,11 @@ namespace Tests
         {
             Console.WriteLine(string.Join("\n", variable));
         }
+
+        // Counter incremented every time `wait ms` is invoked (real path only,
+        // mocks bypass the executor). Mock execution tests reset and inspect
+        // this to confirm the host method was/wasn't actually called.
+        public static int waitMsCallCount = 0;
 
         public static List<string> staticPrintBuffer = new List<string>();
         [FadeBasicCommand("static print")]

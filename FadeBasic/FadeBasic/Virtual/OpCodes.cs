@@ -127,7 +127,7 @@ namespace FadeBasic.Virtual
         }
         public bool IsString() => typeCode == TypeCodes.STRING;
         public bool IsStruct() => typeCode == TypeCodes.STRUCT;
-        public void ProcessJson(IJsonOperation op)
+        public void ProcessJson<T>(ref T op) where T : IJsonOperation
         {
             op.IncludeField(nameof(typeCode), ref typeCode);
             op.IncludeField(nameof(typeId), ref typeId);
@@ -232,10 +232,9 @@ namespace FadeBasic.Virtual
         /// </summary>
         public const byte DISCARD_TYPED = 55;
 
-        /// <summary>
-        /// Reads a ptr value from the stack, and that ptr is used as a heap address. The result on the stack is the length (in bytes) of the allocation on the heap
-        /// </summary>
-        public const byte LENGTH = 16;
+        // Slot 16 was an earlier (never-wired) LENGTH opcode. Reused for
+        // nothing today; the actual LENGTH lives further down at byte 79
+        // with a defined contract (inline elem size, pushes count).
 
         /// <summary>
         /// Duplicates the current value on the stack, like a type-code qualified int or word
@@ -383,8 +382,181 @@ namespace FadeBasic.Virtual
 
         /// <summary>
         /// pull a value off the defer stack, and push it into the main stack.
-        /// If the defer stack is empty, a 0 is used. 
+        /// If the defer stack is empty, a 0 is used.
         /// </summary>
-        public const byte POP_DEFER = 63; 
+        public const byte POP_DEFER = 63;
+
+        /// <summary>
+        /// Begin a runto: pops a target address off the stack, pushes a runto frame
+        /// (target_addr, test_resume_ip), and sets instructionIndex to the saved
+        /// programResumeIP. Used at the start of every `runto :L` statement in test code.
+        /// </summary>
+        public const byte RUNTO = 64;
+
+        /// <summary>
+        /// Yield-back marker: the compiler emits this immediately after every label
+        /// that is referenced by a `runto` somewhere in the test corpus. When executed,
+        /// checks whether the top of runtoStack targets the current address. If yes,
+        /// stores the program IP in programResumeIP and jumps to test_resume_ip.
+        /// Otherwise falls through. In `dotnet run` builds (no tests), this opcode is
+        /// not emitted.
+        /// </summary>
+        public const byte RUNTO_YIELD = 65;
+
+        /// <summary>
+        /// Records an assertion failure on the VM and halts execution. The data
+        /// stack at the time of dispatch holds a string ptr pointing to the
+        /// captured source text of the asserted expression. The compiler emits
+        /// this only on the failure branch of an assert; passing assertions just
+        /// fall through.
+        /// </summary>
+        public const byte ASSERT_FAIL = 66;
+
+        /// <summary>
+        /// Installs a void-mock for a host command. Stack at dispatch:
+        ///   [..., commandId:int]  → consumed
+        /// On the next CALL_HOST for that command id, the VM pops the args
+        /// (per CommandInfo.args metadata) but does not invoke the C# method
+        /// and does not push a return value. Useful for suppressing void
+        /// commands like `wait ms` during tests.
+        /// </summary>
+        public const byte MOCK_VOID = 67;
+
+        /// <summary>
+        /// Installs a value-returning mock for a host command. Stack at
+        /// dispatch (top to bottom):
+        ///   [..., commandId:int, returnValue:typed]  → consumed
+        /// On the next CALL_HOST for that command id, args are popped and
+        /// the recorded return value is pushed in their place.
+        /// </summary>
+        public const byte MOCK_RETURNS = 68;
+
+        /// <summary>
+        /// Installs a forbid-mock for a host command. Stack: [..., commandId:int].
+        /// On dispatch, the VM records an assertion failure naming the command.
+        /// </summary>
+        public const byte MOCK_FORBID = 69;
+
+        /// <summary>
+        /// Removes any mock registration for a single command. Stack: [..., commandId:int].
+        /// </summary>
+        public const byte MOCK_CLEAR = 70;
+
+        /// <summary>
+        /// Removes all mock registrations for the current VM. No stack inputs.
+        /// </summary>
+        public const byte MOCK_CLEAR_ALL = 71;
+
+        /// <summary>
+        /// Pushes the current scope-stack depth onto the data stack as an int.
+        /// Depth 1 means only the global scope is live. Used by the assert-unwind
+        /// trampoline to walk up the scope chain draining defers, but is a
+        /// general primitive any future "unwind to scope N" feature can reuse.
+        /// </summary>
+        public const byte PUSH_SCOPE_DEPTH = 72;
+
+        /// <summary>
+        /// Reads a 4-byte command id inline from the bytecode (the next 4
+        /// bytes after the opcode) and pushes the current invocation count
+        /// for that host command onto the data stack as an int. Counts are
+        /// maintained on the VM regardless of whether a mock is installed,
+        /// so `call count cmd` works for unmocked commands too — returns 0
+        /// when `cmd` was never called.
+        /// </summary>
+        public const byte CALL_COUNT = 73;
+
+        /// <summary>
+        /// Installs a mock pointing at a bytecode body. Stack at dispatch
+        /// (top → bottom): commandId (int), bodyAddr (int). The VM records
+        /// the body's address; CALL_HOST for that command id will JUMP to
+        /// the body (pushing methodStack like a normal function call) so
+        /// the body runs with command args bound as locals in a new scope.
+        /// Replaces MOCK_VOID / MOCK_RETURNS / MOCK_FORBID for new mocks.
+        /// </summary>
+        public const byte MOCK_INSTALL = 74;
+
+        /// <summary>
+        /// Writes a typed value through a PTR_REG / PTR_GLOBAL_REG pointer
+        /// stored in a body-local register. Reads an inline register address
+        /// (the body local's slot). Pops a typed value from the stack and
+        /// writes it through the pointer found in that local.
+        /// Stack at dispatch (top → bottom): typed value to write.
+        /// Used by ref-arg writeback at mock-body exit.
+        /// </summary>
+        public const byte WRITE_REF = 75;
+
+        /// <summary>
+        /// Reads through a PTR_REG / PTR_GLOBAL_REG stored in a body-local
+        /// register and pushes the value at the pointed-to register onto
+        /// the data stack as a typed value. Reads an inline register
+        /// address (the body local's slot holding the ptr).
+        /// Used at mock-body prelude to initialize a ref param's value
+        /// register with the caller's current value.
+        /// </summary>
+        public const byte LOAD_REF = 76;
+
+        /// <summary>
+        /// Stores a typed ref-pointer from the stack into a body-local
+        /// register, preserving the stack-side type code (PTR_REG or
+        /// PTR_GLOBAL_REG). Reads an inline register address (the slot).
+        /// Distinct from STORE_PTR — which reads the type code from VM
+        /// state — because in the mock-body prelude the VM-state typeCode
+        /// has been clobbered by intervening opcodes between the caller's
+        /// push and this store.
+        /// Stack at dispatch (top → bottom): typed pointer (8 bytes + type).
+        /// </summary>
+        public const byte STORE_REF = 77;
+
+        /// <summary>
+        /// Spreads a Fade single-dimensional array onto the data stack in
+        /// the shape a `params` arg expects. Pops a heap pointer to the
+        /// array's contents (PTR_HEAP, 8 bytes + type code). Reads an
+        /// inline element type code (1 byte). Pushes each element as a
+        /// typed value in REVERSE order (so the host reads them back in
+        /// declaration order), then pushes the element count as an int.
+        /// </summary>
+        public const byte SPREAD_ARRAY = 78;
+
+        /// <summary>
+        /// Pops a heap pointer (PTR_HEAP, 8 bytes + type code) and reads
+        /// the underlying allocation's byte length. Divides by an inline
+        /// element-size byte and pushes the resulting count as an int.
+        /// Used to implement the `len()` keyword for arrays and strings:
+        /// the compiler emits the element size based on the source type
+        /// (4 for string chars, 4/8/etc. for typed arrays).
+        /// </summary>
+        public const byte LENGTH = 79;
+
+        /// <summary>
+        /// Inverse of SPREAD_ARRAY: pops a count int from the stack, then
+        /// pops `count` typed values, allocates a heap block of
+        /// count*elemSize bytes, writes the values into it, and pushes
+        /// a PTR_HEAP to the new allocation. Element type comes from an
+        /// inline byte. Used by mock-body preludes to receive a params
+        /// arg as a Fade array the body can iterate.
+        /// </summary>
+        public const byte GATHER_ARRAY = 80;
+
+        /// <summary>
+        /// Like CALL_HOST, but bypasses the mock table entirely — always
+        /// dispatches to the real registered host command, even when a
+        /// mock is installed for that command id. Used by the
+        /// `passthrough` keyword inside a mock body so a mock can invoke
+        /// the underlying real command. Identical stack shape and inline
+        /// encoding to CALL_HOST. CallCount is NOT incremented (the
+        /// surrounding CALL_HOST already counted the outer invocation).
+        /// </summary>
+        public const byte CALL_HOST_REAL = 81;
+
+        /// <summary>
+        /// Same as JUMP_HISTORY (pops destination off the stack, pushes
+        /// a return frame onto methodStack, jumps). Used by test
+        /// launchers to GOSUB into ancestor-or-self test bodies. The
+        /// pushed frame is tagged isLauncherFrame=true so user-facing
+        /// stack-trace capture skips it — launcher frames are control-
+        /// flow plumbing, not visible call sites. RETURN treats them
+        /// identically to a normal JUMP_HISTORY frame.
+        /// </summary>
+        public const byte JUMP_HISTORY_LAUNCH = 82;
     }
 }

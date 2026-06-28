@@ -1,3 +1,20 @@
+// Formatting — thin adapter over FadeBasic.LSP.Core.Handlers.FormattingHandler.
+//
+// ─── Behavioral audit (pre-refactor native vs Core) ─────────────────────
+//
+// Both run `TokenFormatter.Format(unit.lexerResults.combinedTokens, settings)`
+// and translate the resulting edits to LSP TextEdits.
+//
+// Native passed casing from the language-server configuration setting
+// `conf.language.fade.formatCasing` ("upper" | "lower" | other). Core
+// takes a TabSize/InsertSpaces/Casing options object. We adapt by reading
+// the same setting before invoking Core.
+//
+// Native re-lexed the source from disk on every request. Now we lex once
+// per document change via CompilerService and reuse those tokens through
+// Core. This avoids reading the file system on every format and keeps the
+// formatter output in sync with everything else the LSP has parsed.
+
 using System;
 using System.Collections.Generic;
 using System.Threading;
@@ -9,6 +26,9 @@ using OmniSharp.Extensions.LanguageServer.Protocol.Client.Capabilities;
 using OmniSharp.Extensions.LanguageServer.Protocol.Document;
 using OmniSharp.Extensions.LanguageServer.Protocol.Models;
 using OmniSharp.Extensions.LanguageServer.Protocol.Server;
+using CoreFormatHandler = FadeBasic.LSP.Core.Handlers.FormattingHandler;
+using LspCasingSetting = FadeBasic.LSP.Core.Handlers.LspCasingSetting;
+using LspFormattingOptions = FadeBasic.LSP.Core.Handlers.LspFormattingOptions;
 using Range = OmniSharp.Extensions.LanguageServer.Protocol.Models.Range;
 
 namespace LSP.Handlers;
@@ -24,82 +44,59 @@ public class FormattingHandler : DocumentFormattingHandlerBase
         };
     }
 
-    
-    private readonly ILogger<SemanticTokenHandler> _logger;
-    private readonly DocumentService _docs;
+    private readonly ILogger<FormattingHandler> _logger;
     private readonly ILanguageServerConfiguration _lsp;
-    private CompilerService _compiler;
-    private readonly ProjectService _projects;
+    private readonly CompilerService _compiler;
 
     public FormattingHandler(
         ILanguageServerConfiguration lsp,
-        ILogger<SemanticTokenHandler> logger, 
-        DocumentService docs, CompilerService compiler, ProjectService projects)
+        ILogger<FormattingHandler> logger,
+        CompilerService compiler)
     {
         _lsp = lsp;
-        _compiler = compiler;
-        _projects = projects;
         _logger = logger;
-        _docs = docs;
+        _compiler = compiler;
     }
-    
+
     public override async Task<TextEditContainer?> Handle(DocumentFormattingParams request, CancellationToken cancellationToken)
     {
         var edits = new List<TextEdit>();
 
+        // Honor the existing language-server config setting that controls
+        // identifier casing — same behavior as the pre-refactor handler.
         var config = await _lsp.GetConfiguration(new ConfigurationItem
         {
-            Section = "conf.language.fade"
+            Section = "conf.language.fade",
         });
         var casingStr = config.GetSection("conf.language.fade")["formatCasing"];
-        var casingOption = TokenFormatSettings.CasingSetting.Ignore;
+        var casing = LspCasingSetting.Ignore;
         if (string.Equals("upper", casingStr, StringComparison.InvariantCultureIgnoreCase))
-        {
-            casingOption = TokenFormatSettings.CasingSetting.ToUpper;
-        } else if (string.Equals("lower", casingStr, StringComparison.InvariantCultureIgnoreCase))
-        {
-            casingOption = TokenFormatSettings.CasingSetting.ToLower;
-        }
-        
-        if (!_compiler.TryGetProjectContexts(request.TextDocument.Uri, out var contexts))
-        {
-            _logger.LogError($"source document=[{request.TextDocument.Uri}] did not map to any project contexts");
-            return edits;
-        }
+            casing = LspCasingSetting.ToUpper;
+        else if (string.Equals("lower", casingStr, StringComparison.InvariantCultureIgnoreCase))
+            casing = LspCasingSetting.ToLower;
 
-        var projectUrl = contexts[0];
-        if (!_projects.TryGetProject(projectUrl, out var project))
-        {
-            _logger.LogError($"source document=[{projectUrl}] did not map to any project");
+        if (!_compiler.TryGetProjectsFromSource(request.TextDocument.Uri, out var units) || units.Count == 0)
             return edits;
-        }
 
-        if (!_docs.TryGetSourceDocument(request.TextDocument.Uri, out var doc))
-        {
-            _logger.LogError($"source document=[{request.TextDocument.Uri}] does not have a backing document");
-            return edits;
-        }
-
-        var lexer = new Lexer();
-        var lexerResults = lexer.TokenizeWithErrors(doc, project.Item2.collection);
-        
-        var tokenEdits = TokenFormatter.Format(lexerResults.combinedTokens, new TokenFormatSettings
+        var doc = CoreAdapter.ToDocument(units[0], request.TextDocument.Uri.ToString());
+        var coreEdits = CoreFormatHandler.Compute(doc, new LspFormattingOptions
         {
             TabSize = request.Options.TabSize,
-            UseTabs = !request.Options.InsertSpaces,
-            Casing = casingOption
+            InsertSpaces = request.Options.InsertSpaces,
+            Casing = casing,
         });
 
-        for (var i = tokenEdits.Count - 1; i >= 0; i--)
+        foreach (var e in coreEdits)
         {
-            var tokenEdit = tokenEdits[i];
             edits.Add(new TextEdit
             {
-                Range = new Range(tokenEdit.startLine, tokenEdit.startChar, tokenEdit.endLine, tokenEdit.endChar),
-                NewText = tokenEdit.replacement
+                Range = new Range(
+                    e.Range.Start.Line, e.Range.Start.Character,
+                    e.Range.End.Line, e.Range.End.Character),
+                NewText = e.NewText ?? string.Empty,
             });
         }
-        
+
         return edits;
     }
 }

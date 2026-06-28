@@ -11,10 +11,10 @@ public partial class TokenVm
     public void Function_NoReturn()
     {
         var src = @"
-x = Test()
+x = Demo()
 y = x
 END
-Function Test()
+Function Demo()
 
 EndFunction
 
@@ -35,10 +35,10 @@ EndFunction
         // TODO: how do we stop people from jumping INTO a function? 
         //  probably by adding a restrictino that you cannot goto between function scopes ? 
         var src = @"
-x = Test()
+x = Demo()
 goto truck ` this line causes execution to jump into a function, which is bad bad bad
 ` the important part is that no END expression exists, but the compiler should auto-end
-Function Test()
+Function Demo()
     a = 1 + 2
     truck:
 EndFunction a
@@ -53,9 +53,9 @@ Endfunction
     public void Function_AutoEnd()
     {
         var src = @"
-x = Test()
+x = Demo()
 ` the important part is that no END expression exists, but the compiler should auto-end
-Function Test()
+Function Demo()
 a = 1 + 2
 EndFunction a
 ";
@@ -72,10 +72,10 @@ EndFunction a
     public void Function_Simple()
     {
         var src = @"
-x = Test()
+x = Demo()
 
 END
-Function Test()
+Function Demo()
 a = 1 + 2
 EndFunction a
 ";
@@ -87,8 +87,8 @@ EndFunction a
         Assert.That(vm.dataRegisters[0], Is.EqualTo(3)); 
         Assert.That(vm.typeRegisters[0], Is.EqualTo(TypeCodes.INT));
         
-        Assert.That(vm.internedData.functions["test"].typeId, Is.EqualTo(0));
-        Assert.That(vm.internedData.functions["test"].typeCode, Is.EqualTo(TypeCodes.INT));
+        Assert.That(vm.internedData.functions["demo"].typeId, Is.EqualTo(0));
+        Assert.That(vm.internedData.functions["demo"].typeCode, Is.EqualTo(TypeCodes.INT));
     }
 
     
@@ -98,10 +98,10 @@ EndFunction a
         var src = @"
 global y as integer
 y = 1
-x = Test()
+x = Demo()
 
 END
-Function Test()
+Function Demo()
 a = y
 EndFunction a
 ";
@@ -126,10 +126,10 @@ ENDTYPE
 GLOBAL albert AS egg ` declare as global, so it can be used in function
 albert.x = 42
 
-z = Test() ` put the result onto a variable so we can validate it
+z = Demo() ` put the result onto a variable so we can validate it
 
 END
-Function Test()
+Function Demo()
 EndFunction albert.x ` just access the global value
 ";
         Setup(src, out _, out var prog);
@@ -153,10 +153,10 @@ DIM randoArr(3) as egg ` for some reason this messes things up maybe?
 GLOBAL albert AS egg ` declare as global, so it can be used in function
 albert.x = 42
 z = 1
-z = Test() ` put the result onto a variable so we can validate it
+z = Demo() ` put the result onto a variable so we can validate it
 
 END
-Function Test()
+Function Demo()
 EndFunction albert.x ` just access the global value
 ";
         Setup(src, out _, out var prog);
@@ -174,10 +174,10 @@ EndFunction albert.x ` just access the global value
         var src = @"
 local y as integer
 y = 1
-x = Test()
+x = Demo()
 
 END
-Function Test()
+Function Demo()
 a = y
 EndFunction a
 ";
@@ -196,10 +196,10 @@ EndFunction a
     {
         var src = @"
 x as byte
-x = Test(2)
+x = Demo(2)
 
 END
-Function Test(a as byte)
+Function Demo(a as byte)
 EndFunction a * 2
 ";
         Setup(src, out _, out var prog);
@@ -216,10 +216,10 @@ EndFunction a * 2
     public void Function_String()
     {
         var src = @"
-x$ = Test(""world"")
+x$ = Demo(""world"")
 
 END
-Function Test(a as string)
+Function Demo(a as string)
 EndFunction a + ""hello""
 ";
         Setup(src, out _, out var prog);
@@ -240,9 +240,9 @@ EndFunction a + ""hello""
     {
         var src = @"
 x$ = """"
-x$ = Test()
+x$ = Demo()
 END
-Function Test()
+Function Demo()
 a$ = ""hello""
 EndFunction a$
 ";
@@ -258,8 +258,8 @@ EndFunction a$
         Assert.That(vm.typeRegisters[0], Is.EqualTo(TypeCodes.STRING));
         
         
-        Assert.That(vm.internedData.functions["test"].typeId, Is.EqualTo(0));
-        Assert.That(vm.internedData.functions["test"].typeCode, Is.EqualTo(TypeCodes.STRING));
+        Assert.That(vm.internedData.functions["demo"].typeId, Is.EqualTo(0));
+        Assert.That(vm.internedData.functions["demo"].typeCode, Is.EqualTo(TypeCodes.STRING));
     }
 
     
@@ -274,11 +274,11 @@ ENDTYPE
 e1 as egg
 e1.x = 1
 
-e2 = Test(e1)
+e2 = Demo(e1)
 e2.x = e2.x * 2
 
 END
-Function Test(e as egg)
+Function Demo(e as egg)
 e.x = e.x + 1
 e.x = e.x + 1
 EndFunction e
@@ -339,10 +339,10 @@ cards(0) = 100
 cards(1) = 200
 cards(2) = 300
 
-x = Test()
+x = Demo()
 
 END
-Function Test()
+Function Demo()
     g = cards(0) + cards(1) + cards(2)
 EndFunction g
 ";
@@ -374,10 +374,10 @@ dim cards(3) as cardType
 cards(2).suit = 5
 cards(2).value = 8
 
-x = Test(2)
+x = Demo(2)
 
 END
-Function Test(index)
+Function Demo(index)
     ct as cardType
     ct = cards(index)
     `IF ct.suit = 5 then returnValue$ = ""of pie""
@@ -415,10 +415,10 @@ dim cards(3) as cardType
 cards(2).suit = 5
 cards(2).value = 8
 
-x$ = Test(2)
+x$ = Demo(2)
 print x$
 END
-Function Test(index)
+Function Demo(index)
     ct as cardType
     ct = cards(index)
     IF ct.suit = 5 then returnValue$ = ""of pie""
@@ -461,10 +461,10 @@ e as egg
 e.x = 32
 e.y = 66
 
-derp = Test(e)
+derp = Demo(e)
 
 END
-Function Test(a as egg)
+Function Demo(a as egg)
 EndFunction a.x + a.y
 ";
         Setup(src, out _, out var prog);
@@ -500,10 +500,10 @@ ENDTYPE
 e as egg
 e.x = 32
 e.y = 66
-Test(e)
+Demo(e)
 
 END
-Function Test(a as egg)
+Function Demo(a as egg)
 a.x = a.x * 2
 a.y = a.y - 10
 EndFunction
@@ -532,10 +532,10 @@ EndFunction
     public void Function_ArgOrder_1()
     {
         var src = @"
-x = Test(1, 2)
+x = Demo(1, 2)
 
 END
-Function Test(a, b)
+Function Demo(a, b)
 EndFunction a
 ";
         Setup(src, out _, out var prog);
@@ -552,10 +552,10 @@ EndFunction a
     public void Function_ArgOrder_2()
     {
         var src = @"
-x = Test(1, 2)
+x = Demo(1, 2)
 
 END
-Function Test(a, b)
+Function Demo(a, b)
 EndFunction b
 ";
         Setup(src, out var compiler, out var prog);
@@ -572,10 +572,10 @@ EndFunction b
     public void Function_Args()
     {
         var src = @"
-x = Test(1, 2)
+x = Demo(1, 2)
 
 END
-Function Test(a, b)
+Function Demo(a, b)
 EndFunction a + b
 ";
         Setup(src, out _, out var prog);
@@ -589,11 +589,11 @@ EndFunction a + b
         
         
         // parameters are in reverse order of index
-        Assert.That(vm.internedData.functions["test"].parameters[1].index, Is.EqualTo(0));
-        Assert.That(vm.internedData.functions["test"].parameters[1].name, Is.EqualTo("a"));
+        Assert.That(vm.internedData.functions["demo"].parameters[1].index, Is.EqualTo(0));
+        Assert.That(vm.internedData.functions["demo"].parameters[1].name, Is.EqualTo("a"));
         
-        Assert.That(vm.internedData.functions["test"].parameters[0].index, Is.EqualTo(1));
-        Assert.That(vm.internedData.functions["test"].parameters[0].name, Is.EqualTo("b"));
+        Assert.That(vm.internedData.functions["demo"].parameters[0].index, Is.EqualTo(1));
+        Assert.That(vm.internedData.functions["demo"].parameters[0].name, Is.EqualTo("b"));
     }
 
     
@@ -601,10 +601,10 @@ EndFunction a + b
     public void Function_Args_Cast()
     {
         var src = @"
-x = Test(1.2)
+x = Demo(1.2)
 
 END
-Function Test(a)
+Function Demo(a)
 EndFunction a + 1
 ";
         Setup(src, out _, out var prog);
@@ -622,10 +622,10 @@ EndFunction a + 1
     public void Function_Args_TypeCast()
     {
         var src = @"
-x = Test(1.2)
+x = Demo(1.2)
 
 END
-Function Test(a#)
+Function Demo(a#)
 EndFunction a# + 1
 ";
         Setup(src, out _, out var prog);
@@ -643,10 +643,10 @@ EndFunction a# + 1
     public void Function_Args_TypeCast_IntToFloat()
     {
         var src = @"
-x# = Test(1)
+x# = Demo(1)
 
 END
-Function Test(a#)
+Function Demo(a#)
 EndFunction a# + 1
 ";
         Setup(src, out _, out var prog);
@@ -667,10 +667,10 @@ EndFunction a# + 1
     public void Function_Args_TypeCast_OrderFlip()
     {
         var src = @"
-x = Test(5.2)
+x = Demo(5.2)
 
 END
-Function Test(a#)
+Function Demo(a#)
 EndFunction 1 + a# 
 ";
         Setup(src, out _, out var prog);
@@ -688,10 +688,10 @@ EndFunction 1 + a#
     public void Function_Args_TypeCast_NoCast()
     {
         var src = @"
-x# = Test(1.2)
+x# = Demo(1.2)
 
 END
-Function Test(a#)
+Function Demo(a#)
 EndFunction a# + 1
 ";
         Setup(src, out _, out var prog);
@@ -712,10 +712,10 @@ EndFunction a# + 1
     {
         var src = @"
 y = 1
-Test()
+Demo()
 
 END
-Function Test()
+Function Demo()
 y = 2
 EndFunction
 ";
@@ -733,12 +733,12 @@ EndFunction
     public void Function_Recursion()
     {
         var src = @"
-x = Test(1)
+x = Demo(1)
 
 END
-Function Test(a)
+Function Demo(a)
     IF a < 10
-        a = Test(a + 1)
+        a = Demo(a + 1)
     ENDIF
 EndFunction a
 ";
@@ -758,9 +758,9 @@ EndFunction a
     public void Function_UnusedReturnValue()
     {
         var src = @"
-Test(1)
+Demo(1)
 
-Function Test(a)
+Function Demo(a)
     ` the value a will be put onto the stack due to the return, but nothing takes it off?
 EndFunction a
 ";

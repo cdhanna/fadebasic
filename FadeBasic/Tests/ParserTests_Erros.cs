@@ -278,6 +278,22 @@ add(1, ""toast"")
         // Assert.That(errors[0].Display, Is.EqualTo($"[1:0] - {ErrorCodes.GotoMissingLabel}"));
     }
     
+
+        [Test]
+    public void ParseError_TypeCheck_FunctionAnd()
+    {
+        var input = @"
+    FUNCTION evenAndPositive(n)
+    isEven = n mod 2 = 0
+    isPositive = n > 0
+    ENDFUNCTION isEven and isPositive
+
+";
+        var parser = MakeParser(input);
+        var prog = parser.ParseProgram();
+        prog.AssertNoParseErrors();
+        // Assert.That(errors[0].Display, Is.EqualTo($"[1:0] - {ErrorCodes.GotoMissingLabel}"));
+    }
     
     [Test]
     public void ParseError_TypeCheck_IntToFloat()
@@ -1555,8 +1571,8 @@ endfunction
     public void ParseError_Function_CallBeforeDefined_Works()
     {
         var input = @"
-x = test(1)
-function test(a)
+x = demo(1)
+function demo(a)
 endfunction a
 ";
         var parser = MakeParser(input);
@@ -1568,9 +1584,9 @@ endfunction a
     public void ParseError_Function_DefinedTwice()
     {
         var input = @"
-function test()
+function demo()
 endfunction
-function test(a)
+function demo(a)
 endfunction
 ";
         var parser = MakeParser(input);
@@ -2126,8 +2142,8 @@ ENDTYPE
 TYPE chicken
     y 
 ENDTYPE
-test as egg
-y = test.x
+t1 as egg
+y = t1.x
 z = y.y
 ";
         var parser = MakeParser(input);
@@ -2732,7 +2748,7 @@ x = b
     {
         var input = @"
 #macro
-    n = macro return test()
+    n = macro return demo()
 #endmacro
 x = [n]
 ";
@@ -3029,7 +3045,7 @@ dim n(3)
     public void ParseError_Macro_CommandAppearsOutsideOfMacro()
     {
         var input = @"
-x = macro return test()
+x = macro return demo()
 ";
         var parser = MakeParser(input);
         var prog = parser.ParseProgram();
@@ -3231,10 +3247,11 @@ repeat
         var parser = MakeParser(input);
         var prog = parser.ParseProgram();
 
+        // exactly one error — the missing `until` must not cascade into a
+        // second "expression missing" error from parsing a condition at EOF.
         var errors = prog.GetAllErrors();
-        Assert.That(errors.Count, Is.EqualTo(2)); 
+        Assert.That(errors.Count, Is.EqualTo(1));
         Assert.That(errors[0].Display, Is.EqualTo($"[1:0] - {ErrorCodes.RepeatStatementMissingUntil}"));
-        Assert.That(errors[1].Display, Is.EqualTo($"[1:7] - {ErrorCodes.ExpressionMissing}"));
     }
     
     

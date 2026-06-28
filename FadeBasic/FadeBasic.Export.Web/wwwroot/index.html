@@ -1,0 +1,306 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8" />
+    <title>Fade Web Export</title>
+    <style>
+        body { font-family: ui-monospace, Menlo, Consolas, monospace; margin: 0; background: #111; color: #ddd; min-height: 100vh; }
+        header { padding: 0.5rem 1rem; background: #222; border-bottom: 1px solid #333; font-size: 0.85rem; color: #888; }
+        main { padding: 1rem; }
+        #output { white-space: pre-wrap; word-break: break-word; }
+        #status { color: #6cf; }
+        .err { color: #f66; }
+    </style>
+</head>
+<body>
+    <header><span id="status">Loading runtime…</span></header>
+    <main><div id="output"></div></main>
+
+    <script type="module">
+        // Export.Web runs the VM on the main thread of this iframe. The
+        // host-agnostic runtime module exposes init / dispatch / onMessage;
+        // we wire those to the parent-window postMessage relay (for
+        // preview mode) or to the local UI directly (for a regular
+        // static-host export).
+        import { init, dispatch, onMessage } from './runtime.js';
+
+        const statusEl = document.getElementById('status');
+        const outputEl = document.getElementById('output');
+
+        const append = (line, cls) => {
+            const span = document.createElement('span');
+            if (cls) span.className = cls;
+            span.textContent = line + '\n';
+            outputEl.appendChild(span);
+        };
+        const fail = (msg) => { statusEl.textContent = msg; statusEl.classList.add('err'); };
+
+        try {
+            // Plugin extension point. Every library command that calls
+            // HostBridge.PostMessage(channel, payload) routes through here.
+            // The handler returns (or resolves to) { resultType, value };
+            // the runtime dispatches that to the matching Deposit*
+            // JSExport which swaps the placeholder on the VM's operand
+            // stack.
+            //
+            // resultType strings match the FadeBasic VM primitive types:
+            //   'string'  → string (heap pointer)
+            //   'int'     → int32
+            //   'real'    → float32
+            //   'bool'    → bool
+            //   'byte'    → uint8
+            //   'word'    → uint16
+            //   'dword'   → uint32     (use >>> 0 for unsigned)
+            //   'dint'    → int64      (use BigInt past 2^53)
+            //   'dfloat'  → float64
+            //   'void'    → no return value
+            // Pick the one matching the command's declared C# return type.
+            //
+            // To add a new cooperative command in a plugin library:
+            //   1. The library's C# command calls HostBridge.PostMessage
+            //      with its own channel name and HostBridge.SuspendVm.
+            //   2. The plugin's consumer adds an entry to this map in
+            //      their own index.html (or a script the page loads).
+            //   3. Done. No changes to FadeBasic, FadeBasic.Export.Web,
+            //      runtime.js, or this index.html's framework needed.
+            //
+            // Exposed on window so plugin scripts loaded after this one
+            // can extend the map before the runtime has anything to send.
+            const hostHandlers = {
+                'fade-web/prompt': (payload) => ({
+                    resultType: 'string',
+                    value: (() => { try { return window.prompt(payload) ?? ''; }
+                                    catch { return ''; } })(),
+                }),
+            };
+            window.fadeHostHandlers = hostHandlers;
+
+            const handleHostMessage = async (m) => {
+                const handler = hostHandlers[m.channel];
+                if (!handler) {
+                    console.warn('[fade] no host handler for channel:', m.channel);
+                    dispatch({ type: 'host-reply', resultType: 'string', value: '' });
+                    return;
+                }
+                try {
+                    const reply = await handler(m.payload);
+                    dispatch({ type: 'host-reply', ...reply });
+                } catch (e) {
+                    console.error('[fade] host handler for', m.channel, 'threw:', e);
+                    dispatch({ type: 'host-reply', resultType: 'string', value: '' });
+                }
+            };
+
+            // Pending-promise map for local id-correlated calls (used in
+            // the regular-export bootstrap below for load-assembly /
+            // register-command-assembly / run-start round-trips).
+            const pending = new Map();
+            let nextId = 0;
+            const call = (msg) => new Promise((resolve) => {
+                const id = ++nextId;
+                pending.set(id, resolve);
+                dispatch({ ...msg, id });
+            });
+
+            // Iframe-local consumers of runtime events. The runtime emits
+            // events via onMessage callbacks; we route each event type to
+            // the right place (UI element, pending-promise resolver,
+            // parent-window forward in preview mode, etc.).
+            const onReady = new Promise((resolve, reject) => {
+                onMessage((m) => {
+                    if (!m) return;
+                    if (m.type === 'ready') { resolve(); return; }
+                    if (m.type === 'boot-error') { reject(new Error(m.message)); return; }
+                    if (m.type === 'print') { append(m.line); return; }
+                    if (m.type === 'alert') { window.alert(m.msg); return; }
+                    if (m.type === 'host-message') { handleHostMessage(m); return; }
+                    if (m.type === 'test-starting') {
+                        // New test took over the VM. Clear the output area
+                        // so each test's prints start fresh, and surface
+                        // the active test's name in the status line.
+                        outputEl.innerHTML = '';
+                        statusEl.textContent = 'Running ' + (m.testName ?? '…');
+                        return;
+                    }
+                    if (m.type === 'log') { console.log('[runtime]', m.message); return; }
+                    if (m.type === 'heartbeat') return;
+                    // id-carrying results consumed locally OR forwarded to
+                    // the parent (preview mode). Both paths add a second
+                    // listener below.
+                    if (m.id != null && pending.has(m.id)) {
+                        const cb = pending.get(m.id);
+                        pending.delete(m.id);
+                        cb(m);
+                    }
+                });
+            });
+
+            // Start booting the .NET runtime. Events that fire during
+            // boot are already wired into onMessage above.
+            init();
+            await onReady;
+
+            // Preview mode: parent window owns the source-of-truth.
+            // Boot order:
+            //   1. Parent posts `bootstrap` with command DLLs only.
+            //      Iframe registers each one; iframe is now "armed."
+            //   2. Parent posts run / debug / tests / compile commands
+            //      via the same postMessage channel. Iframe dispatches
+            //      each to the local runtime. Runtime events that aren't
+            //      consumed by the iframe-local listener above are
+            //      forwarded to the parent so the Playground's UI can
+            //      react.
+            const isPreview = new URLSearchParams(location.search).has('preview');
+
+            if (!isPreview) {
+                // ── Regular static-host export path ────────────────────
+                statusEl.textContent = 'Loading game…';
+
+                const manifest = await fetch('fade-manifest.json').then(r => r.json());
+                const entryName = manifest.entryAssembly;
+                if (!entryName) throw new Error('fade-manifest.json missing entryAssembly');
+
+                // Pre-load every dep DLL in game/ before the entry assembly so
+                // resolving the entry's ILaunchable doesn't fail on missing refs.
+                // manifest.deps is authoritative — no directory listing on static
+                // hosts. Targets writes it from $(OutDir)*.dll minus the entry.
+                const deps = Array.isArray(manifest.deps) ? manifest.deps : [];
+                for (const dep of deps) {
+                    if (dep === entryName) continue;
+                    try {
+                        const bytes = await fetch(`game/${dep}`).then(r => r.arrayBuffer());
+                        const r = await call({ type: 'load-assembly', dllBytes: bytes });
+                        const parsed = JSON.parse(r.result);
+                        if (!parsed.ok) append(`[warn] load ${dep}: ${parsed.error}`, 'err');
+                    } catch (e) {
+                        append(`[warn] load ${dep}: ${e.message}`, 'err');
+                    }
+                }
+
+                const runOnce = async (kickoff) => {
+                    statusEl.textContent = 'Running…';
+                    const result = await call(kickoff);
+                    let parsed; try { parsed = JSON.parse(result.result); } catch { parsed = {}; }
+                    if (parsed.ok) statusEl.textContent = 'Done.';
+                    else {
+                        statusEl.textContent = parsed.compileError ? 'Compile error' : 'Runtime error';
+                        if (parsed.compileError) append(parsed.compileError, 'err');
+                        if (parsed.error) append(parsed.error, 'err');
+                    }
+                };
+
+                if (manifest.bytecode) {
+                    // Playground-style export — game/program.fbytecode + commandDlls.
+                    const cmds = Array.isArray(manifest.commandDlls) ? manifest.commandDlls : [];
+                    for (const c of cmds) {
+                        try {
+                            const bytes = await fetch(`game/${c.assembly}.dll`).then(r => r.arrayBuffer());
+                            const r = await call({ type: 'register-command-assembly',
+                                dllBytes: bytes, className: c.class });
+                            const parsed = JSON.parse(r.result);
+                            if (!parsed.ok) append(`[warn] register ${c.assembly}: ${parsed.error}`, 'err');
+                        } catch (e) {
+                            append(`[warn] register ${c.assembly}: ${e.message}`, 'err');
+                        }
+                    }
+                    const bytecode = await fetch(`game/${manifest.bytecode}`).then(r => r.arrayBuffer());
+                    await runOnce({ type: 'run-start-bytecode', bytecode });
+                } else {
+                    const entryBytes = await fetch(`game/${entryName}`).then(r => r.arrayBuffer());
+                    await runOnce({ type: 'run-start', dllBytes: entryBytes });
+                }
+            } else {
+                // ── Preview mode (Playground iframe) ──────────────────
+                statusEl.textContent = 'Waiting for bootstrap…';
+
+                let armed = false;
+                // True while bootstrap's own register-command-assembly
+                // round-trips are in flight. The runtime→parent relay
+                // suppresses id-carrying replies during this window so
+                // the iframe's pending Map doesn't race the parent's.
+                let bootstrapping = false;
+                const onBootstrap = async (data) => {
+                    bootstrapping = true;
+                    try {
+                        outputEl.innerHTML = '';
+                        statusEl.textContent = 'Registering libraries…';
+                        for (const c of (data.commandDlls || [])) {
+                            const r = await call({
+                                type: 'register-command-assembly',
+                                dllBytes: c.bytes, className: c.class,
+                            });
+                            const parsed = JSON.parse(r.result);
+                            if (!parsed.ok) append(`[warn] register ${c.assembly}: ${parsed.error}`, 'err');
+                        }
+                    } finally {
+                        bootstrapping = false;
+                    }
+                    armed = true;
+                    statusEl.textContent = 'Ready.';
+                    try { window.parent.postMessage({ type: 'preview-armed' }, '*'); }
+                    catch { /* parent may be cross-origin */ }
+                };
+
+                // Runtime → parent relay. Events consumed internally
+                // for the iframe's render surface (print, alert,
+                // host-message → window.prompt) stay in the iframe so
+                // the user sees them where the game is. Everything
+                // else — id-correlated results, streaming events
+                // (debug-event, test-progress), boot-error diagnostics
+                // — is forwarded to the parent so the Playground's UI
+                // can react.
+                const internalOnly = new Set([
+                    'ready', 'boot-error',
+                    'print', 'alert', 'host-message',
+                    'log', 'heartbeat',
+                    // test-starting is a UI hint just for the iframe
+                    // (clear output between tests). Playground gets
+                    // per-test state via test-progress instead.
+                    'test-starting',
+                ]);
+                onMessage((m) => {
+                    if (!m || internalOnly.has(m.type)) return;
+                    // Suppress id-carrying replies during bootstrap —
+                    // they resolve the iframe's own `call()` pending
+                    // entries and would spuriously match the parent's
+                    // pending map (independent id counters that overlap
+                    // from 1).
+                    if (bootstrapping && m.id != null) return;
+                    try { window.parent.postMessage(m, '*'); } catch { }
+                });
+
+                // Parent → runtime relay. Bootstrap is handled here;
+                // everything else is dispatched directly to the runtime.
+                // Run-start messages reset the visible output so the
+                // user sees a clean slate per run.
+                const resetOnEntry = new Set([
+                    'run-start-source', 'run-start-bytecode', 'run-start',
+                    'debug-start', 'debug-start-test', 'run-tests',
+                ]);
+                window.addEventListener('message', (e) => {
+                    if (e.source !== window.parent) return;
+                    const m = e.data;
+                    if (!m) return;
+                    if (m.type === 'bootstrap') { onBootstrap(m); return; }
+                    if (!armed) {
+                        console.warn('[preview] message before bootstrap:', m.type);
+                        return;
+                    }
+                    if (resetOnEntry.has(m.type)) {
+                        outputEl.innerHTML = '';
+                        statusEl.textContent = 'Running…';
+                    }
+                    dispatch(m);
+                });
+
+                // Tell the parent we're ready for the bootstrap message.
+                try { window.parent.postMessage({ type: 'preview-ready' }, '*'); }
+                catch { /* parent may be cross-origin; that's OK */ }
+            }
+        } catch (e) {
+            fail('Failed: ' + (e?.message ?? e));
+            console.error(e);
+        }
+    </script>
+</body>
+</html>

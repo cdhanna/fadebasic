@@ -35,19 +35,19 @@ v2 = v
 v3 = v2
 ", 3)]
     [TestCase(@"
-x$ = test()
-function test()
+x$ = demo()
+function demo()
 endfunction ""igloo""
 ", 1)]
     [TestCase(@"
-x$ = test(1)
-x$ = test(2)
-function test(n)
+x$ = demo(1)
+x$ = demo(2)
+function demo(n)
 endfunction str$(n)
 ", 1)]
     [TestCase(@"
-test()
-function test()
+demo()
+function demo()
     z$ = ""toast""
 endfunction
 ", 1)]
@@ -56,8 +56,8 @@ type vec
     x
     y
 endtype
-v = test() ` 1 allocation to assign
-function test()
+v = demo() ` 1 allocation to assign
+function demo()
     v2 as vec 
     v3 as vec
 endfunction v2 
@@ -109,12 +109,13 @@ tuna_opt_string 3 `an empty optional does not need to allocate
     public void GC_Simple(string src, int allocationCount)
     {
         Setup(src, out var compiler, out var prog);
-        
+
         var vm = new VirtualMachine(prog);
         vm.hostMethods = compiler.methodTable;
+        vm.sweepInterval = 1; // GC tests exercise the sweep-on-every-store path
 
         vm.Execute2(0);
-        vm.heap.Sweep();
+        vm.CollectGarbage();
 
         Assert.That(vm.heap.Allocations, Is.EqualTo(allocationCount));
     }
@@ -147,12 +148,13 @@ x3 = a(3)
 q3 = x3.z
 ";
         Setup(src, out var compiler, out var prog);
-        
+
         var vm = new VirtualMachine(prog);
         vm.hostMethods = compiler.methodTable;
+        vm.sweepInterval = 1; // this test guards against stale copies of freed memory
 
         vm.Execute2(0);
-        vm.heap.Sweep();
+        vm.CollectGarbage();
 
         var v = vm.dataRegisters[6];
         var v2 = vm.dataRegisters[7];
@@ -186,12 +188,13 @@ next
     public void GC_Simple_StringConcatIssues(string src, int allocationCount)
     {
         Setup(src, out var compiler, out var prog);
-        
+
         var vm = new VirtualMachine(prog);
         vm.hostMethods = compiler.methodTable;
+        vm.sweepInterval = 1; // GC tests exercise the sweep-on-every-store path
 
         vm.Execute2(0);
-        vm.heap.Sweep();
+        vm.CollectGarbage();
 
         Assert.That(vm.heap.Allocations, Is.EqualTo(allocationCount));
     }

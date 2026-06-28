@@ -1,0 +1,33 @@
+# Cloudflare Worker config for the GitHub OAuth device-flow CORS proxy.
+#
+# This worker holds NO secrets. It just relays two GitHub endpoints that
+# don't send CORS headers, so the playground (a static SPA) can run the
+# OAuth device flow directly from the browser. See README.md for the
+# end-to-end deploy steps.
+#
+# After `wrangler deploy` succeeds, the worker URL looks like
+# `https://fade-oauth-proxy.<your-subdomain>.workers.dev`. Plug that
+# URL into the playground's GitHub auth config.
+
+name = "fade-oauth-proxy"
+main = "src/index.ts"
+compatibility_date = "2025-01-01"
+
+# `workers.dev` subdomain is the free-tier default — no custom domain
+# needed for this to work. Disable it later if you wire up a custom
+# domain via the `routes` block.
+workers_dev = true
+
+# Origins that are allowed to call the proxy. Browser requests from any
+# other origin get a 403. Update this list when you add deployments
+# (staging, prod, etc.). Comma-separated; leave whitespace alone — the
+# worker trims it.
+#
+# Patterns:
+#   - Exact origin     `https://playground.example.com`
+#   - localhost any port  `http://localhost:*` / `http://127.0.0.1:*`
+#     (still narrows to local dev — an attacker would have to be
+#     running malicious code on the same machine, in which case the
+#     worker is the least of your problems.)
+[vars]
+ALLOWED_ORIGINS = "http://localhost:*,http://127.0.0.1:*,https://fade-playground.pages.dev,https://tests.fade-playground.pages.dev"

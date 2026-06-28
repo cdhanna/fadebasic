@@ -1,0 +1,221 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>GhostBot</title>
+  <link rel="icon" type="image/png" href="/ghost_lee_128.png" />
+  <link rel="stylesheet" href="/src/style.css" />
+</head>
+<body>
+  <div id="browser-blocker" class="browser-blocker" hidden>
+    <div class="vscode-panel browser-blocker-card">
+      <div class="panel-header">
+        <img src="/ghost_lee_128.png" alt="" width="28" height="28" />
+        <span>GhostBot</span>
+      </div>
+      <div class="panel-body">
+        <h1>Open GhostBot as a desktop app</h1>
+        <p>This UI only works inside the native GhostBot window. A browser tab cannot talk to llama.cpp.</p>
+        <pre class="code-block">cd ghostBot && npm start</pre>
+        <p class="muted">That launches the macOS/Windows/Linux window with full model download and inference.</p>
+      </div>
+    </div>
+  </div>
+
+  <div class="vscode-shell" id="app-root">
+    <header class="titlebar">
+      <div class="titlebar-left">
+        <img src="/ghost_lee.png" alt="Lee the ghost" class="titlebar-logo" width="32" height="32" />
+        <div class="titlebar-text">
+          <span class="titlebar-title">GhostBot</span>
+          <span class="titlebar-sub">Local AI for Fade Playground</span>
+        </div>
+      </div>
+      <span id="app-badge" class="titlebar-badge">Desktop</span>
+    </header>
+
+    <div class="workbench">
+      <nav class="activity-bar" aria-label="Setup steps">
+        <button type="button" class="activity-item active" data-step="1" id="act-step-1" title="Download model">
+          <span class="codicon codicon-cloud-download"></span>
+        </button>
+        <button type="button" class="activity-item" data-step="2" id="act-step-2" title="Load GPU">
+          <span class="codicon codicon-server-process"></span>
+        </button>
+        <button type="button" class="activity-item" data-step="3" id="act-step-3" title="Connect">
+          <span class="codicon codicon-plug"></span>
+        </button>
+      </nav>
+
+      <main class="editor-area">
+        <div class="tab-strip" role="tablist" aria-label="Setup">
+          <button type="button" class="tab active" data-step="1" id="tab-step-1">1. Get model</button>
+          <button type="button" class="tab" data-step="2" id="tab-step-2">2. Load GPU</button>
+          <button type="button" class="tab" data-step="3" id="tab-step-3">3. Connect</button>
+        </div>
+
+        <div class="panel-stack">
+          <!-- Step 1 -->
+          <section class="vscode-panel step-panel" id="step-1" data-step="1">
+            <div class="panel-header">
+              <span>Download a GGUF model</span>
+              <button type="button" id="open-models-folder-btn" class="btn secondary btn-small" title="Reveal models folder in Finder">
+                <span class="codicon codicon-folder-opened"></span> Open models folder
+              </button>
+            </div>
+            <div class="panel-body">
+              <p class="panel-lead">
+                Pick a model to download from Hugging Face. If a load fails with
+                <code>corrupted or incomplete</code>, open the models folder, delete the partial file, and download again.
+              </p>
+              <p id="models-dir-hint" class="hint path-hint"></p>
+
+              <div id="model-catalog" class="model-catalog"></div>
+
+              <div id="download-idle" class="download-actions">
+                <p id="download-status-text" class="hint">Checking local models…</p>
+                <button type="button" id="download-btn" class="btn primary" disabled>Download selected model</button>
+                <button type="button" id="redownload-btn" class="btn secondary" hidden>Re-download (replace file)</button>
+                <button type="button" id="skip-download-btn" class="btn link" hidden>
+                  I already have a model — continue
+                </button>
+              </div>
+
+              <div id="download-active" class="download-progress" hidden>
+                <div class="download-stats">
+                  <span id="dl-pct" class="dl-pct">0%</span>
+                  <span id="dl-label" class="dl-label">—</span>
+                  <span id="dl-mb" class="dl-mb">0 / 0 MB</span>
+                </div>
+                <div class="progress" aria-hidden="true">
+                  <div id="dl-bar" class="progress-fill"></div>
+                </div>
+                <div class="download-meta">
+                  <span id="dl-speed">—</span>
+                  <span id="dl-eta">—</span>
+                </div>
+                <p id="dl-phase" class="hint">Starting download…</p>
+              </div>
+
+              <div id="download-done" class="download-done" hidden>
+                <p class="done-check">✓ Model ready on disk</p>
+                <p id="download-done-detail" class="hint"></p>
+                <button type="button" id="goto-step-2" class="btn primary">Continue to load →</button>
+              </div>
+            </div>
+          </section>
+
+          <!-- Step 2 -->
+          <section class="vscode-panel step-panel step-locked" id="step-2" data-step="2">
+            <div class="panel-header"><span>Load into GPU</span></div>
+            <div class="panel-body">
+              <p class="panel-lead">
+                Loads weights into Metal/Vulkan. Use <strong>Unload</strong> to free VRAM when done.
+              </p>
+
+              <label class="field">
+                <span class="field-label">GGUF file</span>
+                <select id="model-select" class="input" disabled></select>
+              </label>
+
+              <div class="btn-row">
+                <button type="button" id="load-model-btn" class="btn primary" disabled>Load model</button>
+                <button type="button" id="unload-model-btn" class="btn secondary" disabled>Unload (free VRAM)</button>
+                <button type="button" id="open-models-folder-btn-2" class="btn secondary">
+                  <span class="codicon codicon-folder-opened"></span> Open models folder
+                </button>
+              </div>
+
+              <div id="load-status" class="status-pill idle">No model loaded</div>
+              <p id="load-detail" class="hint"></p>
+
+              <div id="load-done" hidden>
+                <button type="button" id="goto-step-3" class="btn primary">Continue to connect →</button>
+              </div>
+
+              <div class="claude-divider"><span>or</span></div>
+
+              <div class="claude-card" id="claude-card">
+                <div class="claude-card-header">
+                  <span class="field-label">Claude API (cloud)</span>
+                  <span id="claude-active-pill" class="status-pill idle" hidden>Active</span>
+                </div>
+                <p class="hint">
+                  Serve a Claude model from Anthropic instead of a local GGUF. Uses your own
+                  API key (stored on this machine, never sent to Playground peers).
+                </p>
+                <label class="field">
+                  <span class="field-label">Model</span>
+                  <select id="claude-model-select" class="input"></select>
+                </label>
+                <label class="field">
+                  <span class="field-label">API key</span>
+                  <input id="claude-key-input" class="input" type="password"
+                    placeholder="sk-ant-… (leave blank to keep current)" autocomplete="off" />
+                </label>
+                <div class="btn-row">
+                  <button type="button" id="claude-save-btn" class="btn secondary">Save key</button>
+                  <button type="button" id="claude-activate-btn" class="btn primary">Use Claude</button>
+                  <button type="button" id="claude-deactivate-btn" class="btn secondary" hidden>Stop using Claude</button>
+                </div>
+                <div id="claude-status" class="status-pill idle">No API key set</div>
+              </div>
+            </div>
+          </section>
+
+          <!-- Step 3 -->
+          <section class="vscode-panel step-panel step-locked" id="step-3" data-step="3">
+            <div class="panel-header"><span>Connections</span></div>
+            <div class="panel-body">
+              <p class="panel-lead">
+                In Playground → <strong>AI Models</strong>, enter this code once. Every Playground
+                tab or browser that uses it shows up below — approve each the first time and it
+                reconnects automatically after.
+              </p>
+
+              <div class="code-share">
+                <span class="field-label">Your GhostBot code</span>
+                <code id="ghost-code" class="ghost-code">------</code>
+                <button type="button" id="copy-code-btn" class="btn secondary btn-small">Copy</button>
+              </div>
+
+              <div id="session-status" class="status-pill idle">Waiting for model</div>
+              <p id="session-detail" class="hint">Load a model in step 2 first.</p>
+
+              <div id="connections" class="connections"></div>
+
+              <div id="activity-card" class="activity-card" hidden>
+                <div class="activity-head">
+                  <span id="activity-dot" class="activity-dot"></span>
+                  <span id="activity-label">Idle</span>
+                  <span class="grow"></span>
+                  <span id="activity-count" class="activity-count" title="Requests served this session"></span>
+                </div>
+                <div id="activity-meter" class="activity-meter"><span id="activity-meter-fill"></span></div>
+                <p id="activity-detail" class="hint"></p>
+                <pre id="activity-preview" class="activity-preview" hidden></pre>
+              </div>
+            </div>
+          </section>
+        </div>
+
+        <section class="vscode-panel output-panel">
+          <div class="panel-header">
+            <span>Output</span>
+            <button type="button" id="clear-log-btn" class="btn link btn-small">Clear</button>
+          </div>
+          <pre id="log" class="log output-body"></pre>
+        </section>
+      </main>
+    </div>
+
+    <footer class="status-bar">
+      <span id="status-bar-text">Ready</span>
+      <span id="status-bar-models" class="status-bar-right"></span>
+    </footer>
+  </div>
+
+  <script type="module" src="/src/main.ts"></script>
+</body>
+</html>

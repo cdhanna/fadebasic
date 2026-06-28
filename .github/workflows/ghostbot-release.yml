@@ -1,0 +1,94 @@
+# Builds the GhostBot desktop app (Tauri) for macOS + Windows and publishes the
+# installers to a GitHub Release. The Playground's "Download GhostBot" button
+# points at the latest release of this repo.
+#
+# Trigger manually (Actions → "GhostBot Release" → Run workflow, enter a version)
+# or by pushing a tag like `ghostbot-v0.1.0`.
+#
+# Signing/notarization: the APPLE_* / WINDOWS_* secrets are optional. With them
+# unset the build still succeeds but is UNSIGNED — macOS users must right-click →
+# Open the first time, and Windows shows a SmartScreen prompt. Set the secrets to
+# ship without those warnings.
+name: GhostBot Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Release version, e.g. 0.1.0"
+        required: true
+  push:
+    tags:
+      - "ghostbot-v*"
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: macos-latest
+            rust-targets: aarch64-apple-darwin,x86_64-apple-darwin
+            args: --target universal-apple-darwin
+          - platform: windows-latest
+            rust-targets: ""
+            args: ""
+    runs-on: ${{ matrix.platform }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.rust-targets }}
+
+      # llama-cpp-2 compiles llama.cpp via cmake — ensure it's present on both
+      # runners (preinstalled, but pinning avoids surprises).
+      - uses: lukka/get-cmake@latest
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: ghostBot/src-tauri
+
+      - name: Install frontend dependencies
+        working-directory: ghostBot
+        run: npm ci
+
+      - name: Resolve version
+        id: ver
+        shell: bash
+        run: |
+          if [ -n "${{ github.event.inputs.version }}" ]; then
+            echo "v=${{ github.event.inputs.version }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "v=${GITHUB_REF_NAME#ghostbot-v}" >> "$GITHUB_OUTPUT"
+          fi
+
+      - uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # macOS signing + notarization (optional; unset = unsigned build):
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        with:
+          projectPath: ghostBot
+          tagName: ghostbot-v${{ steps.ver.outputs.v }}
+          releaseName: GhostBot v${{ steps.ver.outputs.v }}
+          releaseBody: |
+            GhostBot — the desktop AI runner for the Fade Playground.
+
+            Download the installer for your platform, install it, then enter its
+            join code in the Playground's **AI Models** tab to connect.
+
+            ⚠️ Experimental. Builds may be unsigned — on macOS, right-click the app
+            and choose **Open** the first time.
+          releaseDraft: true
+          prerelease: true
+          args: ${{ matrix.args }}

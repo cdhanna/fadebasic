@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Generic;
 using System.Linq;
 
@@ -14,7 +15,12 @@ namespace FadeBasic.Ast
         public List<IStatementNode> statements = new List<IStatementNode>();
         public List<TypeDefinitionStatement> typeDefinitions = new List<TypeDefinitionStatement>();
         public List<FunctionStatement> functions = new List<FunctionStatement>();
-        public List<LabelDefinition> labels = new List<LabelDefinition>();
+        public List<LabelDeclarationNode> labels = new List<LabelDeclarationNode>();
+        public List<TestNode> tests = new List<TestNode>();
+        // CommandCollection the parser used to resolve command names. Stashed
+        // here so post-parse visitors (e.g., mock-body type validation) can
+        // look up command metadata without taking it as a parameter.
+        public CommandCollection commands;
         protected override string GetString()
         {
             List<IStatementNode> allStatements = new List<IStatementNode>();
@@ -22,23 +28,16 @@ namespace FadeBasic.Ast
             allStatements.AddRange(typeDefinitions);
             allStatements.AddRange(statements);
             allStatements.AddRange(functions);
+            allStatements.AddRange(tests);
             return $"{string.Join(",", allStatements.Select(x => x.ToString()))}";
         }
 
-        public override IEnumerable<IAstVisitable> IterateChildNodes()
+        protected override void VisitChildren(Action<IAstVisitable> onVisit, Action<IAstVisitable> onExit)
         {
-            foreach (var statement in statements)
-            {
-                yield return statement;
-            }
-            foreach (var function in functions)
-            {
-                yield return function;
-            }
-            foreach (var type in typeDefinitions)
-            {
-                yield return type;
-            }
+            foreach (var statement in statements) statement?.Visit(onVisit, onExit);
+            foreach (var function in functions) function?.Visit(onVisit, onExit);
+            foreach (var type in typeDefinitions) type?.Visit(onVisit, onExit);
+            foreach (var test in tests) test?.Visit(onVisit, onExit);
         }
     }
 }

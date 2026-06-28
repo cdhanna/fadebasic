@@ -8,7 +8,7 @@ public partial class ParserTests
     public void Invoke_Simple()
     {
         var input = @"
-x = Test()
+x = Demo()
 ";
         var parser = MakeParser(input);
         var prog = parser.ParseProgram();
@@ -17,7 +17,7 @@ x = Test()
         var code = prog.ToString();
         Console.WriteLine(code);
         Assert.That(code, Is.EqualTo(@"(
-(= (ref x),(ref test[]))
+(= (ref x),(ref demo[]))
 )".ReplaceLineEndings("")));
     }
 
@@ -26,7 +26,7 @@ x = Test()
     public void Invoke_WithArg()
     {
         var input = @"
-x = Test(1)
+x = Demo(1)
 ";
         var parser = MakeParser(input);
         var prog = parser.ParseProgram();
@@ -35,7 +35,7 @@ x = Test(1)
         var code = prog.ToString();
         Console.WriteLine(code);
         Assert.That(code, Is.EqualTo(@"(
-(= (ref x),(ref test[(1)]))
+(= (ref x),(ref demo[(1)]))
 )".ReplaceLineEndings("")));
     }
     
@@ -44,7 +44,7 @@ x = Test(1)
     public void Invoke_Statement()
     {
         var input = @"
-Test(1)
+Demo(1)
 ";
         var parser = MakeParser(input);
         var prog = parser.ParseProgram();
@@ -53,7 +53,7 @@ Test(1)
         var code = prog.ToString();
         Console.WriteLine(code);
         Assert.That(code, Is.EqualTo(@"(
-(expr (ref test[(1)]))
+(expr (ref demo[(1)]))
 )".ReplaceLineEndings("")));
     }
 

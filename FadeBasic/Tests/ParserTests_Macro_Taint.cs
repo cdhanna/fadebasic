@@ -12,7 +12,7 @@ public partial class ParserTests
     {
         var input = @"
 #macro
-    x = macro return test()
+    x = macro return demo()
     # y = [x]
 #endmacro
 ";
@@ -394,7 +394,7 @@ y = e.x
     {
         HauntedErrorCheck(@"
 #macro
-    x = macro return test()
+    x = macro return demo()
     y = x
     # a = 1
 #endmacro
@@ -407,7 +407,7 @@ y = e.x
     {
         HauntedErrorCheck(@"
 #macro
-    x = macro return test()
+    x = macro return demo()
     y = x
     # a = [x]
 #endmacro
@@ -420,7 +420,7 @@ y = e.x
     {
         HauntedErrorCheck(@"
 #macro
-    x = macro return test()
+    x = macro return demo()
     y$ = ""a"" + str$(x)
     # [y$] = 1
 #endmacro
@@ -436,7 +436,7 @@ y = e.x
     {
         HauntedErrorCheck(@"
 #macro
-    x = macro return test()
+    x = macro return demo()
     y = x
     # a[x] = 1
 #endmacro
@@ -451,7 +451,7 @@ y = e.x
     {
         HauntedErrorCheck(@"
 #macro
-    x = macro return test()
+    x = macro return demo()
     y = x
     x2 = 3
     if y
@@ -471,7 +471,7 @@ y = e.x
     {
         HauntedErrorCheck(@"
 #macro
-    x = macro return test()
+    x = macro return demo()
     y = x
     x2 = 3
     if x2
@@ -491,7 +491,7 @@ y = e.x
     {
         HauntedErrorCheck(@"
 #macro
-    x = macro return test()
+    x = macro return demo()
     y = x
     if y 
         # a = 1

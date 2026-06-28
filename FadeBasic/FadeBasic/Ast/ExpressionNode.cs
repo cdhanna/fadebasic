@@ -19,6 +19,7 @@ namespace FadeBasic.Ast
     public interface ICanHaveErrors
     {
         List<ParseError> Errors { get; }
+        bool HasErrors { get; }
     }
 
     public enum UnaryOperationType
@@ -174,10 +175,9 @@ namespace FadeBasic.Ast
             return $"xcall {command.name}{argString}";
         }
 
-        public override IEnumerable<IAstVisitable> IterateChildNodes()
+        protected override void VisitChildren(Action<IAstVisitable> onVisit, Action<IAstVisitable> onExit)
         {
-            foreach (var arg in args) yield return arg;
-
+            foreach (var arg in args) arg?.Visit(onVisit, onExit);
         }
     }
 
@@ -197,9 +197,9 @@ namespace FadeBasic.Ast
             return $"{OperationUtil.ToString(operationType)} {rhs}";
         }
 
-        public override IEnumerable<IAstVisitable> IterateChildNodes()
+        protected override void VisitChildren(Action<IAstVisitable> onVisit, Action<IAstVisitable> onExit)
         {
-            yield return rhs;
+            rhs?.Visit(onVisit, onExit);
         }
 
     }
@@ -226,10 +226,10 @@ namespace FadeBasic.Ast
             return $"{OperationUtil.ToString(operationType)} {lhs},{rhs}";
         }
 
-        public override IEnumerable<IAstVisitable> IterateChildNodes()
+        protected override void VisitChildren(Action<IAstVisitable> onVisit, Action<IAstVisitable> onExit)
         {
-            yield return lhs;
-            yield return rhs;
+            lhs?.Visit(onVisit, onExit);
+            rhs?.Visit(onVisit, onExit);
         }
 
     }
@@ -250,9 +250,9 @@ namespace FadeBasic.Ast
             return $"derefExpr {expression}";
         }
 
-        public override IEnumerable<IAstVisitable> IterateChildNodes()
+        protected override void VisitChildren(Action<IAstVisitable> onVisit, Action<IAstVisitable> onExit)
         {
-            yield return expression;
+            expression?.Visit(onVisit, onExit);
         }
     }
     
@@ -272,9 +272,9 @@ namespace FadeBasic.Ast
             return $"addr {variableNode}";
         }
 
-        public override IEnumerable<IAstVisitable> IterateChildNodes()
+        protected override void VisitChildren(Action<IAstVisitable> onVisit, Action<IAstVisitable> onExit)
         {
-            yield return variableNode;
+            variableNode?.Visit(onVisit, onExit);
         }
     }
 
@@ -285,10 +285,7 @@ namespace FadeBasic.Ast
             return "default";
         }
 
-        public override IEnumerable<IAstVisitable> IterateChildNodes()
-        {
-            yield break;
-        }
+        protected override void VisitChildren(Action<IAstVisitable> onVisit, Action<IAstVisitable> onExit) { }
     }
 
     public class LiteralIntExpression : AstNode, ILiteralNode
@@ -336,10 +333,7 @@ namespace FadeBasic.Ast
             return value.ToString();
         }
 
-        public override IEnumerable<IAstVisitable> IterateChildNodes()
-        {
-            yield break;
-        }
+        protected override void VisitChildren(Action<IAstVisitable> onVisit, Action<IAstVisitable> onExit) { }
 
     }
 
@@ -361,10 +355,7 @@ namespace FadeBasic.Ast
             return startToken.caseInsensitiveRaw;
         }
 
-        public override IEnumerable<IAstVisitable> IterateChildNodes()
-        {
-            yield break;
-        }
+        protected override void VisitChildren(Action<IAstVisitable> onVisit, Action<IAstVisitable> onExit) { }
     }
 
     public class LiteralStringExpression : AstNode, ILiteralNode
@@ -386,9 +377,140 @@ namespace FadeBasic.Ast
             return startToken.raw;
         }
 
-        public override IEnumerable<IAstVisitable> IterateChildNodes()
+        protected override void VisitChildren(Action<IAstVisitable> onVisit, Action<IAstVisitable> onExit) { }
+    }
+
+    /// <summary>
+    /// `len(<expr>)` — integer expression returning the element count of
+    /// an array or the character count of a string. The inner expression
+    /// must be array- or string-typed; the visitor enforces that. Element
+    /// size is determined at compile time and emitted as an inline byte
+    /// after the LENGTH opcode.
+    /// </summary>
+    public class LenExpression : AstNode, IExpressionNode
+    {
+        public IExpressionNode inner;
+
+        /// <summary>
+        /// Optional dimension selector: `len(arr, k)` returns the size of the
+        /// k-th dimension, zero-indexed like array indexing (`len(arr, 0)` is
+        /// the first dimension). Only legal when <see cref="inner"/> is an
+        /// array; the visitor enforces that. May be a runtime expression — an
+        /// out-of-range value is a fatal VM error (INVALID_ADDRESS), like an
+        /// out-of-bounds array index.
+        /// </summary>
+        public IExpressionNode dimension;
+
+        public LenExpression(Token startToken, Token endToken, IExpressionNode inner) : base(startToken, endToken)
         {
-            yield break;
+            this.inner = inner;
+        }
+
+        protected override string GetString()
+        {
+            return dimension == null ? $"len {inner}" : $"len {inner} {dimension}";
+        }
+
+        protected override void VisitChildren(Action<IAstVisitable> onVisit, Action<IAstVisitable> onExit)
+        {
+            inner?.Visit(onVisit, onExit);
+            dimension?.Visit(onVisit, onExit);
         }
     }
+
+    /// <summary>
+    /// `dims(arr)` — the highest valid dimension index of an array (rank - 1),
+    /// as an int, so `for d = 0 to dims(arr)` visits every dimension via the
+    /// zero-indexed `len(arr, d)`. The rank is compile-time knowledge, so this
+    /// constant-folds. Only arrays are legal — the visitor enforces that.
+    /// </summary>
+    public class DimsExpression : AstNode, IExpressionNode
+    {
+        public IExpressionNode inner;
+
+        public DimsExpression(Token startToken, Token endToken, IExpressionNode inner) : base(startToken, endToken)
+        {
+            this.inner = inner;
+        }
+
+        protected override string GetString()
+        {
+            return $"dims {inner}";
+        }
+
+        protected override void VisitChildren(Action<IAstVisitable> onVisit, Action<IAstVisitable> onExit)
+        {
+            inner?.Visit(onVisit, onExit);
+        }
+    }
+
+    /// <summary>
+    /// `bytes(x)` — the memory size of a value in bytes, as an int.
+    /// Accepts a variable of any type, a type name, or any value-producing
+    /// expression:
+    ///  - struct variable / type name / scalar variable → compile-time constant
+    ///  - array or string variable → runtime allocation size
+    ///  - other expressions (e.g. `bytes(someCall())`) → the expression is
+    ///    evaluated (side effects run), its value discarded, and the size of
+    ///    its parsed type is the result; string-valued expressions report
+    ///    their runtime allocation size.
+    /// When the argument resolves to a type name rather than a variable, the
+    /// visitor records it in <see cref="resolvedTypeName"/> and the inner
+    /// VariableRefNode is not treated as a variable reference.
+    /// </summary>
+    public class BytesExpression : AstNode, IExpressionNode
+    {
+        public IExpressionNode inner;
+
+        /// <summary>
+        /// Set by the scope visitor when <see cref="inner"/> is an identifier
+        /// that names a declared type instead of a variable. Variables shadow
+        /// type names.
+        /// </summary>
+        public string resolvedTypeName;
+
+        public BytesExpression(Token startToken, Token endToken, IExpressionNode inner) : base(startToken, endToken)
+        {
+            this.inner = inner;
+        }
+
+        protected override string GetString()
+        {
+            return $"bytes {inner}";
+        }
+
+        protected override void VisitChildren(Action<IAstVisitable> onVisit, Action<IAstVisitable> onExit)
+        {
+            inner?.Visit(onVisit, onExit);
+        }
+    }
+
+    /// <summary>
+    /// `call count <command>` — integer expression returning the number of
+    /// times the host command was invoked during the current VM execution.
+    /// Counts every CALL_HOST (whether mocked or not) so the user can write
+    /// `assert call count save_file = 1` without having to install a mock
+    /// first. Legal inside a test block.
+    /// </summary>
+    public class CallCountExpression : AstNode, IExpressionNode
+    {
+        // Full command name, lowercased (matches the lexer's
+        // CommandNameTree-normalized form, like MockStatement.commandName).
+        public string commandName;
+        public Token commandNameToken;
+
+        public CallCountExpression(Token startToken, Token endToken, Token nameToken) : base(startToken, endToken)
+        {
+            commandNameToken = nameToken;
+            commandName = nameToken?.caseInsensitiveRaw;
+        }
+
+        protected override string GetString()
+        {
+            return $"call count {commandName}";
+        }
+
+        protected override void VisitChildren(Action<IAstVisitable> onVisit, Action<IAstVisitable> onExit) { }
+    }
+
 }

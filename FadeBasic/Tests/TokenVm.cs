@@ -439,7 +439,7 @@ y$ = ""world"" + x$
     {
         Setup(src, out _, out var prog);
         var vm = new VirtualMachine(prog);
-        vm.Execute().MoveNext();
+        vm.Execute3();
         Assert.That(vm.dataRegisters[0], Is.EqualTo(expected));
         Assert.That(vm.typeRegisters[0], Is.EqualTo(TypeCodes.INT));
     }
@@ -2340,15 +2340,16 @@ a = x(1)
 
 ";
         Setup(src, out _, out var prog);
-        
+
         var vm = new VirtualMachine(prog);
+        vm.sweepInterval = 1; // cursor math below assumes freed blocks become reusable immediately
         vm.Execute2();
-        
-        // the first data-register is the loop variable, n 
+
+        // the first data-register is the loop variable, n
         // Assert.That(vm.dataRegisters[1], Is.EqualTo(0));
         // Assert.That(vm.typeRegisters[1], Is.EqualTo(TypeCodes.INT));
-        
-        
+
+
         Assert.That(vm.heap.Cursor, Is.EqualTo((2*(10*4)).ToPtr())); //10 ints, which have a size of 4.. And the second one, because of the re-assignment
          
 //        Assert.Fail("It shouldn't be possible to clear an array, because the pointer tracking is going to get confused. ");
@@ -2782,7 +2783,7 @@ next
     {
         var src = @"
 #macro
-x = macro return test()
+x = macro return demo()
 #endmacro
 n = [x]
 ";
@@ -3643,17 +3644,17 @@ ENDTYPE
 albert AS chicken
 albert.e.color = 3
 albert.n = 4
-test = albert.e.color * albert.n
+result = albert.e.color * albert.n
 ";
         Setup(src, out var compiler, out var prog);
         var vm = new VirtualMachine(prog);
         vm.hostMethods = compiler.methodTable;
         vm.Execute2();
-        
-        
+
+
         Assert.That(vm.heap.Cursor, Is.EqualTo(8.ToPtr()));
         Assert.That(vm.typeRegisters[0], Is.EqualTo(TypeCodes.STRUCT));
-        
+
         Assert.That(vm.typeRegisters[1], Is.EqualTo(TypeCodes.INT));
         Assert.That(vm.dataRegisters[1], Is.EqualTo(12));
     }
@@ -3870,7 +3871,7 @@ y = x(2).derp * x(1).color
     {
         var x = new TestCommands();
         
-        var src = "callTest";
+        var src = "callDemo";
         Setup(src, out var compiler, out var prog);
         var vm = new VirtualMachine(prog);
         vm.hostMethods = compiler.methodTable;

@@ -1,0 +1,30 @@
+{
+  "name": "ghostbot",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "start": "tauri dev",
+    "dev": "echo 'Use npm start for the desktop app (npm run dev:web is Vite only — no model download)' && exit 1",
+    "dev:web": "vite",
+    "build": "tsc && vite build",
+    "test": "npm run test:icons && vitest run && npm run test:rust",
+    "test:icons": "node scripts/validate-icons.mjs",
+    "test:rust": "cargo test --manifest-path src-tauri/Cargo.toml",
+    "tauri": "tauri",
+    "tauri:dev": "tauri dev",
+    "tauri:build": "tauri build"
+  },
+  "dependencies": {
+    "@tauri-apps/api": "^2.0.0",
+    "@tauri-apps/plugin-shell": "^2.0.0",
+    "@vscode/codicons": "^0.0.45",
+    "trystero": "^0.20.0"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "^2.0.0",
+    "typescript": "^5.8.3",
+    "vite": "^6.3.5",
+    "vitest": "^4.1.7"
+  }
+}

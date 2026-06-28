@@ -1,0 +1,247 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Sharing — sign-in + adapter smoke test</title>
+<style>
+  :root { color-scheme: dark light; font-family: ui-sans-serif, system-ui, sans-serif; }
+  body { max-width: 900px; margin: 24px auto; padding: 0 16px; line-height: 1.4; color: #ddd; background: #181818; }
+  h1 { font-size: 18px; margin: 0 0 4px; }
+  fieldset { border: 1px solid #444; border-radius: 6px; padding: 10px 12px; margin: 0 0 10px; }
+  legend { padding: 0 6px; opacity: .8; font-size: 12px; }
+  label { display: inline-block; font-size: 12px; opacity: .8; }
+  input[type=text] { width: 100%; box-sizing: border-box; padding: 5px 7px; font: inherit; font-family: ui-monospace, monospace; font-size: 12px; }
+  button { padding: 5px 10px; margin: 2px 4px 2px 0; font: inherit; font-size: 13px; cursor: pointer; }
+  button:disabled { opacity: .4; cursor: not-allowed; }
+  .status { font-family: ui-monospace, monospace; font-size: 12px; opacity: .8; }
+  .ok { color: #6f6; }
+  .err { color: #f88; }
+  .dim { opacity: .55; }
+  #log { background: #0d0d0d; color: #ddd; padding: 10px 12px; border-radius: 6px;
+         font-family: ui-monospace, monospace; font-size: 12px; white-space: pre-wrap;
+         max-height: 320px; overflow: auto; }
+  #me { padding: 8px 12px; border-radius: 6px; font-family: ui-monospace, monospace; font-size: 12px; background: #222; display: inline-block; }
+  #me.ok { background: #1d3; color: #fff; }
+</style>
+</head>
+<body>
+
+<h1>Sharing — sign-in + adapter smoke test</h1>
+<p class="status">PAT-based sign-in (the only browser-friendly GitHub auth — device flow and web flow are both CORS-blocked on github.com/login/*) plus an end-to-end adapter smoke test. Run via Vite dev server: <code>npm run dev</code>, then open <code>http://localhost:5311/scripts/test-sharing-signin.html</code>.</p>
+
+<fieldset>
+  <legend>1. Auth</legend>
+  <div id="me">not signed in</div>
+  <div style="margin-top: 8px;">
+    <button id="signIn">Sign in</button>
+    <button id="validate">Validate stored token</button>
+    <button id="signOut">Sign out</button>
+  </div>
+</fieldset>
+
+<fieldset>
+  <legend>2. End-to-end adapter smoke test (creates a throwaway repo)</legend>
+  <label>Repo name</label>
+  <input type="text" id="repoName" value="">
+  <div style="margin-top: 8px;">
+    <button id="runSmoke">Run smoke test</button>
+    <button id="cleanup">Delete test repo</button>
+  </div>
+</fieldset>
+
+<fieldset>
+  <legend>3. Log</legend>
+  <button id="clearLog">Clear</button>
+  <div id="log"></div>
+</fieldset>
+
+<script type="module">
+import { openSignInDialog } from '/src/sharing/auth-ui.ts';
+import { validateToken, GitHubAdapter, Repo, MemoryWorkingTree, SessionTokenStore } from '/src/sharing/index.ts';
+
+// Compat shim: this scaffold predates the SessionTokenStore refactor whose
+// .save() takes a StoredTokenSet ({accessToken, ...}) instead of a raw PAT
+// string. Wrap it back to the old "save/load a string" shape so the rest of
+// this file doesn't need touching.
+class LocalStorageTokenStore {
+  #inner = new SessionTokenStore();
+  load() { return this.#inner.load()?.accessToken ?? null; }
+  save(token) { this.#inner.save({ accessToken: token }); }
+  clear() { this.#inner.clear(); }
+}
+
+const $ = (id) => document.getElementById(id);
+const logEl = $('log');
+const meEl = $('me');
+
+function log(msg, cls = '') {
+  const ts = new Date().toISOString().slice(11, 23);
+  const line = document.createElement('div');
+  if (cls) line.className = cls;
+  line.textContent = `[${ts}] ${msg}`;
+  logEl.appendChild(line);
+  logEl.scrollTop = logEl.scrollHeight;
+}
+
+function setMe(text, cls = '') {
+  meEl.textContent = text;
+  meEl.className = cls;
+}
+
+// ─── config persistence ────────────────────────────────────────────────────
+(function initConfig() {
+  if (!$('repoName').value) {
+    const today = new Date().toISOString().slice(0,10).replace(/-/g,'');
+    $('repoName').value = `fade-sharing-smoke-${today}-${Math.random().toString(36).slice(2,7)}`;
+  }
+})();
+
+// ─── token store ───────────────────────────────────────────────────────────
+const tokenStore = new LocalStorageTokenStore();
+
+// On load, if we have a stored token, validate and reflect the signed-in state.
+(async function tryReuseStoredToken() {
+  const t = tokenStore.load();
+  if (!t) return;
+  try {
+    const user = await validateToken(t);
+    setMe(`signed in as @${user.login} (scopes: ${user.scopes.join(', ') || '(fine-grained)'})`, 'ok');
+    log(`reused stored token for @${user.login}`, 'dim');
+  } catch (e) {
+    log(`stored token invalid — clearing: ${e.message}`, 'err');
+    tokenStore.clear();
+  }
+})();
+
+// ─── auth actions ──────────────────────────────────────────────────────────
+$('signIn').onclick = async () => {
+  try {
+    log('opening PAT entry dialog…');
+    const token = await openSignInDialog();
+    // openSignInDialog already validated the token before resolving, so we
+    // can save it directly. Re-call validateToken just to surface the
+    // resolved user info in the log.
+    tokenStore.save(token);
+    const user = await validateToken(token);
+    setMe(`signed in as @${user.login} (scopes: ${user.scopes.join(', ') || '(fine-grained)'})`, 'ok');
+    log(`hello @${user.login} — token saved to localStorage`, 'ok');
+  } catch (e) {
+    if (e?.name === 'AbortError') { log('sign-in canceled', 'dim'); return; }
+    log(`sign-in failed: ${e.message}`, 'err');
+  }
+};
+
+$('validate').onclick = async () => {
+  const t = tokenStore.load();
+  if (!t) { log('no stored token', 'err'); return; }
+  try {
+    const user = await validateToken(t);
+    log(`token valid for @${user.login} (scopes: ${user.scopes.join(', ') || '(fine-grained)'})`, 'ok');
+    setMe(`signed in as @${user.login}`, 'ok');
+  } catch (e) {
+    log(`token invalid: ${e.message}`, 'err');
+    tokenStore.clear();
+    setMe('not signed in');
+  }
+};
+
+$('signOut').onclick = () => {
+  tokenStore.clear();
+  setMe('not signed in');
+  log('signed out — token cleared from localStorage', 'dim');
+};
+
+// ─── adapter smoke test ────────────────────────────────────────────────────
+let smokeState = { adapter: null, owner: null, repoName: null };
+
+$('runSmoke').onclick = async () => {
+  const token = tokenStore.load();
+  if (!token) { log('sign in first', 'err'); return; }
+  const repoName = $('repoName').value.trim();
+  if (!repoName) { log('repo name missing', 'err'); return; }
+
+  try {
+    log(`creating throwaway repo ${repoName}…`);
+    const adapter = await GitHubAdapter.createRepo({ name: repoName, token });
+    smokeState.adapter = adapter;
+    smokeState.repoName = repoName;
+    // owner comes back via the repo create — we can read it indirectly by checking branch metadata
+    const meta = await adapter.headMetadata();
+    log(`  repo created; default branch commit = ${meta?.revisionId?.slice(0,8) ?? '(empty)'}`, 'ok');
+
+    log('building a Repo engine over the adapter…');
+    const repo = new Repo(adapter);
+
+    log('writing a working-tree file → committing → reading HEAD back');
+    const wt = new MemoryWorkingTree();
+    await wt.write('fade.json', new TextEncoder().encode('{"project":"smoke"}\n'));
+    await wt.write('hello.fbasic', new TextEncoder().encode('print "hello from path B"\n'));
+    const commit = await repo.commit(wt, { author: 'test', message: 'smoke: initial commit' });
+    log(`  committed ${commit.id.slice(0,8)} with ${Object.keys(commit.tree).length} tree entries`, 'ok');
+
+    const head = await adapter.readHead();
+    log(`  HEAD now points at ${head.commit.slice(0,8)} (file sha ${head.revisionId.slice(0,8)})`, 'ok');
+    if (head.commit !== commit.id) throw new Error('HEAD does not match the commit we just wrote');
+
+    log('reading the manifest back via the adapter…');
+    const manifestJson = await adapter.getCommit(commit.id);
+    log(`  manifest length = ${manifestJson.length} bytes`, 'ok');
+
+    log('reading one of the blobs back via the adapter…');
+    const helloHash = commit.tree['hello.fbasic'].hash;
+    const helloBytes = await adapter.getObject(helloHash);
+    const helloText = new TextDecoder().decode(helloBytes);
+    if (!helloText.startsWith('print "hello from path B"')) throw new Error('round-trip mismatch');
+    log(`  blob ${helloHash.slice(0,8)} round-tripped (${helloBytes.length} bytes) ✓`, 'ok');
+
+    // Suspected eventual-consistency window between the Contents API (which
+    // we just wrote through) and the Git Trees API (which listObjectHashes
+    // uses). Retry a few times with a short delay so we can tell consistency
+    // lag apart from a real bug.
+    log('listing all blobs via the Trees API (with retry for git-data consistency)…');
+    let allHashes = [];
+    const expected = Object.keys(commit.tree).length;
+    for (let attempt = 1; attempt <= 5; attempt++) {
+      allHashes = await adapter.listObjectHashes();
+      log(`  attempt ${attempt}: ${allHashes.length} blob(s) (expected ${expected})`, allHashes.length === expected ? 'ok' : 'dim');
+      if (allHashes.length === expected) break;
+      if (attempt < 5) await new Promise(r => setTimeout(r, 1500));
+    }
+    if (allHashes.length !== expected) {
+      log(`  WARNING: listObjectHashes never converged to ${expected} blobs after 5 retries`, 'err');
+    }
+
+    log('SMOKE TEST PASSED. Path B is real.', 'ok');
+    log('Click "Delete test repo" to clean up, or visit the repo on GitHub to inspect.');
+  } catch (e) {
+    log(`smoke test failed: ${e.message}`, 'err');
+    console.error(e);
+  }
+};
+
+$('cleanup').onclick = async () => {
+  if (!smokeState.repoName) { log('no smoke-test repo to clean up', 'dim'); return; }
+  const token = tokenStore.load();
+  if (!token) { log('sign in first', 'err'); return; }
+  try {
+    const user = await validateToken(token);
+    const r = await fetch(`https://api.github.com/repos/${user.login}/${smokeState.repoName}`, {
+      method: 'DELETE',
+      headers: { Authorization: `Bearer ${token}`, Accept: 'application/vnd.github+json' },
+    });
+    if (!r.ok && r.status !== 404) throw new Error(`${r.status} ${await r.text()}`);
+    log(`deleted ${user.login}/${smokeState.repoName}`, 'ok');
+    smokeState = { adapter: null, owner: null, repoName: null };
+  } catch (e) {
+    log(`cleanup failed: ${e.message} — delete it manually on github.com`, 'err');
+  }
+};
+
+$('clearLog').onclick = () => { logEl.textContent = ''; };
+
+window.addEventListener('error', (e) => log(`window error: ${e.message}`, 'err'));
+window.addEventListener('unhandledrejection', (e) => log(`unhandled rejection: ${e.reason?.message || e.reason}`, 'err'));
+</script>
+
+</body>
+</html>

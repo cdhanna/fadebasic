@@ -5,6 +5,21 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.0] - 2026-06-28
+### Added
+- `TEST` keyword and related mechanisms
+- `LEN` keyword for checking string and dimension array length
+- `DIMS` keyword for checking dimension count of array
+- `BYTES` keyword for checking byte size of things
+
+### Changed
+- Commands that accept a typed `isParams` arg can be fulfilled with a fade array
+- Internal VM allocates less memory
+- Garbage collection migrated to mark-and-sweep instead of pure ref counting
+
+### Fixed
+- boolean type inference works through binary operators
+
 ## [0.0.64] - 2026-04-28
 ### Added
 - Rider IDE Plugin Support

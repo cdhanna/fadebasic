@@ -15,6 +15,9 @@ project.lock.json
 *.userosscache
 *.sln.docstates
 
+# install.sh WASM staging output
+FadeBasic/FadeBasic.Export.Web/staging/
+
 # Build results (scoped to .NET bin/obj so they don't match source folders named debug/release)
 **/bin/[Dd]ebug/
 **/bin/[Dd]ebugPublic/
@@ -27,6 +30,8 @@ project.lock.json
 x64/
 x86/
 build/
+!FadeBasic/FadeBasic.Export.Web/build/
+!FadeBasic/FadeBasic.Export.Web/build/**
 bld/
 [Bb]in/
 [Oo]bj/
@@ -41,3 +46,8 @@ msbuild.wrn
 # Plugin signing material (JetBrains Marketplace)
 *.pem
 *.crt
+
+# BenchmarkDotNet output
+**/BenchmarkDotNet.Artifacts/
+
+node_modules/

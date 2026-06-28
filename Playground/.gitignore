@@ -1,0 +1,6 @@
+node_modules
+dist
+public/runtime
+public/monogame-runtime
+*.log
+.vite

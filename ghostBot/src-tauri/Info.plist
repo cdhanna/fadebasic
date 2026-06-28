@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- Merged into the bundle by Tauri (macOS). WebRTC peer discovery sends
+     mDNS / direct UDP to local-network addresses; without this usage
+     description macOS 15+ silently drops that traffic and ICE fails when
+     the Playground peer is on the same machine or LAN.
+     NOTE: in `tauri dev` the permission is attributed to the process that
+     launched the app (your terminal/IDE) — grant it there via
+     System Settings → Privacy & Security → Local Network. -->
+<plist version="1.0">
+<dict>
+    <key>NSLocalNetworkUsageDescription</key>
+    <string>GhostBot connects directly to the Fade Playground in your browser over WebRTC, which may use local-network addresses when both run on the same machine or LAN.</string>
+</dict>
+</plist>

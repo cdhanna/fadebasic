@@ -20,14 +20,16 @@ namespace FadeBasic.Ast.Visitors
         
         public static void AddHaunting(this ProgramNode program, ParseOptions options)
         {
-            
             CheckStatements(program.statements);
+            // TODO: do we need to check function statements? 
+            foreach (var test in program.tests)
+            {
+                test.testProgram.AddHaunting(options);
+            }
         }
 
         public static void CheckStatements(IList<IStatementNode> statements)
         {
-            
-            
             for (var i = 0; i < statements.Count; i++)
             {
                 var statement = statements[i];

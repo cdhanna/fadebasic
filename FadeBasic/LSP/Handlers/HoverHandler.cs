@@ -1,43 +1,62 @@
-using System;
-using System.Collections.Generic;
-using System.Linq;
-using System.Text;
+// Hover — thin adapter over FadeBasic.LSP.Core.Handlers.HoverHandler.
+//
+// ─── Behavioral audit (pre-refactor native vs Core) ─────────────────────
+//
+// Pre-refactor native:
+//   * Walked the AST for the smallest matching node at the cursor.
+//   * For a CommandStatement/CommandExpression, generated rich Markdown from
+//     ProjectDocs (groups → commands → methodDocs).
+//   * For a function call (FunctionCall flag on ExpressionStatement or
+//     ArrayIndexReference), looked up `scope.functionTable` and returned
+//     `function.Trivia` verbatim.
+//   * For nodes whose DeclaredFromSymbol.source implements IHasTriviaNode,
+//     returned the source's Trivia verbatim.
+//   * Did NOT surface diagnostics on hover.
+//   * Did NOT surface variable / parameter / label info beyond raw trivia.
+//
+// Core HoverHandler now provides:
+//   * Error/lex-error markdown when a diagnostic encloses the cursor.
+//   * Rich command markdown via ICommandDocsProvider (same ProjectDocs
+//     pipeline behind a small interface). The native LSP installs a
+//     `ProjectDocsCommandDocsProvider` here so the exact-same markdown
+//     pipeline is used.
+//   * Function-call hover via DeclaredFromSymbol.source on the AST.
+//   * Symbol info for VariableRef / Declaration / Parameter / Label,
+//     formatted as a fenced `fade` code block + trivia.
+//
+// Behavioral diffs vs old native:
+//   * Hovering over a token that maps to a diagnostic now surfaces the
+//     diagnostic instead of nothing (better).
+//   * Hovering over a variable/parameter/label now shows a signature-shaped
+//     header, not just trivia (more informative).
+//   * The output range is derived from the matched token, not from
+//     `unit.sourceMap.GetOriginalRange` on the AST node. For single-file
+//     projects this is identical; for multi-file ones the new range may
+//     be tighter (token-level instead of node-level).
+//   * The old function-call path returned trivia raw (no header); Core now
+//     prefixes a `function name(args)` code-block header before trivia.
+
 using System.Threading;
 using System.Threading.Tasks;
 using FadeBasic;
-using FadeBasic.ApplicationSupport.Project;
-using FadeBasic.Ast;
-using FadeBasic.Json;
-using FadeBasic.Virtual;
 using LSP.Services;
-using Microsoft.Extensions.Logging;
-using OmniSharp.Extensions.LanguageServer.Protocol;
 using OmniSharp.Extensions.LanguageServer.Protocol.Client.Capabilities;
 using OmniSharp.Extensions.LanguageServer.Protocol.Document;
 using OmniSharp.Extensions.LanguageServer.Protocol.Models;
+using CoreHoverHandler = FadeBasic.LSP.Core.Handlers.HoverHandler;
 using Range = OmniSharp.Extensions.LanguageServer.Protocol.Models.Range;
 
 namespace LSP.Handlers;
 
 public class HoverHandler : HoverHandlerBase
 {
-    private readonly ILogger<HoverHandler> _logger;
-    private readonly DocumentService _docs;
     private readonly CompilerService _compiler;
-    private readonly ProjectService _project;
 
-    public HoverHandler(
-        ILogger<HoverHandler> logger,
-        DocumentService docs,
-        CompilerService compiler,
-        ProjectService project)
+    public HoverHandler(CompilerService compiler)
     {
-        _logger = logger;
-        _docs = docs;
         _compiler = compiler;
-        _project = project;
     }
-    
+
     protected override HoverRegistrationOptions CreateRegistrationOptions(HoverCapability capability, ClientCapabilities clientCapabilities)
     {
         return new HoverRegistrationOptions
@@ -46,239 +65,45 @@ public class HoverHandler : HoverHandlerBase
         };
     }
 
-
-    StringBuilder GenerateMarkdown(CommandInfo command, DocumentUri uri)
+    public override Task<Hover?> Handle(HoverParams request, CancellationToken cancellationToken)
     {
-        var sb = new StringBuilder();
-        if (!_compiler.TryGetDocsForSrc(uri, out var docs, out var docHost))
+        if (!_compiler.TryGetProjectsFromSource(request.TextDocument.Uri, out var units) || units.Count == 0)
+            return Task.FromResult(default(Hover?));
+
+        var unit = units[0];
+
+        if (!unit.sourceMap.TryGetMappedLocation(
+                request.TextDocument.Uri.GetFileSystemPath(),
+                request.Position.Line,
+                request.Position.Character,
+                out _, out var mappedLine, out var mappedChar))
         {
-            sb.Append("no docs loaded");
-            return sb;
+            return Task.FromResult(default(Hover?));
         }
 
-        CommandDocs foundCommand = null;
-        CommandGroupDocs foundGroup = null;
-        foreach (var docGroup in docs.groups)
-        {
-            if (foundCommand != null)
-            {
-                break;
-            }
-            
-            foreach (var docCommand in docGroup.commands)
-            {
-                if (command.name == docCommand.commandName)
-                {
-                    foundGroup = docGroup;
-                    foundCommand = docCommand;
-                    break;
-                }
-            }
-        }
-        
-        // var foundCommand = docs.groups.SelectMany(x => x.commands)
-            // .FirstOrDefault(x => x.commandName == command.name);
+        // Install the project's docs so Core's command hover path renders
+        // the same Markdown the pre-refactor native handler did.
+        _compiler.TryGetDocsForSrc(request.TextDocument.Uri, out var projectDocs, out _);
 
-        if (foundCommand == null)
-        {
-            sb.Append("no docs available"); // no token found
-            return sb;
-        }
+        var doc = CoreAdapter.ToDocument(unit, request.TextDocument.Uri.ToString(), projectDocs);
+        var hover = CoreHoverHandler.Compute(doc, mappedLine, mappedChar);
+        if (hover == null) return Task.FromResult(default(Hover?));
 
-        sb.AppendLine($"[Full Documentation]({docHost.GetUrlForCommand(foundGroup.title, foundCommand.commandName)})");
+        // Map the range back to the originating source file so multi-file
+        // projects highlight the right region.
+        var startTok = new Token { lineNumber = hover.Range.Start.Line, charNumber = hover.Range.Start.Character };
+        var origin = unit.sourceMap.GetOriginalLocation(startTok);
+        var len = System.Math.Max(1, hover.Range.End.Character - hover.Range.Start.Character);
+        var range = new Range(origin.startLine, origin.startChar, origin.startLine, origin.startChar + len);
 
-        sb.AppendLine($"### {foundCommand.commandName}");
-        if (!string.IsNullOrEmpty(foundCommand.methodDocs.summary))
-        {
-            sb.AppendLine(foundCommand.methodDocs.summary.Trim());
-        }
-        sb.Append(Environment.NewLine);
-        
-        if (command.args.Length > 0)
-        {
-            sb.AppendLine($"#### Parameters");
-            if (foundCommand.methodDocs.parameters.Count > command.args.Length)
-            {
-                sb.Append("(invalid number of parameter docs)");
-                return sb;
-            }
-            for (var i = 0; i < command.args.Length; i++)
-            {
-                var arg = command.args[i];
-                var parameter = i < foundCommand.methodDocs.parameters.Count ? foundCommand.methodDocs.parameters[i] : default;
-                sb.Append("##### ");
-                if (VmUtil.TryGetVariableTypeDisplay(arg.typeCode, out var type))
-                {
-                    sb.Append($"`{type}` ");
-                }
-                else
-                {
-                    sb.Append("_unknown_ ");
-                }
-                
-                if (arg.isOptional)
-                {
-                    sb.Append("_(optional)_ ");
-                }
-                if (arg.isRef)
-                {
-                    sb.Append("_(ref)_ ");
-                }
-
-                if (parameter != default)
-                {
-                    sb.Append(parameter.name);
-                    sb.Append(Environment.NewLine);
-                    sb.AppendLine(parameter.body.Trim());
-                }
-                else
-                {
-                    sb.AppendLine("_(doc missing)_");
-                }
-            }
-        }
-        
-        if (command.returnType != TypeCodes.VOID)
-        {
-            sb.Append(Environment.NewLine);
-            sb.Append("#### Returns");
-            if (VmUtil.TryGetVariableTypeDisplay(command.returnType, out var type))
-            {
-                sb.Append($" `{type}`");
-            }
-
-            if (!string.IsNullOrEmpty(foundCommand.methodDocs.returns))
-            {
-                sb.Append(Environment.NewLine);
-                sb.AppendLine(foundCommand.methodDocs.returns.Trim());
-            }
-        }
-
-        if (!string.IsNullOrEmpty(foundCommand.methodDocs.remarks))
-        {
-            sb.Append(Environment.NewLine);
-            sb.AppendLine("#### Remarks");
-            sb.AppendLine(foundCommand.methodDocs.remarks.Trim());
-        }
-
-        if (foundCommand.methodDocs.examples.Count > 0)
-        {
-            sb.Append(Environment.NewLine);
-            sb.AppendLine("#### Examples");
-            foreach (var example in foundCommand.methodDocs.examples)
-            {
-                sb.AppendLine(example.Trim());
-            }
-        }
-
-        return sb;
-    }
-
-    public override Task<Hover> Handle(HoverParams request, CancellationToken cancellationToken)
-    {
-        if (!_compiler.TryGetProjectsFromSource(request.TextDocument.Uri, out var units))
-        {
-            _logger.LogError($"source document=[{request.TextDocument.Uri}] did not map to any compiled unit");
-            return null;
-        }
-
-        if (units.Count == 0) return Task.FromResult(default(Hover?));
-        
-        var unit = units[0]; // TODO: how should a project be tokenized if it belongs to more than 1 project? 
-
-        /*
-         * given the position, we could find the token,
-         * from the token, we could look up and see
-         */
-        // _logger.LogInformation("looking for def : " + request.Position);
-
-        if (!unit.sourceMap.GetMappedPosition(request.TextDocument.Uri.GetFileSystemPath(), request.Position.Line,
-                request.Position.Character, out var token))
-        {
-            return Task.FromResult(default(Hover?)); // no token found
-        }
-
-        var local = unit.sourceMap.GetOriginalLocation(token);
-        var range = new Range(local.startLine, local.startChar, local.startLine, token.raw.Length);
-
-        var referencedNodes = new List<IAstNode>();
-        // var x = unit.program.scope.functionTable;
-
-        void VisitFunc(IAstVisitable x)
-        {
-            var isMatch = Token.AreLocationsEqual(x.StartToken, token) || Token.AreLocationsEqual(x.EndToken, token);
-            var isInvalidNode = x is ProgramNode;
-            if (isMatch && !isInvalidNode)
-            {
-                referencedNodes.Add(x);
-            }
-        }
-        unit.program?.Visit(VisitFunc);
-        unit.macroProgram?.Visit(VisitFunc);
-
-        // var markdown = $"test [this]({request.TextDocument.Uri.ToString()}#L2%2C4)";
-        var markdown = "";
-        if (referencedNodes.Count == 0)
-        {
-            markdown = "no known node";
-        }
-        
-        else
-        {
-            var smalledReferencedNode = referencedNodes.MinBy(a =>
-                a.EndToken.charNumber + (a.EndToken.raw?.Length ?? 0) - a.StartToken.charNumber);
-
-            var expr = smalledReferencedNode;//referencedNodes[0];
-            var exprRange = unit.sourceMap.GetOriginalRange(new TokenRange
-            {
-                start = expr.StartToken,
-                end = expr.EndToken
-            });
-            range = new Range(exprRange.startLine, exprRange.startChar, exprRange.endLine, exprRange.endChar);
-
-            switch (expr)
-            {
-                case AstNode node when node.DeclaredFromSymbol?.source is IHasTriviaNode triviaSource:
-                    markdown = triviaSource.Trivia;
-                    break;
-                case ExpressionStatement exprStatement when exprStatement.StartToken.flags.HasFlag(TokenFlags.FunctionCall) && exprStatement.expression is ArrayIndexReference exprIndexRef:
-                    if (!unit.program.scope.functionTable.TryGetValue(exprIndexRef.variableName, out var function))
-                    {
-                        markdown = "_function does not exist_";
-                        break;
-                    }
-
-                    markdown = function.Trivia;
-                    break;
-                case ArrayIndexReference indexRef when indexRef.StartToken.flags.HasFlag(TokenFlags.FunctionCall):
-                    if (!unit.program.scope.functionTable.TryGetValue(indexRef.variableName, out function))
-                    {
-                        markdown = "_function does not exist_";
-                        break;
-                    }
-
-                    markdown = function.Trivia;
-                    break;
-                case CommandExpression expression:
-                    markdown = GenerateMarkdown(expression.command, request.TextDocument.Uri).ToString();
-                    // a command that returns something is an expression!
-                    break;
-                case CommandStatement statement:
-                    markdown = GenerateMarkdown(statement.command, request.TextDocument.Uri).ToString();
-                    break;
-            }
-        }
-
-        var hover = new Hover()
+        return Task.FromResult<Hover?>(new Hover
         {
             Range = range,
             Contents = new MarkedStringsOrMarkupContent(new MarkupContent
             {
                 Kind = MarkupKind.Markdown,
-                Value = markdown
-            })
-        };
-        return Task.FromResult(hover);
-
+                Value = hover.Contents ?? string.Empty,
+            }),
+        });
     }
 }

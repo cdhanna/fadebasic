@@ -239,39 +239,40 @@ namespace FadeBasic.ApplicationSupport.Project
             var sources = new List<IMethodSource>();
             var loadContext = new AssemblyLoadContext("metadata", isCollectible: true);
 
-            // TODO: technically there could be multiple lib paths, right? one for each library?
-            // var libPath = Path.GetDirectoryName(libraries[0].absoluteOutputDllPath);
-            // var libPath = AppContext.BaseDirectory;
-            
+            // Probe the consumer's TargetDir (libPath) AND the directory of each
+            // loaded library DLL. A macro command in lib A can call into a sibling
+            // assembly B that A project-references; B sits next to A in A's own bin
+            // (or in the NuGet lib/ folder), but on a clean build it has not yet
+            // been copied into the consumer's TargetDir when this resolver runs.
+            var probeDirs = new List<string> { libPath };
+            foreach (var lib in libraries)
+            {
+                var dir = Path.GetDirectoryName(lib.absoluteOutputDllPath);
+                if (!string.IsNullOrEmpty(dir) && !probeDirs.Contains(dir))
+                    probeDirs.Add(dir);
+            }
+
             loadContext.Resolving += (assemblyContext, assemblyName) =>
             {
                 if (assemblyName.FullName == typeof(IMethodSource).Assembly.GetName().FullName)
                 {
-                    // log("!!! Trying to load common assembly.");
                     return typeof(IMethodSource).Assembly;
                 }
-                
-                
-                // log($"!!! Requested: [{assemblyName.FullName}]");
-                //log($"!!! Compared: [{typeof(IMethodSource).Assembly.GetName().FullName}]");
-                
-                string candidatePath = Path.Combine(
-                    libPath,
-                    assemblyName.Name + ".dll");
 
-                // log($"!!! candidate-path=[{candidatePath}]");
-                
-                if (!File.Exists(candidatePath))
-                    return null;
+                foreach (var dir in probeDirs)
+                {
+                    var candidatePath = Path.Combine(dir, assemblyName.Name + ".dll");
+                    if (!File.Exists(candidatePath))
+                        continue;
 
-                var foundName = AssemblyName.GetAssemblyName(candidatePath);
-                // log($"!!! candidate-name=[{foundName.Name}] vs requested=[{assemblyName.Name}]");
-                
-                if (foundName.Name != assemblyName.Name)
-                    return null;
+                    var foundName = AssemblyName.GetAssemblyName(candidatePath);
+                    if (foundName.Name != assemblyName.Name)
+                        continue;
 
-                // log($"!!! Proxied: [{candidatePath}]");
-                return assemblyContext.LoadIntoMemory(candidatePath);
+                    return assemblyContext.LoadIntoMemory(candidatePath);
+                }
+
+                return null;
             };
             using var _ = loadContext.EnterContextualReflection();
             

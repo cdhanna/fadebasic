@@ -93,6 +93,9 @@ namespace FadeBasic
             [LexemType.KeywordSelect] = LexemFlags.PUSH_INDENT,
             [LexemType.KeywordCase] = LexemFlags.PUSH_INDENT,
             [LexemType.KeywordCaseDefault] = LexemFlags.PUSH_INDENT,
+            [LexemType.KeywordTest] = LexemFlags.PUSH_INDENT,
+            [LexemType.ConstantBegin] = LexemFlags.PUSH_INDENT,
+            [LexemType.ConstantTokenize] = LexemFlags.PUSH_INDENT,
             
             [LexemType.KeywordElse] = LexemFlags.PUSH_AND_POP_INDENT,
             
@@ -105,6 +108,9 @@ namespace FadeBasic
             [LexemType.KeywordUntil] = LexemFlags.POP_INDENT,
             [LexemType.KeywordEndCase] = LexemFlags.POP_INDENT,
             [LexemType.KeywordEndSelect] = LexemFlags.POP_INDENT,
+            [LexemType.KeywordEndTest] = LexemFlags.POP_INDENT,
+            [LexemType.ConstantEnd] = LexemFlags.POP_INDENT,
+            [LexemType.ConstantEndTokenize] = LexemFlags.POP_INDENT,
             // TODO: add other keywords
         };
 
@@ -120,7 +126,7 @@ namespace FadeBasic
                 var clone = new List<Token>();
                 foreach (var t in tokens)
                 {
-                    if (t.lexem.type == LexemType.EndStatement) continue;
+                    if (t.type == LexemType.EndStatement) continue;
                     clone.Add(t);
                 }
 

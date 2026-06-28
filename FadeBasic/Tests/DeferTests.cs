@@ -51,7 +51,7 @@ public class DeferTests
         var src = @"
 ghost:
 a = 1
-function test()
+function demo()
 
     static print ""a""
 
@@ -64,7 +64,7 @@ function test()
         return 
 
     endfunction
-        test()
+        demo()
 ";
         Setup(src, out var compiler, out var prog);
 

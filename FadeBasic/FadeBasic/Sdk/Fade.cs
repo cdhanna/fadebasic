@@ -37,9 +37,9 @@ namespace FadeBasic.Sdk
         
         
         public static bool TryCreateFromProject(
-            string csProjPath, 
-            CommandCollection availableCommands, 
-            out FadeRuntimeContext context, 
+            string csProjPath,
+            CommandCollection availableCommands,
+            out FadeRuntimeContext context,
             out FadeErrors errors)
         {
             context = null;
@@ -91,10 +91,10 @@ namespace FadeBasic.Sdk
             return TryCreateFromString(sourceMap.fullSource, commandCollection, out context, out errors, sourceMap);
 
         }
-        
+
         public static bool TryCreateFromString(
-            string src, 
-            CommandCollection commands, 
+            string src,
+            CommandCollection commands,
             out FadeRuntimeContext context,
             out FadeErrors errors,
             SourceMap map=null)
@@ -159,11 +159,12 @@ namespace FadeBasic.Sdk
         }
     }
 
-    public class FadeRuntimeContext : ILaunchable
+    public partial class FadeRuntimeContext : ITestLaunchable
     {
         byte[] ILaunchable.Bytecode => Machine.program;
         CommandCollection ILaunchable.CommandCollection => CommandCollection;
         DebugData ILaunchable.DebugData => Compiler.DebugData;
+        IReadOnlyList<TestManifestEntry> ITestLaunchable.TestManifest => Compiler.TestManifest;
         
         private DebugSession _session;
         private static Lexer _lexer = new Lexer();
@@ -758,8 +759,8 @@ namespace FadeBasic.Sdk
             return false;
         }
         
-        public static bool TryFromSource(string src, 
-            CommandCollection commands, 
+        public static bool TryFromSource(string src,
+            CommandCollection commands,
             out FadeRuntimeContext context,
             out FadeErrors errors,
             SourceMap map = null)
@@ -802,6 +803,12 @@ namespace FadeBasic.Sdk
                 InternStrings = true
             });
             compiler.Compile(program);
+
+            // Resolve test manifest source locations to per-file paths via the
+            // source map, so multi-`.fbasic` projects surface the right
+            // originating file in IDE Test Explorer (Stage 11H). No-op when
+            // no source map was supplied (single-string SDK callers).
+            FadeBasic.Launch.LaunchUtil.ApplySourceMap(compiler.TestManifest, map);
 
             var vm = new VirtualMachine(compiler.Program);
             vm.hostMethods = compiler.methodTable;

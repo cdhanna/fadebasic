@@ -110,6 +110,24 @@ namespace FadeBasic.Lsp
                 case LexemType.KeywordExit:
                 case LexemType.KeywordDefer:
                 case LexemType.KeywordEndDefer:
+                case LexemType.KeywordTest:
+                case LexemType.KeywordEndTest:
+                case LexemType.KeywordAbstract:
+                case LexemType.KeywordFrom:
+                case LexemType.KeywordRunto:
+                case LexemType.KeywordEndRunto:
+                case LexemType.KeywordAssert:
+                case LexemType.KeywordMock:
+                case LexemType.KeywordEndMock:
+                case LexemType.KeywordMocks:
+                case LexemType.KeywordExitMock:
+                case LexemType.KeywordForbid:
+                case LexemType.KeywordClear:
+                case LexemType.KeywordCallCount:
+                case LexemType.KeywordMaxCycles:
+                case LexemType.KeywordLen:
+                case LexemType.KeywordDims:
+                case LexemType.KeywordBytes:
                     return PortableSemanticTokenType.Keyword;
 
                 case LexemType.KeywordType:
@@ -223,6 +241,26 @@ namespace FadeBasic.Lsp
                 case IfStatement _ when context.LeftToken.type == LexemType.EndStatement || context.LeftToken.type == LexemType.KeywordRem:
                 case ProgramNode _ when context.LeftToken.type == LexemType.EndStatement || context.LeftToken.type == LexemType.KeywordRem:
                     return GetStatementCompletions(context, true);
+
+                // Control-flow condition expressions: `if <cursor>`,
+                // `while <cursor>`, `until <cursor>`, `loop while <cursor>`.
+                // The construct's Group entry survives because its
+                // [startToken, endToken] span covers the whole statement,
+                // but the just-typed identifier inside the condition
+                // doesn't — its single-token span sits strictly BEFORE
+                // the cursor (Visit's EndToken check requires
+                // cursor ≤ EndToken). So Group ends at the outer
+                // construct, leftToken is the partial identifier or the
+                // control keyword itself, and the more-specific
+                // `when EndStatement|KeywordRem` cases above don't match.
+                // Treat this as expression context: surface variables of
+                // ANY type (including structs — fbasic conditions coerce
+                // truthy/falsy), function calls, and non-void commands.
+                case IfStatement _:
+                case WhileStatement _:
+                case RepeatUntilStatement _:
+                case DoLoopStatement _:
+                    return GetExpressionCompletions(context);
             }
 
             return new List<PortableCompletionItem>();
