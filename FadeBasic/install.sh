@@ -71,10 +71,11 @@ done
 if [ -z "$FADE_USE_LOCAL_SOURCE" ]; then
   if [ -z "$FADE_NUGET_DRYRUN" ]; then
     echo "pushing packages to nuget source: ${PACKAGE_SOURCE}"
-    dotnet nuget push "$OUTPUT_FOLDER/*.$BUILD_NUMBER.nupkg" --source "$PACKAGE_SOURCE" $NUGET_KEY_STR
-    if [ "$SKIP_WASM" = false ]; then
-      dotnet nuget push "$OUTPUT_FOLDER/FadeBasic.Export.Web.$SEM_VER.nupkg" --source "$PACKAGE_SOURCE" $NUGET_KEY_STR
-    fi
+    # This glob pushes EVERY nupkg in the output folder, including
+    # FadeBasic.Export.Web.$SEM_VER (it ends in .$BUILD_NUMBER.nupkg) when WASM
+    # was built — so no separate Export.Web push is needed. --skip-duplicate
+    # makes re-running a release idempotent against already-pushed packages.
+    dotnet nuget push "$OUTPUT_FOLDER/*.$BUILD_NUMBER.nupkg" --source "$PACKAGE_SOURCE" $NUGET_KEY_STR --skip-duplicate
   else
     echo "Skipping NuGet push because FADE_NUGET_DRYRUN is set."
   fi
@@ -83,8 +84,5 @@ else
   dotnet nuget list source
   ./setup.sh
   dotnet nuget list source
-  dotnet nuget push "$OUTPUT_FOLDER/*.$BUILD_NUMBER.nupkg" --source "LocalFade"
-  if [ "$SKIP_WASM" = false ]; then
-    dotnet nuget push "$OUTPUT_FOLDER/FadeBasic.Export.Web.$SEM_VER.nupkg" --source "LocalFade"
-  fi
+  dotnet nuget push "$OUTPUT_FOLDER/*.$BUILD_NUMBER.nupkg" --source "LocalFade" --skip-duplicate
 fi
