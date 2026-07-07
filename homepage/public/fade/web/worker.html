@@ -1,0 +1,111 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="utf-8" />
+    <title>Fade Web Runtime (worker mode)</title>
+    <base href="/" />
+    <style>
+        body { font-family: system-ui, sans-serif; max-width: 800px; margin: 2rem auto; padding: 0 1rem; }
+        textarea { width: 100%; height: 8rem; font-family: ui-monospace, monospace; }
+        button { padding: 0.5rem 1rem; margin: 0.5rem 0; }
+        pre { background: #f4f4f4; padding: 1rem; white-space: pre-wrap; }
+        #status { color: #888; font-size: 0.9rem; }
+        nav { margin-bottom: 1rem; }
+        .badge { display: inline-block; background: #e0f0ff; color: #06408a; padding: 0.1rem 0.5rem; border-radius: 4px; font-size: 0.8rem; }
+        .heartbeat { color: #888; font-size: 0.8rem; margin-left: 0.5rem; }
+    </style>
+</head>
+
+<body>
+    <nav><a href="/">main-thread version</a> | <strong>worker version</strong></nav>
+    <h1>Fade Web Runtime <span class="badge">worker mode</span></h1>
+    <p id="status">Booting .NET runtime in a Web Worker...</p>
+
+    <textarea id="source">print upper$("hello from a worker")
+print "this won't freeze the page"
+wait ms 2000
+print "two seconds passed inside the worker"
+x = rnd(100)
+y = x * 2</textarea>
+    <br />
+    <button id="run" disabled>Run</button>
+    <span class="heartbeat" id="heartbeat">heartbeat: 0</span>
+
+    <h3>Output</h3>
+    <pre id="output">(not yet run)</pre>
+
+    <p style="color: #888; font-size: 0.85rem;">
+        The "heartbeat" number ticks every 100ms via <code>setInterval</code> on the main thread.
+        Notice it keeps ticking even while a Fade program is running (including <code>wait ms</code>).
+        On the <a href="/">main-thread version</a>, the same program freezes the heartbeat for the duration.
+    </p>
+
+    <script>
+        // Main-thread heartbeat — visible proof the page stays responsive while the
+        // worker is busy. With main-thread Blazor, this would stop during execution.
+        let beats = 0;
+        const hb = document.getElementById('heartbeat');
+        setInterval(() => { hb.textContent = 'heartbeat: ' + (++beats); }, 100);
+
+        const worker = new Worker('worker.js', { type: 'module' });
+        const status = document.getElementById('status');
+        const output = document.getElementById('output');
+        const runBtn = document.getElementById('run');
+        let nextId = 0;
+        const pending = new Map();
+
+        worker.onmessage = (e) => {
+            const msg = e.data;
+            if (msg.type === 'log') {
+                status.textContent = 'worker: ' + msg.message;
+                console.log('[worker]', msg.message);
+            } else if (msg.type === 'ready') {
+                status.textContent = '.NET runtime ready (worker mode).';
+                runBtn.disabled = false;
+            } else if (msg.type === 'print') {
+                // Stream each print line into the page as it arrives.
+                output.textContent += msg.line + '\n';
+            } else if (msg.type === 'alert') {
+                // DOM-bound command proxied back to the main thread.
+                window.alert(msg.msg);
+            } else if (msg.type === 'result') {
+                const resolver = pending.get(msg.id);
+                pending.delete(msg.id);
+                if (resolver) resolver(msg.result);
+            } else if (msg.type === 'boot-error') {
+                status.textContent = 'Worker boot error — see console.';
+                console.error('worker boot error:', msg.message);
+            }
+        };
+
+        worker.onerror = (e) => {
+            console.error('worker error:', e);
+            status.textContent = 'Worker error — see console.';
+        };
+
+        function compileAndRun(source) {
+            return new Promise((resolve) => {
+                const id = ++nextId;
+                pending.set(id, resolve);
+                worker.postMessage({ type: 'run', id, source });
+            });
+        }
+
+        runBtn.addEventListener('click', async () => {
+            const src = document.getElementById('source').value;
+            output.textContent = '';  // cleared so streamed prints can build up live
+            try {
+                const result = await compileAndRun(src);
+                // The result string from C# includes the buffered prints + variables,
+                // which would duplicate what already streamed. Replace with the full
+                // result for a clean final state.
+                output.textContent = result;
+            } catch (e) {
+                output.textContent = 'Error: ' + e;
+            }
+        });
+    </script>
+</body>
+
+</html>

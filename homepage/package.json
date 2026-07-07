@@ -4,9 +4,17 @@
   "version": "0.0.0",
   "type": "module",
   "scripts": {
+    "gen:help": "node ../../Fade.Playground/packages/md-to-svelte/src/generate.mjs ../FadeBasic/book/FadeBook/Language.md --out src/generated/help-content.js --title \"Fade Language\"",
+    "stage:fade": "node scripts/stage-fade.mjs",
+    "prep": "npm run gen:help && npm run stage:fade",
+    "predev": "npm run prep",
+    "prebuild": "npm run prep",
     "dev": "vite --config vite.dev.config",
     "build": "vite build",
     "preview": "vite preview"
+  },
+  "dependencies": {
+    "monaco-editor": "^0.52.0"
   },
   "devDependencies": {
     "@sveltejs/vite-plugin-svelte": "^5.0.3",

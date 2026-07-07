@@ -1,61 +1,3 @@
-
-### Contents
-
-- [Inspiration](#language-guide)
-- Language features
-    - [Comments](#comments)
-    - [Variables](#variables)
-        - [Single Line](#single-line-assignment)
-        - [Sigils](#sigils)
-    - [Casting](#casting)
-    - [Primitives](#primitive-types)
-        - [Implicit Casts](#implicit-casts)
-    - [Strings](#strings)
-    - [Functions](#functions)
-        - [Scopes](#function-scopes)
-        - [Returns](#return-values)
-        - [Parameters](#parameters)
-        - [Nested Functions](#no-nested-functions)
-        - [Clojures](#no-lambdas-or-clojures)
-    - [Scopes](#scopes)
-    - [Types](#user-defined-types)
-        - [Default](#udt-default-value)
-        - [Initializers](#udt-initializer)
-        - [Assignment](#udt-assignment)
-        - [Methods](#no-methods)
-    - [Arrays](#arrays)
-        - [Multidimensions](#multidimensional-arrays)
-        - [Arrays of Types](#arrays-of-udt)
-        - [Resize an Array](#resize-an-array)
-        - [Out of Bounds](#array-out-of-bounds)
-        - [Return Values](#cannot-return-arrays-from-functions)
-        - [Assignment](#cannot-assign-an-array)
-    - [Literals](#literals)
-    - [Operations](#operations)
-        - [Numerics](#numeric-operations)
-        - [Commands](#commands)
-        - [Short Circuits](#short-circuiting)
-    - [Control Statements](#control-statements)
-        - [Conditionals](#conditionals)
-        - [Single Line](#single-line-statements)
-        - [For Loops](#for-loops)
-        - [While Loops](#while-loops)
-        - [Repeat Loops](#repeat-loops)
-        - [Do Loops](#do-loops)
-        - [End](#end)
-        - [Goto](#goto)
-        - [Gosub](#gosub)
-        - [Select](#select-statements)
-        - [Defer](#defer-statements)
-    - [Compile Time Execution](#compile-time-constants)
-        - [Structures](#program-structure)
-        - [Substitutions](#Substitutions)
-        - [Shorthands](#shorthands)
-        - [Haunted Variables](#haunted-code)
-    - [Constants](#compile-time-constants)
-    - [Memory](#memory)
-
-
 # Language Guide
 
 _Fade Basic_ is a variant of BASIC. The language is fairly limited in its scope and it is intended to capture the essence of what _Dark Basic Pro_ was able to do in 2003. If you are familiar with _Dark Basic_, then read about the [Differences between _Fade Basic_ and _Dark Basic_](https://github.com/cdhanna/fadebasic/blob/main/FadeBasic/book/FadeBook/Dark%20Basic%20Pro%20Changes.md). It is worth glancing over this document with an open mind, as some of the language decisions may raise an eyebrow in 2025. 
@@ -305,6 +247,7 @@ A Scope is a collection of variables that are available to be accessed within th
 ## User Defined Types
 
 In addition to primitives, _Fade_ supports the declaration of custom type structures, referred to as User Defined Types (UDT). The following example declares a new type and the creates a variable of the new type. 
+<!-- fade:hint This defines a type and a variable but prints nothing. Add `PRINT myToast.size` at the end, or set a breakpoint on the last line and hit Debug to watch `myToast` fill in. -->
 ```basic
 `declare a type with two fields
 TYPE TOAST
@@ -698,14 +641,16 @@ PRINT "hello world"
 ```
 
 _Commands_ may accept parameters, and may return a value. For example, the `CONSOLE WIDTH()` command _returns_ a value.
-```basic
+<!-- fade:commands console width -->
+```basic norun
 width = CONSOLE WIDTH()
 ```
 
 When a command has a return value, it must be invoked using parenthesis. Notice that the `PRINT` command is invocable without parenthesis, because it does not return a value. However, the `CONSOLE WIDTH()` command returns a number, and therefore requires parenthesis. 
 
 When a command requires multiple parameters, they may be optionally separated with commas. Both of these statements are valid.
-```basic
+<!-- fade:commands set cursor -->
+```basic norun
 SET CURSOR 1 2
 SET CURSOR 1, 2
 ```
@@ -1896,7 +1841,8 @@ ENDTEST
 ```
 
 When the command has parameters that must be assigned, the mock block must assign them.
-```basic
+<!-- fade:commands input -->
+```basic norun
 `normally, the INPUT command accepts a line of input from the terminal, and puts the value in x$
 INPUT "enter name", x$
 _L1:
