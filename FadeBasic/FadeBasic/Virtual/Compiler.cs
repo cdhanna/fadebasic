@@ -1454,6 +1454,14 @@ namespace FadeBasic.Virtual
             var exitAddr = _buffer.Count;
             _buffer.Add(OpCodes.NOOP);
 
+            // Stamp a *computed* debug token on the exit NOOP. Every case body
+            // exits by jumping here, and without a token of its own the exit
+            // resolves (via TryFindClosestTokenBeforeIndex) to the LAST case
+            // body's real token — so stepping over a matched case would wrongly
+            // pause on the final CASE line even though it never executed. A
+            // computed token is skipped by the stepper (mirrors Compile(IfStatement)).
+            _dbg?.AddFakeDebugToken(exitAddr, switchStatement.endToken);
+
             // now do all the address replacements....
             for (var i = 0; i < switchStatement.cases.Count; i++)
             {

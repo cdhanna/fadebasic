@@ -688,6 +688,75 @@ endfunction";
     }
 
     [Test]
+    public void StepOver_SwitchExit_HasComputedToken_NotLastCase()
+    {
+        // Regression: stepping over a matched CASE body used to pause on the
+        // LAST CASE line (which never executed). Every case body jumps to the
+        // switch's exit NOOP, but that NOOP had no debug token, so
+        // TryFindClosestTokenBeforeIndex resolved it to the last case body's
+        // real token — a stop point for step-over. The exit must carry a
+        // COMPUTED token so the stepper skips it (mirrors Compile(IfStatement)).
+        var src = @"x = 1
+SELECT (x)
+    CASE 0
+        PRINT ""zero""
+    ENDCASE
+    CASE 1
+        PRINT ""one""
+    ENDCASE
+    CASE 2
+        PRINT ""two""
+    ENDCASE
+ENDSELECT
+PRINT ""done""
+";
+        Compile(src, out _, out var compiler, out var vm);
+        var dbg = compiler.DebugData;
+
+        var real = dbg.statementTokens.Where(t => t.isComputed == 0).ToList();
+        // PRINT "two" (last case body) is on line 9 (0-based); PRINT "done" line 12.
+        var lastCaseTok = real.First(t => t.token.lineNumber == 9);
+        var doneTok = real.First(t => t.token.lineNumber == 12);
+
+        var exitComputed = dbg.statementTokens
+            .Where(t => t.isComputed == 1 && t.insIndex > lastCaseTok.insIndex && t.insIndex < doneTok.insIndex)
+            .ToList();
+        Assert.That(exitComputed, Is.Not.Empty,
+            "the switch exit must carry a computed token between the last case body and the next statement");
+
+        // And the exit instruction resolves to that computed token, not the
+        // last case's real token — so step-over won't pause on the last case.
+        var map = new IndexCollection(dbg.statementTokens);
+        Assert.That(map.TryFindClosestTokenBeforeIndex(exitComputed[0].insIndex, out var resolved), Is.True);
+        Assert.That(resolved.isComputed, Is.EqualTo(1),
+            "the switch exit index must resolve to a computed (skip) token");
+    }
+
+    [Test]
+    public void ExpandVariable_MultiDimArray_ExpandsEverySibling()
+    {
+        // Regression: expanding a multi-dimensional array only worked for the
+        // FIRST sub-array. Element pointers past index 0 were computed with raw
+        // `rawValue + offset` instead of VmPtr arithmetic, corrupting the heap
+        // pointer so ReadSpan threw and the sibling expansion came back empty.
+        var src = "DIM numbers(3, 5)\n";
+        Compile(src, out _, out var compiler, out var vm);
+        vm.Execute2();
+
+        var db = new DebugVariableDatabase(vm, compiler.DebugData, new EmptyDebugLogger());
+        var numbers = db.GetGlobalVariablesForFrame(0).variables.First(v => v.name == "numbers");
+
+        var rows = db.Expand(numbers.id);
+        Assert.That(rows.variables.Count, Is.EqualTo(3), "numbers(3,5) has 3 rows");
+        foreach (var row in rows.variables)
+        {
+            var cols = db.Expand(row.id);
+            Assert.That(cols.variables.Count, Is.EqualTo(5),
+                $"row '{row.name}' should expand to 5 elements (not just the first sibling)");
+        }
+    }
+
+    [Test]
     public async Task DebugServerDemo()
     {
         var port = LaunchUtil.FreeTcpPort();

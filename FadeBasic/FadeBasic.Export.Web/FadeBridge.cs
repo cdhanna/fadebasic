@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Diagnostics.CodeAnalysis;
 using System.Reflection;
 using System.Runtime.Loader;
 using System.Runtime.InteropServices.JavaScript;
@@ -793,19 +794,27 @@ public static partial class FadeBridge
             var commands = _workspace.Commands;
             if (!FadeSdk.TryCreateFromString(source, commands, out var ctx, out _))
                 return "[]";
-            var tests = new List<object>();
+            // Hand-rolled JSON: PublishTrimmed strips anonymous-type parameter
+            // names, so JsonSerializer.Serialize(new { … }) throws at runtime and
+            // the catch below would silently return "[]" (no tests ever surface).
+            // Same reasoning as DebugStartOk/DebugStartErr.
+            var sb = new StringBuilder("[");
+            var first = true;
             foreach (var t in ctx.Compiler.TestManifest)
             {
-                tests.Add(new
-                {
-                    name = t.name,
-                    isAbstract = t.isAbstract,
-                    fromParent = t.fromParent,
-                    sourceLine = t.sourceLine,
-                    sourceChar = t.sourceChar,
-                });
+                if (!first) sb.Append(',');
+                first = false;
+                sb.Append("{\"name\":");
+                AppendJsonString(sb, t.name);
+                sb.Append(",\"isAbstract\":").Append(t.isAbstract ? "true" : "false");
+                sb.Append(",\"fromParent\":");
+                if (t.fromParent == null) sb.Append("null"); else AppendJsonString(sb, t.fromParent);
+                sb.Append(",\"sourceLine\":").Append(t.sourceLine);
+                sb.Append(",\"sourceChar\":").Append(t.sourceChar);
+                sb.Append('}');
             }
-            return JsonSerializer.Serialize(tests, _jsonOpts);
+            sb.Append(']');
+            return sb.ToString();
         }
         catch
         {
@@ -854,12 +863,7 @@ public static partial class FadeBridge
             var commands = _workspace.Commands;
             if (!FadeSdk.TryCreateFromString(source, commands, out var ctx, out var errors))
             {
-                return JsonSerializer.Serialize(new
-                {
-                    ok = false,
-                    error = "Compile failed:\n" + errors.ToDisplay(),
-                    statementLines = Array.Empty<int>(),
-                }, _jsonOpts);
+                return DebugStartErr("Compile failed:\n" + errors.ToDisplay());
             }
             FadeBasic.Virtual.TestManifestEntry foundEntry = null;
             foreach (var t in ctx.Compiler.TestManifest)
@@ -872,13 +876,9 @@ public static partial class FadeBridge
             }
             if (foundEntry == null || foundEntry.isAbstract)
             {
-                return JsonSerializer.Serialize(new
-                {
-                    ok = false,
-                    error = foundEntry == null
-                        ? $"No test named '{testName}' found"
-                        : $"Test '{testName}' is abstract and cannot be debugged",
-                }, _jsonOpts);
+                return DebugStartErr(foundEntry == null
+                    ? $"No test named '{testName}' found"
+                    : $"Test '{testName}' is abstract and cannot be debugged");
             }
 
             // Fresh VM at the test's entry address (matches
@@ -898,22 +898,31 @@ public static partial class FadeBridge
             var lines = new SortedSet<int>();
             foreach (var t in ctx.Compiler.DebugData.statementTokens)
                 if (t?.token != null) lines.Add(t.token.lineNumber);
-            return JsonSerializer.Serialize(new
-            {
-                ok = true,
-                statementLines = lines,
-                testName = foundEntry.name,
-                testLine = foundEntry.sourceLine,
-            }, _jsonOpts);
+            return DebugStartTestOk(lines, foundEntry.name, foundEntry.sourceLine);
         }
         catch (Exception ex)
         {
-            return JsonSerializer.Serialize(new
-            {
-                ok = false,
-                error = "Debug-test start failed: " + ex.Message,
-            }, _jsonOpts);
+            return DebugStartErr("Debug-test start failed: " + ex.Message);
         }
+    }
+
+    // Hand-rolled JSON for DebugStartTest's success shape. Anonymous types +
+    // JsonSerializer break under PublishTrimmed (parameter names are stripped),
+    // so — like DebugStartOk/DebugStartErr — build the literal directly.
+    private static string DebugStartTestOk(SortedSet<int> statementLines, string testName, int testLine)
+    {
+        var sb = new StringBuilder("{\"ok\":true,\"statementLines\":[");
+        var first = true;
+        foreach (var line in statementLines)
+        {
+            if (!first) sb.Append(',');
+            sb.Append(line);
+            first = false;
+        }
+        sb.Append("],\"testName\":");
+        AppendJsonString(sb, testName);
+        sb.Append(",\"testLine\":").Append(testLine).Append('}');
+        return sb.ToString();
     }
 
     // Compile + boot a debug session. Returns JSON with { ok, error?,
@@ -1070,6 +1079,14 @@ public static partial class FadeBridge
 
     // Replace the active breakpoint set. linesJson is a JSON array of
     // { lineNumber, colNumber? } pairs in the source's coordinate space.
+    //
+    // Reflection-based JsonSerializer.Deserialize below needs BreakpointRequestDto's
+    // parameterless ctor + properties to survive the WASM trimmer. Without this,
+    // a trimmed publish (e.g. built without the wasm-tools workload) throws
+    // "Deserialization of types without a parameterless constructor ... is not
+    // supported" at runtime and breakpoints never register. This keeps the type's
+    // members regardless of build/trim settings.
+    [DynamicDependency(DynamicallyAccessedMemberTypes.PublicParameterlessConstructor | DynamicallyAccessedMemberTypes.PublicProperties, typeof(BreakpointRequestDto))]
     [JSExport]
     public static string DebugSetBreakpoints(string linesJson)
     {

@@ -493,9 +493,14 @@ namespace FadeBasic.Virtual
                             if (nextArrayIndex < arrayRanks)
                             {
                                 var ogAlloc = variable.allocation;
-                                var ptr = variable.rawValue + (ulong)(elementSize * i * strideLength);
+                                // Advance through the heap with VmPtr arithmetic (as the
+                                // struct branch above does) — a raw `rawValue + offset`
+                                // corrupts the pointer for elements past the first, so only
+                                // element 0 (offset 0) expanded; the rest threw in ReadSpan.
+                                var elementVmPtr = VmPtr.FromRaw(variable.rawValue) + (elementSize * i * strideLength);
+                                var ptr = VmPtr.GetRaw(ref elementVmPtr);
 
-                                var v = new DebugRuntimeVariable(_vm, $"{i}", elementTypeCode, ptr, ref ogAlloc, 
+                                var v = new DebugRuntimeVariable(_vm, $"{i}", elementTypeCode, ptr, ref ogAlloc,
                                     variable.scopeIndex,
                                     variable.regAddr)
                                 {
