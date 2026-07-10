@@ -5,16 +5,10 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.1.3] - 2026-07-10
 ### Fixed
-- Web runtime (`FadeBasic.Export.Web`) test discovery (`FadeBridge.ListTests`) returned an empty list on trimmed WASM publishes — it serialized anonymous types via `JsonSerializer` (parameter names stripped by trimming), threw, and its `catch` swallowed the error into `"[]"`. So no tests (and, for `#MACRO`/`#TOKENIZE`-generated tests, none of the real expanded names like `sample_42`) ever surfaced. Rewritten to emit hand-rolled JSON.
-- Web runtime (`FadeBasic.Export.Web`) debugging a single test (`FadeBridge.DebugStartTest`) failed on trimmed WASM publishes — same anonymous-type/`JsonSerializer` trimming issue: the call threw and the worker returned `{}` (the debugger silently never paused). Rewritten to emit hand-rolled JSON like `DebugStart`, making test-debug sessions start (and hit breakpoints) on trimmed builds.
-- Debugger step-over no longer pauses on the last `CASE` line of a `SELECT` block that never executed. Every case body jumps to the switch's exit `NOOP`, which had no debug token and so resolved to the last case body's (real) source token — a spurious step-over stop. The exit now carries a computed token that the stepper skips (same treatment as `IF`/`ENDIF`).
-- Expanding a multi-dimensional array in the debugger's Variables view now works for every sub-array, not just the first. Element pointers past index 0 were advanced with raw `rawValue + offset` arithmetic instead of `VmPtr` arithmetic, corrupting the heap pointer so `ReadSpan` threw and the sibling expansion returned empty.
-
-## [0.1.3] - 2026-07-03
-### Fixed
-- Web runtime (`FadeBasic.Export.Web`) breakpoints now register on trimmed WASM publishes (e.g. builds without the `wasm-tools` workload). `FadeBridge.DebugSetBreakpoints` deserialization of `BreakpointRequestDto` was trimmed away — the runtime threw "Deserialization of types without a parameterless constructor" and silently dropped every breakpoint. A `[DynamicDependency]` now preserves the type's constructor and properties regardless of trim settings.
+- formatter works for type and mock keywords
+- various debugger issues
 
 ## [0.1.2] - 2026-06-29
 ### Added
