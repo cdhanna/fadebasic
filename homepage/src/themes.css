@@ -1,0 +1,97 @@
+/* Docs theming palette — extracted from the Playground. Each theme sets the
+   core UI CSS variables; [data-theme="<id>"] on <html> switches them in
+   lockstep with the Monaco editor theme (setFadeTheme). Code-token colors are
+   NOT here — they're emitted per-theme by @fadebasic/editor (fadeThemeTokenCss).
+
+   Variables (consumed by App.svelte, Help.svelte, and the fade-runnable /
+   fade-code component CSS):
+     --bg / --bg-1 / --bg-2 / --bg-3   surfaces, light→dark chrome
+     --fg / --fg-2 / --fg-muted        text
+     --border / --border-2             separators
+     --accent / --accent-hover         interactive accent
+     --hover-bg / --list-active-bg     row hover / selected
+     --code-bg / --code-fg / --pre-bg  inline code + code blocks
+     --link-fg                         links
+     --btn-radius                      button corner radius
+     --btn-hover-bg                    accent-tinted button hover (derived) */
+
+:root {
+    --bg: #1e1e1e;
+    --bg-1: #1e1e1e;
+    --bg-2: #252526;
+    --bg-3: #2d2d2d;
+    --fg: #d4d4d4;
+    --fg-2: #cccccc;
+    --fg-muted: #9d9d9d;
+    --border: #1e1e1e;
+    --border-2: #333333;
+    --accent: #0e639c;
+    --accent-hover: #1177bb;
+    --on-accent: #ffffff;   /* text/icons that sit ON an accent-filled surface */
+    --hover-bg: #2a2d2e;
+    --list-active-bg: #37373d;
+    --code-bg: #2d2d30;
+    --code-fg: #ce9178;
+    --pre-bg: #1e1e1e;
+    --link-fg: #569cd6;
+    --btn-radius: 4px;
+    --btn-hover-bg: color-mix(in srgb, var(--accent) 30%, var(--bg-3));
+}
+html[data-theme="light"] {
+    --bg: #ffffff; --bg-1: #ffffff; --bg-2: #f3f3f3; --bg-3: #e7e7e7;
+    --fg: #1f1f1f; --fg-2: #333333; --fg-muted: #5d5d5d;
+    --border: #d4d4d4; --border-2: #d4d4d4;
+    --accent: #007acc; --accent-hover: #006bb3; --on-accent: #ffffff;
+    --hover-bg: #e8e8e8; --list-active-bg: #cfe2f3;
+    --code-bg: #f0f0f0; --code-fg: #a31515; --pre-bg: #f6f8fa; --link-fg: #0451a5;
+}
+html[data-theme="dracula"] {
+    --bg: #282a36; --bg-1: #21222c; --bg-2: #282a36; --bg-3: #44475a;
+    --fg: #f8f8f2; --fg-2: #f8f8f2; --fg-muted: #9299bd;
+    --border: #1d1f29; --border-2: #44475a;
+    --accent: #bd93f9; --accent-hover: #d6acff; --on-accent: #282a36;
+    --hover-bg: #3a3d52; --list-active-bg: #44475a;
+    --code-bg: #44475a; --code-fg: #f1fa8c; --pre-bg: #21222c; --link-fg: #8be9fd;
+}
+html[data-theme="solarized-dark"] {
+    --bg: #002b36; --bg-1: #073642; --bg-2: #002b36; --bg-3: #073642;
+    --fg: #93a1a1; --fg-2: #839496; --fg-muted: #8b9fa0;
+    --border: #073642; --border-2: #073642;
+    --accent: #268bd2; --accent-hover: #2c9be3; --on-accent: #ffffff;
+    --hover-bg: #073642; --list-active-bg: #094759;
+    --code-bg: #073642; --code-fg: #2aa198; --pre-bg: #073642; --link-fg: #4aa8e8;
+}
+html[data-theme="monokai"] {
+    --bg: #272822; --bg-1: #1e1f1c; --bg-2: #272822; --bg-3: #3e3d32;
+    --fg: #f8f8f2; --fg-2: #cccccc; --fg-muted: #aca684;
+    --border: #1e1f1c; --border-2: #3e3d32;
+    --accent: #fd971f; --accent-hover: #ffb86c; --on-accent: #272822;
+    --hover-bg: #3e3d32; --list-active-bg: #4a4839;
+    --code-bg: #3e3d32; --code-fg: #e6db74; --pre-bg: #1e1f1c; --link-fg: #66d9ef;
+}
+html[data-theme="nord"] {
+    --bg: #2e3440; --bg-1: #242933; --bg-2: #2e3440; --bg-3: #3b4252;
+    --fg: #d8dee9; --fg-2: #d8dee9; --fg-muted: #9aa2b3;
+    --border: #242933; --border-2: #434c5e;
+    --accent: #5e81ac; --accent-hover: #81a1c1; --on-accent: #eceff4;
+    --hover-bg: #3b4252; --list-active-bg: #434c5e;
+    --code-bg: #3b4252; --code-fg: #a3be8c; --pre-bg: #242933; --link-fg: #88c0d0;
+}
+html[data-theme="high-contrast"] {
+    --bg: #000000; --bg-1: #000000; --bg-2: #0a0a0a; --bg-3: #1a1a1a;
+    --fg: #ffffff; --fg-2: #ffffff; --fg-muted: #cfcfcf;
+    --border: #6fc3df; --border-2: #6fc3df;
+    --accent: #1aebff; --accent-hover: #6fefff; --on-accent: #000000;
+    --hover-bg: #1f1f1f; --list-active-bg: #094771;
+    --code-bg: #0a0a0a; --code-fg: #ce9178; --pre-bg: #000000; --link-fg: #3794ff;
+}
+html[data-theme="dbp"] {
+    --bg: #ECECEC; --bg-1: #FFFFFF; --bg-2: #D4D4D4; --bg-3: #BFBFBF;
+    --fg: #000000; --fg-2: #1F1F1F; --fg-muted: #555555;
+    --border: #919191; --border-2: #A0A0A0;
+    --accent: #316AC5; --accent-hover: #4080DC; --on-accent: #ffffff;
+    --hover-bg: #E0E0E0; --list-active-bg: #C2D5F2;
+    --code-bg: #F0F0F0; --code-fg: #800000; --pre-bg: #F8F8F8; --link-fg: #0000EE;
+    --btn-radius: 3px;
+}
+html[data-theme="dbp"] body { font-family: Tahoma, 'Segoe UI', sans-serif; }

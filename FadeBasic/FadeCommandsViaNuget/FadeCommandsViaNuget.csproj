@@ -8,8 +8,14 @@
         <FadeNugetVersion Condition="'$(FadeNugetVersion)' == ''">0.12.13.305</FadeNugetVersion>
     </PropertyGroup>
 
+    <!-- This fixture verifies the *published NuGet* consumption path, so it
+         compiles against the FadeBasic.Lang.Core package on purpose. PrivateAssets
+         keeps that package Core from flowing transitively to referencing projects
+         (Tests) — which already reference the SOURCE FadeBasic.Lang.Core via
+         ProjectReference. Without this the two identities (pkg 0.13.x vs source
+         0.0.0.0) collide as CS1704 "same simple name already imported". -->
     <ItemGroup>
-        <PackageReference Include="FadeBasic.Lang.Core" Version="$(FadeNugetVersion)" />
-        <PackageReference Include="FadeBasic.Lang.CommandSourceGenerator" Version="$(FadeNugetVersion)" OutputItemType="Analyzer"/>
+        <PackageReference Include="FadeBasic.Lang.Core" Version="$(FadeNugetVersion)" PrivateAssets="all" />
+        <PackageReference Include="FadeBasic.Lang.CommandSourceGenerator" Version="$(FadeNugetVersion)" OutputItemType="Analyzer" PrivateAssets="all" />
     </ItemGroup>
 </Project>

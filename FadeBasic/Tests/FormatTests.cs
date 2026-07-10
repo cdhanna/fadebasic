@@ -126,6 +126,26 @@ fUnCtIoN testFunc(a, b)
     n = a + b
 ENDFUNCTION n
 ", 5)]
+    [TestCase(@"
+type x
+n
+b
+endtype
+", @"
+type x
+    n
+    b
+endtype
+", 2)]
+    [TestCase(@"
+x = {
+y = 1
+}
+", @"
+x = {
+    y = 1
+}
+", 1)]
     public void Format_CaseIgnore(string src, string expected, int editCount=1)
     {
         settings = new TokenFormatSettings
@@ -376,7 +396,7 @@ select n
         case 1
  x(1)
   endcase
-default
+case default
 x(2)
 endcase
 endselect
@@ -385,7 +405,7 @@ select n
     case 1
         x(1)
     endcase
-    default
+    case default
         x(2)
     endcase
 endselect

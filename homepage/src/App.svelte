@@ -2,7 +2,20 @@
   import fadeLogo from "./../../images/ghost_lee.png";
   import fadeScreen from "./../../images/fade_screenshot2.png";
   import Help from "./Help.svelte";
+  import { cubicInOut } from "svelte/easing";
   import "@fadebasic/components";
+
+  // Horizontal page slide. `x` is the off-screen side as a percentage of the
+  // page width (responsive, no innerWidth read). Svelte drives `u` 1→0 on
+  // enter and 0→1 on leave, so a page flies in from / out to its own side.
+  // The homepage sits on the LEFT (x:-100), the docs on the RIGHT (x:100), so
+  // forward navigation slides left and Back slides right — direction is implicit
+  // in each page's fixed side, no need to track nav direction.
+  const slideX = (node, { x = 100, duration = 340 } = {}) => ({
+    duration,
+    easing: cubicInOut,
+    css: (t, u) => `transform: translateX(${u * x}%)`,
+  });
 
   // On phones the live IDE emulator (monaco + a WASM runtime) is too heavy and
   // too cramped — fall back to the original screenshot there. Checking a media
@@ -46,18 +59,27 @@ FUNCTION fizzBuzz(n)
 ENDFUNCTION`;
 
   // Hash router — GitHub Pages serves a single static index (200, no rewrite,
-  // no 404-status fallback). The fragment carries both the route and an optional
-  // in-page anchor: `#/help#variables` → route `/help`, section `variables`.
-  // (A URL has one fragment, but it may contain a second `#`; Help parses it.)
+  // no 404-status fallback). The fragment carries the route as a path:
+  // `#/learn/<tab>/<anchor>` (e.g. `#/learn/commands/sync`). The tab is part of
+  // the path and the trailing segment is the in-page anchor — Help scrolls to it
+  // with JS (no second `#`). Legacy `#/help*` links still resolve (Help redirects).
   let route = $state(location.hash);
   const onHash = () => { route = location.hash; };
+  let showHelp = $derived(route.startsWith("#/learn") || route.startsWith("#/help"));
 </script>
 
 <svelte:window on:hashchange={onHash} />
 
-{#if route.startsWith("#/help")}
-  <Help />
+<!-- Crossfade between the homepage and the docs. Both pages live in the SAME
+     grid cell (grid-area 1/1), so during the transition they overlap instead of
+     stacking — no layout jump. Opacity on the .page wrapper also fades Help's
+     position:fixed chrome (tabs/TOC), since opacity applies to fixed
+     descendants. -->
+<div class="app-shell">
+{#if showHelp}
+  <div class="page" transition:slideX={{ x: 100 }}><Help /></div>
 {:else}
+  <div class="page" transition:slideX={{ x: -100 }}>
 <main class="hero">
   <div class="hero-intro">
     <div class="content">
@@ -70,7 +92,7 @@ ENDFUNCTION`;
 
     <div class="buttons" style="display: flex; flex-direction: row; justify-content: space-between;">
       <a href="https://github.com/cdhanna/fadebasic/tree/main?tab=readme-ov-file#fade-basic"><button>Install</button></a>
-      <a href="#/help"><button>Learn</button></a>
+      <a href="#/learn/language"><button>Learn</button></a>
       <a href="https://discord.gg/yxFAFJurvU" unselectable="off"><button>Discord</button></a>
     </div>
 
@@ -100,6 +122,7 @@ ENDFUNCTION`;
         layout="ide"
         debug
         hide-run
+        theme-picker
         breakpoints="25"
         asset-base="/fade/"
         code={fizzbuzz}
@@ -107,9 +130,16 @@ ENDFUNCTION`;
     {/if}
   </section>
 </main>
+  </div>
 {/if}
+</div>
 
 <style>
+  /* Overlapping pages share one grid cell so the slide doesn't reflow; clip the
+     off-screen page horizontally so it can't spawn a scrollbar mid-transition. */
+  .app-shell { display: grid; width: 100%; min-width: 0; overflow-x: clip; }
+  .app-shell > .page { grid-area: 1 / 1; min-width: 0; }
+
   /* Two-column hero: intro copy on the left, the live IDE emulator on the
      right (where the screenshot used to sit). Wraps to a single column on
      narrow screens. */

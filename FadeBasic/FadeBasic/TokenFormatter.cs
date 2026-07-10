@@ -92,10 +92,13 @@ namespace FadeBasic
             [LexemType.KeywordRepeat] = LexemFlags.PUSH_INDENT,
             [LexemType.KeywordSelect] = LexemFlags.PUSH_INDENT,
             [LexemType.KeywordCase] = LexemFlags.PUSH_INDENT,
-            [LexemType.KeywordCaseDefault] = LexemFlags.PUSH_INDENT,
+            // [LexemType.KeywordCaseDefault] = LexemFlags.PUSH_INDENT,
             [LexemType.KeywordTest] = LexemFlags.PUSH_INDENT,
             [LexemType.ConstantBegin] = LexemFlags.PUSH_INDENT,
             [LexemType.ConstantTokenize] = LexemFlags.PUSH_INDENT,
+            [LexemType.KeywordType] = LexemFlags.PUSH_INDENT,
+            [LexemType.BracketOpen] = LexemFlags.PUSH_INDENT,
+            [LexemType.KeywordMock] = LexemFlags.PUSH_INDENT,
             
             [LexemType.KeywordElse] = LexemFlags.PUSH_AND_POP_INDENT,
             
@@ -111,6 +114,9 @@ namespace FadeBasic
             [LexemType.KeywordEndTest] = LexemFlags.POP_INDENT,
             [LexemType.ConstantEnd] = LexemFlags.POP_INDENT,
             [LexemType.ConstantEndTokenize] = LexemFlags.POP_INDENT,
+            [LexemType.KeywordEndType] = LexemFlags.POP_INDENT,
+            [LexemType.BracketClose] = LexemFlags.POP_INDENT,
+            [LexemType.KeywordEndMock] = LexemFlags.POP_INDENT,
             // TODO: add other keywords
         };
 

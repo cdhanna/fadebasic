@@ -3,9 +3,9 @@
   line-height: 1.5;
   font-weight: 400;
 
-  color-scheme: light dark;
-  color: rgba(255, 255, 255, 0.87);
-  background-color: #242424;
+  /* Driven by the active theme (data-theme on <html>). See themes.css. */
+  color: var(--fg);
+  background-color: var(--bg);
 
   font-synthesis: none;
   text-rendering: optimizeLegibility;
@@ -16,6 +16,11 @@
 
 
 body {
+  /* margin:0 is essential for the page-slide: while a .page is mid-transform it
+     becomes the containing block for Help's position:fixed chrome (tabs/TOC), so
+     .page's top-left must equal the viewport's (0,0) or the fixed elements pop
+     when the transform is removed at the end of the slide. */
+  margin: 0;
   display: flex;
   place-items: start;
 }
@@ -37,19 +42,20 @@ h1 {
 }
 button {
   border-radius: 8px;
-  border: 1px solid transparent;
+  border: 1px solid var(--border-2);
   padding: 0.6em 1.2em;
   font-size: 1em;
   font-weight: 500;
   font-family: inherit;
-  background-color: #1a1a1a;
+  background-color: var(--bg-3);
+  color: var(--fg);
   cursor: pointer;
   transition: border-color 0.25s;
   margin: 2px 4px;
   flex-grow: 1;
 }
 button:hover {
-  border-color: #646cff;
+  border-color: var(--accent);
 }
 button:focus,
 button:focus-visible {
@@ -147,20 +153,5 @@ main {
   }
 }
 
-@media (prefers-color-scheme: light) {
-
-  :root {
-    color: #213547;
-    background-color: #ffffff;
-  }
-  a:hover {
-    color: #747bff;
-  }
-
-  button {
-    background-color: #f9f9f9;
-  }
-  .screenshot {
-    filter: drop-shadow(0 5px .5em #0000004d);
-  }
-}
+/* Page colors follow the explicit theme (data-theme), not the OS preference —
+   the prefers-color-scheme override was removed so the picker fully controls it. */

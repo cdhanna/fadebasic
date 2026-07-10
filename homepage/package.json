@@ -5,8 +5,12 @@
   "type": "module",
   "scripts": {
     "gen:help": "node ../../Fade.Playground/packages/md-to-svelte/src/generate.mjs ../FadeBasic/book/FadeBook/Language.md --out src/generated/help-content.js --title \"Fade Language\"",
+    "gen:tutorial": "node ../../Fade.Playground/packages/md-to-svelte/src/generate.mjs ../FadeBasic/book/FadeBook/Game.md --out src/generated/game-content.js --title \"Game Tutorial\"",
+    "gen:commands": "node scripts/gen-commands.mjs",
     "stage:fade": "node scripts/stage-fade.mjs",
-    "prep": "npm run gen:help && npm run stage:fade",
+    "build:assets": "node scripts/build-assets.mjs",
+    "stage:assets": "node scripts/stage-assets.mjs",
+    "prep": "npm run gen:help && npm run gen:tutorial && npm run gen:commands && npm run stage:fade && npm run stage:assets",
     "predev": "npm run prep",
     "prebuild": "npm run prep",
     "dev": "vite --config vite.dev.config",

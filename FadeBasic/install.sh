@@ -51,7 +51,11 @@ if [ "$SKIP_WASM" = false ]; then
   echo "publishing FadeBasic.Export.Web WASM bundle..."
   # No --include-symbols/--include-source: FadeBasic.Export.Web is a content-only package.
   #dotnet publish ./FadeBasic.Export.Web -c Release -o bin/wasm_t2 /p:IsPublish=true
-  dotnet publish ./FadeBasic.Export.Web -c Release -o $WASM_ARTIFIACT_DIR /p:IsPublish=true
+  # /p:Version=$SEM_VER stamps the assembly version so FadeBridge.GetVersionInfo()
+  # (surfaced in the Playground Diagnostics panel) reports the real fade version
+  # instead of the default 1.0.0. publish rebuilds by default, so without this
+  # flag it would overwrite the versioned build from `dotnet build` above.
+  dotnet publish ./FadeBasic.Export.Web -c Release -o $WASM_ARTIFIACT_DIR /p:IsPublish=true /p:Version=$SEM_VER
   dotnet pack ./FadeBasic.Export.Web --output "$OUTPUT_FOLDER" /p:Version=$SEM_VER -c Release /p:FADE_WASM_ARTIFACT_DIR=${WASM_ARTIFIACT_DIR} /p:IsPack=true
 else
   echo "skipping WASM build (--skip-wasm)"

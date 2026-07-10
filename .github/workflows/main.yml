@@ -1,68 +1,99 @@
-# This is a basic workflow to help you get started with Actions
-
 name: Deploy
 
-# Controls when the workflow will run
+# Builds the fadebasic.com docs site (homepage/) and deploys it to GitHub Pages.
+#
+# The homepage consumes the @fadebasic/* component library and the runtime
+# staging scripts from a SIBLING Fade.Playground checkout (via the Vite aliases
+# in homepage/vite.config.js and homepage/scripts/*). Until those packages are
+# published to npm, CI reproduces the local dev layout by checking out both
+# repos side by side:
+#
+#   $GITHUB_WORKSPACE/
+#     dby/               ← this repo (cdhanna/fadebasic)  -> homepage lives here
+#     Fade.Playground/   ← cdhanna/fade.playground        -> @fadebasic/* + staging
+#
+# The WASM runtime is staged in PACKAGE mode (FADE_RUNTIME_MODE=package), i.e.
+# the pinned published nupkgs from Fade.Playground/packages/runtime-assets/
+# runtime-versions.json — so no .NET SDK is needed. Bump that file (and publish
+# the matching Fade nupkgs) to move the docs to a newer runtime.
+
 on:
-  # Triggers the workflow on push or pull request events but only for the "main" branch
   push:
     branches: [ "main" ]
   pull_request:
     branches: [ "main" ]
-
-  # Allows you to run this workflow manually from the Actions tab
   workflow_dispatch:
 
-# Sets permissions of the GITHUB_TOKEN to allow deployment to GitHub Pages
+# Permissions for the GITHUB_TOKEN to deploy to GitHub Pages.
 permissions:
   contents: read
   pages: write
   id-token: write
 
-# Allow one concurrent deployment
+# One concurrent Pages deployment; newer pushes cancel in-flight runs.
 concurrency:
   group: "pages"
   cancel-in-progress: true
 
-# A workflow run is made up of one or more jobs that can run sequentially or in parallel
 jobs:
-  # This workflow contains a single job called "build"
   build:
-    # The type of runner that the job will run on
     runs-on: ubuntu-latest
-
-    # Steps represent a sequence of tasks that will be executed as part of the job
     steps:
-      # Checks-out your repository under $GITHUB_WORKSPACE, so your job can access it
-      - uses: actions/checkout@v3
+      - name: Checkout docs repo (fadebasic)
+        uses: actions/checkout@v4
+        with:
+          path: dby
 
-      - name: install
-        working-directory: homepage
+      - name: Checkout Fade.Playground (component library + runtime staging)
+        uses: actions/checkout@v4
+        with:
+          repository: cdhanna/fade.playground
+          # Case matters on the Linux runner: the Vite aliases resolve
+          # ../../Fade.Playground, so the checkout path must be exactly this.
+          path: Fade.Playground
+          # If fade.playground is PRIVATE, the default GITHUB_TOKEN cannot read a
+          # different repo — create a PAT (or GitHub App token) with read access
+          # to it, store it as a secret, and uncomment the line below. If the
+          # repo is public, the default token already works.
+          # token: ${{ secrets.PLAYGROUND_CHECKOUT_TOKEN }}
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.x'
+
+      # Installs the @fadebasic/* workspaces' deps (monaco-editor, @vscode/
+      # codicons, marked, fflate) that the aliased source imports pull in.
+      - name: Install Fade.Playground workspaces
+        working-directory: Fade.Playground
         run: npm install
-      - name: build
-        working-directory: homepage
+
+      - name: Install homepage deps
+        working-directory: dby/homepage
+        run: npm install
+
+      # prep (gen:* + stage:fade + stage:assets) then vite build. Package mode
+      # keeps the runtime staging to pinned nupkgs (no .NET). Validated locally.
+      - name: Build homepage
+        working-directory: dby/homepage
+        env:
+          FADE_RUNTIME_MODE: package
         run: npm run build
+
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v3
         with:
-          path: homepage/dist
+          path: dby/homepage/dist
 
-  # Deploy job
   deploy:
-    # Add a dependency to the build job
     needs: build
-
-    # Grant GITHUB_TOKEN the permissions required to make a Pages deployment
+    # Only publish on push to main / manual dispatch — never for PR validation.
+    if: github.event_name != 'pull_request'
     permissions:
-      pages: write      # to deploy to Pages
-      id-token: write   # to verify the deployment originates from an appropriate source
-
-    # Deploy to the github-pages environment
+      pages: write
+      id-token: write
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
-
-    # Specify runner + deployment step
     runs-on: ubuntu-latest
     steps:
       - name: Deploy to GitHub Pages

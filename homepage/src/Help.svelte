@@ -3,19 +3,170 @@
   // (blocks + table of contents) is generated from Language.md by
   // @fadebasic/md-to-svelte at build time.
   import '@fadebasic/components';
+  import { formatFadeSource } from '@fadebasic/components';
   import { HELP_BLOCKS, HELP_TITLE, HELP_TOC } from './generated/help-content.js';
+  import { HELP_BLOCKS as GAME_BLOCKS, HELP_TITLE as GAME_TITLE, HELP_TOC as GAME_TOC } from './generated/game-content.js';
+  import { GAME_COMMAND_GROUPS } from './generated/game-commands.js';
+  import { THEMES, applyTheme, getTheme } from './theme.js';
+  import { normalizeBeta } from './beta.js';
   import { onMount, tick } from 'svelte';
   import { cubicOut } from 'svelte/easing';
 
-  const GITHUB = 'https://github.com/cdhanna/fadebasic/tree/main?tab=readme-ov-file#fade-basic';
-  const DISCORD = 'https://discord.gg/yxFAFJurvU';
+  // Theme picker (top bar). main.js already applied the persisted theme at boot.
+  let theme = $state(getTheme());
+  function pickTheme(id) { theme = applyTheme(id); }
 
-  // Scroll-spy: which section is currently in view. Drives the moving left-
-  // border indicator in the TOC (like VSCode's minimap position). Updated on
-  // scroll — the topmost heading whose top has passed a small offset wins.
-  let activeSlug = $state(HELP_TOC[0]?.slug ?? null);
+  // ── Tabs & routing ────────────────────────────────────────────────────────
+  // Route shape: `#/learn/<tab>/<anchor>`. The tab is part of the PATH (not a
+  // second `#`), and the anchor is the last path segment — JS scrolls to it.
+  // Tutorial reuses the exact Language layout (prose + morphing try-it snippets),
+  // just fed the Game.md content and pointed at the MonoGame runtime.
+  const TABS = [
+    { key: 'language', label: 'Language', route: '/learn/language' },
+    { key: 'commands', label: 'Commands', route: '/learn/commands' },
+    { key: 'tutorial', label: 'Game Tutorial', route: '/learn/tutorial' },
+  ];
+  const DOCS = {
+    language: { blocks: HELP_BLOCKS, toc: HELP_TOC, title: HELP_TITLE ?? 'Fade Language', runtime: '' },
+    tutorial: { blocks: GAME_BLOCKS, toc: GAME_TOC, title: GAME_TITLE ?? 'Game Tutorial', runtime: 'monogame' },
+  };
+  const TAB_KEYS = TABS.map((t) => t.key);
+
+  // Parse `#/learn/<tab>/<anchor>`. Also normalizes the old `#/help` / `#/help/game`
+  // links (→ language / commands) so shared URLs keep working.
+  function parseHash() {
+    let h = location.hash.replace(/^#/, '');            // "/learn/commands/sync"
+    if (h.startsWith('/help/game')) return { tab: 'commands', anchor: h.slice('/help/game'.length).replace(/^[/#]/, ''), legacy: true };
+    if (h.startsWith('/help'))      return { tab: 'language', anchor: h.slice('/help'.length).replace(/^[/#]/, ''), legacy: true };
+    const parts = h.replace(/^\//, '').split('/');       // ["learn","commands","sync"]
+    const key = TAB_KEYS.includes(parts[1]) ? parts[1] : 'language';
+    const anchor = parts.slice(2).join('/');
+    return { tab: key, anchor: anchor ? decodeURIComponent(anchor) : '', legacy: false };
+  }
+  const routeFor = (tab, anchor) => `#/learn/${tab}${anchor ? `/${encodeURIComponent(anchor)}` : ''}`;
+
+  let tab = $state(parseHash().tab);
+  let selectedCmd = $state(null);              // Commands tab: the command whose doc is shown
+
+  // ── Beta gating ────────────────────────────────────────────────────────────
+  // The Commands + Game Tutorial tabs aren't public yet. They surface only when
+  // (1) you're already on that route (direct/shared links keep working), or
+  // (2) `?beta` is present in the URL's *query string*. The query string lives
+  // before the `#`, so the browser preserves it across every hash-only route
+  // change we make — beta "propagates" through app navigation for free — while
+  // editing it out of the URL turns beta off immediately (no sticky latch).
+  const BETA_TABS = new Set(['commands', 'tutorial']);
+  let betaUnlocked = $state(normalizeBeta());
+  // A beta tab shows in the nav when unlocked or when it's the tab we're on.
+  let visibleTabs = $derived(TABS.filter((t) => !BETA_TABS.has(t.key) || betaUnlocked || tab === t.key));
+
+  // ── Full-page search (all tabs) ────────────────────────────────────────────
+  const stripHtml = (s) => (s || '').replace(/<[^>]*>/g, '');
+  // Language keywords → the Language.md section that documents each (slugs come
+  // from HELP_TOC). Lets `if`, `for`, `function`, … resolve to the language docs.
+  const LANGUAGE_KEYWORDS = {
+    if: 'conditionals', then: 'conditionals', else: 'conditionals', elseif: 'conditionals', endif: 'conditionals',
+    while: 'while-loops', endwhile: 'while-loops',
+    for: 'for-loops', to: 'for-loops', step: 'for-loops', next: 'for-loops',
+    repeat: 'repeat-loops', until: 'repeat-loops',
+    do: 'do-loops', loop: 'do-loops',
+    exit: 'control-statements', skip: 'control-statements',
+    select: 'select-statements', case: 'select-statements', endcase: 'select-statements', endselect: 'select-statements', default: 'select-statements',
+    defer: 'defer-statements',
+    function: 'functions', endfunction: 'functions', exitfunction: 'functions',
+    global: 'scopes', local: 'scopes',
+    dim: 'arrays',
+    as: 'casting',
+    type: 'user-defined-types', endtype: 'user-defined-types',
+    goto: 'goto', gosub: 'gosub', return: 'gosub',
+    and: 'operations', or: 'operations', not: 'operations', mod: 'operations',
+    rem: 'comments', remstart: 'comments', remend: 'comments',
+    constant: 'compile-time-constants',
+    end: 'end', true: 'literals', false: 'literals',
+  };
+  // Primitive data types (classic BASIC names + C# equivalents) → the Primitive
+  // Types section. Both spellings are valid in declarations, so both search.
+  const PRIMITIVE_TYPES = [
+    'integer', 'int', 'double integer', 'long', 'byte', 'word', 'ushort',
+    'dword', 'uint', 'boolean', 'bool', 'float', 'double float', 'double', 'string',
+  ];
+  let searchQuery = $state('');
+  let searchOpen = $state(false);
+  let searchBlurTimer;      // pending "close on blur" timer, cancelled on refocus
+  let searchIndex = null;   // built lazily (cmdSlug is defined further down)
+  function buildSearchIndex() {
+    if (searchIndex) return searchIndex;
+    const out = [];
+    for (const t of HELP_TOC) out.push({ tab: 'language', label: t.text, anchor: t.slug, kind: 'Language', sub: '' });
+    for (const [kw, anchor] of Object.entries(LANGUAGE_KEYWORDS)) out.push({ tab: 'language', label: kw, anchor, kind: 'Keyword', sub: 'Language keyword' });
+    for (const t of PRIMITIVE_TYPES) out.push({ tab: 'language', label: t, anchor: 'primitive-types', kind: 'Type', sub: 'Primitive data type' });
+    for (const t of GAME_TOC) out.push({ tab: 'tutorial', label: t.text, anchor: t.slug, kind: 'Tutorial', sub: '' });
+    const seen = new Set();
+    for (const g of GAME_COMMAND_GROUPS) for (const c of g.commands) {
+      if (seen.has(c.name)) continue; seen.add(c.name);
+      out.push({ tab: 'commands', label: c.name, anchor: cmdSlug(c.name), kind: 'Command', sub: stripHtml(c.desc).slice(0, 100) });
+    }
+    return (searchIndex = out);
+  }
+  let searchResults = $derived.by(() => {
+    const q = searchQuery.trim().toLowerCase();
+    if (q.length < 2) return [];
+    const scored = [];
+    for (const e of buildSearchIndex()) {
+      if (BETA_TABS.has(e.tab) && !betaUnlocked) continue;   // don't leak beta docs via search
+      const label = e.label.toLowerCase();
+      let score = -1;
+      if (label === q) score = 0;
+      else if (label.startsWith(q)) score = 1;
+      else if (label.includes(q)) score = 2;
+      else if (e.sub.toLowerCase().includes(q)) score = 3;
+      if (score >= 0) scored.push({ ...e, score });
+    }
+    scored.sort((a, b) => a.score - b.score || a.label.length - b.label.length);
+    return scored.slice(0, 12);
+  });
+  function gotoSearch(r) {
+    if (!r) return;
+    searchOpen = false; searchQuery = '';
+    location.hash = routeFor(r.tab, r.anchor);
+  }
+
+  // The blocks the body renders as prose + try-it snippets. Language/Tutorial
+  // come from their generated markdown; the Commands tab synthesizes blocks from
+  // the selected command's examples, so all three share ONE snippet UI + morph.
+  let blocks = $derived(
+    tab === 'commands'
+      ? (selectedCmd?.examples ?? []).map((ex) => ({ type: 'code', runnable: true, code: ex.code, caption: ex.caption }))
+      : (DOCS[tab]?.blocks ?? [])
+  );
+  let currentRuntime = $derived(tab === 'language' ? '' : 'monogame');
+  let currentToc = $derived(DOCS[tab]?.toc ?? []);
+
+  // Format every snippet through the LSP document formatter at render time (the
+  // engine owns the canonical style, so we don't bake it into the generated
+  // data). Results are cached by original source; `viewBlocks` swaps in the
+  // formatted code so display, the editor, the morph, and copy all agree.
+  let formatted = $state({});
+  const fmtRequested = new Set();
   $effect(() => {
-    const heads = HELP_TOC.map((t) => document.getElementById(t.slug)).filter(Boolean);
+    const bs = blocks;
+    const mono = currentRuntime === 'monogame';
+    for (const b of bs) {
+      if (b.type !== 'code' || !b.code || fmtRequested.has(b.code)) continue;
+      fmtRequested.add(b.code);
+      formatFadeSource('/fade/', b.code, mono)
+        .then((f) => { if (f && f !== b.code) formatted = { ...formatted, [b.code]: f }; })
+        .catch(() => {});
+    }
+  });
+  let viewBlocks = $derived(blocks.map((b) => (b.type === 'code' && formatted[b.code]) ? { ...b, code: formatted[b.code] } : b));
+
+  // Scroll-spy: which section is currently in view (language/tutorial only).
+  let activeSlug = $state(null);
+  $effect(() => {
+    if (tab === 'commands') return;
+    const toc = currentToc;
+    const heads = toc.map((t) => document.getElementById(t.slug)).filter(Boolean);
     if (!heads.length) return;
     const spy = () => {
       let cur = heads[0].id;
@@ -44,25 +195,44 @@
     copyTimer = setTimeout(() => (copied = null), 1200);
   }
 
-  // The section anchor embedded in the hash-router hash: everything after the
-  // SECOND `#`. "#/help#variables" → "variables"; "#/help" → "".
-  function currentAnchor() {
-    const h = location.hash.slice(1);       // "/help#variables"
-    const i = h.indexOf('#');
-    return i >= 0 ? decodeURIComponent(h.slice(i + 1)) : '';
+  // ── Commands tab: grouped command reference ───────────────────────────────
+  const cmdSlug = (name) => name.toLowerCase().replace(/[^\w]+/g, '-').replace(/^-|-$/g, '');
+  let gameExpanded = $state(new Set());        // expanded group names
+  function toggleGroup(name) {
+    const s = new Set(gameExpanded);
+    s.has(name) ? s.delete(name) : s.add(name);
+    gameExpanded = s;
+  }
+  // Pick a command (from a link or the anchor) and reset the live snippet.
+  function selectCmd(c) { selectedCmd = c; active = null; coloredCode.clear(); }
+  // Resolve the selected command from the route anchor and auto-expand its group.
+  function syncCommands() {
+    const { anchor } = parseHash();
+    if (!anchor) { selectCmd(null); return; }
+    for (const g of GAME_COMMAND_GROUPS) {
+      const c = g.commands.find((cc) => cmdSlug(cc.name) === anchor);
+      if (c) {
+        selectCmd(c);
+        if (!gameExpanded.has(g.name)) { const s = new Set(gameExpanded); s.add(g.name); gameExpanded = s; }
+        return;
+      }
+    }
   }
 
-  function scrollToAnchor(smooth) {
-    const id = currentAnchor();
-    if (!id) return;
-    const el = document.getElementById(id);
-    if (el) { el.scrollIntoView({ behavior: smooth ? 'smooth' : 'auto', block: 'start' }); activeSlug = id; }
+  function scrollToAnchor(smooth, tries = 12) {
+    const { anchor } = parseHash();
+    if (!anchor) return;
+    const el = document.getElementById(anchor);
+    if (el) { el.scrollIntoView({ behavior: smooth ? 'smooth' : 'auto', block: 'start' }); activeSlug = anchor; return; }
+    // The element may not exist yet if we just switched tabs (the new tab's body
+    // hasn't rendered). Retry across a few frames until it appears.
+    if (tries > 0) requestAnimationFrame(() => scrollToAnchor(smooth, tries - 1));
   }
 
-  // Point the URL bar at a section (route + in-page anchor) and copy the link.
+  // Point the URL bar at a section (tab + in-page anchor) and copy the link.
   // Setting the hash fires hashchange, which scrolls us there.
   function linkToSection(id) {
-    location.hash = `/help#${id}`;
+    location.hash = routeFor(tab, id);
     navigator.clipboard?.writeText(location.href);
     showToast('Link copied');
   }
@@ -71,25 +241,40 @@
   let toastTimer;
   function showToast(msg) { toast = msg; clearTimeout(toastTimer); toastTimer = setTimeout(() => (toast = ''), 1400); }
 
-  // TOC links carry the full hash (`#/help#slug`), so clicking one updates the
-  // hash → hashchange → scroll. Highlight immediately without waiting for spy.
+  // TOC links carry the full hash, so clicking one updates the hash → hashchange
+  // → scroll. Highlight immediately without waiting for spy.
   function goto(slug) { activeSlug = slug; }
 
-  onMount(() => {
-    // GitHub-style hover anchor on every heading: click copies a link to it.
+  // Re-stamp the GitHub-style hover anchors onto whatever headings the current
+  // tab rendered (language + tutorial prose). Called on mount and tab switch.
+  async function stampHeadingAnchors() {
+    await tick();
     for (const h of document.querySelectorAll('.help-body h1[id], .help-body h2[id], .help-body h3[id], .help-body h4[id]')) {
+      if (h.querySelector('.heading-anchor')) continue;
       const a = document.createElement('a');
       a.className = 'heading-anchor';
-      a.href = `#/help#${h.id}`;
+      a.href = routeFor(tab, h.id);
       a.title = 'Copy link to this section';
       a.setAttribute('aria-label', 'Copy link to this section');
       a.textContent = '#';
       a.addEventListener('click', (e) => { e.preventDefault(); linkToSection(h.id); });
       h.appendChild(a);
     }
-    // Deep link on load, then keep in sync as the hash changes.
-    scrollToAnchor(false);
-    const onHash = () => scrollToAnchor(true);
+  }
+
+  function syncRoute(smooth) {
+    active = null;
+    if (tab === 'commands') syncCommands();
+    else { stampHeadingAnchors(); scrollToAnchor(smooth); }
+  }
+
+  onMount(() => {
+    const { legacy } = parseHash();
+    // Canonicalize a legacy #/help link to the new #/learn scheme without a
+    // history entry, so back/forward stay clean.
+    if (legacy) history.replaceState(null, '', routeFor(tab, parseHash().anchor));
+    syncRoute(false);
+    const onHash = () => { betaUnlocked = normalizeBeta(); tab = parseHash().tab; syncRoute(true); };
     window.addEventListener('hashchange', onHash);
     return () => window.removeEventListener('hashchange', onHash);
   });
@@ -176,7 +361,7 @@
     const snip = e.currentTarget.closest('.snip');
     const pre = snip?.querySelector('.fade-code__pre');
     if (!pre || !canAnimate()) { active = i; return; }
-    const injected = hintLines(HELP_BLOCKS[i]).length;
+    const injected = hintLines(viewBlocks[i]).length;
     coloredCode.set(i, pre.querySelector('code')?.innerHTML ?? '');
 
     const facade = makeFacade(pre, (pre.querySelector('code') ?? pre).getBoundingClientRect());
@@ -213,7 +398,7 @@
     const snip = e?.currentTarget?.closest('.snip');
     const pane = snip?.querySelector('.fade-runnable__pane-editor');
     const closingIndex = active;
-    const injected = hintLines(HELP_BLOCKS[active]).length;
+    const injected = hintLines(viewBlocks[active]).length;
     const fromLine = pane ? codeLines(pane)[injected] : null;
     const live = snip?.querySelector('.snip-live');
     if (!snip || !fromLine || !live || !canAnimate()) { active = null; return; }
@@ -273,7 +458,9 @@
   // (authored as a hidden comment in Language.md) wins; otherwise, snippets
   // that don't print anything get a nudge to PRINT or set a breakpoint.
   const NUDGE = "This snippet doesn't print anything — add a PRINT statement, or set a breakpoint in the gutter and hit Debug to inspect the values.";
-  const hintFor = (block) => block.hint ?? (/\bprint\b/i.test(block.code) ? null : NUDGE);
+  // The print-nudge only makes sense for the web (Language) runtime — MonoGame
+  // snippets are graphical, so they never get an auto-nudge (only explicit hints).
+  const hintFor = (block) => block.hint ?? (currentRuntime === '' && !/\bprint\b/i.test(block.code) ? NUDGE : null);
   // Word-wrap the hint to short lines so, injected as `-comments, it reads as a
   // few tidy lines rather than one long one. Returns [] when there's no hint.
   function wrapHint(text, max = 50) {
@@ -289,7 +476,91 @@
   const hintLines = (block) => { const h = hintFor(block); return h ? wrapHint(h) : []; };
 </script>
 
+<!-- Shared prose + try-it snippet body. Drives Language, Game Tutorial, and the
+     Commands tab's per-command examples from the reactive `blocks` array, so all
+     three get the identical layout, editor width, and markdown→editor morph. -->
+{#snippet bodyBlocks()}
+  {#each viewBlocks as block, i}
+    {#if block.type === 'html'}
+      {@html block.html}
+    {:else}
+      {#if block.caption}<p class="snip-caption">{@html block.caption}</p>{/if}
+      <div class="snip">
+        {#if block.runnable && active === i}
+          <div class="snip-live" out:editorFade>
+            <fade-runnable class="ide" layout="ide" debug closable hide-run
+              runtime={currentRuntime || undefined}
+              asset-base="/fade/" code={block.code}
+              hint={hintLines(block).join('\n')} onfadeclose={(e) => closeIt(e)}></fade-runnable>
+          </div>
+        {:else if block.runnable}
+          <div class="snip-static">
+            {#if canTryIt}
+              <button class="snip-btn try" onclick={(e) => openIt(i, e)}>
+                <span class="codicon codicon-play"></span> try it
+              </button>
+            {/if}
+            <button class="snip-btn copy" title="Copy code" aria-label="Copy code" onclick={() => copy(block.code, i)}>
+              <span class="codicon codicon-{copied === i ? 'check' : 'copy'}"></span>
+            </button>
+            <fade-code runtime={currentRuntime || undefined} asset-base="/fade/" code={block.code} commands={block.commands?.join(",")}></fade-code>
+          </div>
+        {:else}
+          <div class="snip-static">
+            <button class="snip-btn copy" title="Copy code" aria-label="Copy code" onclick={() => copy(block.code, i)}>
+              <span class="codicon codicon-{copied === i ? 'check' : 'copy'}"></span>
+            </button>
+            <fade-code runtime={currentRuntime || undefined} asset-base="/fade/" code={block.code} commands={block.commands?.join(",")}></fade-code>
+          </div>
+        {/if}
+      </div>
+    {/if}
+  {/each}
+{/snippet}
+
+<nav class="help-tabs">
+  <a class="help-tabs-home" href="#/" aria-label="Home">← Home</a>
+  {#each visibleTabs as t}
+    <a class="help-tab" class:active={tab === t.key} href="#{t.route}">{t.label}</a>
+  {/each}
+  <label class="help-theme" title="Theme">
+    <select aria-label="Theme" value={theme} onchange={(e) => pickTheme(e.currentTarget.value)}>
+      {#each THEMES as t}<option value={t.id}>{t.label}</option>{/each}
+    </select>
+  </label>
+  <div class="help-search">
+    <span class="codicon codicon-search"></span>
+    <input
+      type="text" placeholder="Search all docs…" aria-label="Search docs"
+      bind:value={searchQuery}
+      onfocus={() => { clearTimeout(searchBlurTimer); searchOpen = true; }}
+      oninput={() => (searchOpen = true)}
+      onblur={() => { searchBlurTimer = setTimeout(() => (searchOpen = false), 150); }}
+      onkeydown={(e) => {
+        if (e.key === 'Escape') { searchQuery = ''; searchOpen = false; e.currentTarget.blur(); }
+        else if (e.key === 'Enter') gotoSearch(searchResults[0]);
+      }} />
+    {#if searchOpen && searchResults.length}
+      <div class="help-search-results">
+        {#each searchResults as r}
+          <button class="help-search-item" onmousedown={(e) => e.preventDefault()} onclick={() => gotoSearch(r)}>
+            <span class="help-search-kind help-search-kind--{r.tab}">{r.kind}</span>
+            <span class="help-search-label">{r.label}</span>
+            {#if r.sub}<span class="help-search-sub">{r.sub}</span>{/if}
+          </button>
+        {/each}
+      </div>
+    {/if}
+  </div>
+</nav>
+
 <div class="help-layout" class:toc-drawer={tocDrawer} class:toc-open={tocOpen}>
+  {#if BETA_TABS.has(tab)}
+    <div class="beta-banner" role="status">
+      <span class="beta-tag">BETA</span>
+      This section is a work in progress — content and behavior may change.
+    </div>
+  {/if}
   {#if tocDrawer}
     <button class="toc-toggle" aria-label="Table of contents" onclick={() => (tocOpen = !tocOpen)}>
       <span class="codicon codicon-list-unordered"></span>
@@ -297,118 +568,246 @@
     {#if tocOpen}<button class="toc-scrim" aria-label="Close" onclick={() => (tocOpen = false)}></button>{/if}
   {/if}
   <nav class="toc" onclick={() => { if (tocDrawer) tocOpen = false; }}>
-    <div class="toc-actions">
-      <a class="toc-home" href="#/">← Home</a>
-      <a href={GITHUB} target="_blank" rel="noreferrer">GitHub</a>
-      <a href={DISCORD} target="_blank" rel="noreferrer">Discord</a>
-    </div>
-    <div class="toc-title">{HELP_TITLE ?? 'Fade Language'}</div>
-    <ul class="toc-list">
-      {#each HELP_TOC as item}
-        <li class="lvl-{item.level}">
-          <a href="#/help#{item.slug}" data-slug={item.slug} class:active={item.slug === activeSlug}
-             onclick={() => goto(item.slug)}>{item.text}</a>
-        </li>
-      {/each}
-    </ul>
+    {#if tab === 'commands'}
+      <div class="toc-title">Commands</div>
+      <ul class="toc-list cmd-toc">
+        {#each GAME_COMMAND_GROUPS as g}
+          <li class="cmd-group">
+            <button class="cmd-group-head" onclick={() => toggleGroup(g.name)}>
+              <span class="codicon codicon-chevron-{gameExpanded.has(g.name) ? 'down' : 'right'}"></span>
+              <span class="cmd-group-name">{g.name}</span>
+              <span class="cmd-count">{g.commands.length}</span>
+            </button>
+            {#if gameExpanded.has(g.name)}
+              <ul class="cmd-list">
+                {#each g.commands as c}
+                  <li>
+                    <a href={routeFor('commands', cmdSlug(c.name))} class:active={selectedCmd?.name === c.name}
+                       onclick={() => selectCmd(c)}>{c.name}</a>
+                  </li>
+                {/each}
+              </ul>
+            {/if}
+          </li>
+        {/each}
+      </ul>
+    {:else}
+      <div class="toc-title">{DOCS[tab].title}</div>
+      <ul class="toc-list">
+        {#each currentToc as item}
+          <li class="lvl-{item.level}">
+            <a href={routeFor(tab, item.slug)} data-slug={item.slug} class:active={item.slug === activeSlug}
+               onclick={() => goto(item.slug)}>{item.text}</a>
+          </li>
+        {/each}
+      </ul>
+    {/if}
   </nav>
 
-  <article class="help-body">
-    {#each HELP_BLOCKS as block, i}
-      {#if block.type === 'html'}
-        {@html block.html}
-      {:else if block.runnable}
-        <div class="snip">
-          {#if active === i}
-            <div class="snip-live" out:editorFade>
-              <fade-runnable class="ide" layout="ide" debug hide-run closable asset-base="/fade/" code={block.code} hint={hintLines(block).join('\n')} onfadeclose={(e) => closeIt(e)}></fade-runnable>
-            </div>
+  {#if tab === 'commands'}
+    <article class="help-body">
+      {#if selectedCmd}
+        <div class="cmd-doc">
+          <h1 class="cmd-name">{selectedCmd.name}</h1>
+          {#if selectedCmd.desc}<p class="cmd-desc">{@html selectedCmd.desc}</p>{/if}
+          <h2>Parameters</h2>
+          {#if selectedCmd.params.length}
+            {#each selectedCmd.params as p}
+              <div class="cmd-param">
+                <code class="cmd-type">{p.type}</code>
+                <span class="cmd-pname">{p.name}</span>
+                {#if p.modifier}<span class="cmd-mod">({p.modifier})</span>{/if}
+                {#if p.desc}<span class="cmd-pdesc">— {@html p.desc}</span>{/if}
+              </div>
+            {/each}
           {:else}
-            <div class="snip-static">
-              {#if canTryIt}
-                <button class="snip-btn try" onclick={(e) => openIt(i, e)}>
-                  <span class="codicon codicon-play"></span> try it
-                </button>
-              {/if}
-              <button class="snip-btn copy" title="Copy code" aria-label="Copy code" onclick={() => copy(block.code, i)}>
-                <span class="codicon codicon-{copied === i ? 'check' : 'copy'}"></span>
-              </button>
-              <fade-code asset-base="/fade/" code={block.code} commands={block.commands?.join(",")}></fade-code>
-            </div>
+            <p class="cmd-none">None</p>
+          {/if}
+          {#if selectedCmd.returns}
+            <h2>Returns</h2>
+            <div class="cmd-param"><code class="cmd-type">{selectedCmd.returns.type}</code>{#if selectedCmd.returns.desc}<span class="cmd-pdesc">— {@html selectedCmd.returns.desc}</span>{/if}</div>
+          {/if}
+          {#if selectedCmd.remarks}
+            <h2>Remarks</h2>
+            <p class="cmd-remarks">{@html selectedCmd.remarks}</p>
+          {/if}
+          {#if blocks.length}
+            <h2>Examples</h2>
           {/if}
         </div>
+        {@render bodyBlocks()}
       {:else}
-        <div class="snip">
-          <div class="snip-static">
-            <button class="snip-btn copy" title="Copy code" aria-label="Copy code" onclick={() => copy(block.code, i)}>
-              <span class="codicon codicon-{copied === i ? 'check' : 'copy'}"></span>
-            </button>
-            <fade-code asset-base="/fade/" code={block.code} commands={block.commands?.join(",")}></fade-code>
-          </div>
+        <div class="cmd-doc">
+          <h1>Commands</h1>
+          <p>The full command reference for the MonoGame runtime. Pick a category on the left and choose a command to see its parameters, return value, and runnable examples.</p>
+          <p style="color:var(--fg-muted)">New to the game runtime? Start with the <a href="#/learn/tutorial" style="color:var(--accent)">Game Tutorial</a>.</p>
         </div>
       {/if}
-    {/each}
-  </article>
+    </article>
+  {:else}
+    <article class="help-body">
+      {@render bodyBlocks()}
+    </article>
+  {/if}
   {#if toast}<div class="help-toast">{toast}</div>{/if}
 </div>
 
 <style>
+  /* Sticky docs tabs across the very top (Language | Game Commands | …). */
+  .help-tabs {
+    position: fixed; top: 0; left: 0; right: 0; height: 40px; z-index: 30;
+    display: flex; align-items: stretch; gap: 2px; padding: 0 10px;
+    background: var(--bg); border-bottom: 1px solid var(--border-2);
+  }
+  .help-tabs-home { display: inline-flex; align-items: center; color: var(--fg-muted); text-decoration: none; font-size: 0.82rem; padding: 0 12px 0 4px; margin-right: 6px; border-right: 1px solid var(--border-2); }
+  .help-tabs-home:hover { color: var(--fg); }
+  .help-tab {
+    display: inline-flex; align-items: center; padding: 0 16px; color: var(--fg-muted);
+    text-decoration: none; font-size: 0.9rem; border-bottom: 2px solid transparent;
+  }
+  .help-tab:hover { color: var(--fg); }
+  .help-tab.active { color: var(--fg); border-bottom-color: var(--accent); }
+
+  /* Theme picker + search, right-aligned; picker sits to the left of search. */
+  .help-search { position: relative; display: flex; align-items: center; gap: 6px; align-self: center; }
+  .help-search > .codicon { color: var(--fg-muted); font-size: 14px; pointer-events: none; }
+  .help-search input {
+    height: 30px; box-sizing: border-box;
+    background: var(--bg-3); border: 1px solid var(--border-2); border-radius: 6px; color: var(--fg);
+    font: inherit; font-size: 0.82rem; padding: 0 8px; width: 220px;
+  }
+  .help-search input:focus { outline: none; border-color: var(--accent); }
+  .help-search-results {
+    position: absolute; top: calc(100% + 6px); right: 0; width: 400px; max-width: 80vw;
+    max-height: 64vh; overflow-y: auto; background: var(--bg-2); border: 1px solid var(--border-2);
+    border-radius: 8px; box-shadow: 0 10px 34px rgba(0, 0, 0, 0.55); z-index: 40; padding: 4px;
+  }
+  .help-search-item {
+    display: flex; align-items: center; gap: 8px; width: 100%; text-align: left;
+    background: none; border: 0; color: var(--fg); padding: 6px 8px; border-radius: 6px;
+    cursor: pointer; font: inherit; font-size: 0.85rem;
+  }
+  .help-search-item:hover { background: var(--hover-bg); }
+  .help-search-kind {
+    flex: 0 0 auto; font-size: 0.6rem; text-transform: uppercase; letter-spacing: 0.04em;
+    padding: 2px 6px; border-radius: 4px; background: var(--border-2); color: var(--fg-muted);
+  }
+  .help-search-kind--commands { background: #3a2f4a; color: #c586c0; }
+  .help-search-kind--tutorial { background: #2a3a4a; color: #4aa3ff; }
+  .help-search-kind--language { background: #2a4a3a; color: #5ac57a; }
+  .help-search-label { flex: 0 0 auto; color: var(--fg); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+  .help-search-sub { flex: 1 1 auto; color: var(--fg-muted); font-size: 0.78rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+  /* Theme picker */
+  .help-theme { display: flex; align-items: center; align-self: center; margin-left: auto; margin-right: 8px; }
+  .help-theme select {
+    height: 30px; box-sizing: border-box;
+    background: var(--bg-3); border: 1px solid var(--border-2); border-radius: 6px; color: var(--fg);
+    font: inherit; font-size: 0.8rem; padding: 0 6px; cursor: pointer;
+  }
+  .help-theme select:focus { outline: none; border-color: var(--accent); }
+
   .help-layout {
     padding-left: 240px;   /* reserve room for the fixed TOC */
+    padding-top: 40px;     /* clear the fixed tabs bar */
     text-align: left;
   }
 
   /* Table of contents — fixed to the LEFT EDGE of the screen (not the centered
-     content), so it stays put as the body scrolls. */
+     content), so it stays put as the body scrolls. Sits below the tabs bar. */
   .toc {
     position: fixed;
     left: 0;
-    top: 0;
+    top: 40px;
     width: 240px;
-    height: 100vh;
+    height: calc(100vh - 40px);
     overflow-y: auto;
     box-sizing: border-box;
     padding: 1.25rem 0.75rem 2rem;
-    border-right: 1px solid #333;
+    border-right: 1px solid var(--border-2);
     font-size: 0.9rem;
-    background: #242424;
+    background: var(--bg-2);
     z-index: 5;
   }
-  .toc-actions { display: flex; flex-wrap: wrap; gap: 0.5rem; margin-bottom: 1rem; }
-  .toc-actions a {
-    flex: 1 1 auto;
-    text-align: center;
-    text-decoration: none;
-    color: #cfcfcf;
-    background: #2d2d2d;
-    border: 1px solid #3a3a3a;
-    border-radius: 6px;
-    padding: 5px 8px;
+  /* Slim pre-release notice; spans the content region below the tabs bar. */
+  .beta-banner {
+    display: flex; align-items: center; gap: 8px;
+    padding: 7px 16px;
     font-size: 0.82rem;
+    color: var(--fg-2);
+    background: color-mix(in srgb, var(--accent) 14%, var(--bg-2));
+    border-bottom: 1px solid color-mix(in srgb, var(--accent) 35%, var(--border-2));
   }
-  .toc-actions a:hover { background: #3a3d41; color: #fff; }
-  .toc-actions .toc-home { background: #0e639c; border-color: #0e639c; color: #fff; }
-  .toc-actions .toc-home:hover { background: #1177bb; }
-  .toc-title { font-weight: 700; margin: 0.25rem 0 0.5rem; color: #eee; }
+  .beta-tag {
+    flex: 0 0 auto;
+    font-weight: 700; font-size: 0.68rem; letter-spacing: 0.06em;
+    padding: 2px 6px; border-radius: 4px;
+    background: var(--accent); color: var(--on-accent);
+  }
+  .toc-title { font-weight: 700; margin: 0.25rem 0 0.5rem; color: var(--fg); }
   .toc-list { list-style: none; margin: 0; padding: 0; }
   .toc-list li { margin: 1px 0; }
   .toc-list a {
     display: block;
-    color: #9aa0a6;
+    color: var(--fg-muted);
     text-decoration: none;
     padding: 3px 6px;
     border-radius: 4px;
     border-left: 2px solid transparent;
   }
-  .toc-list a:hover { color: #fff; background: #2a2d2e; }
+  .toc-list a:hover { color: var(--fg); background: var(--hover-bg); }
   /* Moving position indicator — the section currently in view. */
   .toc-list a { transition: border-left-color 0.15s, color 0.15s; }
-  .toc-list a.active { border-left-color: #2f81f7; color: #e9edf1; font-weight: 600; }
+  .toc-list a.active { border-left-color: var(--accent); color: var(--fg); font-weight: 600; }
   .toc-list .lvl-1 { font-weight: 600; margin-top: 0.4rem; }
   .toc-list .lvl-2 a { padding-left: 6px; }
   /* Nested subsections (the docs use #### under ##). */
   .toc-list .lvl-3 a,
-  .toc-list .lvl-4 a { padding-left: 22px; font-size: 0.82rem; color: #808690; }
+  .toc-list .lvl-4 a { padding-left: 22px; font-size: 0.82rem; color: var(--fg-muted); }
+
+  /* ── Game Commands: grouped TOC + doc panel ─────────────────────────── */
+  .cmd-toc { }
+  .cmd-group-head {
+    width: 100%; display: flex; align-items: center; gap: 6px; background: none;
+    border: 0; color: var(--fg-2); font: inherit; font-size: 0.9rem; cursor: pointer;
+    padding: 4px 6px; border-radius: 4px; text-align: left;
+  }
+  .cmd-group-head:hover { background: var(--hover-bg); color: var(--fg); }
+  .cmd-group-head .codicon { font-size: 14px; color: var(--fg-muted); flex: 0 0 auto; }
+  .cmd-group-name { flex: 1 1 auto; }
+  .cmd-count { flex: 0 0 auto; color: var(--fg-muted); font-size: 0.75rem; }
+  .cmd-list { list-style: none; margin: 0 0 2px; padding: 0 0 2px; }
+  .cmd-list a {
+    display: block; color: var(--fg-muted); text-decoration: none; padding: 2px 6px 2px 26px;
+    font-size: 0.82rem; border-radius: 4px; border-left: 2px solid transparent;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+  .cmd-list a:hover { color: var(--fg); background: var(--hover-bg); }
+  .cmd-list a.active { border-left-color: var(--accent); color: var(--fg); background: var(--list-active-bg); }
+
+  .cmd-doc :global(h1), .cmd-name { font-size: 1.6rem; margin: 0 0 0.5rem; color: var(--link-fg); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+  .cmd-doc h2 { font-size: 0.78rem; text-transform: uppercase; letter-spacing: 0.05em; color: var(--fg-muted); margin: 1.6rem 0 0.5rem; border-bottom: 1px solid var(--border-2); padding-bottom: 4px; }
+  .cmd-desc { color: var(--fg); }
+  .cmd-param { padding: 4px 0; color: var(--fg); }
+  .cmd-type { background: var(--bg-3); color: var(--fg); padding: 1px 6px; border-radius: 4px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.85em; }
+  .cmd-pname { color: var(--link-fg); font-weight: 600; margin-left: 6px; }
+  .cmd-mod { color: var(--fg-muted); font-style: italic; margin-left: 4px; }
+  .cmd-pdesc { color: var(--fg-muted); margin-left: 4px; }
+  .cmd-none { color: var(--fg-muted); font-style: italic; }
+  .cmd-remarks { color: var(--fg-2); white-space: pre-wrap; }
+  /* Caption above a command example / tutorial snippet (from the docs prose). */
+  .snip-caption { color: var(--fg-2); margin: 1.2rem 0 0.4rem; }
+  .snip-caption :global(code) {
+    background: var(--bg-3); color: #d7ba7d; padding: 1px 5px; border-radius: 3px;
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.85em;
+  }
+  /* Examples heading sits tighter above the first snippet than the doc h2s. */
+  .cmd-doc h2:last-child { margin-bottom: 0; }
+  /* Inline code inside doc prose (from {@html}) — distinct from the type chip. */
+  .cmd-desc :global(code), .cmd-remarks :global(code), .cmd-pdesc :global(code) {
+    background: var(--bg-3); color: #d7ba7d; padding: 1px 5px; border-radius: 3px;
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.85em;
+  }
 
   .help-body {
     /* Left the prose a debug-sidebar's width to the right of the TOC, so when a
@@ -429,7 +828,7 @@
   :global(.help-body h4 .heading-anchor) {
     position: absolute; left: -0.9em; top: 0;
     opacity: 0; transition: opacity 0.12s;
-    color: #6b7280; font-weight: 400; text-decoration: none;
+    color: var(--fg-muted); font-weight: 400; text-decoration: none;
     padding-right: 0.35em; cursor: pointer;
   }
   :global(.help-body h1:hover .heading-anchor),
@@ -437,19 +836,19 @@
   :global(.help-body h3:hover .heading-anchor),
   :global(.help-body h4:hover .heading-anchor),
   :global(.help-body .heading-anchor:focus) { opacity: 1; }
-  :global(.help-body .heading-anchor:hover) { color: #2f81f7; }
+  :global(.help-body .heading-anchor:hover) { color: var(--accent); }
 
   .help-toast {
     position: fixed; bottom: 22px; left: 50%; transform: translateX(-50%);
-    background: #0e639c; color: #fff; padding: 7px 16px; border-radius: 6px;
+    background: var(--accent); color: var(--fg); padding: 7px 16px; border-radius: 6px;
     font-size: 0.85rem; z-index: 80; box-shadow: 0 4px 16px rgba(0,0,0,0.4);
     animation: help-toast-in 0.16s ease;
   }
   @keyframes help-toast-in { from { opacity: 0; transform: translate(-50%, 6px); } to { opacity: 1; transform: translate(-50%, 0); } }
-  .help-body :global(pre) { background: #1e1e1e; color: #ddd; padding: 0.75rem; border-radius: 6px; overflow-x: auto; }
+  .help-body :global(pre) { background: var(--code-bg); color: var(--fg); padding: 0.75rem; border-radius: 6px; border: 1px solid var(--border-2); overflow-x: auto; }
   .help-body :global(code) { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
   .help-body :global(table) { border-collapse: collapse; }
-  .help-body :global(td), .help-body :global(th) { border: 1px solid #444; padding: 4px 8px; }
+  .help-body :global(td), .help-body :global(th) { border: 1px solid var(--border-2); padding: 4px 8px; }
   /* Don't set display on fade-runnable — the component owns it (grid in IDE
      mode); an override here would collapse the IDE layout to a block stack. */
   .help-body :global(fade-code) { display: block; }
@@ -472,8 +871,8 @@
   }
   .help-body :global(.fade-callout__body > :first-child) { margin-top: 0; }
   .help-body :global(.fade-callout__body > :last-child) { margin-bottom: 0; }
-  .help-body :global(.fade-callout--note)      { border-left-color: #2f81f7; }
-  .help-body :global(.fade-callout--note .fade-callout__title)      { color: #2f81f7; }
+  .help-body :global(.fade-callout--note)      { border-left-color: var(--accent); }
+  .help-body :global(.fade-callout--note .fade-callout__title)      { color: var(--accent); }
   .help-body :global(.fade-callout--note .fade-callout__title::before)      { content: "ℹ️"; }
   .help-body :global(.fade-callout--tip)       { border-left-color: #3fb950; }
   .help-body :global(.fade-callout--tip .fade-callout__title)       { color: #3fb950; }
@@ -513,18 +912,19 @@
     display: inline-flex;
     align-items: center;
     gap: 4px;
-    border: 1px solid #3a3a3a;
-    background: #2d2d2d;
-    color: #ccc;
+    border: 1px solid var(--border-2);
+    background: var(--bg-3);
+    color: var(--fg-2);
     border-radius: 4px;
     padding: 4px 9px;
     cursor: pointer;
   }
-  .snip-btn:hover { background: #3a3d41; color: #fff; }
+  .snip-btn:hover { background: var(--btn-hover-bg); color: var(--fg); }
   .snip-btn .codicon { font-size: 13px; }
   .snip-static .try, .snip-static .copy { position: absolute; top: 9px; z-index: 2; }
-  .snip-static .try { left: 8px; background: #0e639c; border-color: #0e639c; color: #fff; }
-  .snip-static .try:hover { background: #1177bb; }
+  .snip-static .try { left: 8px; background: var(--accent); border-color: var(--accent); color: var(--on-accent); }
+  .snip-static .try:hover { color: var(--on-accent); }
+  .snip-static .try:hover { background: var(--accent-hover); }
   /* Copy is an icon-only button that fades in on hover (or keyboard focus). */
   .snip-static .copy { right: 8px; padding: 5px 7px; opacity: 0; transition: opacity 0.12s; }
   .snip-static .copy .codicon { font-size: 14px; }
@@ -561,7 +961,7 @@
        exact x. Break ≈ sidebar(180) + gutter(89) − code padding(12). */
     margin-left: -257px;
     width: calc(100vw - 240px - 34px);   /* fill right, balanced gutters */
-    border: 1px solid #2b2f36;
+    border: 1px solid var(--border-2);
     border-radius: 8px;
     overflow: hidden;
     box-shadow: 0 8px 30px rgba(0, 0, 0, 0.4);
@@ -584,9 +984,9 @@
      toggles it. The content reclaims the TOC's 240px but keeps the debug gap so
      the editor still aligns. */
   .toc-toggle {
-    position: fixed; top: 10px; left: 10px; z-index: 25;
+    position: fixed; top: 48px; left: 10px; z-index: 25;
     width: 38px; height: 38px; display: inline-flex; align-items: center; justify-content: center;
-    background: #0e639c; color: #fff; border: 0; border-radius: 8px; cursor: pointer;
+    background: var(--accent); color: var(--fg); border: 0; border-radius: 8px; cursor: pointer;
     box-shadow: 0 2px 10px rgba(0,0,0,0.4);
   }
   .toc-toggle .codicon { font-size: 18px; }

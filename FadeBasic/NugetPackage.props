@@ -1,5 +1,11 @@
 <Project>
     <PropertyGroup>
+        <!-- Fallback version for builds that don't pass /p:Version (e.g. a plain
+             `dotnet build`/`publish` in the IDE). Release builds override this via
+             install.sh's /p:Version=$SEM_VER. Without a default here, assemblies
+             fall back to 1.0.0, which is what FadeBridge.GetVersionInfo() reports
+             into the Playground Diagnostics panel. -->
+        <VersionPrefix Condition="'$(VersionPrefix)' == ''">0.0.0-dev</VersionPrefix>
         <Authors>Chris Hanna</Authors>
         <ProjectUrl>https://fadebasic.com</ProjectUrl>
         <PackageProjectUrl>https://fadebasic.com</PackageProjectUrl>
