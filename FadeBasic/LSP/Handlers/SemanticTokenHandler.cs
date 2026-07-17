@@ -51,7 +51,12 @@ public class SemanticTokenHandler : SemanticTokensHandlerBase
                 TokenModifiers = capability.TokenModifiers,
                 TokenTypes = capability.TokenTypes,
             },
-            Full = new SemanticTokensCapabilityRequestFull { Delta = true },
+            // Delta disabled: the incremental diff was mis-coloring block-closing
+            // keywords (endif/loop) when the client's cached previous token set
+            // lagged an edit. A full token set per request is always correct and
+            // cheap for source-sized files. (The lexer classification itself is
+            // correct — see LexClassifyProbeTests.)
+            Full = new SemanticTokensCapabilityRequestFull { Delta = false },
             Range = true,
         };
     }
@@ -61,9 +66,16 @@ public class SemanticTokenHandler : SemanticTokensHandlerBase
     {
         try
         {
-            if (!_compiler.TryGetProjectsFromSource(identifier.TextDocument.Uri, out var units) || units.Count == 0)
-                return Task.CompletedTask;
-            var unit = units[0];
+            // Parse the live buffer right now (cheap) so highlighting tracks
+            // every keystroke instead of waiting on the debounced diagnostics
+            // pass. Fall back to the last cached unit if a fresh parse isn't
+            // available (e.g. project not yet resolved).
+            if (!_compiler.TryParseFresh(identifier.TextDocument.Uri, out var unit) || unit == null)
+            {
+                if (!_compiler.TryGetProjectsFromSource(identifier.TextDocument.Uri, out var units) || units.Count == 0)
+                    return Task.CompletedTask;
+                unit = units[0];
+            }
 
             var doc = CoreAdapter.ToDocument(unit, identifier.TextDocument.Uri.ToString());
             var classified = CoreSemTokensHandler.Classify(doc);

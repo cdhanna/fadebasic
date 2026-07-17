@@ -290,6 +290,23 @@ public static partial class FadeBridge
     public static string RunStartFromSource(string source) =>
         CooperativePump.RunStartFromSource(source);
 
+    // Hot reload: arm a new source against the running program (returns a verdict
+    // JSON) and query the latest verdict. When a DEBUG session is active, target
+    // its reload session (DebugTick applies it while keeping the debugger
+    // attached); otherwise the run-mode session (RunTick applies it). Both apply
+    // at the next clean statement boundary, preserving state.
+    [JSExport]
+    public static string ReloadArm(string source) =>
+        _debugSession?.HotReload != null
+            ? CooperativePump.ReloadArmSession(_debugSession.HotReload, source)
+            : CooperativePump.ReloadArm(source);
+
+    [JSExport]
+    public static string ReloadStatus() =>
+        _debugSession?.HotReload != null
+            ? CooperativePump.ReloadStatusSession(_debugSession.HotReload)
+            : CooperativePump.ReloadStatus();
+
     [JSExport]
     public static byte[] CompileToBytecode(string source) =>
         CooperativePump.CompileToBytecode(source);
@@ -941,6 +958,11 @@ public static partial class FadeBridge
             }
             _debugContext = ctx;
             _debugSession = new WebDebugSession(ctx.Machine, ctx.Compiler.DebugData, commands);
+            // Hot reload while debugging: arm a session over the SAME VM +
+            // compiler that produced the running bytecode (Gotcha #1). DebugTick's
+            // StartDebugging hook applies armed edits at a safepoint and rebinds
+            // via RestartAfterReload — keeping the debugger attached + breakpoints.
+            _debugSession.HotReload = CooperativePump.BuildReloadSession(ctx.Machine, ctx.Compiler, commands);
             _debugTestEntry = null; // non-test debug; clear any prior test marker
             // Pre-mark as paused so the first tick's running→paused detection
             // doesn't fire a synthetic stop event for our internal start-

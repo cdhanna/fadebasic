@@ -115,7 +115,14 @@ namespace FadeBasic.Launch
         
         public DebugToken hitBreakpointToken;
         public IndexCollection instructionMap;
-        
+
+        // Optional state-preserving hot reload. When set (the launcher wires this
+        // for a debug + watch session), the debug loop yields at a clean statement
+        // boundary whenever an edit is armed, applies it live to THIS vm, and
+        // rebinds via RestartAfterReload — keeping the debugger attached and
+        // breakpoints re-verified, with runtime state preserved. Null → no reload.
+        public FadeBasic.Virtual.HotReload.HotReloadSession HotReload;
+
         public IDebugLogger logger;
 
         public DebugVariableDatabase variableDb;
@@ -211,12 +218,78 @@ namespace FadeBasic.Launch
             ApplyRestart(nextVm, nextDebugData, commandCollection);
         }
 
+        /// <summary>
+        /// Rebind the session after a STATE-PRESERVING hot reload that mutated the
+        /// CURRENT VM in place (bytecode swapped + PC/globals/heap migrated by the
+        /// <see cref="FadeBasic.Virtual.HotReload.Migrator"/>). Unlike
+        /// <see cref="Restart"/> — which swaps in a freshly-built VM and resets all
+        /// state — this keeps the live <c>_vm</c> and only re-points the session at
+        /// the new program's debug data, re-resolving breakpoints via the same
+        /// REV_REQUEST_RESTART round-trip the client already handles for F1
+        /// restart. Call at a safepoint immediately after the reload commits so the
+        /// debugger stays attached and breakpoints re-verify against the new lines,
+        /// with runtime state preserved. Does NOT Suspend()/rebuild the VM.
+        /// </summary>
+        public void RestartAfterReload(DebugData nextDebugData, CommandCollection nextCommands)
+        {
+            // resumeExecution:false — a reload must NOT resume a program the user
+            // paused. Preserve the current paused/running state across the rebind
+            // (unlike F1 Restart, which resets to running).
+            ApplyRestart(_vm, nextDebugData, nextCommands, resumeExecution: false);
+            OnReloadRebound();
+        }
+
+        // Called after RestartAfterReload rebinds. ApplyRestart raises the
+        // re-HELLO gate (debuggerReset=1) so a socket DAP client re-syncs
+        // breakpoints via PROTO_HELLO. Embedded in-process sessions (web worker /
+        // monogame browser) have no such client — they override this to clear the
+        // gate so the next tick resumes immediately (the host re-sends breakpoints
+        // directly instead). Default: no-op (socket path keeps the gate).
+        protected virtual void OnReloadRebound() { }
+
+        // Apply an armed hot reload IF the VM is parked at a clean statement
+        // boundary (the Execute3 callback yields us there). Commits the edit to
+        // the live VM (Migrator swaps bytecode + migrates state), then rebinds the
+        // session to the new program's debug data. Returns true if a reload
+        // committed so the caller yields the exec loop, letting the re-HELLO gate
+        // (debuggerReset=1) drive the client to re-send breakpoints — the same
+        // handshake F1 restart uses, but with runtime state preserved.
+        private bool TryApplyHotReload()
+        {
+            if (HotReload == null || !HotReload.HasPending) return false;
+            var facts = HotReload.CurrentFacts;
+            if (facts == null) return false;
+            if (FadeBasic.Virtual.HotReload.HotReloadUtil.StatementStartForInstruction(facts, _vm.instructionIndex) != _vm.instructionIndex)
+                return false; // not at a clean boundary yet — keep running
+            try
+            {
+                var plan = HotReload.Tick(); // re-classifies + applies iff ApplicableNow
+                if (plan.Verdict == FadeBasic.Virtual.HotReload.Verdict.ApplicableNow)
+                {
+                    // CurrentFacts now points at the freshly-committed program.
+                    RestartAfterReload(HotReload.CurrentFacts.Debug, _commandCollection);
+                    // If we stayed paused ON a breakpoint line, mark it as the
+                    // already-hit token (ApplyRestart cleared it) so the next
+                    // continue EXECUTES this line and moves on, instead of
+                    // immediately re-firing the same breakpoint at the same spot.
+                    if (IsPaused && instructionMap.TryFindClosestTokenBeforeIndex(_vm.instructionIndex, out var tok))
+                        hitBreakpointToken = tok;
+                    return true;
+                }
+            }
+            catch
+            {
+                HotReload.Cancel();
+            }
+            return false;
+        }
+
         // Shared swap path used by Restart() and the (now-defensive) inbound
         // REV_REQUEST_RESTART message handler. Mutates _vm and the surrounding
         // state on the calling thread; safe because the only writers of these
         // fields are the message-processing loop and Restart(), both invoked
         // from the same VM-driving thread.
-        private void ApplyRestart(VirtualMachine nextVm, DebugData nextDebugData, CommandCollection nextCommands)
+        private void ApplyRestart(VirtualMachine nextVm, DebugData nextDebugData, CommandCollection nextCommands, bool resumeExecution = true)
         {
             _vm = nextVm;
             _vm.shouldThrowRuntimeException = false;
@@ -236,8 +309,14 @@ namespace FadeBasic.Launch
             }
 
             // reset state variables
-            pauseRequestedByMessageId = 0;
-            resumeRequestedByMessageId = 0;
+            // A hot reload (resumeExecution:false) preserves the paused/running
+            // state — the user's pause must survive the rebind. F1 Restart
+            // (resumeExecution:true) clears it so the fresh program starts running.
+            if (resumeExecution)
+            {
+                pauseRequestedByMessageId = 0;
+                resumeRequestedByMessageId = 0;
+            }
             currentInsLookupOffset = 0;
             stepNextMessage = null;
             stepIntoMessage = null;
@@ -1981,6 +2060,18 @@ namespace FadeBasic.Launch
                 
                 ReadMessage();
 
+                // Hot reload while PAUSED. A paused breakpoint sits at a clean
+                // statement boundary, so an armed edit can commit right here. Apply
+                // it and STAY paused (RestartAfterReload preserves the pause) — the
+                // user accepted a reload, not a resume. Yield so the tick returns
+                // and the client refreshes on REV_REQUEST_RESTART. (While running,
+                // the Execute3 callback below yields at a boundary instead.)
+                if (IsPaused && TryApplyHotReload())
+                {
+                    handleManualSuspension = true;
+                    continue;
+                }
+
                 // If the debug client disconnected while we were paused (breakpoint, step,
                 // or explicit pause), auto-resume so the program isn't stuck forever waiting
                 // for a continuation that will never arrive. Keep hitBreakpointToken set so
@@ -2063,6 +2154,15 @@ namespace FadeBasic.Launch
                                     return true;
                                 }
 
+                                // Hot reload: if an edit is armed, yield the moment we reach a
+                                // clean statement boundary so TryApplyHotReload can swap bytecode
+                                // + rebind the session there (resuming mid-statement would diverge).
+                                if (HotReload != null && HotReload.HasPending && HotReload.CurrentFacts != null
+                                    && FadeBasic.Virtual.HotReload.HotReloadUtil.StatementStartForInstruction(HotReload.CurrentFacts, ins) == ins)
+                                {
+                                    return true;
+                                }
+
                                 if (instructionMap.TryFindClosestTokenBeforeIndex(ins, out var t))
                                 {
                                     // Mark movedOff BEFORE checking shouldPause so that the very
@@ -2093,9 +2193,18 @@ namespace FadeBasic.Launch
 
                             if (_vm.isSuspendRequested && !hitBreakpoint)
                             {
-                                // the vm itself requested a suspend operation. 
+                                // the vm itself requested a suspend operation.
                                 //  we should yield out of the function and let the caller
-                                //  re-call us when they are ready. 
+                                //  re-call us when they are ready.
+                                handleManualSuspension = true;
+                            }
+
+                            // Execute3 may have yielded at a clean boundary because a
+                            // hot reload is armed. Apply it here (swap bytecode + rebind
+                            // the session) and yield so the re-HELLO gate re-syncs
+                            // breakpoints, exactly like the F1 restart path.
+                            if (TryApplyHotReload())
+                            {
                                 handleManualSuspension = true;
                             }
                         }

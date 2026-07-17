@@ -156,6 +156,16 @@ namespace FadeBasic.Virtual
         public int allocsSinceCollect;
 
         public int Allocations => _allocations.Count;
+
+        // Live-allocation enumeration used by hot-reload heap migration to find
+        // every instance of a changed struct type. Snapshots to a list so the
+        // caller may allocate/free during iteration without invalidating it.
+        public List<VmAllocation> SnapshotAllocations()
+        {
+            var list = new List<VmAllocation>(_allocations.Count);
+            foreach (var kvp in _allocations) list.Add(kvp.Value);
+            return list;
+        }
         
         public VmHeap(int initialCapacity)
         {

@@ -360,6 +360,18 @@ function handle(msg) {
         runMsgId = msg.id;
         runPumpTerminalType = 'run-tick-result';
         pumpTimerId = setTimeout(pumpRunTick, 0);
+    } else if (msg.type === 'reload-arm') {
+        // Hot reload: arm a new source against the running program. The pump's
+        // RunTick applies it at the next clean statement boundary (state-preserving).
+        let json = '{"ok":false,"error":"unknown"}';
+        try { json = FB.ReloadArm(msg.source || ''); }
+        catch (e) { json = JSON.stringify({ ok: false, error: String(e?.message ?? e) }); }
+        emit({ type: 'reload-arm-result', id: msg.id, result: json });
+    } else if (msg.type === 'reload-status') {
+        let json = '{"ok":true}';
+        try { json = FB.ReloadStatus(); }
+        catch (e) { json = JSON.stringify({ ok: false, error: String(e?.message ?? e) }); }
+        emit({ type: 'reload-status-result', id: msg.id, result: json });
     } else if (msg.type === 'stop-run') {
         if (pumpTimerId != null) { clearTimeout(pumpTimerId); pumpTimerId = null; }
         try { FB.StopRun(); }

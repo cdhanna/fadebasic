@@ -45,6 +45,36 @@ b# = 2.3
 
         Assert.That(variables.Count, Is.EqualTo(2));
     }
+
+    [Test]
+    public void RestartAfterReload_RebindsToNewProgram_LeavesVmUntouched()
+    {
+        // Mirrors what a hot reload during debug does: the VM was already
+        // migrated in place by the Migrator; RestartAfterReload just re-points
+        // the session at the new program's debug data (same VM) so the debugger
+        // stays attached and breakpoints re-verify — WITHOUT rebuilding the VM.
+        Compile("a = 3\nb = a + 1\n", out _, out var c1, out var vm);
+        var session = new DebugSession(vm, c1.DebugData, TestCommands.CommandsForTesting, new LaunchOptions
+        {
+            debug = true, debugPort = 9999, debugWaitForConnection = false
+        });
+        session.StartDebugging(); // no breakpoints → runs to completion
+
+        var ipBefore = session.InstructionPointer;
+        var mapBefore = session.instructionMap;
+        var dbBefore = session.variableDb;
+
+        // The edited program, compiled separately (the "new side").
+        Compile("a = 3\nb = a + 2\n", out _, out var c2, out _);
+        session.RestartAfterReload(c2.DebugData, TestCommands.CommandsForTesting);
+
+        Assert.That(session.instructionMap, Is.Not.SameAs(mapBefore),
+            "instructionMap must be rebuilt from the new program's statement map");
+        Assert.That(session.variableDb, Is.Not.SameAs(dbBefore),
+            "variableDb must be rebound to the new program");
+        Assert.That(session.InstructionPointer, Is.EqualTo(ipBefore),
+            "the rebind must NOT touch the live VM (its PC/state is preserved)");
+    }
     
     [Test]
     public void Exploration_Variables_Arrays()

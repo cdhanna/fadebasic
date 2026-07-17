@@ -224,6 +224,12 @@ namespace FadeBasic.Virtual
         {
             return _arrayVarToReg.TryGetValue(name, out arrayVariable);
         }
+
+        // Enumeration accessors used by hot-reload's structural diff to read the
+        // full name -> register/type mapping out of a compiled program. Kept
+        // read-only so callers can't mutate the scope's tables.
+        public IReadOnlyDictionary<string, CompiledVariable> Variables => _varToReg;
+        public IReadOnlyDictionary<string, CompiledArrayVariable> ArrayVariables => _arrayVarToReg;
         
         public CompiledVariable Create(string name, byte typeCode, bool isGlobal, byte regOffset=0)
         {

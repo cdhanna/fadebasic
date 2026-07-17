@@ -17,6 +17,8 @@ public class LaunchableGenerator
     public const string TAG_ENCODED_DEBUGDATA = "__ENCODED_DEBUG_DATA__";
     public const string TAG_ENCODED_TESTMANIFEST = "__ENCODED_TEST_MANIFEST__";
     public const string TAG_COMMAND_ARRAY = "__COMMAND_ARR__";
+    public const string TAG_SOURCE_FILES = "__SOURCE_FILES__";
+    public const string TEMPLATE_SOURCEFILES_VAR = "_sourceFiles";
     public const string TEMPLATE_BYTECODE_TAB = "        ";
     public const string TEMPLATE_ENCODED_BYTE_VAR = "encodedByteCode";
     public const string TEMPLATE_ENCODED_DEBUGDATA_VAR = "encodedDebugData";
@@ -67,7 +69,7 @@ using {nameof(FadeBasic)};
 using {nameof(FadeBasic)}.{nameof(FadeBasic.Launch)};
 using {nameof(FadeBasic)}.{nameof(FadeBasic.Virtual)};
 
-public partial class {TAG_CLASSNAME} : {nameof(ITestLaunchable)}
+public partial class {TAG_CLASSNAME} : {nameof(ITestLaunchable)}, {nameof(IWatchableLaunchable)}
 {{
     {TAG_MAIN}
 
@@ -80,6 +82,10 @@ public partial class {TAG_CLASSNAME} : {nameof(ITestLaunchable)}
     public DebugData DebugData => {TEMPLATE_DEBUGDATA_VAR};
 
     public IReadOnlyList<TestManifestEntry> TestManifest => {TEMPLATE_TESTMANIFEST_VAR};
+
+    // ordered .fbasic source paths this program was built from (for --fade-watch)
+    public IReadOnlyList<string> SourceFiles => {TEMPLATE_SOURCEFILES_VAR};
+    protected static readonly string[] {TEMPLATE_SOURCEFILES_VAR} = new string[] {{ {TAG_SOURCE_FILES} }};
 
     #region method table
     private static readonly CommandCollection _collection = new CommandCollection(
@@ -146,8 +152,18 @@ public partial class {TAG_CLASSNAME} : {nameof(ITestLaunchable)}
             mainBlock = enableTesting ? MainTemplateWithTesting : MainTemplate;
         }
 
+        // ordered source paths from the build's source map → verbatim string
+        // literals (@"..."), so the runtime watch can recompile the exact set.
+        var sourcePaths = unit.sourceMap?.fileRanges?
+            .Select(r => r.Item1)
+            .Where(p => !string.IsNullOrEmpty(p))
+            .ToList() ?? new List<string>();
+        var sourceFilesLiteral = string.Join(", ",
+            sourcePaths.Select(p => "@\"" + p.Replace("\"", "\"\"") + "\""));
+
         src = src.Replace(TAG_MAIN, mainBlock);
         src = src.Replace(TAG_COMMAND_ARRAY, commandArray);
+        src = src.Replace(TAG_SOURCE_FILES, sourceFilesLiteral);
         src = src.Replace(TAG_ENCODED_BYTECODE, byteCodeReplacement);
         src = src.Replace(TAG_ENCODED_DEBUGDATA, debugDataReplacement);
         src = src.Replace(TAG_ENCODED_TESTMANIFEST, testManifestReplacement);

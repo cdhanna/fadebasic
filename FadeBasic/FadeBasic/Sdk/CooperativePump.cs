@@ -4,6 +4,7 @@ using System.Diagnostics;
 using FadeBasic.Json;
 using FadeBasic.Sdk;
 using FadeBasic.Virtual;
+using FadeBasic.Virtual.HotReload;
 using FadeSdk = FadeBasic.Sdk.Fade;
 
 namespace FadeBasic.Sdk
@@ -33,6 +34,15 @@ namespace FadeBasic.Sdk
     {
         // ─── Active run state ────────────────────────────────────────
         public static VirtualMachine RunVm { get; set; }
+
+        // ─── Hot reload (state-preserving) ────────────────────────────
+        // Built on RunStartFromSource (facts come from the SAME compiler that
+        // produced RunVm.program, so the running instructionIndex maps into the
+        // facts). ReloadArm arms a new source; RunTick applies it at a clean
+        // statement boundary — mirroring the console-watch / monogame paths.
+        private static HotReloadSession _reloadSession;
+        private static Verdict _lastReloadVerdict = Verdict.NoChange;
+        private static string _lastRudeReason;
         private static string _runError;
         private static bool _waitingForHostReply;
         // Public so debug-session drivers can reset + read it the same
@@ -107,6 +117,7 @@ namespace FadeBasic.Sdk
                     return new PumpStartResult { ok = false, compileError = errors.ToDisplay() }.Jsonify();
                 RunVm = ctx.Machine;
                 ResetPerRunState();
+                SetupReloadSession(ctx.Compiler);
                 return new PumpStartResult { ok = true }.Jsonify();
             }
             catch (Exception ex)
@@ -185,6 +196,134 @@ namespace FadeBasic.Sdk
             _waitEndsAtTickMs = 0;
             _runStopRequested = false;
             _testRunActive = false;
+            _reloadSession = null;
+            _lastReloadVerdict = Verdict.NoChange;
+            _lastRudeReason = null;
+        }
+
+        // ─── Hot reload ───────────────────────────────────────────────
+        static void SetupReloadSession(Compiler compiler)
+        {
+            try { _reloadSession = BuildReloadSession(RunVm, compiler, GetCommands()); }
+            catch { _reloadSession = null; }
+        }
+
+        // Build a HotReloadSession over a given VM + the compiler that produced its
+        // bytecode. The compile delegate re-compiles edited source against the same
+        // command surface. Reused by run mode (SetupReloadSession) and the web
+        // debug path (FadeBridge.DebugStart), so both classify the same way.
+        public static HotReloadSession BuildReloadSession(VirtualMachine vm, Compiler compiler, CommandCollection commands)
+        {
+            var facts = ProgramFacts.FromCompiler(compiler);
+            return new HotReloadSession(vm, facts, src =>
+            {
+                if (!FadeSdk.TryCreateFromString(src, commands, out var c, out var errs))
+                    throw new Exception(errs.ToDisplay());
+                return c.Compiler;
+            });
+        }
+
+        // Arm a new source for hot reload and classify it against the running VM.
+        // Returns the verdict so the UI can show applicable (blue) vs rude (needs
+        // full restart). RunTick applies it at the next clean statement boundary.
+        public static string ReloadArm(string source)
+        {
+            if (_reloadSession == null)
+                return new PumpStartResult { ok = false, error = "reload unavailable (start a source run first)" }.Jsonify();
+            try
+            {
+                _reloadSession.Arm(source);
+                var plan = _reloadSession.Poll();
+                _lastReloadVerdict = plan.Verdict;
+                _lastRudeReason = plan.RudeReason;
+                return new PumpStartResult { ok = true, verdict = plan.Verdict.ToString(), rudeReason = plan.RudeReason }.Jsonify();
+            }
+            catch (Exception ex)
+            {
+                _reloadSession.Cancel();
+                return new PumpStartResult { ok = false, compileError = ex.Message }.Jsonify();
+            }
+        }
+
+        public static string ReloadStatus() =>
+            new PumpStartResult { ok = true, verdict = _lastReloadVerdict.ToString(), rudeReason = _lastRudeReason }.Jsonify();
+
+        // Arm + classify an ARBITRARY reload session, returning the same verdict
+        // envelope as ReloadArm. The debug path passes _debugSession.HotReload so
+        // the edit is applied by the debug tick (StartDebugging's hot-reload hook),
+        // keeping the debugger attached and breakpoints re-verified.
+        public static string ReloadArmSession(HotReloadSession session, string source)
+        {
+            if (session == null)
+                return new PumpStartResult { ok = false, error = "reload unavailable (no run or debug session)" }.Jsonify();
+            try
+            {
+                session.Arm(source);
+                var plan = session.Poll();
+                return new PumpStartResult { ok = true, verdict = plan.Verdict.ToString(), rudeReason = plan.RudeReason }.Jsonify();
+            }
+            catch (Exception ex)
+            {
+                session.Cancel();
+                return new PumpStartResult { ok = false, compileError = ex.Message }.Jsonify();
+            }
+        }
+
+        // Status for an arbitrary reload session. Once the debug tick commits the
+        // edit, HasPending clears → NoChange (the "applied" signal the UI polls).
+        public static string ReloadStatusSession(HotReloadSession session)
+        {
+            if (session == null || !session.HasPending)
+                return new PumpStartResult { ok = true, verdict = Verdict.NoChange.ToString() }.Jsonify();
+            try
+            {
+                var plan = session.Poll();
+                return new PumpStartResult { ok = true, verdict = plan.Verdict.ToString(), rudeReason = plan.RudeReason }.Jsonify();
+            }
+            catch
+            {
+                return new PumpStartResult { ok = true, verdict = Verdict.NoChange.ToString() }.Jsonify();
+            }
+        }
+
+        // Apply a pending reload if the VM has reached a clean statement boundary
+        // (offset 0, no active function frames). Called from RunTick.
+        static void TryApplyReload()
+        {
+            if (_reloadSession == null || !_reloadSession.HasPending) return;
+            if (_lastReloadVerdict == Verdict.PermanentlyRude) return; // never applies; needs restart
+            if (!AdvanceToCleanBoundary()) return;
+            try
+            {
+                var plan = _reloadSession.Tick();
+                _lastReloadVerdict = _reloadSession.HasPending ? plan.Verdict : Verdict.NoChange;
+                _lastRudeReason = plan.RudeReason;
+            }
+            catch { _reloadSession.Cancel(); }
+        }
+
+        // Roll the VM forward to a clean STATEMENT START (PC at offset 0 of a
+        // statement). That — not call-stack depth — is what makes the resume
+        // immune to bytecode-length shifts (the freeze fix). We deliberately do
+        // NOT require methodStack.ptr == 0: gating on top-level-only meant a
+        // program whose main loop lives inside a function (the common shape)
+        // never reached a boundary, so an ApplicableNow edit armed but never
+        // committed. The core applies fine at depth > 0 — RemapProgramCounter
+        // remaps every call frame, and Tick re-runs the control gate before
+        // committing (so if this boundary's statement is the edited one, it just
+        // waits for the next one). See SafepointTests.ControlGate_InsideFunction_*.
+        static bool AdvanceToCleanBoundary()
+        {
+            var facts = _reloadSession.CurrentFacts;
+            for (var i = 0; i < 500_000; i++)
+            {
+                bool atStart = HotReloadUtil.StatementStartForInstruction(facts, RunVm.instructionIndex) == RunVm.instructionIndex;
+                if (atStart) return true;
+                if (RunVm.instructionIndex >= RunVm.program.Length) return false;
+                RunVm.isSuspendRequested = false;
+                RunVm.Execute2(1);
+            }
+            return false;
         }
 
         // ─── Run tick ─────────────────────────────────────────────────
@@ -249,6 +388,9 @@ namespace FadeBasic.Sdk
                     }.Jsonify();
                 }
             }
+
+            // Apply a pending hot reload at a clean boundary (state-preserving).
+            if (!_testRunActive) TryApplyReload();
 
             var complete = _runError != null
                 || RunVm.instructionIndex >= RunVm.program.Length;
@@ -488,6 +630,8 @@ namespace FadeBasic.Sdk
         public string error;
         public string compileError;
         public int byteCount;
+        public string verdict;      // hot-reload: ApplicableNow / PendingTransient / PermanentlyRude / NoChange
+        public string rudeReason;
 
         public void ProcessJson<T>(ref T op) where T : IJsonOperation
         {
@@ -495,6 +639,8 @@ namespace FadeBasic.Sdk
             op.IncludeField("error", ref error);
             op.IncludeField("compileError", ref compileError);
             op.IncludeField("byteCount", ref byteCount);
+            op.IncludeField("verdict", ref verdict);
+            op.IncludeField("rudeReason", ref rudeReason);
         }
     }
 

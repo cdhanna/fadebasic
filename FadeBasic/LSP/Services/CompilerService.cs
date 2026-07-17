@@ -161,6 +161,30 @@ public class CompilerService
     }
 
 
+    /// <summary>
+    /// Parse the project owning <paramref name="sourceUri"/> from the CURRENT
+    /// editor buffer, right now — no debounce, no diagnostics, no publishing,
+    /// no caching side effects. Used by fast, read-only features (semantic
+    /// highlighting) that must reflect the live buffer on every keystroke;
+    /// lexing/parsing is cheap, so we don't make them wait on the debounced
+    /// diagnostics pass (see <see cref="UpdateDebounced"/>).
+    /// </summary>
+    public bool TryParseFresh(DocumentUri sourceUri, out CodeUnit unit)
+    {
+        unit = null;
+        if (!TryGetProjectContexts(sourceUri, out var projectUris)) return false;
+        foreach (var projectUri in projectUris)
+        {
+            if (!_projects.TryGetProject(projectUri, out var project)) continue;
+            var context = project.Item1;
+            var commands = project.Item2;
+            var sourceMap = context.CreateSourceMap(_docs.GetSourceLinesOrReadLines);
+            unit = sourceMap.Parse(commands.collection);
+            return true;
+        }
+        return false;
+    }
+
     public bool TryGetProjectsFromSource(DocumentUri sourceUri, out List<CodeUnit> units)
     {
         units = null;

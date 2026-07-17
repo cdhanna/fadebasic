@@ -43,6 +43,17 @@ internal sealed class WebDebugSession : DebugSession
         debuggerSaidHello = 1;
     }
 
+    // After a hot-reload rebind, RestartAfterReload raises the PROTO_HELLO gate
+    // (debuggerReset=1). There's no TCP client to re-HELLO here, so clear it —
+    // the next DebugTick resumes immediately and the page re-sends breakpoints
+    // against the new program directly.
+    protected override void OnReloadRebound()
+    {
+        hasConnectedDebugger = 1;
+        debuggerSaidHello = 1;
+        debuggerReset = 0;
+    }
+
     // Enqueue an inbound message (from the main thread) for the next tick
     // to dispatch via DebugSession.ReadMessage's switch.
     public void Enqueue(DebugMessage msg)

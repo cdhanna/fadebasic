@@ -270,6 +270,18 @@ namespace FadeBasic.Virtual
             // scopeStack.Push(scope);
         }
 
+        /// <summary>
+        /// Re-read the interned-data section after <see cref="program"/> has been
+        /// swapped (hot-reload). Recomputes the interned-data pointer from the new
+        /// program header and rebuilds the runtime type/string tables. Does NOT
+        /// touch scopes, the heap, or the program counter.
+        /// </summary>
+        public void ReloadInternedData()
+        {
+            internedDataInstructionIndex = BitConverter.ToInt32(program, 0);
+            ReadInternedData();
+        }
+
 
         /// <summary>
         /// Tracing garbage collection: compute the set of reachable heap

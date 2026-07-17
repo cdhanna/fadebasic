@@ -1,12 +1,15 @@
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
+using System.IO;
 using System.Linq;
 using System.Net;
 using System.Net.Sockets;
 using System.Threading;
+using FadeBasic.Ast;
 using FadeBasic.Sdk;
 using FadeBasic.Virtual;
+using FadeBasic.Virtual.HotReload;
 
 namespace FadeBasic.Launch
 {
@@ -16,13 +19,32 @@ namespace FadeBasic.Launch
         public const string ENV_ENABLE_DEBUG_DONT_WAIT = "FADE_BASIC_DEBUG_DONT_WAIT";
         public const string ENV_DEBUG_PORT = "FADE_BASIC_DEBUG_PORT";
         public const string ENV_DEBUG_LOG_PATH = "FADE_BASIC_DEBUG_LOG_PATH";
-        
-        
+        // Hot-reload watch: path to the .fbasic source to watch + recompile
+        // in-process. Implies debug DATA (we recompile with it) but NOT the
+        // debug SERVER — see Launcher.RunWithWatch.
+        public const string ENV_WATCH = "FADE_BASIC_WATCH";
+        // When set ("true"/"1"), the watch runs silently — no [fade-watch] info
+        // logs (banner / reload verdicts). Genuine errors still print.
+        public const string ENV_WATCH_QUIET = "FADE_BASIC_WATCH_QUIET";
+
+
         public bool debug;
         public int debugPort = 0;
         public bool debugWaitForConnection = true;
         public string debugLogPath;
-        
+
+        /// <summary>Hot-reload watch is enabled.</summary>
+        public bool watch;
+        /// <summary>
+        /// What to watch: a single .fbasic file, a directory (all *.fbasic under
+        /// it, joined), or null/empty → the current working directory.
+        /// </summary>
+        public string watchPath;
+        /// <summary>Suppress [fade-watch] info logs; reload happens silently.</summary>
+        public bool watchQuiet;
+
+        public LaunchOptions Clone() => (LaunchOptions)MemberwiseClone();
+
 
         public static readonly LaunchOptions DefaultOptions;
         static LaunchOptions()
@@ -45,6 +67,17 @@ namespace FadeBasic.Launch
                 DefaultOptions.debug = debugEnv == "true" || debugEnv == "1";
                 DefaultOptions.debugWaitForConnection = !(debugDontWait == "true" || debugDontWait == "1");
                 DefaultOptions.debugLogPath = Environment.GetEnvironmentVariable(ENV_DEBUG_LOG_PATH);
+                // FADE_BASIC_WATCH: "true"/"1" → watch the cwd; any other value →
+                // a file or directory path; unset → no watch.
+                var watchEnv = Environment.GetEnvironmentVariable(ENV_WATCH);
+                if (!string.IsNullOrEmpty(watchEnv))
+                {
+                    DefaultOptions.watch = true;
+                    var lower = watchEnv.ToLowerInvariant();
+                    DefaultOptions.watchPath = (lower == "true" || lower == "1") ? null : watchEnv;
+                }
+                var quietEnv = Environment.GetEnvironmentVariable(ENV_WATCH_QUIET)?.ToLowerInvariant();
+                DefaultOptions.watchQuiet = quietEnv == "true" || quietEnv == "1";
 
                 if (!int.TryParse(Environment.GetEnvironmentVariable(ENV_DEBUG_PORT), out DefaultOptions.debugPort))
                 {
@@ -79,31 +112,350 @@ namespace FadeBasic.Launch
         {
             options ??= LaunchOptions.DefaultOptions;
 
-            var vm = new VirtualMachine(instance.Bytecode)
+            // Headless watch (no debugger): the standalone hot-reload loop.
+            if (options.watch && !options.debug)
             {
-                hostMethods = HostMethodTable.FromCommandCollection(instance.CommandCollection)
-            };
+                RunWithWatch(instance, options);
+                return;
+            }
 
+            // Plain run (no debugger, no watch): just execute the baked bytecode.
             if (!options.debug)
             {
-                vm.Execute2(0); // 0 means run until suspend.
+                var runVm = new VirtualMachine(instance.Bytecode)
+                {
+                    hostMethods = HostMethodTable.FromCommandCollection(instance.CommandCollection)
+                };
+                runVm.Execute2(0); // 0 means run until suspend.
+                return;
+            }
+
+            // Debug path. When --fade-watch is ALSO set, run an in-process-compiled
+            // program (so the reload facts share a statement map with the bytecode
+            // we actually run) and hand the armed HotReloadSession to the debug
+            // session — DebugForever applies edits at a safepoint and rebinds via
+            // RestartAfterReload, keeping the debugger attached (see DebugSession).
+            VirtualMachine vm;
+            DebugData debugData;
+            CommandCollection commands;
+            ReloadWatch reloadWatch = options.watch ? BuildReloadWatch(instance, options) : null;
+            if (reloadWatch != null)
+            {
+                vm = reloadWatch.Vm;
+                debugData = reloadWatch.Compiler.DebugData;
+                commands = reloadWatch.Collection;
             }
             else
             {
-                var session = new DebugSession(vm, instance.DebugData, instance.CommandCollection, options);
-                machineToDebugTable.Add(vm, (instance, session));
-                session.StartServer();
-                session.DebugForever(); // needs infinite budget.
-                session.ShutdownServer();
-
+                vm = new VirtualMachine(instance.Bytecode)
+                {
+                    hostMethods = HostMethodTable.FromCommandCollection(instance.CommandCollection)
+                };
+                debugData = instance.DebugData;
+                commands = instance.CommandCollection;
             }
 
+            var session = new DebugSession(vm, debugData, commands, options);
+            session.HotReload = reloadWatch?.Session; // null → debug without reload
+            machineToDebugTable.Add(vm, (instance, session));
+            session.StartServer();
+            try
+            {
+                session.DebugForever(); // needs infinite budget.
+            }
+            finally
+            {
+                session.ShutdownServer();
+                if (reloadWatch != null)
+                    foreach (var fw in reloadWatch.Watchers) fw.Dispose();
+            }
+        }
+
+        /// <summary>
+        /// Headless hot-reload watch. Recompiles the watched source in-process
+        /// WITH debug data (so the reload machinery has a statement map, no matter
+        /// how the assembly was built), runs it in a safepoint-aware loop, and
+        /// applies edits live via <see cref="HotReloadSession"/>. No debug server
+        /// and no connection wait — this is the "debug DATA, not debug SERVER" path.
+        ///
+        /// v1: single-file watch. Multi-file projects are a follow-up.
+        /// </summary>
+        /// <summary>
+        /// A configured hot-reload watch: an in-process-compiled VM plus the armed
+        /// <see cref="HotReloadSession"/> and the file watchers feeding it. Shared
+        /// by the headless watch (<see cref="RunWithWatch"/>) and the debug+watch
+        /// path (<see cref="Run{T}"/>). <c>null</c> is returned on initial compile
+        /// error.
+        /// </summary>
+        internal sealed class ReloadWatch
+        {
+            public VirtualMachine Vm;
+            public Compiler Compiler;
+            public CommandCollection Collection;
+            public HotReloadSession Session;
+            public List<FileSystemWatcher> Watchers = new List<FileSystemWatcher>();
+            public string Label;
+        }
+
+        /// <summary>
+        /// Resolve the watched source set, compile it in-process WITH debug data
+        /// (so the reload machinery — and any attached debug session — share a
+        /// statement map that matches the bytecode we actually run), build the VM +
+        /// <see cref="HotReloadSession"/>, and install FileSystemWatchers that arm
+        /// the session on edits. Returns <c>null</c> and logs on compile error.
+        /// </summary>
+        static ReloadWatch BuildReloadWatch<T>(T instance, LaunchOptions options)
+            where T : ILaunchable
+        {
+            var collection = instance.CommandCollection;
+
+            // Prefer the exact source set the program was built from (paths baked
+            // into the launchable), recomposed via the SAME join the build uses
+            // (SourceMap.CreateSourceMap). This gives multi-file parity with a
+            // normal `dotnet run` and removes the wrong-path footgun. Falls back
+            // to an explicit path / cwd only when the launchable can't tell us.
+            var inferred = (instance as IWatchableLaunchable)?.SourceFiles?
+                .Where(File.Exists).ToList();
+
+            Func<string> compose;
+            var watcherSpecs = new List<(string dir, string filter, bool recursive)>();
+            string label;
+
+            if (inferred != null && inferred.Count > 0)
+            {
+                var files = inferred;
+                compose = () => SourceMap.CreateSourceMap(files).fullSource;
+                foreach (var d in files.Select(f => Path.GetDirectoryName(Path.GetFullPath(f)))
+                             .Where(d => !string.IsNullOrEmpty(d)).Distinct())
+                    watcherSpecs.Add((d, "*.fbasic", false));
+                label = $"{files.Count} built source file(s)";
+            }
+            else if (!string.IsNullOrEmpty(options.watchPath) && Directory.Exists(Path.GetFullPath(options.watchPath))
+                     || string.IsNullOrEmpty(options.watchPath))
+            {
+                var dir = string.IsNullOrEmpty(options.watchPath)
+                    ? Directory.GetCurrentDirectory() : Path.GetFullPath(options.watchPath);
+                compose = () => ComposeDirectory(dir);
+                watcherSpecs.Add((dir, "*.fbasic", true));
+                label = $"*.fbasic under {dir}";
+            }
+            else
+            {
+                var file = Path.GetFullPath(options.watchPath);
+                if (!File.Exists(file))
+                {
+                    Console.Error.WriteLine($"[fade-watch] path not found: {file}");
+                    return null;
+                }
+                compose = () => SafeRead(file);
+                watcherSpecs.Add((Path.GetDirectoryName(file), Path.GetFileName(file), false));
+                label = file;
+            }
+
+            var initialSource = compose();
+            if (!TryCompileSource(initialSource, collection, out var compiler, out var compileError))
+            {
+                Console.Error.WriteLine($"[fade-watch] initial compile failed:\n{compileError}");
+                return null;
+            }
+
+            var vm = new VirtualMachine(compiler.Program)
+            {
+                hostMethods = HostMethodTable.FromCommandCollection(collection)
+            };
+            var facts = ProgramFacts.FromCompiler(compiler);
+            var session = new HotReloadSession(vm, facts, src =>
+            {
+                if (!TryCompileSource(src, collection, out var c, out var err))
+                    throw new Exception(err);
+                return c;
+            });
+
+            var result = new ReloadWatch
+            {
+                Vm = vm, Compiler = compiler, Collection = collection, Session = session, Label = label,
+            };
+
+            // Dedupe: only arm when the composed source actually differs from what
+            // we last armed. Holding ctrl+s (or the editor firing several events
+            // per save) then produces no reload churn.
+            var armLock = new object();
+            var lastArmed = initialSource;
+            void OnChanged(object _, FileSystemEventArgs __)
+            {
+                string next;
+                try { next = compose(); }
+                catch { return; /* transient IO while the editor writes; next event catches it */ }
+                lock (armLock)
+                {
+                    if (string.Equals(next, lastArmed)) return; // no real change
+                    lastArmed = next;
+                }
+                session.Arm(next);
+            }
+            foreach (var (dir, filter, recursive) in watcherSpecs)
+            {
+                var fw = new FileSystemWatcher(dir, filter)
+                {
+                    IncludeSubdirectories = recursive,
+                    NotifyFilter = NotifyFilters.LastWrite | NotifyFilters.Size | NotifyFilters.FileName,
+                    EnableRaisingEvents = true,
+                };
+                fw.Changed += OnChanged;
+                fw.Created += OnChanged;
+                fw.Deleted += OnChanged;
+                fw.Renamed += (o, e) => OnChanged(o, e);
+                result.Watchers.Add(fw);
+            }
+
+            return result;
+        }
+
+        /// <summary>
+        /// Headless hot-reload watch. Recompiles the watched source in-process WITH
+        /// debug data, runs it in a safepoint-aware loop, and applies edits live via
+        /// <see cref="HotReloadSession"/>. No debug server and no connection wait —
+        /// this is the "debug DATA, not debug SERVER" path. For debug + watch (a
+        /// debugger attached), see the debug branch of <see cref="Run{T}"/>.
+        ///
+        /// v1: single-file / inferred-source watch. Multi-file projects are covered
+        /// via IWatchableLaunchable.SourceFiles.
+        /// </summary>
+        static void RunWithWatch<T>(T instance, LaunchOptions options)
+            where T : ILaunchable
+        {
+            var setup = BuildReloadWatch(instance, options);
+            if (setup == null) return;
+
+            var vm = setup.Vm;
+            var session = setup.Session;
+            bool quiet = options.watchQuiet;
+            void Info(string msg) { if (!quiet) Console.WriteLine(msg); }
+
+            try
+            {
+                Info($"[fade-watch] watching {setup.Label} — save to hot-reload.");
+
+                // Run the program; suspend at a STATEMENT boundary whenever a
+                // reload is armed so the control gate evaluates at a clean
+                // safepoint (offset 0).
+                while (vm.instructionIndex < vm.program.Length
+                       && vm.error.type == VirtualRuntimeErrorType.NONE)
+                {
+                    vm.Execute2(256, ins =>
+                        session.HasPending
+                        && HotReloadUtil.StatementStartForInstruction(session.CurrentFacts, ins) == ins);
+
+                    if (!session.HasPending) continue;
+
+                    try
+                    {
+                        var plan = session.Tick();
+                        Info($"[fade-watch] {DescribePlan(plan, session)}");
+                    }
+                    catch (Exception ex)
+                    {
+                        Console.Error.WriteLine($"[fade-watch] reload rejected: {ex.Message}");
+                        session.Cancel();
+                    }
+                }
+
+                if (vm.error.type != VirtualRuntimeErrorType.NONE)
+                    Console.Error.WriteLine($"[fade-watch] runtime error: {vm.error.message}");
+                Info("[fade-watch] program finished.");
+            }
+            finally
+            {
+                foreach (var fw in setup.Watchers) fw.Dispose();
+            }
+        }
+
+        static string SafeRead(string path)
+        {
+            for (var attempt = 0; ; attempt++)
+            {
+                try { return File.ReadAllText(path); }
+                catch (IOException) when (attempt < 5) { Thread.Sleep(20); }
+            }
+        }
+
+        // Join every *.fbasic under a directory into one program. Deterministic
+        // order: any file named main.fbasic first, then the rest by full path.
+        // (v1 heuristic — a real multi-file project's fade.json `sources` order
+        // would be more precise; noted in the design doc.)
+        public static string ComposeDirectory(string dir)
+        {
+            var files = Directory.GetFiles(dir, "*.fbasic", SearchOption.AllDirectories);
+            Array.Sort(files, (a, b) =>
+            {
+                bool am = string.Equals(Path.GetFileName(a), "main.fbasic", StringComparison.OrdinalIgnoreCase);
+                bool bm = string.Equals(Path.GetFileName(b), "main.fbasic", StringComparison.OrdinalIgnoreCase);
+                if (am != bm) return am ? -1 : 1;
+                return string.CompareOrdinal(a, b);
+            });
+
+            var sb = new System.Text.StringBuilder();
+            foreach (var f in files)
+            {
+                sb.Append(SafeRead(f));
+                sb.Append('\n');
+            }
+            return sb.ToString();
+        }
+
+        static string DescribePlan(ReconcilePlan plan, HotReloadSession session)
+        {
+            switch (plan.Verdict)
+            {
+                case Verdict.ApplicableNow: return "reloaded";
+                case Verdict.NoChange: return "no change";
+                case Verdict.PendingTransient:
+                    var lines = plan.BlockingStatements
+                        .Select(s => LineOf(session.CurrentFacts, s))
+                        .Where(l => l >= 0).Distinct().OrderBy(l => l).ToList();
+                    var where = lines.Count > 0 ? $" (active near source line {string.Join(",", lines.Select(l => l + 1))})" : "";
+                    return $"pending — waiting for active code to finish{where}";
+                case Verdict.PermanentlyRude: return $"cannot hot-reload: {plan.RudeReason} — restart required";
+                default: return plan.Verdict.ToString();
+            }
+        }
+
+        static int LineOf(ProgramFacts facts, int stmtStart)
+        {
+            if (facts?.Debug == null) return -1;
+            foreach (var t in facts.Debug.statementTokens)
+                if (t.insIndex == stmtStart && t.token != null) return t.token.lineNumber;
+            return -1;
+        }
+
+        /// <summary>
+        /// Lex/parse/compile source in-process WITH debug data. Returns false and
+        /// a human-readable error string on parse errors (never throws for those).
+        /// </summary>
+        public static bool TryCompileSource(string src, CommandCollection collection, out Compiler compiler, out string error)
+        {
+            compiler = null;
+            error = null;
+            var lexer = new Lexer();
+            var tokens = lexer.Tokenize(src, collection);
+            var parser = new Parser(new TokenStream(tokens), collection);
+            var ast = parser.ParseProgram();
+            var errors = ast.GetAllErrors();
+            if (errors.Count > 0)
+            {
+                error = string.Join("\n", errors.Select(e => e.Display));
+                return false;
+            }
+            compiler = new Compiler(collection, new CompilerOptions { GenerateDebugData = true });
+            compiler.Compile(ast);
+            return true;
         }
 
         // Args parsing: recognized command-line forms.
         public const string ArgFadeTest = "--fade-test";
         public const string ArgFadeListTests = "--fade-list-tests";
         public const string ArgFadeTestAll = "--fade-test-all";
+        public const string ArgFadeWatch = "--fade-watch";
 
         /// <summary>
         /// Console-app entry point that dispatches between normal program
@@ -127,15 +479,41 @@ namespace FadeBasic.Launch
         public static int Main<T>(T instance, string[] args, LaunchOptions options=null)
             where T : ILaunchable
         {
+            options ??= LaunchOptions.DefaultOptions;
             if (args != null && args.Length > 0)
             {
                 if (TryDispatchTestArgs(instance, args, out var exitCode))
                 {
                     return exitCode;
                 }
+                if (TryGetWatchArg(args, out var watchPath))
+                {
+                    options = options.Clone();
+                    options.watch = true;
+                    options.watchPath = watchPath; // may be null → cwd
+                }
             }
             Run(instance, options);
             return 0;
+        }
+
+        // Recognizes `--fade-watch`, `--fade-watch <path>`, and `--fade-watch=<path>`.
+        // A bare `--fade-watch` (no path, or followed by another flag) enables
+        // watch with a null path, which RunWithWatch resolves to the cwd.
+        static bool TryGetWatchArg(string[] args, out string path)
+        {
+            path = null;
+            for (var i = 0; i < args.Length; i++)
+            {
+                var a = args[i];
+                if (a == ArgFadeWatch)
+                {
+                    if (i + 1 < args.Length && !args[i + 1].StartsWith("-")) path = args[i + 1];
+                    return true;
+                }
+                if (a.StartsWith(ArgFadeWatch + "=")) { path = a.Substring(ArgFadeWatch.Length + 1); return true; }
+            }
+            return false;
         }
 
         // Returns true if args contain a recognized test-runner flag, in which
