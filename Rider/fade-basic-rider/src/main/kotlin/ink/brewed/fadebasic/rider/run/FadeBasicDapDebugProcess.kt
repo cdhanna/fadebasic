@@ -510,7 +510,30 @@ class FadeBasicDapDebugProcess(
                 if (parentRef <= 0) return null
                 return object : com.intellij.xdebugger.frame.XValueModifier() {
                     override fun getInitialValueEditorText(): String = v.value.orEmpty()
-                    override fun setValue(newValue: String, callback: XModificationCallback) {
+
+                    // XValueModifier has two setValue overloads and the platform
+                    // changed which one is abstract:
+                    //   - 252 (our compile target): setValue(String, …) is
+                    //     abstract-by-convention (its body throws
+                    //     AbstractMethodError) and setValue(XExpression, …) ships
+                    //     a default that delegates to the String overload.
+                    //   - 262 (2026.2 / RD-262.8665.248): setValue(XExpression, …)
+                    //     is the real abstract method with NO delegation, and the
+                    //     String overload is the defaulted/deprecated one.
+                    // Overriding only String therefore leaves the 262 abstract
+                    // method unimplemented → plugin-verifier failure +
+                    // AbstractMethodError at runtime. Override BOTH (both exist in
+                    // both SDKs) and funnel into one helper so the edit runs
+                    // whichever overload the running platform dispatches to.
+                    override fun setValue(
+                        expression: com.intellij.xdebugger.XExpression,
+                        callback: XModificationCallback,
+                    ) = applyNewValue(expression.expression, callback)
+
+                    override fun setValue(newValue: String, callback: XModificationCallback) =
+                        applyNewValue(newValue, callback)
+
+                    private fun applyNewValue(newValue: String, callback: XModificationCallback) {
                         AppExecutorUtil.getAppExecutorService().execute {
                             try {
                                 val remote = remoteRef.get()
