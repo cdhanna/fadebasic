@@ -157,10 +157,11 @@ ENDFUNCTION`;
         <li>Is debuggable,</li>
         <li>Uses no runtime Reflection,</li>
         <li>Has minimal dependencies,</li>
+        <li>Has VSCode support and Rider support,</li>
         <li>Has a test framework,</li>
         <li>Has a compile time macro system,</li>
         <li>Runs in dotnet, or in WASM,</li>
-        <li>Is Customizable.</li>
+        <li>Is extendable.</li>
       </ul>
       <p> <i>Fade</i> is <a href="https://github.com/cdhanna/fadebasic/tree/main?tab=readme-ov-file#fade-basic" onclick={slideAway("https://github.com/cdhanna/fadebasic/tree/main?tab=readme-ov-file#fade-basic", "left")}>open source</a> and created by <a href="https://brewed.ink">Chris Hanna</a> </p>
     </div>
@@ -294,4 +295,15 @@ ENDFUNCTION`;
   /* Don't set `display` here — the component owns it (grid in IDE mode). */
   .tryit :global(fade-runnable.ide) { margin-top: 0.75rem; height: min(95vh, 960px); box-shadow: 0 8px 30px rgba(0,0,0,0.35); }
   .tryit .shot img { width: 100%; height: auto; border-radius: 8px; box-shadow: 0 8px 30px rgba(0,0,0,0.35); }
+
+  /* Mobile: the desktop rules pin .hero-intro to 460px (flex-shrink:0) and .tryit
+     to a 640px min-width, so on a phone they overflow the viewport (and get
+     cropped by .app-shell's overflow-x:clip). Below the two-column breakpoint,
+     drop those rigid sizes so each column shrinks to the screen and stacks —
+     content then wraps with natural line breaks instead of being crunched. */
+  @media (max-width: 900px) {
+    .hero { flex-direction: column; flex-wrap: nowrap; gap: 1.25rem; align-items: stretch; }
+    .hero-intro,
+    .tryit { flex: 1 1 auto; width: 100%; min-width: 0; }
+  }
 </style>

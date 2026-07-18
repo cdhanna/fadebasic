@@ -2,6 +2,7 @@ import java.io.File
 import org.jetbrains.kotlin.gradle.dsl.JvmTarget
 import org.jetbrains.kotlin.gradle.tasks.KotlinCompile
 import org.gradle.api.tasks.Copy
+import org.gradle.api.file.DuplicatesStrategy
 
 plugins {
     kotlin("jvm") version "2.1.0"
@@ -127,45 +128,61 @@ tasks.test {
 }
 
 val fadeBasicRoot = layout.projectDirectory.asFile.toPath().normalize().resolve("../../FadeBasic").normalize()
-// Locate a built tool DLL. Probes, newest-first, every place the .NET build
-// might have dropped it: an explicit -PfadeToolsDir override, then the Release
-// and Debug net8.0 outputs. CI's install.sh builds the solution in Release
-// (→ bin/Release/net8.0), while a local `dotnet build` defaults to Debug
-// (→ bin/Debug/net8.0) — the old code only checked Debug, so CI shipped no
-// bundled tools at all. Returns null when the DLL hasn't been built anywhere.
+// Locate the DIRECTORY holding a built tool DLL. `dotnet build -o <dir>`
+// produces a framework-dependent deployment — LSP.dll PLUS LSP.runtimeconfig.json,
+// LSP.deps.json, and ~30 dependency DLLs. `dotnet LSP.dll` needs ALL of them: with
+// no runtimeconfig.json the host assumes a self-contained app and dies looking for
+// libhostpolicy.dylib. So we bundle the whole output dir (like install.sh's `cp -R`
+// for the VS Code / Zed tools), not just the entry DLL.
+//
+// Probes, newest-first: an explicit -PfadeToolsDir override, then the Release and
+// Debug net8.0 outputs. CI passes -PfadeToolsDir (a merged LSP+DAP build); locally
+// a plain `dotnet build` lands in bin/Debug/net8.0. Returns null when unbuilt.
 val fadeToolsOverrideDir: java.nio.file.Path? =
     (project.findProperty("fadeToolsDir") as String?)?.let { file(it).toPath().normalize() }
-fun resolveFadeToolDll(projectName: String, dllName: String): File? {
+fun resolveFadeToolDir(projectName: String, dllName: String): File? {
     val candidates = buildList {
         fadeToolsOverrideDir?.let { add(it.resolve(dllName)) }
         add(fadeBasicRoot.resolve("$projectName/bin/Release/net8.0/$dllName"))
         add(fadeBasicRoot.resolve("$projectName/bin/Debug/net8.0/$dllName"))
     }.map { it.toFile() }.filter { it.isFile }
-    return candidates.maxByOrNull { it.lastModified() }
+    // The dir that CONTAINS the newest matching dll.
+    return candidates.maxByOrNull { it.lastModified() }?.parentFile
 }
 val copyFadeBundledTools = tasks.register<Copy>("copyFadeBundledTools") {
     group = "fade"
     description =
-        "Bundle LSP.dll and DAP.dll into the plugin, probing Release then Debug net8.0 output " +
-            "(override with -PfadeToolsDir). Re-run Gradle after building the .NET solution."
-    val lspDll = resolveFadeToolDll("LSP", "LSP.dll")
-    val dapDll = resolveFadeToolDll("DAP", "DAP.dll")
-    // A release MUST ship both DLLs — once the dev csproj mapping is baked
+        "Bundle the full LSP + DAP build output (dlls + runtimeconfig + deps) into the plugin, " +
+            "probing Release then Debug net8.0 output (override with -PfadeToolsDir). " +
+            "Re-run Gradle after building the .NET solution."
+    val lspDir = resolveFadeToolDir("LSP", "LSP.dll")
+    val dapDir = resolveFadeToolDir("DAP", "DAP.dll")
+    // Unique source dirs — when -PfadeToolsDir holds a merged LSP+DAP build,
+    // lspDir == dapDir and we must not copy it twice.
+    val sourceDirs = listOfNotNull(lspDir, dapDir).distinct()
+    val hasLsp = lspDir != null
+    val hasDap = dapDir != null
+    // A release MUST ship both tools — once the dev csproj mapping is baked
     // empty they're the only tool source, so keep the task enabled even when
     // they're missing and fail at execution rather than silently publishing a
-    // plugin that dies at runtime with "set paths in Settings".
-    enabled = fadeRelease || lspDll != null || dapDll != null
+    // plugin that dies at runtime.
+    enabled = fadeRelease || sourceDirs.isNotEmpty()
     doFirst {
-        if (fadeRelease && (lspDll == null || dapDll == null)) {
+        if (fadeRelease && (!hasLsp || !hasDap)) {
             throw GradleException(
-                "fadeRelease build is missing bundled tools (LSP.dll=${lspDll != null}, DAP.dll=${dapDll != null}). " +
-                    "Build the .NET solution first (e.g. `dotnet build FadeBasic/build.sln -c Release`) or pass -PfadeToolsDir.",
+                "fadeRelease build is missing bundled tools (LSP=$hasLsp, DAP=$hasDap). " +
+                    "Build the .NET tools first (e.g. `dotnet build FadeBasic/LSP -c Release -o <dir>` " +
+                    "and the same for DAP) or pass -PfadeToolsDir.",
             )
         }
     }
+    // Merging two net8.0 outputs means shared dependency DLLs (FadeBasic.Lang.Core,
+    // etc.) appear in both — identical bytes, so last-wins is safe.
+    duplicatesStrategy = DuplicatesStrategy.INCLUDE
     into(layout.buildDirectory.dir("fade-tools-resources"))
-    lspDll?.let { from(it) }
-    dapDll?.let { from(it) }
+    // from(dir) copies the dir's CONTENTS (recursively), so runtimeconfig.json,
+    // deps.json, and every dependency assembly land alongside the entry dll.
+    sourceDirs.forEach { from(it) }
 }
 
 tasks.named<ProcessResources>("processResources") {
