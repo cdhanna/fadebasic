@@ -17,6 +17,61 @@
     css: (t, u) => `transform: translateX(${u * x}%)`,
   });
 
+  // Slide the homepage off-screen before following an EXTERNAL link (the docs
+  // slide is Svelte-transition-driven; a cross-origin nav can't animate the
+  // incoming site, so we animate the exit then navigate). `dir` is the side the
+  // page flies out to. Modified clicks (⌘/ctrl/shift = new tab) and
+  // reduced-motion users bypass the animation.
+  let leaving = $state("");
+  let entering = $state("");
+  const prefersReducedMotion =
+    typeof window !== "undefined" && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  /**
+   * @param {string} url
+   * @param {"left" | "right"} [dir]
+   */
+  const slideAway = (url, dir = "left") => (/** @type {MouseEvent} */ e) => {
+    if (e.metaKey || e.ctrlKey || e.shiftKey) return; // preserve open-in-new-tab
+    e.preventDefault();
+    if (prefersReducedMotion) { window.location.href = url; return; }
+    if (leaving) return;
+    leaving = dir;
+    window.setTimeout(() => { window.location.href = url; }, 380);
+  };
+
+  // Browser back/forward: we leave the homepage by sliding LEFT, so returning to
+  // it should slide back IN from the left. This also fixes the bfcache case —
+  // without it, a restored page keeps its slid-out `leaving` state and shows
+  // blank. Handles both bfcache restores (pageshow persisted) and back_forward
+  // reloads. (Forward INTO the Playground can't re-trigger its slide: the
+  // ?fadeEnter param was stripped from history — a documented cross-origin gap.)
+  const playEnter = () => {
+    leaving = ""; // clear any leftover exit state
+    if (prefersReducedMotion) return;
+    entering = "left";
+    window.setTimeout(() => { entering = ""; }, 440);
+  };
+  if (typeof window !== "undefined") {
+    const nav = /** @type {PerformanceNavigationTiming | undefined} */ (
+      performance.getEntriesByType("navigation")[0]
+    );
+    if (nav?.type === "back_forward") playEnter();
+    window.addEventListener("pageshow", (e) => { if (e.persisted) playEnter(); });
+  }
+
+  // "Try Online" target. On localhost, point at the local Playground dev server
+  // (https://localhost:5311) so the exit→enter slide can be tested end-to-end;
+  // in production it's the deployed Playground. `?fadeEnter=slide` tells the
+  // Playground to slide itself in from the right on arrival (matches the exit).
+  const isLocal =
+    typeof location !== "undefined" &&
+    (location.hostname === "localhost" || location.hostname === "127.0.0.1");
+  const playgroundUrl =
+    (isLocal ? "https://localhost:5311" : "https://dev.fadebasic.com") + "/?fadeEnter=slide";
+
+  // The Try Online button's hover polish is pure CSS (soft fill + lift + a single
+  // subtle sheen) — see the styles below. No JS action needed.
+
   // On phones the live IDE emulator (monaco + a WASM runtime) is too heavy and
   // too cramped — fall back to the original screenshot there. Checking a media
   // query lets us skip mounting the emulator entirely on mobile.
@@ -79,7 +134,7 @@ ENDFUNCTION`;
 {#if showHelp}
   <div class="page" transition:slideX={{ x: 100 }}><Help /></div>
 {:else}
-  <div class="page" transition:slideX={{ x: -100 }}>
+  <div class="page" class:leaving-left={leaving === "left"} class:leaving-right={leaving === "right"} class:entering-left={entering === "left"} transition:slideX={{ x: -100 }}>
 <main class="hero">
   <div class="hero-intro">
     <div class="content">
@@ -91,7 +146,7 @@ ENDFUNCTION`;
     </div>
 
     <div class="buttons" style="display: flex; flex-direction: row; justify-content: space-between;">
-      <a href="https://github.com/cdhanna/fadebasic/tree/main?tab=readme-ov-file#fade-basic"><button>Install</button></a>
+      <a href={playgroundUrl} onclick={slideAway(playgroundUrl, "left")}><button class="try-online"><span class="try-label">Try Online</span></button></a>
       <a href="#/learn/language"><button>Learn</button></a>
       <a href="https://discord.gg/yxFAFJurvU" unselectable="off"><button>Discord</button></a>
     </div>
@@ -104,10 +159,10 @@ ENDFUNCTION`;
         <li>Has minimal dependencies,</li>
         <li>Has a test framework,</li>
         <li>Has a compile time macro system,</li>
-        <li>Compiles to WASM,</li>
+        <li>Runs in dotnet, or in WASM,</li>
         <li>Is Customizable.</li>
       </ul>
-      <p> <i>Fade</i> is open source and created by <a href="https://brewed.ink">Chris Hanna</a> </p>
+      <p> <i>Fade</i> is <a href="https://github.com/cdhanna/fadebasic/tree/main?tab=readme-ov-file#fade-basic" onclick={slideAway("https://github.com/cdhanna/fadebasic/tree/main?tab=readme-ov-file#fade-basic", "left")}>open source</a> and created by <a href="https://brewed.ink">Chris Hanna</a> </p>
     </div>
   </div>
 
@@ -139,6 +194,73 @@ ENDFUNCTION`;
      off-screen page horizontally so it can't spawn a scrollbar mid-transition. */
   .app-shell { display: grid; width: 100%; min-width: 0; overflow-x: clip; }
   .app-shell > .page { grid-area: 1 / 1; min-width: 0; }
+
+  /* External-nav exit: slide the homepage off-screen, then the click handler
+     navigates (see slideAway). A keyframe animation (not a transition) so it
+     runs from the class add without a prior state and never fights the Svelte
+     slideX transition used for in-app docs navigation. */
+  @keyframes hp-slide-away-left  { to { transform: translateX(-100%); opacity: 0; } }
+  @keyframes hp-slide-away-right { to { transform: translateX(100%);  opacity: 0; } }
+  .page.leaving-left  { animation: hp-slide-away-left  380ms cubic-bezier(0.4, 0, 0.2, 1) forwards; }
+  .page.leaving-right { animation: hp-slide-away-right 380ms cubic-bezier(0.4, 0, 0.2, 1) forwards; }
+  /* Return via browser back/forward: slide back in from the left (mirrors the
+     exit). Also overrides any restored leaving state so bfcache never shows the
+     page slid-out. */
+  @keyframes hp-slide-in-left { from { transform: translateX(-100%); opacity: 0; } to { transform: translateX(0); opacity: 1; } }
+  .page.entering-left { animation: hp-slide-in-left 420ms cubic-bezier(0.22, 1, 0.36, 1) both; }
+
+  /* "Try Online" — the primary CTA. Restrained hover polish only: the accent
+     wash deepens, the button lifts a hair with a soft glow, and a single quiet
+     specular sheen glides across once. No mini-animation, nothing busy. */
+  .buttons button.try-online {
+    background: color-mix(in srgb, var(--accent) 8%, transparent);
+    color: var(--accent);
+    border: 2px solid var(--accent);
+    font-weight: 700;
+    position: relative;
+    overflow: hidden;         /* clip the sheen to the button shape */
+    transition:
+      background 0.22s ease,
+      color 0.2s ease,
+      border-color 0.2s ease,
+      box-shadow 0.28s ease,
+      transform 0.18s ease;
+  }
+  .buttons button.try-online:hover {
+    background: color-mix(in srgb, var(--accent) 16%, transparent);
+    border-color: var(--accent-hover);
+    transform: translateY(-1px);
+    box-shadow: 0 6px 18px color-mix(in srgb, var(--accent) 22%, transparent);
+  }
+  .buttons button.try-online:active { transform: translateY(0); }
+  /* A single soft specular sheen that glides across once per hover. */
+  .buttons button.try-online::before {
+    content: "";
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+    background: linear-gradient(
+      115deg,
+      transparent 32%,
+      color-mix(in srgb, #fff 55%, transparent) 50%,
+      transparent 68%
+    );
+    transform: translateX(-150%);
+    opacity: 0;
+  }
+  .buttons button.try-online:hover::before { animation: try-sheen 0.7s ease; }
+  @keyframes try-sheen {
+    0% { transform: translateX(-150%); opacity: 0; }
+    18% { opacity: 0.5; }
+    100% { transform: translateX(150%); opacity: 0; }
+  }
+  .buttons button.try-online .try-label { position: relative; z-index: 1; }
+  @media (prefers-reduced-motion: reduce) {
+    .page.leaving-left, .page.leaving-right, .page.entering-left { animation: none; }
+    .buttons button.try-online { transition: background 0.2s ease, border-color 0.2s ease; }
+    .buttons button.try-online:hover { transform: none; }
+    .buttons button.try-online:hover::before { animation: none; }
+  }
 
   /* Two-column hero: intro copy on the left, the live IDE emulator on the
      right (where the screenshot used to sit). Wraps to a single column on

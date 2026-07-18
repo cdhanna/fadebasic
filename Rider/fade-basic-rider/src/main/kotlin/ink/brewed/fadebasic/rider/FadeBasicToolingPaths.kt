@@ -1,8 +1,17 @@
 package ink.brewed.fadebasic.rider
 
 import ink.brewed.fadebasic.rider.settings.FadeBasicRiderSettings
+import java.io.File
 
 object FadeBasicToolingPaths {
+
+    // The baked dev csproj path is a developer convenience (run the LSP/DAP
+    // from ../../FadeBasic source). Release builds bake it empty (see
+    // build.gradle.kts `fadeRelease`), but guard on existence anyway: a path
+    // like /home/runner/work/.../LSP.csproj that leaks from a build machine
+    // must never be handed to `dotnet run --project` on a user's box — skip it
+    // and fall through to the bundled DLL instead of crashing.
+    private fun String.existsAsFile(): Boolean = isNotEmpty() && File(this).isFile
 
     fun canStartLsp(state: FadeBasicRiderSettings.State, classLoader: ClassLoader?): Boolean =
         runCatching { lspArgv(state, classLoader) }.isSuccess
@@ -15,7 +24,7 @@ object FadeBasicToolingPaths {
         if (userProj.isNotEmpty()) return withOptionalLspLog(listOf("run", "--project", userProj, "--"), state)
 
         val baked = FadeBasicDevPaths.LSP_PROJECT.trim()
-        if (baked.isNotEmpty()) return withOptionalLspLog(listOf("run", "--project", baked, "--"), state)
+        if (baked.existsAsFile()) return withOptionalLspLog(listOf("run", "--project", baked, "--"), state)
 
         val bundled = classLoader?.let { FadeBasicBundledToolCache.bundledDllPath(it, "LSP.dll") }
         if (bundled != null) return withOptionalLspLog(listOf(bundled.toString()), state)
@@ -40,7 +49,7 @@ object FadeBasicToolingPaths {
         if (userProj.isNotEmpty()) return listOf("run", "--project", userProj, "--")
 
         val baked = FadeBasicDevPaths.DAP_PROJECT.trim()
-        if (baked.isNotEmpty()) return listOf("run", "--project", baked, "--")
+        if (baked.existsAsFile()) return listOf("run", "--project", baked, "--")
 
         val bundled = classLoader?.let { FadeBasicBundledToolCache.bundledDllPath(it, "DAP.dll") }
         if (bundled != null) return listOf(bundled.toString())

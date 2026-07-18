@@ -102,6 +102,17 @@ jobs:
         run: echo "FADE_NUGET_DRYRUN=true" >> $GITHUB_ENV
 
 
+      # Build the LSP/DAP DLLs the Rider plugin bundles. Fresh Release build
+      # into a fixed dir so `-PfadeToolsDir` below picks them up regardless of
+      # version — build.sln does NOT include LSP/DAP, so nothing else populates
+      # a predictable net8.0 output for them before the Rider build runs.
+      - name: Build Fade tools for Rider bundle
+        working-directory: ./FadeBasic
+        if: inputs.publishRider == true
+        run: |
+          dotnet build ./LSP -o "${{ runner.temp }}/fade-rider-tools" -c Release
+          dotnet build ./DAP -o "${{ runner.temp }}/fade-rider-tools" -c Release
+
       - name: Build and Publish Rider Plugin
         working-directory: ./Rider/fade-basic-rider
         if: inputs.publishRider == true
@@ -112,7 +123,7 @@ jobs:
         run: |
           echo "${{ secrets.JETBRAINS_PLUGIN_SIGNING_CERT_CHAIN }}" > "$JETBRAINS_PLUGIN_SIGNING_CERT_CHAIN_FILE"
           echo "${{ secrets.JETBRAINS_PLUGIN_SIGNING_KEY }}" > "$JETBRAINS_PLUGIN_SIGNING_KEY_FILE"
-          ./gradlew buildPlugin publishPlugin -PpluginVersion=${{ inputs.majorSemver }}.${{ inputs.minorSemver }}.${{ inputs.patchSemver }}
+          ./gradlew buildPlugin publishPlugin -PfadeRelease=true -PfadeToolsDir="${{ runner.temp }}/fade-rider-tools" -PpluginVersion=${{ inputs.majorSemver }}.${{ inputs.minorSemver }}.${{ inputs.patchSemver }}
           rm -f "$JETBRAINS_PLUGIN_SIGNING_CERT_CHAIN_FILE" "$JETBRAINS_PLUGIN_SIGNING_KEY_FILE"
 
       - name: Upload Rider Plugin Artifact
