@@ -556,6 +556,39 @@ namespace FadeBasic.Virtual
                 Compile(statement);
             }
 
+            // Trailing steppable no-op (debug builds only). Without it, the last
+            // statement is followed straight by CompileEnd()'s jump-past-the-end,
+            // which carries no debug token — so a step-over on the final line falls
+            // off the end and the program terminates before you can inspect the
+            // result. A NOOP with a REAL statement token (isComputed == 0) gives
+            // step-over one more place to land, with all state intact (NOOP does
+            // nothing); the next step runs it and exits. Anchored one line past the
+            // last statement so it reads as "end of program" rather than
+            // re-highlighting the last line. Gated on _dbg so run/release bytecode
+            // is unchanged.
+            if (_dbg != null && program.statements.Count > 0)
+            {
+                // Anchor the end stop one line past the LAST line of source — the
+                // max over the parser's EOF token and every statement's tokens
+                // (trailing comments are statements too). Anchoring past the last
+                // *executable* statement alone would strand the stop on a trailing
+                // comment/blank line; landing past the whole file lets the web views
+                // render it as a distinct "end of program" marker.
+                var maxLine = program.EndToken?.lineNumber ?? 0;
+                foreach (var s in program.statements)
+                {
+                    var tk = s.EndToken ?? s.StartToken;
+                    if (tk != null && tk.lineNumber > maxLine) maxLine = tk.lineNumber;
+                }
+                var endToken = new Token
+                {
+                    lineNumber = maxLine + 1,
+                    charNumber = 0,
+                };
+                AddDebugToken(endToken);   // insIndex defaults to the NOOP we add next
+                _buffer.Add(OpCodes.NOOP);
+            }
+
             // prevent the execution from ever going to the functions. GOTO statements _should_ be illegal to jump into a function's scope.
             CompileEnd();
 
@@ -2967,6 +3000,14 @@ namespace FadeBasic.Virtual
             // _buffer.Add(OpCodes.STORE);
             // _buffer.Add(arrayVar.registerAddress);
             PushStorePtr(_buffer, arrayVar.registerAddress, arrayVar.isGlobal);
+            // Re-register the debug variable at THIS store's instruction index.
+            // The VM stamps scope.insIndexes[register] with the most-recent store's
+            // ins index, and the debugger maps register → variable through
+            // insToVariable[thatIndex]. REDIM re-stores the array pointer, so
+            // without re-registering here the register would point at an ins index
+            // with no debug variable and `nums` would vanish from the debugger
+            // after a REDIM (mirrors DIM + scalar assignment, which both do this).
+            _dbg?.AddVariable(_buffer.Count - 1, arrayVar);
         }
 
         public void Compile(DeclarationStatement declaration, bool includeDefaultInitializer=false)

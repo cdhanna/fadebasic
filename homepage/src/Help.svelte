@@ -274,7 +274,7 @@
     // history entry, so back/forward stay clean.
     if (legacy) history.replaceState(null, '', routeFor(tab, parseHash().anchor));
     syncRoute(false);
-    const onHash = () => { betaUnlocked = normalizeBeta(); tab = parseHash().tab; syncRoute(true); };
+    const onHash = () => { betaUnlocked = normalizeBeta(); tab = parseHash().tab; tocOpen = false; syncRoute(true); };
     window.addEventListener('hashchange', onHash);
     return () => window.removeEventListener('hashchange', onHash);
   });
@@ -494,7 +494,7 @@
               hint={hintLines(block).join('\n')} onfadeclose={(e) => closeIt(e)}></fade-runnable>
           </div>
         {:else if block.runnable}
-          <div class="snip-static">
+          <div class="snip-static" class:has-try={canTryIt}>
             {#if canTryIt}
               <button class="snip-btn try" onclick={(e) => openIt(i, e)}>
                 <span class="codicon codicon-play"></span> try it
@@ -518,16 +518,33 @@
   {/each}
 {/snippet}
 
-<nav class="help-tabs">
-  <a class="help-tabs-home" href="#/" aria-label="Home">← Home</a>
-  {#each visibleTabs as t}
-    <a class="help-tab" class:active={tab === t.key} href="#{t.route}">{t.label}</a>
-  {/each}
-  <label class="help-theme" title="Theme">
+<!-- Nav bits, rendered inline in the top bar on wide screens and inside the
+     fold-out drawer on narrow ones — one source of truth, one hamburger. Split
+     into two so the drawer can reorder them (theme on top, tabs under a header)
+     while the top bar keeps its original inline order. -->
+{#snippet themePicker()}
+  <label class="help-theme" title="Theme" onclick={(e) => e.stopPropagation()}>
+    <span class="help-theme-label">Theme</span>
     <select aria-label="Theme" value={theme} onchange={(e) => pickTheme(e.currentTarget.value)}>
       {#each THEMES as t}<option value={t.id}>{t.label}</option>{/each}
     </select>
   </label>
+{/snippet}
+{#snippet navLinks()}
+  <a class="help-tabs-home" href="#/" aria-label="Home">← Home</a>
+  {#each visibleTabs as t}
+    <a class="help-tab" class:active={tab === t.key} href="#{t.route}">{t.label}</a>
+  {/each}
+{/snippet}
+
+<nav class="help-tabs">
+  {#if tocDrawer}
+    <button class="help-menu-toggle" aria-label="Menu" aria-expanded={tocOpen}
+            onclick={() => (tocOpen = !tocOpen)}>
+      <span class="codicon codicon-menu"></span>
+    </button>
+  {/if}
+  <div class="help-nav-group">{@render navLinks()}{@render themePicker()}</div>
   <div class="help-search">
     <span class="codicon codicon-search"></span>
     <input
@@ -561,13 +578,20 @@
       This section is a work in progress — content and behavior may change.
     </div>
   {/if}
-  {#if tocDrawer}
-    <button class="toc-toggle" aria-label="Table of contents" onclick={() => (tocOpen = !tocOpen)}>
-      <span class="codicon codicon-list-unordered"></span>
-    </button>
-    {#if tocOpen}<button class="toc-scrim" aria-label="Close" onclick={() => (tocOpen = false)}></button>{/if}
+  {#if tocDrawer && tocOpen}
+    <button class="toc-scrim" aria-label="Close" onclick={() => (tocOpen = false)}></button>
   {/if}
   <nav class="toc" onclick={() => { if (tocDrawer) tocOpen = false; }}>
+    {#if tocDrawer}
+      <!-- On narrow screens the single hamburger's drawer also carries the nav;
+           shown only at the smallest widths via CSS. Theme sits at the very top;
+           the tabs get their own header, mirroring the docs' TOC header. -->
+      <div class="toc-nav-extra">
+        {@render themePicker()}
+        <div class="toc-title toc-nav-title">Pages</div>
+        {@render navLinks()}
+      </div>
+    {/if}
     {#if tab === 'commands'}
       <div class="toc-title">Commands</div>
       <ul class="toc-list cmd-toc">
@@ -706,6 +730,53 @@
     font: inherit; font-size: 0.8rem; padding: 0 6px; cursor: pointer;
   }
   .help-theme select:focus { outline: none; border-color: var(--accent); }
+
+  /* Single hamburger (top bar, left) — rendered only when the TOC is a drawer
+     (tocDrawer). It toggles that one drawer, which carries the TOC and, on the
+     smallest screens, the nav (Home/tabs/theme) too — so there's just one menu
+     button, never two. */
+  .help-menu-toggle {
+    display: inline-flex; align-items: center; justify-content: center;
+    align-self: center; flex: 0 0 auto; width: 34px; height: 30px; padding: 0; margin-right: 4px;
+    background: var(--bg-3); border: 1px solid var(--border-2); border-radius: 6px;
+    color: var(--fg); cursor: pointer;
+  }
+  .help-menu-toggle .codicon { font-size: 16px; }
+  /* Wide screens: the group is transparent (display:contents) so Home/tabs/theme
+     lay out exactly as before; the theme label + in-drawer nav copy are hidden. */
+  .help-nav-group { display: contents; }
+  .help-theme-label { display: none; }
+  .toc-nav-extra { display: none; }
+
+  /* Smallest screens: drop the inline nav from the bar (it lives in the drawer
+     now) so the bar keeps only the hamburger + a full-width search box. */
+  @media (max-width: 680px) {
+    .help-tabs { gap: 8px; padding: 0 8px; }
+    .help-nav-group { display: none; }
+    .help-search { flex: 1 1 auto; min-width: 0; }
+    .help-search input { width: 100%; }
+    /* nav items at the top of the drawer */
+    .toc-nav-extra {
+      display: flex; flex-direction: column; gap: 2px;
+      padding: 4px 4px 8px; margin-bottom: 8px; border-bottom: 1px solid var(--border-2);
+    }
+    /* theme picker: pinned at the very top, left-aligned (not centered) */
+    .toc-nav-extra .help-theme {
+      order: -1; align-self: flex-start; margin: 0 0 8px 0;
+      justify-content: flex-start; gap: 8px; padding: 4px 6px;
+    }
+    .toc-nav-extra .help-theme-label { display: inline; color: var(--fg-muted); font-size: 0.85rem; }
+    .toc-nav-extra .help-theme select { flex: 0 0 auto; }
+    /* "Pages" header over the tab links, mirroring the docs TOC header */
+    .toc-nav-title { margin: 2px 6px 4px; }
+    .toc-nav-extra .help-tabs-home {
+      border-right: 0; padding: 8px 6px; margin: 0;
+    }
+    .toc-nav-extra .help-tab {
+      padding: 8px 6px; font-size: 0.95rem; border-bottom: 0; border-left: 2px solid transparent;
+    }
+    .toc-nav-extra .help-tab.active { border-left-color: var(--accent); border-bottom-color: transparent; }
+  }
 
   .help-layout {
     padding-left: 240px;   /* reserve room for the fixed TOC */
@@ -899,8 +970,12 @@
      border here shifts the code down ~1px and shows a stray box during the
      facade glide. The facade clones this, so removing it keeps the code's
      height/position identical from snippet → editor. */
-  /* Extra top padding so the floating try-it / copy buttons clear the code. */
-  .snip-static :global(.fade-code__pre) { padding-top: 2.9rem; border: 0; }
+  /* Only reserve the top strip when a "try it" button actually sits there. Non-
+     runnable (and can't-try) blocks skip the reserved height — no dead space —
+     and the copy button just floats over the top-right corner (it only appears
+     on hover anyway). */
+  .snip-static :global(.fade-code__pre) { padding-top: 0.85rem; border: 0; }
+  .snip-static.has-try :global(.fade-code__pre) { padding-top: 2.9rem; }
   .snip-static :global(fade-code code) { font-size: 14px; line-height: 19px; }
   .snip-btn {
     /* app.css sets a global `button { flex-grow: 1 }`; pin so buttons in the
@@ -956,9 +1031,12 @@
        between the TOC and the code). Then fill RIGHT to the far edge so the
        editor is balanced (equal ~8px gutters left and right) rather than
        hugging the left with dead space on the right. */
-    /* Break left so the (narrowed) sidebar + Monaco's ~89px line-number gutter
-       fall into the reserved gap and the code text lands at the static code's
-       exact x. Break ≈ sidebar(180) + gutter(89) − code padding(12). */
+    /* Break left so the debug sidebar + Monaco's line-number gutter fall into the
+       reserved gap and the code text lands at the static code's exact x. Break ≈
+       sidebar(217) + gutter(~50, tightened) − code padding(12) ≈ 257. The gutter
+       shrank (see editor.ts), so the sidebar absorbs the difference — the code
+       stays put and the reclaimed width goes to the debug panel, not a leftward
+       shift. */
     margin-left: -257px;
     width: calc(100vw - 240px - 34px);   /* fill right, balanced gutters */
     border: 1px solid var(--border-2);
@@ -967,9 +1045,11 @@
     box-shadow: 0 8px 30px rgba(0, 0, 0, 0.4);
     position: relative;                  /* anchor the floating close button */
   }
-  /* Narrow the debug sidebar so sidebar + gutter fit the reserved gap (keeps the
-     tighter "old" spacing while still landing the code text in place). */
-  .snip-live :global(.fade-runnable--ide) { grid-template-columns: 180px minmax(0, 1fr); }
+  /* Debug sidebar width. It's sized so sidebar + (tightened) gutter still fill the
+     reserved gap and the code lands at the static code's exact x — i.e. the width
+     reclaimed from the gutter is given back to the sidebar rather than shifting
+     the code left. */
+  .snip-live :global(.fade-runnable--ide) { grid-template-columns: 217px minmax(0, 1fr); }
   /* In drawer mode the TOC is an overlay, so there's no fixed left column to
      reserve against and the prose is centered (see below). The fixed -259px
      break would shove the editor off the left edge, so instead pin the editor
@@ -980,16 +1060,9 @@
   .snip-live :global(fade-runnable.ide) { height: min(72vh, 620px); }
 
   /* ── Fold-out TOC (drawer) — when the viewport is too narrow for a fixed TOC
-     + the reserved debug gap. The TOC slides in over the content; a hamburger
-     toggles it. The content reclaims the TOC's 240px but keeps the debug gap so
-     the editor still aligns. */
-  .toc-toggle {
-    position: fixed; top: 48px; left: 10px; z-index: 25;
-    width: 38px; height: 38px; display: inline-flex; align-items: center; justify-content: center;
-    background: var(--accent); color: var(--fg); border: 0; border-radius: 8px; cursor: pointer;
-    box-shadow: 0 2px 10px rgba(0,0,0,0.4);
-  }
-  .toc-toggle .codicon { font-size: 18px; }
+     + the reserved debug gap. The TOC slides in over the content, toggled by the
+     single top-bar hamburger. The content reclaims the TOC's 240px but keeps the
+     debug gap so the editor still aligns. */
   .toc-scrim { position: fixed; inset: 0; z-index: 15; background: rgba(0,0,0,0.45); border: 0; }
   .help-layout.toc-drawer { padding-left: 0; }
   /* TOC is an overlay now — drop the reserved left gap and center the prose in

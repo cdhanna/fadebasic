@@ -763,6 +763,77 @@ PRINT ""done""
     }
 
     [Test]
+    public void ProgramEnd_HasTrailingSteppableNoop_PastTheSource()
+    {
+        // A step-over on the last line used to fall off the end: after the final
+        // statement, the only thing left is CompileEnd()'s jump-past-the-end,
+        // which carries no debug token — so the stepper never finds a new REAL
+        // token and the program terminates before you can inspect the result.
+        // The compiler now emits a trailing NOOP carrying a REAL statement token
+        // (isComputed == 0), giving step-over a place to land with all state
+        // intact. It's anchored just past the last statement. (Trailing comments
+        // are dropped by the parser, so the compiler can't see past them — the web
+        // views special-case a stop that lands on a blank/comment line and render
+        // it as "end of program"; that's covered by an in-browser probe.)
+        var src = "x = 1\ny = 2\n";
+        Compile(src, out _, out var compiler, out var vm);
+        var dbg = compiler.DebugData;
+
+        var real = dbg.statementTokens.Where(t => t.isComputed == 0).ToList();
+        // The end stop is the real token with the greatest instruction index
+        // (emitted after every statement); the others are `x = 1` and `y = 2`.
+        var endTok = real.OrderByDescending(t => t.insIndex).First();
+        var maxOther = real.Where(t => t != endTok).Max(t => t.token.lineNumber);
+
+        // It must sit past every executable statement.
+        Assert.That(endTok.token.lineNumber, Is.GreaterThan(maxOther),
+            "the end stop must land past the last executable statement");
+
+        // The instruction it points at is a NOOP (does nothing → state intact).
+        Assert.That(compiler.Program[endTok.insIndex], Is.EqualTo(OpCodes.NOOP),
+            "the trailing steppable stop must land on a NOOP");
+
+        // And that instruction resolves to the end token itself (a REAL stop), so
+        // step-over pauses here rather than resolving back to a prior line and
+        // running off the end.
+        var map = new IndexCollection(dbg.statementTokens);
+        Assert.That(map.TryFindClosestTokenBeforeIndex(endTok.insIndex, out var resolved), Is.True);
+        Assert.That(resolved.isComputed, Is.EqualTo(0), "the end stop must be a REAL (steppable) token");
+        Assert.That(resolved.insIndex, Is.EqualTo(endTok.insIndex), "and resolve to the end NOOP itself");
+    }
+
+    [Test]
+    public void Redim_KeepsArrayVisibleInDebugger()
+    {
+        // Regression: a REDIM re-stores the array's pointer register at a NEW
+        // instruction index. The VM stamps scope.insIndexes[register] with that
+        // index and the debugger resolves register → variable via
+        // insToVariable[thatIndex]. REDIM used not to re-register the debug
+        // variable, so after a REDIM the register pointed at an unmapped ins index
+        // and the array vanished from the debugger. It must stay visible (and
+        // reflect the new size).
+        var src = @"DIM nums(4)
+nums(2) = 3
+REDIM nums(10)
+x = nums(2)
+";
+        Compile(src, out _, out var compiler, out var vm);
+        var dbg = compiler.DebugData;
+        vm.Execute2();   // runs past the REDIM
+
+        var db = new DebugVariableDatabase(vm, dbg, new EmptyDebugLogger());
+        var all = db.GetGlobalVariablesForFrame(0).variables
+            .Concat(db.GetLocalVariablesForFrame(0).variables)
+            .ToList();
+        var nums = all.FirstOrDefault(v => v.name == "nums");
+        Assert.That(nums, Is.Not.Null, "the array must still be visible in the debugger after a REDIM");
+
+        // And it should reflect the REDIM'd size (4 → 10 elements).
+        var rows = db.Expand(nums.id);
+        Assert.That(rows.variables.Count, Is.EqualTo(10), "nums should show 10 elements after REDIM(10)");
+    }
+
+    [Test]
     public void ExpandVariable_MultiDimArray_ExpandsEverySibling()
     {
         // Regression: expanding a multi-dimensional array only worked for the
