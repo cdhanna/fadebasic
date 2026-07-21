@@ -81,7 +81,13 @@ namespace FadeBasic
             
             [LexemType.FieldSplitter] = LexemFlags.NO_SPACE,
             [LexemType.ParenOpen] = LexemFlags.NO_SPACE,
-            [LexemType.ParenClose] = LexemFlags.NO_SPACE,
+            // Only NO_SPACE_TRAILING: `)` hugs what precedes it (`3)`), but
+            // must NOT force the following token to hug it — otherwise
+            // `dim x(3) as Integer` collapses to `dim x(3)as Integer`.
+            // Tokens that legitimately hug a `)` (`,`, `)`, `.`, `(` for a
+            // chained call) carry their own NO_SPACE_TRAILING, so `),`
+            // `))` `).` `)(` still close up correctly.
+            [LexemType.ParenClose] = LexemFlags.NO_SPACE_TRAILING,
             [LexemType.ArgSplitter] = LexemFlags.NO_SPACE_TRAILING,
             
             [LexemType.KeywordIf] = LexemFlags.PUSH_INDENT,

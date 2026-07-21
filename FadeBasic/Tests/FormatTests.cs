@@ -50,6 +50,11 @@ x = 5
     [TestCase("if y >3 then print 3", "if y > 3 then print 3", 1)]
     [TestCase("x.y", "x.y", 0)]
     [TestCase("x.y,y.d", "x.y, y.d", 1)]
+    // Bug 5: `as` after an array declaration's `)` must keep its space —
+    // `dim boxes(10) as Vec2`, not `dim boxes(10)as Vec2`.
+    [TestCase("dim boxes(10) as Vec2", "dim boxes(10) as Vec2", 0)]
+    [TestCase("dim boxes(10)as Vec2", "dim boxes(10) as Vec2", 1)]
+    [TestCase("dim scores(3) as integer", "dim scores(3) as integer", 0)]
     [TestCase(
         @"
 if y >3 then print 3

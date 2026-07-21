@@ -5,6 +5,11 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.5] - 2026-07-21
+### Fixed
+- LSP formatter puts space before `AS`
+- LSP type ahead improvements
+
 ## [0.2.4] - 2026-07-19
 ### Changed
 - Debugger introduces a silent EOF+1 line when stepping over final instruction

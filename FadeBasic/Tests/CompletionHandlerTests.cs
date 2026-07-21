@@ -485,6 +485,168 @@ namespace Tests
                 "expected struct field `y` after `if ballPos.`");
         }
 
+        // ─── Bug 2: function names inside a for-loop body ─────────────────
+        [Test]
+        public void Cursor_InExpression_TopLevel_ShowsFunctionName()
+        {
+            // Baseline: a value-returning user function should be offered in
+            // an expression position at top level.
+            var src =
+                "function computeThing()\n" +
+                "endfunction 5\n" +
+                "result = |";
+            var items = CompleteAt(src);
+            Assert.That(HasLabel(items, "computeThing"), Is.True,
+                "user function should be offered in a top-level expression");
+        }
+
+        [Test]
+        public void Cursor_InExpression_InsideForLoop_ShowsFunctionName()
+        {
+            // Bug: inside a for-loop body the completion list comes back
+            // empty even though it works at top level.
+            var src =
+                "function computeThing()\n" +
+                "endfunction 5\n" +
+                "for i = 1 to 10\n" +
+                "  result = |\n" +
+                "next i";
+            var items = CompleteAt(src);
+            Assert.That(HasLabel(items, "computeThing"), Is.True,
+                "user function should be offered inside a for-loop body");
+        }
+
+        [Test]
+        public void Cursor_InExpression_InsideForLoop_ShowsVariables()
+        {
+            // Broader form of the same bug: NO completions of any kind fire
+            // inside a for-loop body expression.
+            var src =
+                "score = 10\n" +
+                "for i = 1 to 10\n" +
+                "  result = |\n" +
+                "next i";
+            var items = CompleteAt(src);
+            Assert.That(items, Is.Not.Empty,
+                "expression inside a for-loop body should produce completions");
+            Assert.That(HasLabel(items, "score"), Is.True,
+                "variable `score` should be offered inside a for-loop body");
+        }
+
+        [Test]
+        public void Cursor_InExpression_InsideNestedForLoop_ShowsFunctionName()
+        {
+            var src =
+                "function computeThing()\n" +
+                "endfunction 5\n" +
+                "for i = 1 to 10\n" +
+                "  for j = 1 to 10\n" +
+                "    result = |\n" +
+                "  next j\n" +
+                "next i";
+            var items = CompleteAt(src);
+            Assert.That(HasLabel(items, "computeThing"), Is.True,
+                "user function should be offered inside a nested for-loop body");
+        }
+
+        // ─── Bug 4: struct field completion on an array element ───────────
+        [Test]
+        public void Cursor_AfterArrayElementDot_ReturnsFieldCompletions()
+        {
+            // `dim arr(n) as Struct` then `arr(0).` should surface the
+            // struct's fields — same as `structVar.` but the LHS of the
+            // dot is an array-index expression `arr(0)`, whose last token
+            // is `)`, not an identifier.
+            var src =
+                "type Vec2\n" +
+                "  x as integer\n" +
+                "  y as integer\n" +
+                "endtype\n" +
+                "dim boxes(10) as Vec2\n" +
+                "boxes(0).|";
+            var items = CompleteAt(src);
+            Assert.That(HasLabel(items, "x"), Is.True,
+                "expected struct field `x` after `boxes(0).`");
+            Assert.That(HasLabel(items, "y"), Is.True,
+                "expected struct field `y` after `boxes(0).`");
+        }
+
+        // ─── Bug 6: completion in the second operand of `+` ───────────────
+        [Test]
+        public void Cursor_AfterArithmeticPlus_ShowsVariables()
+        {
+            // `y = x + |` — the cursor is in the right-hand operand of a
+            // binary `+`. Variables/functions in scope should be offered.
+            var src =
+                "x = 5\n" +
+                "score = 10\n" +
+                "y = x + |";
+            var items = CompleteAt(src);
+            Assert.That(HasLabel(items, "score"), Is.True,
+                "expected variable `score` as the second operand of `+`");
+        }
+
+        // ─── Bug 2: value-returning functions in statement position ──────
+        // A value-returning function can be called as a bare statement in
+        // fbasic (its result discarded), so it must appear on a fresh
+        // statement line — the user first noticed the omission inside a
+        // for-loop body. GetStatementCompletions used to hard-filter to
+        // TypeInfo.Void, which dropped every non-void function/command.
+        [Test]
+        public void Cursor_FreshLine_TopLevel_ShowsValueFunction()
+        {
+            var items = CompleteAt("function calc()\nendfunction 5\n|");
+            Assert.That(HasLabel(items, "calc"), Is.True,
+                "value-returning function should appear on a fresh top-level line");
+        }
+
+        [Test]
+        public void Cursor_FreshLine_InsideForLoop_ShowsValueFunction()
+        {
+            var src =
+                "function calc()\n" +
+                "endfunction 5\n" +
+                "for i = 1 to 10\n" +
+                "  |\n" +
+                "next i";
+            var items = CompleteAt(src);
+            Assert.That(HasLabel(items, "calc"), Is.True,
+                "value-returning function should appear on a fresh line inside a for-loop");
+        }
+
+        [Test]
+        public void Cursor_FreshLine_InsideForLoop_StillShowsVoidFunction()
+        {
+            // Regression guard: void functions must keep showing too.
+            var src =
+                "function doIt()\n" +
+                "endfunction\n" +
+                "for i = 1 to 10\n" +
+                "  |\n" +
+                "next i";
+            var items = CompleteAt(src);
+            Assert.That(HasLabel(items, "doIt"), Is.True,
+                "void function should still appear on a fresh line inside a for-loop");
+        }
+
+        // ─── Bug 6: variables in a partially-typed operand ───────────────
+        [Test]
+        public void Cursor_AfterArithmeticPlus_PartialOperand_ShowsVariables()
+        {
+            // `total = total + sc|` — a partial identifier as the second
+            // operand of `+`. The incomplete operand drops every statement
+            // node out of the cursor's span (Group is just ProgramNode), so
+            // the switch returned empty and the fallback offered only
+            // commands/functions. In-scope variables must appear too.
+            var src =
+                "total = 0\n" +
+                "score = 5\n" +
+                "total = total + sc|";
+            var items = CompleteAt(src);
+            Assert.That(HasLabel(items, "score"), Is.True,
+                "variable `score` should appear when typing a partial `+` operand");
+        }
+
         [Test]
         public void Cursor_AfterIfPartialIdent_ShowsStructVariables()
         {

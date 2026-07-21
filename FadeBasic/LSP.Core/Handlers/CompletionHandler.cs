@@ -325,6 +325,15 @@ namespace FadeBasic.LSP.Core.Handlers
                 && leftToken.EndCharNumber <= character)
             {
                 AddAllCommandsAndFunctions(portable, context);
+                // Also surface in-scope variables. The fallback fires both
+                // at statement start (`s|`) and mid-expression when the
+                // parser left only ProgramNode in Group — e.g. a partial
+                // operand `total = total + sc|`, where the incomplete
+                // identifier drops every statement node out of the cursor's
+                // span. Commands + functions alone left variables missing
+                // from the dropdown in exactly that spot. GetSymbolCompletions
+                // still honours the declared-after-cursor visibility filter.
+                AddInScopeSymbols(portable, context);
             }
 
             return portable.Select(ToLspCompletionItem).ToList();
@@ -359,6 +368,32 @@ namespace FadeBasic.LSP.Core.Handlers
                 seen.Add(label);
                 portable.Add(pair.item);
             }
+        }
+
+        // Append every in-scope variable (locals then globals) to the
+        // fallback list, deduped by label. TypeInfo.Unset disables the
+        // return/assignment-type filter — at a bare fallback position we
+        // don't know the wanted type, so offer them all and let Monaco
+        // filter by the typed text.
+        private static void AddInScopeSymbols(
+            List<PortableCompletionItem> portable,
+            LspCompletionContext context)
+        {
+            var seen = new HashSet<string>(
+                portable.Select(p => p.Label ?? string.Empty));
+            void AddFrom(SymbolTable table)
+            {
+                if (table == null) return;
+                foreach (var pair in LSPUtil.GetSymbolCompletions(context.FakeToken, TypeInfo.Unset, table))
+                {
+                    var label = pair.item.Label ?? string.Empty;
+                    if (seen.Contains(label)) continue;
+                    seen.Add(label);
+                    portable.Add(pair.item);
+                }
+            }
+            AddFrom(context.LocalScope);
+            AddFrom(context.Scope?.globalVariables);
         }
 
         // Scan the line text backwards from the cursor for a contiguous
@@ -446,6 +481,21 @@ namespace FadeBasic.LSP.Core.Handlers
                 break;
             }
             if (lhsToken == null) return null;
+
+            // The token immediately before the dot is usually the struct
+            // variable itself (`ballPos.`). But for an array element
+            // (`boxes(0).`) it's the `)` closing the index expression —
+            // walk back over the balanced `( … )` to the array-name
+            // identifier that precedes it, and complete against the
+            // array's element type. `dim boxes(n) as Vec2` gives the
+            // array symbol a struct-typed element, so the same
+            // structName lookup below resolves the fields.
+            if (lhsToken.type == LexemType.ParenClose)
+            {
+                lhsToken = FindArrayNameBeforeCloseParen(tokens, lhsToken);
+                if (lhsToken == null) return null;
+            }
+
             // Only identifier tokens can be the LHS of a struct access.
             // Bail on operators, literals, etc. — `5.` is a number, not
             // a member access.
@@ -502,6 +552,35 @@ namespace FadeBasic.LSP.Core.Handlers
                 });
             }
             return list;
+        }
+
+        // Given the `)` that closes an array index expression (`boxes(0)`),
+        // walk backwards over the balanced parentheses and return the
+        // identifier token immediately preceding the matching `(` — the
+        // array name. Returns null if the parens don't balance or there's
+        // no identifier before the open paren (e.g. a parenthesised
+        // sub-expression `(a + b).`, which isn't a member-access LHS).
+        private static Token FindArrayNameBeforeCloseParen(
+            System.Collections.Generic.List<Token> tokens, Token closeParen)
+        {
+            var closeIdx = tokens.LastIndexOf(closeParen);
+            if (closeIdx < 0) return null;
+            var depth = 0;
+            for (var i = closeIdx; i >= 0; i--)
+            {
+                var t = tokens[i];
+                if (t.type == LexemType.ParenClose) depth++;
+                else if (t.type == LexemType.ParenOpen)
+                {
+                    depth--;
+                    if (depth == 0)
+                    {
+                        // Token right before the matching `(` is the array name.
+                        return i > 0 ? tokens[i - 1] : null;
+                    }
+                }
+            }
+            return null;
         }
 
         private static LspCompletionItem ToLspCompletionItem(PortableCompletionItem p)

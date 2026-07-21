@@ -552,8 +552,15 @@ namespace FadeBasic.Lsp
             var list = new List<PortableCompletionItem>();
             if (includeKeywords)
                 list.AddRange(GetKeywordCompletions(context));
-            list.AddRange(GetFunctionCallCompletions(TypeInfo.Void, context.Scope).Select(x => x.item));
-            list.AddRange(GetCommandCallCompletions(TypeInfo.Void, context).Select(x => x.item));
+            // TypeInfo.Unset (not Void) so value-returning functions and
+            // commands are offered at statement position too — fbasic lets
+            // you call them as a bare statement and discard the result, and
+            // a user typing `cal|` on a fresh line (including inside a
+            // for-loop body) expects `calc()` to show. A hardcoded Void
+            // return-type filter dropped every non-void function/command
+            // here; Monaco filters by the typed text instead.
+            list.AddRange(GetFunctionCallCompletions(TypeInfo.Unset, context.Scope).Select(x => x.item));
+            list.AddRange(GetCommandCallCompletions(TypeInfo.Unset, context).Select(x => x.item));
             return list;
         }
 
