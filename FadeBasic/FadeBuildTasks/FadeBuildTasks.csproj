@@ -1,4 +1,4 @@
-﻿<Project Sdk="Microsoft.NET.Sdk">
+﻿<Project Sdk="Microsoft.NET.Sdk" TreatAsLocalProperty="IncludeSymbols;IncludeSource">
 
     <Import Project="../NugetPackage.props"/>
     
@@ -24,6 +24,13 @@
         <GenerateDependencyFile>true</GenerateDependencyFile>
         <DebugType>embedded</DebugType>
         <IsPackable>true</IsPackable>
+        <!-- This is a build-TASKS package: its output goes to tasks/ (not lib/)
+             with embedded debug symbols, so a symbols/source package has no
+             content and pack errors NU5017. Force them off. TreatAsLocalProperty
+             (on the Project element) lets these win over the CLI include flags
+             that install.sh passes. -->
+        <IncludeSymbols>false</IncludeSymbols>
+        <IncludeSource>false</IncludeSource>
     </PropertyGroup>
 
     <ItemGroup>

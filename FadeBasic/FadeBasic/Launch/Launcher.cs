@@ -27,11 +27,34 @@ namespace FadeBasic.Launch
         // logs (banner / reload verdicts). Genuine errors still print.
         public const string ENV_WATCH_QUIET = "FADE_BASIC_WATCH_QUIET";
 
+        // GC tuning. Mirror the fade.json `settings.gc` block; also readable
+        // from env for the desktop/CLI runner. sweepInterval: heap allocations
+        // between garbage collections (higher = fewer collections, more memory;
+        // 0/unset keeps the VM default). paranoid: poison freed memory and never
+        // reuse it, so a use-after-free surfaces immediately — a diagnostic knob
+        // for hunting GC-liveness bugs, not for shipping.
+        public const string ENV_GC_SWEEP = "FADE_BASIC_GC_SWEEP";
+        public const string ENV_GC_PARANOID = "FADE_BASIC_GC_PARANOID";
+
 
         public bool debug;
         public int debugPort = 0;
         public bool debugWaitForConnection = true;
         public string debugLogPath;
+
+        /// <summary>Heap allocations between garbage collections. 0 = leave the
+        /// VM default (<see cref="VirtualMachine.DEFAULT_SWEEP_INTERVAL"/>).</summary>
+        public int gcSweepInterval = 0;
+        /// <summary>Poison freed heap memory and never reuse it (diagnostic).</summary>
+        public bool gcParanoid;
+
+        /// <summary>Apply the GC knobs to a freshly-constructed VM. No-ops the
+        /// sweep interval when unset (0) so callers keep the VM default.</summary>
+        public void ApplyGc(VirtualMachine vm)
+        {
+            if (gcSweepInterval > 0) vm.sweepInterval = gcSweepInterval;
+            vm.heap.paranoid = gcParanoid;
+        }
 
         /// <summary>Hot-reload watch is enabled.</summary>
         public bool watch;
@@ -78,6 +101,10 @@ namespace FadeBasic.Launch
                 }
                 var quietEnv = Environment.GetEnvironmentVariable(ENV_WATCH_QUIET)?.ToLowerInvariant();
                 DefaultOptions.watchQuiet = quietEnv == "true" || quietEnv == "1";
+
+                int.TryParse(Environment.GetEnvironmentVariable(ENV_GC_SWEEP), out DefaultOptions.gcSweepInterval);
+                var paranoidEnv = Environment.GetEnvironmentVariable(ENV_GC_PARANOID)?.ToLowerInvariant();
+                DefaultOptions.gcParanoid = paranoidEnv == "true" || paranoidEnv == "1";
 
                 if (!int.TryParse(Environment.GetEnvironmentVariable(ENV_DEBUG_PORT), out DefaultOptions.debugPort))
                 {
@@ -126,6 +153,7 @@ namespace FadeBasic.Launch
                 {
                     hostMethods = HostMethodTable.FromCommandCollection(instance.CommandCollection)
                 };
+                options.ApplyGc(runVm);
                 runVm.Execute2(0); // 0 means run until suspend.
                 return;
             }
@@ -154,6 +182,7 @@ namespace FadeBasic.Launch
                 debugData = instance.DebugData;
                 commands = instance.CommandCollection;
             }
+            options.ApplyGc(vm);
 
             var session = new DebugSession(vm, debugData, commands, options);
             session.HotReload = reloadWatch?.Session; // null → debug without reload

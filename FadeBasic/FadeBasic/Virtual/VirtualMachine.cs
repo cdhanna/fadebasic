@@ -936,9 +936,16 @@ namespace FadeBasic.Virtual
                             VmUtil.ReadSpanAsUInt(ref stack, out data);
                             scope.dataRegisters[addr] = data;
                             scope.typeRegisters[addr] = typeCode;
-                            scope.insIndexes[addr] = instructionIndex - 1; // minus one because the instruction has already been advanced. 
-                            globalScope.flags[addr] = 0;
-                            
+                            scope.insIndexes[addr] = instructionIndex - 1; // minus one because the instruction has already been advanced.
+                            // Clear the flags on the register we actually wrote — the
+                            // CURRENT scope — matching STORE_PTR / STORE_GLOBAL below.
+                            // This previously wrote globalScope.flags[addr] (copy-paste
+                            // from the _GLOBAL variants). Benign today because register
+                            // addresses are globally unique, so a local's addr never
+                            // aliases a live global's — but writing the wrong scope was
+                            // a latent hazard, so it now targets `scope`.
+                            scope.flags[addr] = 0;
+
                             break;
                         case OpCodes.STORE_PTR:
 

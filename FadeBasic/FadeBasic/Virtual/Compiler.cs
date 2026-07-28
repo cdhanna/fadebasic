@@ -51,8 +51,8 @@ namespace FadeBasic.Virtual
         private string registerAddressSerializer;
         
         public bool isGlobal;
-        public byte[] rankSizeRegisterAddresses; // an array where the index is the rank, and the value is the ptr to a register whose value holds the size of the rank
-        public byte[] rankIndexScalerRegisterAddresses; // an array where the index is the rank, and the value is the ptr to a register whose value holds the multiplier factor for the rank's indexing
+        public int[] rankSizeRegisterAddresses; // an array where the index is the rank, and the value is the ptr to a register whose value holds the size of the rank
+        public int[] rankIndexScalerRegisterAddresses; // an array where the index is the rank, and the value is the ptr to a register whose value holds the multiplier factor for the rank's indexing
         public void ProcessJson<T>(ref T op) where T : IJsonOperation
         {
             op.IncludeField(nameof(byteSize), ref byteSize);
@@ -204,11 +204,11 @@ namespace FadeBasic.Virtual
 
                 foreach (var n in kvp.Value.rankSizeRegisterAddresses)
                 {
-                    if (n > highestAddress) highestAddress = n;
+                    if ((ulong)n > highestAddress) highestAddress = (ulong)n;
                 }
                 foreach (var n in kvp.Value.rankIndexScalerRegisterAddresses)
                 {
-                    if (n > highestAddress) highestAddress = n;
+                    if ((ulong)n > highestAddress) highestAddress = (ulong)n;
                 }
             }
 
@@ -251,9 +251,17 @@ namespace FadeBasic.Virtual
         {
             var compileArrayVar = new CompiledArrayVariable()
             {
-                registerAddress = (byte)(registerCount++),
-                rankSizeRegisterAddresses = new byte[rankLength],
-                rankIndexScalerRegisterAddresses = new byte[rankLength],
+                // Full-width register address. This was `(byte)(registerCount++)`,
+                // which truncated to 8 bits — so in a program with more than 256
+                // registers an array's pointer register WRAPPED (mod 256) onto an
+                // early variable's register. Writing that variable then clobbered
+                // the array's base pointer, producing "cannot add pointer buckets"
+                // on the next index (while len() still worked — it reads the
+                // separate size register). Register addresses are 8-byte in the
+                // bytecode (see ReadRegAddress), and scalars already use full width.
+                registerAddress = registerCount++,
+                rankSizeRegisterAddresses = new int[rankLength],
+                rankIndexScalerRegisterAddresses = new int[rankLength],
                 name = declarationVariable,
                 typeCode = typeCode,
                 byteSize = TypeCodes.GetByteSize(typeCode),
@@ -263,9 +271,15 @@ namespace FadeBasic.Virtual
             return compileArrayVar;
         }
 
-        public byte AllocateRegister()
+        public int AllocateRegister()
         {
-            return (byte)(registerCount++);
+            // Full-width register index. Was (byte)(registerCount++), which
+            // truncated to 8 bits and wrapped mod 256 in programs with >256
+            // registers — a late array's rank/scaler register would alias an
+            // early variable's register. Since a 1-D scaler holds the value 1,
+            // storing it clobbered the aliased variable (e.g. an array pointer)
+            // with 1, causing "cannot add pointer buckets" on the next index.
+            return checked((int)(registerCount++));
         }
     }
 
@@ -3272,6 +3286,13 @@ namespace FadeBasic.Virtual
             _buffer.Add(OpCodes.ADD);
 
         }
+
+        // int overloads: rank-size/scaler register addresses are stored as int
+        // (serializable, unlike ulong), and register indices are always >= 0.
+        static void PushStorePtr(List<byte> buffer, int regAddr, bool isGlobal) => PushStorePtr(buffer, (ulong)regAddr, isGlobal);
+        static void PushLoadPtr(List<byte> buffer, int regAddr, bool isGlobal) => PushLoadPtr(buffer, (ulong)regAddr, isGlobal);
+        static void PushStore(List<byte> buffer, int registerAddress, bool isGlobal) => PushStore(buffer, (ulong)registerAddress, isGlobal);
+        static void PushLoad(List<byte> buffer, int registerAddress, bool isGlobal) => PushLoad(buffer, (ulong)registerAddress, isGlobal);
 
         static void PushStorePtr(List<byte> buffer, ulong regAddr, bool isGlobal)
         {

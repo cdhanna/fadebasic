@@ -199,6 +199,29 @@ next
         Assert.That(vm.heap.Allocations, Is.EqualTo(allocationCount));
     }
 
+    // Invariant guard: a global heap variable keeps its pointer flag after a
+    // function with local scalar stores runs. (The STORE opcode was writing
+    // globalScope.flags[addr] instead of scope.flags[addr]; harmless in
+    // practice because register addresses are globally unique so a local's addr
+    // never aliases a live global's, but the assignment is now to the correct
+    // scope. This test documents the invariant it must not regress.)
+    [Test]
+    public void Store_GlobalPointerFlag_SurvivesFunctionLocals()
+    {
+        var src = @"
+g$ = ""hello""
+clobber()
+function clobber()
+    junk = 42
+endfunction
+";
+        Setup(src, out var compiler, out var prog);
+        var vm = new VirtualMachine(prog) { hostMethods = compiler.methodTable };
+        vm.Execute2(0);
+        Assert.That(VirtualScope.IsPtr(vm.globalScope.flags[0]), Is.True,
+            $"global string lost its pointer flag (globalScope.flags[0]={vm.globalScope.flags[0]})");
+    }
+
     [TestCase("toast", "toast")]
     [TestCase("/", "/")]
     [TestCase("\\\\", "\\")]

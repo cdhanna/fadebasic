@@ -178,6 +178,7 @@ namespace FadeBasic.Virtual
             _lengthToPtrs = new Dictionary<int, Stack<VmPtr>>();
             _sweepKillList = new List<VmPtr>();
             allocsSinceCollect = 0;
+            paranoid = false;
         }
 
         public void Write(VmPtr ptr, int length, byte[] data)
@@ -231,6 +232,16 @@ namespace FadeBasic.Virtual
             Allocate(ref HeapTypeFormat.STRING_FORMAT, length, out ptr);
         }
 
+        // Diagnostic mode: when set, freed blocks are overwritten with a poison
+        // byte and are NOT returned to the size-keyed reuse free-list. Any
+        // use-after-free (a live pointer the GC wrongly reclaimed) then reads
+        // poison instead of either its own stale data or a same-size neighbor's
+        // fresh data — turning a silent corruption into visible garbage / a bad
+        // pointer that trips a bounds/allocation check. Costs memory (freed
+        // space is never recycled), so it's for hunting GC bugs, not production.
+        public bool paranoid;
+        public const byte POISON = 0xDD;
+
         public void Free(VmPtr ptr)
         {
             if (!_allocations.TryGetValue(ptr, out var allocation))
@@ -239,12 +250,24 @@ namespace FadeBasic.Virtual
             }
 
             _allocations.Remove(ptr);
+
+            if (paranoid)
+            {
+                // Scribble over the block so any read through a dangling pointer
+                // returns poison, and drop it on the floor (no reuse) so the
+                // poison sticks instead of being overwritten by the next alloc.
+                var bucket = memory[ptr.bucketPtr];
+                var end = ptr.memoryPtr + allocation.length;
+                for (var i = ptr.memoryPtr; i < end; i++) bucket[i] = POISON;
+                return;
+            }
+
             // _ptrToFreed[ptr] = length;
             if (!_lengthToPtrs.TryGetValue(allocation.length, out var ptrs))
             {
                 ptrs = _lengthToPtrs[allocation.length] = new Stack<VmPtr>();
             }
-            
+
             ptrs.Push(ptr);
         }
         

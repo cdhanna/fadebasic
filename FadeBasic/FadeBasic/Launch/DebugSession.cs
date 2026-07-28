@@ -1005,10 +1005,10 @@ namespace FadeBasic.Launch
                         typeCode = variable.typeCode,
                         structType = structType,
                         byteSize = elementSize,
-                        registerAddress = (byte)variable.regAddr,
+                        registerAddress = variable.regAddr,
                         isGlobal = isGlobal,
-                        rankSizeRegisterAddresses = new byte[arrayRankCount],
-                        rankIndexScalerRegisterAddresses = new byte[arrayRankCount]
+                        rankSizeRegisterAddresses = new int[arrayRankCount],
+                        rankIndexScalerRegisterAddresses = new int[arrayRankCount]
                     };
                     var rankExprs = new IExpressionNode[arrayRankCount];
                     for (var i = 0; i < arrayRankCount; i++)
@@ -1021,8 +1021,8 @@ namespace FadeBasic.Launch
                             .dataRegisters[rankStrideRegAddr];
 
                         var revI = arrayRankCount - i - 1;
-                        compiledArrayVariable.rankSizeRegisterAddresses[i] = (byte)(rankSizeRegAddr);
-                        compiledArrayVariable.rankIndexScalerRegisterAddresses[i] = (byte)(rankStrideRegAddr);
+                        compiledArrayVariable.rankSizeRegisterAddresses[i] = (int)(rankSizeRegAddr);
+                        compiledArrayVariable.rankIndexScalerRegisterAddresses[i] = (int)(rankStrideRegAddr);
                         // variable.
                         rankExprs[i] = new LiteralIntExpression(Token.Blank, (int)rankSize);
                     }
@@ -1689,10 +1689,10 @@ namespace FadeBasic.Launch
                         typeCode = variable.typeCode,
                         structType = structType,
                         byteSize = elementSize,
-                        registerAddress = (byte)variable.regAddr,
+                        registerAddress = variable.regAddr,
                         isGlobal = isGlobal,
-                        rankSizeRegisterAddresses = new byte[arrayRankCount],
-                        rankIndexScalerRegisterAddresses = new byte[arrayRankCount]
+                        rankSizeRegisterAddresses = new int[arrayRankCount],
+                        rankIndexScalerRegisterAddresses = new int[arrayRankCount]
                     };
                     var rankExprs = new IExpressionNode[arrayRankCount];
                     for (var i = 0; i < arrayRankCount; i++)
@@ -1700,8 +1700,8 @@ namespace FadeBasic.Launch
                         var rankStrideRegAddr = variable.regAddr + (ulong)arrayRankCount * 2 - ((ulong)i * 2);
                         var rankSizeRegAddr   = rankStrideRegAddr - 1;
                         var rankSize = _vm.scopeStack.buffer[variable.scopeIndex].dataRegisters[rankSizeRegAddr];
-                        compiledArrayVariable.rankSizeRegisterAddresses[i]           = (byte)rankSizeRegAddr;
-                        compiledArrayVariable.rankIndexScalerRegisterAddresses[i]    = (byte)rankStrideRegAddr;
+                        compiledArrayVariable.rankSizeRegisterAddresses[i]           = (int)rankSizeRegAddr;
+                        compiledArrayVariable.rankIndexScalerRegisterAddresses[i]    = (int)rankStrideRegAddr;
                         rankExprs[i] = new LiteralIntExpression(Token.Blank, (int)rankSize);
                     }
                     node.statements.Insert(0, new DeclarationStatement(Token.Blank,

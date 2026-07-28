@@ -1441,8 +1441,17 @@ namespace FadeBasic.Virtual
                     if (ptrA.bucketPtr != 0)
                     {
                         // the second pointer must always have a zero bucket, because the final pointer must be
-                        //  in the same bucket as the first pointer. 
-                        throw new InvalidOperationException("cannot add pointer buckets");
+                        //  in the same bucket as the first pointer.
+                        // Diagnostic: dump BOTH operands' raw 8 bytes so we can see
+                        // which side carries the garbage high word (bucket) and what
+                        // it is — 0xFFFFFFFF fingerprints a sign-extended negative
+                        // int; other garbage points elsewhere.
+                        var aHex = BitConverter.ToString(a.ToArray());
+                        var bHex = BitConverter.ToString(b.ToArray());
+                        throw new InvalidOperationException(
+                            $"cannot add pointer buckets — aTypeCode={aTypeCode} " +
+                            $"ptrA(bucket={unchecked((uint)ptrA.bucketPtr):X8},mem={ptrA.memoryPtr}) bytesA=[{aHex}] " +
+                            $"ptrB(bucket={unchecked((uint)ptrB.bucketPtr):X8},mem={ptrB.memoryPtr}) bytesB=[{bHex}]");
                     }
 
                     var ptrC = new VmPtr

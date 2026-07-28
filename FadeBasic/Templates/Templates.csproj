@@ -1,4 +1,4 @@
-﻿<Project Sdk="Microsoft.NET.Sdk">
+﻿<Project Sdk="Microsoft.NET.Sdk" TreatAsLocalProperty="IncludeSymbols;IncludeSource">
 
     <Import Project="../NugetPackage.props"/>
     
@@ -16,6 +16,11 @@
         <IncludeContentInPack>true</IncludeContentInPack>
         <IncludeBuildOutput>false</IncludeBuildOutput>
         <ContentTargetFolders>content</ContentTargetFolders>
+        <!-- Content-only template package: no build output, so a symbols/source
+             package is empty and pack errors NU5017. Force them off (wins over
+             install.sh's CLI include flags via TreatAsLocalProperty above). -->
+        <IncludeSymbols>false</IncludeSymbols>
+        <IncludeSource>false</IncludeSource>
 
 <!--        https://github.com/MonoGame/MonoGame/blob/develop/Templates/MonoGame.Templates.CSharp/MonoGame.Templates.CSharp.csproj#L21-->
     </PropertyGroup>
