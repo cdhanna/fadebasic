@@ -1,7 +1,7 @@
 <Project Sdk="Microsoft.NET.Sdk.BlazorWebAssembly">
 
   <PropertyGroup>
-    <TargetFramework>net8.0</TargetFramework>
+    <TargetFramework>net10.0</TargetFramework>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
@@ -17,6 +17,19 @@
     <!-- Removes all ICU globalization data files (~2.5 MB). The LSP worker
          doesn't need locale-sensitive ops. -->
     <InvariantGlobalization>true</InvariantGlobalization>
+  </PropertyGroup>
+
+  <!-- WASM AOT — OPT-IN. Interpreted by default so regular local dev stays fast
+       to build (RunAOTCompilation defaults to false; it only ever applies to
+       `dotnet publish`, never to build/run/hot-reload). Turn on by publishing
+       with `-p:RunAOTCompilation=true`; the Playground build scripts wire that
+       to `npm run build:runtime:aot` (or FADE_AOT=1), and CI enables it for the
+       shipped bundle. Requires the `wasm-tools` dotnet workload
+       (`dotnet workload install wasm-tools`). AOT trades a much slower publish
+       and a larger download for ~5-10x faster in-browser execution; stripping
+       IL after AOT claws back some of that size. -->
+  <PropertyGroup Condition="'$(RunAOTCompilation)' == 'true'">
+    <WasmStripILAfterAOT>true</WasmStripILAfterAOT>
   </PropertyGroup>
 
   <!-- NuGet package: FadeBasic.Export.Web
@@ -54,8 +67,12 @@
   <ItemGroup>
     <!-- PrivateAssets=all: the consumer never compiles or runs any Blazor
          code — the WASM bundle ships these inside _framework/ already. -->
-    <PackageReference Include="Microsoft.AspNetCore.Components.WebAssembly" Version="8.0.0" PrivateAssets="all" />
-    <PackageReference Include="Microsoft.AspNetCore.Components.WebAssembly.DevServer" Version="8.0.0" PrivateAssets="all" />
+    <!-- Match the Mono browser-wasm runtime pack the .NET 10 SDK resolves
+         (10.0.10, per /usr/local/share/dotnet/packs). On net10 the SDK, workload,
+         and runtime all align natively — no cross-major skew like the net8-on-
+         net10-SDK setup had. Keep these in lockstep with the installed net10 pack. -->
+    <PackageReference Include="Microsoft.AspNetCore.Components.WebAssembly" Version="10.0.10" PrivateAssets="all" />
+    <PackageReference Include="Microsoft.AspNetCore.Components.WebAssembly.DevServer" Version="10.0.10" PrivateAssets="all" />
   </ItemGroup>
 
   <!-- PrivateAssets=all on every ProjectReference because this package is

@@ -48,14 +48,24 @@ dotnet pack ./FadeBasic.Testing $PACK_ARGS
 if [ "$SKIP_WASM" = false ]; then
 
   WASM_ARTIFIACT_DIR="$PWD/bin/wasm_${SEM_VER}"
-  echo "publishing FadeBasic.Export.Web WASM bundle..."
+  # WASM AOT is opt-in: FADE_AOT=1 makes the PUBLISHED nupkg carry AOT-compiled
+  # WASM (5-10x faster in-browser at the cost of a much slower pack + a larger
+  # package). This is how the shipped Playground gets AOT — package-mode CI just
+  # downloads whatever nupkg was published here, so the release job that runs
+  # this script sets FADE_AOT=1 (and needs the wasm-tools workload). Regular
+  # local publishes leave it off. Off → interpreted, as before.
+  AOT_ARG=""
+  case "${FADE_AOT:-}" in
+    1|true|yes|TRUE|YES) AOT_ARG="/p:RunAOTCompilation=true"; echo "  (AOT enabled — requires 'dotnet workload install wasm-tools-net8' for this net8.0 runtime)";;
+  esac
+  echo "publishing FadeBasic.Export.Web WASM bundle...${AOT_ARG:+ (AOT)}"
   # No --include-symbols/--include-source: FadeBasic.Export.Web is a content-only package.
   #dotnet publish ./FadeBasic.Export.Web -c Release -o bin/wasm_t2 /p:IsPublish=true
   # /p:Version=$SEM_VER stamps the assembly version so FadeBridge.GetVersionInfo()
   # (surfaced in the Playground Diagnostics panel) reports the real fade version
   # instead of the default 1.0.0. publish rebuilds by default, so without this
   # flag it would overwrite the versioned build from `dotnet build` above.
-  dotnet publish ./FadeBasic.Export.Web -c Release -o $WASM_ARTIFIACT_DIR /p:IsPublish=true /p:Version=$SEM_VER
+  dotnet publish ./FadeBasic.Export.Web -c Release -o $WASM_ARTIFIACT_DIR /p:IsPublish=true /p:Version=$SEM_VER $AOT_ARG
   dotnet pack ./FadeBasic.Export.Web --output "$OUTPUT_FOLDER" /p:Version=$SEM_VER -c Release /p:FADE_WASM_ARTIFACT_DIR=${WASM_ARTIFIACT_DIR} /p:IsPack=true
 else
   echo "skipping WASM build (--skip-wasm)"
