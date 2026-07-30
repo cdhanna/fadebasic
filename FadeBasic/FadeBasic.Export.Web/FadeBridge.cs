@@ -7,8 +7,8 @@ using System.Runtime.InteropServices.JavaScript;
 using System.Runtime.Versioning;
 using System.Text;
 using System.Text.Json;
-using Microsoft.JSInterop;
 using FadeBasic;
+using FadeBasic.Ast.Visitors;
 using FadeBasic.Json;
 using FadeBasic.Launch;
 using FadeBasic.Lib.Standard;
@@ -460,7 +460,12 @@ public static partial class FadeBridge
     }
 
     // ─── Run ──────────────────────────────────────────────────────────────
-    [JSInvokable]
+    // NOTE: reached only through the [JSExport] mono-interop surface
+    // (runtime.js calls FB.CompileAndRun). It formerly also carried
+    // [JSInvokable] (Blazor DotNet.invokeMethod), but nothing calls that path
+    // anymore, and the lone [JSInvokable] was the project's ONLY dependency on
+    // Microsoft.JSInterop — which broke WASM AOT (the trimmer drops the assembly,
+    // then Mono AOT can't resolve the attribute). Removed so AOT links cleanly.
     [JSExport]
     // Returns a JSON envelope so the page can format different kinds of
     // output (compile errors / runtime errors / printed stdout) with their
@@ -500,11 +505,11 @@ public static partial class FadeBridge
         try
         {
             var doc = _workspace.SetDocument(uri, text);
-            return JsonSerializer.Serialize(DiagnosticsHandler.Compute(doc), _jsonOpts);
+            return SerializeDiagnostics(DiagnosticsHandler.Compute(doc));
         }
         catch (Exception ex)
         {
-            return JsonSerializer.Serialize(new LspDiagnostic[]
+            return SerializeDiagnostics(new List<LspDiagnostic>
             {
                 new LspDiagnostic
                 {
@@ -518,8 +523,23 @@ public static partial class FadeBridge
                     Code = "INT-001",
                     Source = "fade",
                 },
-            }, _jsonOpts);
+            });
         }
+    }
+
+    // Reflection-free array serialization via FadeBasic.Json (IJsonable). This
+    // is the per-keystroke diagnostics path — System.Text.Json's reflection
+    // serializer cost ~8ms/reparse in WASM here.
+    static string SerializeDiagnostics(List<LspDiagnostic> diags)
+    {
+        var sb = new StringBuilder("[");
+        for (var i = 0; i < diags.Count; i++)
+        {
+            if (i > 0) sb.Append(',');
+            sb.Append(diags[i].Jsonify());
+        }
+        sb.Append(']');
+        return sb.ToString();
     }
 
     [JSExport]
@@ -527,6 +547,19 @@ public static partial class FadeBridge
     {
         var doc = _workspace.Get(uri);
         return JsonSerializer.Serialize(SemanticTokensHandler.Compute(doc), _jsonOpts);
+    }
+
+    // Range-scoped variant: serialize only tokens whose (0-based) line is in
+    // [startLine, endLine). On a large multi-file project the joined doc is
+    // thousands of lines and serializing the whole token stream per keystroke
+    // costs seconds — the caller (Playground) requests just the editor viewport
+    // so the payload stays tiny. endLine <= 0 means "to end of document".
+    [JSExport]
+    public static string LspGetSemanticTokensRange(string uri, int startLine, int endLine)
+    {
+        var doc = _workspace.Get(uri);
+        if (endLine <= 0) endLine = int.MaxValue;
+        return JsonSerializer.Serialize(SemanticTokensHandler.Compute(doc, startLine, endLine), _jsonOpts);
     }
 
     // Tokenize a free-floating snippet of Fade source — no workspace doc,

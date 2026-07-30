@@ -4,6 +4,7 @@
 using System.Collections.Generic;
 using FadeBasic;
 using FadeBasic.Ast;
+using FadeBasic.Ast.Visitors;
 using FadeBasic.Virtual;
 
 namespace FadeBasic.LSP.Core
@@ -21,6 +22,23 @@ namespace FadeBasic.LSP.Core
         public ICommandDocsProvider Docs;
 
         public bool IsValid => LexResults != null;
+
+        private bool _triviaComputed;
+        // Trivia (leading doc-comment strings on AST nodes) is consumed ONLY by
+        // the on-demand hover / completion / signature-help handlers. Computing
+        // it walks the whole AST and builds a token→index map over every token
+        // in the file — ~38% of the WASM reparse. So we no longer compute it
+        // eagerly on every keystroke (SetDocument); handlers call EnsureTrivia
+        // the first time they actually need it, and it's memoized. A fresh edit
+        // creates a new FadeDocument, so the flag resets naturally.
+        public void EnsureTrivia()
+        {
+            if (_triviaComputed) return;
+            _triviaComputed = true;
+            if (Program == null || LexResults == null) return;
+            try { Program.AddTrivia(LexResults); }
+            catch { /* trivia is best-effort — never fail a hover/completion over it */ }
+        }
     }
 
     // A minimal contract for command documentation. Returns null if the

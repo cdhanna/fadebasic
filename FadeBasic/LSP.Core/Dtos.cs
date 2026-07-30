@@ -3,19 +3,36 @@
 // between these and their wire-protocol types.
 
 using System.Collections.Generic;
+using FadeBasic.Json;
 
 namespace FadeBasic.LSP.Core
 {
-    public class LspPosition
+    // The diagnostic DTOs implement IJsonable so the browser LSP (FadeBridge)
+    // can serialize them with FadeBasic.Json — reflection-free, unlike
+    // System.Text.Json, whose reflection path was ~8ms/reparse in WASM (and
+    // trim-fragile). Field names are the lowercase wire keys the Playground
+    // consumes (d.range.start.line, d.severity, …). Serialization is write-only
+    // here; the read side of ProcessJson is unused but kept symmetric.
+    public class LspPosition : IJsonable
     {
         public int Line;       // 0-based
         public int Character;  // 0-based
+        public void ProcessJson<T>(ref T op) where T : IJsonOperation
+        {
+            op.IncludeField("line", ref Line);
+            op.IncludeField("character", ref Character);
+        }
     }
 
-    public class LspRange
+    public class LspRange : IJsonable
     {
         public LspPosition Start;
         public LspPosition End;
+        public void ProcessJson<T>(ref T op) where T : IJsonOperation
+        {
+            op.IncludeField("start", ref Start);
+            op.IncludeField("end", ref End);
+        }
     }
 
     public enum LspDiagnosticSeverity
@@ -26,13 +43,23 @@ namespace FadeBasic.LSP.Core
         Hint = 4,
     }
 
-    public class LspDiagnostic
+    public class LspDiagnostic : IJsonable
     {
         public LspRange Range;
         public LspDiagnosticSeverity Severity;
         public string Code;
         public string Source;
         public string Message;
+        public void ProcessJson<T>(ref T op) where T : IJsonOperation
+        {
+            op.IncludeField("range", ref Range);
+            var sev = (int)Severity;
+            op.IncludeField("severity", ref sev);
+            Severity = (LspDiagnosticSeverity)sev;
+            op.IncludeField("code", ref Code);
+            op.IncludeField("source", ref Source);
+            op.IncludeField("message", ref Message);
+        }
     }
 
     public class LspHoverResult

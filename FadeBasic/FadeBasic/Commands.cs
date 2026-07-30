@@ -14,6 +14,15 @@ namespace FadeBasic
         public readonly List<IMethodSource> Sources;
         public readonly Dictionary<string, List<CommandInfo>> Lookup;
 
+        // Lazily-built, cached command-name trie. The lexer needs this on EVERY
+        // TokenizeWithErrors call to recognize (possibly multi-word) command
+        // tokens; the command set is fixed once the collection is constructed
+        // (RegisterCommandAssembly rebuilds the whole collection), so build the
+        // trie once here instead of rebuilding it per keystroke. On a large
+        // command set (e.g. MonoGame) that rebuild was pure per-reparse waste.
+        private CommandNameTree _commandTree;
+        public CommandNameTree CommandTree => _commandTree ??= CommandNameTree.Create(Commands);
+
         public CommandCollection()
         {
             Commands = new List<CommandInfo>();

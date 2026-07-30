@@ -27,25 +27,20 @@ namespace FadeBasic.LSP.Core
         {
             var lex = _lexer.TokenizeWithErrors(text, Commands);
             var parser = new Parser(lex.stream, Commands);
+            // ParseProgram already runs AddScopeRelatedErrors (Parser.cs, via the
+            // default ParseOptions) — it resolves names, populates
+            // DeclaredFromSymbol on AST refs, and fills
+            // program.scope.positionedVariables, which the completion,
+            // references, and goto-def handlers depend on. We used to call
+            // AddScopeRelatedErrors AGAIN here with the same options, running the
+            // whole scope-resolution visitor a second time per reparse (~13% of
+            // the reparse and duplicate diagnostics). ParseProgram covers it.
             var program = parser.ParseProgram();
 
-            // Resolves names, populates DeclaredFromSymbol on AST refs, and
-            // fills program.scope.positionedVariables — all of which the
-            // completion, references, and goto-def handlers depend on.
-            // Without this the only errors we report are syntax-level.
-            try
-            {
-                program.AddScopeRelatedErrors(ParseOptions.Default);
-            }
-            catch { /* visitor is best-effort; never fail SetDocument */ }
-
-            // Attach trivia (doc-comment) strings to functions/declarations/
-            // labels so the hover handler can render them as markdown.
-            try
-            {
-                program.AddTrivia(lex);
-            }
-            catch { /* trivia is best-effort */ }
+            // Trivia (doc-comment strings for hover/completion/signature-help) is
+            // computed LAZILY now — see FadeDocument.EnsureTrivia. Attaching it
+            // here walked the whole AST on every keystroke (~38% of the WASM
+            // reparse) for data only the on-demand handlers ever read.
 
             var doc = new FadeDocument
             {

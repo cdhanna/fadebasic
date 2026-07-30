@@ -188,7 +188,13 @@ export async function init() {
     exports = await runtime.getAssemblyExports(config.mainAssemblyName);
     log('exports loaded');
 
-    while (_queue.length) handle(_queue.shift());
+    // Feed any messages buffered before init through the coalescing drain
+    // (same look-ahead supersession as live traffic) rather than handling
+    // each inline.
+    if (_queue.length) {
+        _inbox.push(..._queue.splice(0));
+        if (!_draining) { _draining = true; void drain(); }
+    }
     emit({ type: 'ready', role });
 }
 
@@ -200,9 +206,60 @@ export async function init() {
 // because the lspWorker / vmWorker were both processes with parallel
 // op surfaces; now the LSP worker is the only Worker context, and
 // the iframe is always the VM target).
+// Inbound work queue + coalescing drain. The FB interop calls are synchronous
+// and single-threaded, so a burst of per-keystroke messages from the host can
+// only be serviced one at a time. Draining through our own array (rather than
+// letting each message event run handle() inline) lets us look ahead and drop
+// work that a newer message has already superseded — critically, a full
+// project reparse (lsp-set) whose result a later lsp-set for the same uri is
+// about to overwrite. Without this, continuous typing on a large project piled
+// up multi-second reparses and starved the token/completion requests behind
+// them (getTokens wall time climbed to 4.5s+ purely as queue wait).
+const _inbox = [];
+let _draining = false;
+
 export async function dispatch(msg) {
     if (!exports) { _queue.push(msg); return; }
-    handle(msg);
+    _inbox.push(msg);
+    if (!_draining) { _draining = true; void drain(); }
+}
+
+// Cheap, latency-sensitive request types serviced ahead of a queued
+// full-project reparse (lsp-set, ~1s+). Highlighting/hover/completion must not
+// wait behind a diagnostic recompile the user hasn't paused long enough to need.
+const _priority = new Set([
+    'lsp-tokens', 'lsp-hover', 'lsp-completion', 'ping',
+]);
+
+function _nextIndex() {
+    // Prefer the earliest priority message; otherwise the head (FIFO).
+    for (let i = 0; i < _inbox.length; i++) {
+        if (_inbox[i] && _priority.has(_inbox[i].type)) return i;
+    }
+    return 0;
+}
+
+async function drain() {
+    try {
+        while (_inbox.length) {
+            const msg = _inbox.splice(_nextIndex(), 1)[0];
+            // A full-project reparse that a newer same-uri reparse will replace
+            // is dead work — skip it (its diagnostics would be immediately stale
+            // and it blocks everything behind it for ~a second).
+            if (msg && msg.type === 'lsp-set' &&
+                _inbox.some((m) => m && m.type === 'lsp-set' && m.uri === msg.uri)) {
+                continue;
+            }
+            handle(msg);
+            // Macrotask yield so message events queued while handle() ran are
+            // delivered into _inbox before the next iteration — that's what
+            // makes the look-ahead above see freshly-arrived supersessions.
+            await new Promise((r) => setTimeout(r, 0));
+        }
+    } finally {
+        _draining = false;
+        if (_inbox.length) { _draining = true; void drain(); }
+    }
 }
 
 function handle(msg) {
@@ -224,11 +281,11 @@ function handle(msg) {
         }
         emit({ type: 'result', id: msg.id, result });
     } else if (msg.type === 'lsp-set') {
-        log('lsp-set: calling LspSetDocument');
         let diagnosticsJson = '[]';
         try {
+            const _t0 = Date.now();
             diagnosticsJson = FB.LspSetDocument(msg.uri, msg.text);
-            log('lsp-set: returned, length=' + diagnosticsJson.length);
+            log('lsp-set: reparse ' + (Date.now() - _t0) + 'ms (' + (msg.text ? msg.text.length : 0) + ' chars)');
         } catch (e) {
             log('lsp-set failed: ' + (e?.message ?? e));
         }
@@ -248,7 +305,16 @@ function handle(msg) {
         emit({ type: 'lsp-check-result', id: msg.id, diagnostics: diagnosticsJson });
     } else if (msg.type === 'lsp-tokens') {
         let tokensJson = '[]';
-        try { tokensJson = FB.LspGetSemanticTokens(msg.uri); }
+        try {
+            // Range-scoped when the caller supplies a viewport (startLine set);
+            // otherwise full-document. endLine <= 0 means "to end".
+            const _t0 = Date.now();
+            tokensJson = (typeof msg.startLine === 'number')
+                ? FB.LspGetSemanticTokensRange(msg.uri, msg.startLine | 0, (msg.endLine | 0))
+                : FB.LspGetSemanticTokens(msg.uri);
+            const _dt = Date.now() - _t0;
+            if (_dt > 20) log('lsp-tokens: classify ' + _dt + 'ms');
+        }
         catch (e) { log('lsp-tokens failed: ' + (e?.message ?? e)); }
         emit({ type: 'lsp-tokens-result', id: msg.id, uri: msg.uri, tokens: tokensJson });
     } else if (msg.type === 'lsp-hover') {

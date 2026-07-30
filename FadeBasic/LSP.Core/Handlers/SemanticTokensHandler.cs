@@ -61,22 +61,52 @@ namespace FadeBasic.LSP.Core.Handlers
         public static int LegendIndex(PortableSemanticTokenType t) => ToLegendIndex(t);
 
         public static List<int> Compute(FadeDocument doc)
+            => Compute(doc, 0, int.MaxValue);
+
+        // Range-scoped delta-encoded tokens: only tokens whose (0-based) line is
+        // in [startLine, endLine) are emitted.
+        //
+        // Crucially, classification (LSPUtil.ClassifyToken does per-token command
+        // lookups — the dominant cost) runs ONLY for in-range tokens, not the
+        // whole document. On a large multi-file joined project a viewport request
+        // therefore costs O(range) rather than O(all tokens); classifying every
+        // token just to discard all but ~50 lines' worth was the real bottleneck
+        // (~1.4s/keystroke on killcode), not serialization. Tokens are emitted in
+        // source order, so we skip ahead to startLine and break past endLine.
+        //
+        // We still read the true immediately-preceding token as ClassifyToken's
+        // `prev` context, so an in-range token classifies identically to the full
+        // walk. The delta encoding re-bases naturally: prevLine starts at 0, so
+        // the first in-range token's deltaLine is its absolute line and a decoder
+        // accumulating from 0 lands on the correct line.
+        public static List<int> Compute(FadeDocument doc, int startLine, int endLine)
         {
             var data = new List<int>();
+            if (doc?.LexResults == null) return data;
+            var tokens = doc.LexResults.allTokens;
             int prevLine = 0;
             int prevChar = 0;
 
-            foreach (var ct in Classify(doc))
+            for (int i = 0; i < tokens.Count; i++)
             {
-                int line = ct.Token.lineNumber;
-                int ch = ct.Token.charNumber;
+                var token = tokens[i];
+                if (token.raw == null) continue;
+                int line = token.lineNumber;
+                if (line < startLine) continue;   // not visible yet — don't classify
+                if (line >= endLine) break;        // past the window (source-ordered)
+
+                var prev = i > 0 ? tokens[i - 1] : null;
+                var result = LSPUtil.ClassifyToken(token, prev);
+                if (result.Skip) continue;
+
+                int ch = token.charNumber;
                 int deltaLine = line - prevLine;
                 int deltaChar = deltaLine == 0 ? ch - prevChar : ch;
 
                 data.Add(deltaLine);
                 data.Add(deltaChar);
-                data.Add(ct.Token.Length);
-                data.Add(ToLegendIndex(ct.Type));
+                data.Add(token.Length);
+                data.Add(ToLegendIndex(result.TokenType));
                 data.Add(0); // no modifiers
 
                 prevLine = line;

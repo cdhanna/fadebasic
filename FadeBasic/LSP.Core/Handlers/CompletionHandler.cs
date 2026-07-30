@@ -18,6 +18,7 @@ namespace FadeBasic.LSP.Core.Handlers
         public static List<LspCompletionItem> Compute(FadeDocument doc, int line, int character)
         {
             if (doc?.LexResults == null || doc.Program == null) return new List<LspCompletionItem>();
+            doc.EnsureTrivia(); // lazily materialize doc-comment trivia for item docs
 
             var fakeToken = new Token { lineNumber = line, charNumber = character };
 

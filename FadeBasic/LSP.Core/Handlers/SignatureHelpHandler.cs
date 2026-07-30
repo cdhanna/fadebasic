@@ -43,6 +43,7 @@ namespace FadeBasic.LSP.Core.Handlers
         public static LspSignatureHelp Compute(FadeDocument doc, int line, int character)
         {
             if (doc?.Program == null || doc.LexResults == null) return null;
+            doc.EnsureTrivia(); // lazily materialize doc-comment trivia for the signature doc
 
             // Use char-1 — the cursor sits between characters; the token that
             // "encloses" the cursor is one to the left.

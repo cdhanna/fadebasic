@@ -82,10 +82,26 @@ public class SemanticTokenHandler : SemanticTokensHandlerBase
             var emptyMods = Array.Empty<SemanticTokenModifier>();
             var thisFilePath = identifier.TextDocument.Uri.GetFileSystemPath();
 
+            // Honor a viewport (range) request: for large files VS Code issues
+            // semanticTokens/range for the visible region, arriving here as
+            // SemanticTokensRangeParams. Its Range is in THIS file's local
+            // coords — the same space as the sourceMap-mapped location below —
+            // so we filter on location.startLine. Full requests leave the range
+            // wide open. (Parity with the web/Playground path, which filters the
+            // joined-doc line range in SemanticTokensHandler.Compute.)
+            var rangeStart = 0;
+            var rangeEnd = int.MaxValue;
+            if (identifier is SemanticTokensRangeParams rangeParams && rangeParams.Range != null)
+            {
+                rangeStart = rangeParams.Range.Start.Line;
+                rangeEnd = rangeParams.Range.End.Line + 1; // End.Line is inclusive of the visible line
+            }
+
             foreach (var ct in classified)
             {
                 var location = unit.sourceMap.GetOriginalLocation(ct.Token.lineNumber, ct.Token.charNumber);
                 if (location.fileName != thisFilePath) continue;
+                if (location.startLine < rangeStart || location.startLine >= rangeEnd) continue;
                 builder.Push(location.startLine, location.startChar, ct.Token.Length,
                     ToSemanticTokenType(ct.Type), emptyMods);
             }

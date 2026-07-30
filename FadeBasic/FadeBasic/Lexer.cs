@@ -677,7 +677,9 @@ namespace FadeBasic
             var macroTokens = new List<Token>();
             commands ??= new CommandCollection();
             // var runtimeCommandNames = commands.Commands?.Where(x => x.usage.HasFlag(FadeBasicCommandUsage.Runtime)).Select(c => c.name).ToList() ?? new List<string>();
-            var runtimeCommandTree = CommandNameTree.Create(commands.Commands);
+            // Cached on the collection — building this trie is constant across
+            // reparses (see CommandCollection.CommandTree).
+            var runtimeCommandTree = commands.CommandTree;
             void AddToken(Token t)
             {
                 tokens.Add(t);

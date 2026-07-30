@@ -17,6 +17,7 @@ namespace FadeBasic.LSP.Core.Handlers
         public static LspHoverResult Compute(FadeDocument doc, int line, int character)
         {
             if (doc == null) return null;
+            doc.EnsureTrivia(); // lazily materialize doc-comment trivia we render below
 
             // First: any diagnostic at this position
             if (doc.Program != null)
