@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [0.2.6] - Unreleased
+### Changed
+- Web runtime retargeted to .NET 10 for a much faster interpreter; optional WASM AOT build via the `FADE_AOT` flag
+- Large-project LSP reparse is significantly faster per keystroke: command-tree caching, a single scope-resolution pass, lazy doc-comment trivia, and viewport-scoped semantic tokens that ride back with diagnostics in one pass
+
 ### Fixed
 - Can have more than 255 variables per scope
 
