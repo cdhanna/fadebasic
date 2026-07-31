@@ -261,6 +261,7 @@ namespace FadeBasic
         public static readonly ErrorCode TestFromParentUnknown = "[0269] `test ... from <name>` references a parent test that does not exist";
         public static readonly ErrorCode TestFromParentCycle = "[0270] `from`-chain forms a cycle — a test cannot transitively inherit from itself";
         public static readonly ErrorCode TestDuplicateName = "[0271] another test with this name already exists; test names must be unique within a program";
+        public static readonly ErrorCode RefArgTypeMismatch = "[0290] a by-reference parameter requires an argument of the exact same type — no implicit conversion is possible for a ref argument";
         public static readonly ErrorCode MockParamsObjectArrayUnnamable = "[0268] cannot bind a name to a `params object[]` argument in a mock body";
         public static readonly ErrorCode LenDimensionOnNonArray = "[0272] `len(x, dim)` only applies to arrays — strings do not have dimensions";
         public static readonly ErrorCode LenDimensionOutOfRange = "[0273] dimension index is out of range for this array";

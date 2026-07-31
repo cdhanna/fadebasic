@@ -866,7 +866,26 @@ namespace FadeBasic
 
                 if (TypeInfo.TryGetFromTypeCode(descriptor.typeCode, out var guessType))
                 {
-                    this.EnforceTypeAssignment(arg, arg.ParsedType, guessType, false, out _);
+                    // A by-reference parameter ALIASES the argument's storage, so
+                    // unlike a value parameter (which the compiler casts) it can't
+                    // take an implicitly-converted argument — the bytes at the
+                    // referenced location must already BE the parameter's type. A
+                    // `ref int` fed a REAL lvalue would otherwise pass the lenient
+                    // numeric-assignment rule and then have the VM read/write the
+                    // float's bytes as an int, silently corrupting memory. Require
+                    // an exact scalar-type match here instead. (Arrays and unset/
+                    // unresolved args fall through to the normal check so we don't
+                    // pile a second error onto an already-broken reference.)
+                    if (descriptor.isRef && !arg.ParsedType.unset && !arg.ParsedType.IsArray
+                        && arg.ParsedType.type != guessType.type)
+                    {
+                        arg.Errors.Add(new ParseError(arg, ErrorCodes.RefArgTypeMismatch,
+                            $"cannot pass {ParseErrorExtensions.ConvertTypeInfoToName(arg.ParsedType)} to a `ref {ParseErrorExtensions.ConvertTypeInfoToName(guessType)}` parameter"));
+                    }
+                    else
+                    {
+                        this.EnforceTypeAssignment(arg, arg.ParsedType, guessType, false, out _);
+                    }
                 } else if (descriptor.typeCode == TypeCodes.ANY)
                 {
                     // this is sort of hack, to pass the lhs AS the same type as the arg...

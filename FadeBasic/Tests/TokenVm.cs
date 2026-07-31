@@ -4126,7 +4126,7 @@ refDbl bread.y.w";
     
     
     [Test]
-    public void CallHost_RefType_FromStruct_Nested_InvalidCast()
+    public void CallHost_RefType_FromStruct_Nested_TypeMismatch()
     {
         var src = @"
 type jam
@@ -4145,7 +4145,9 @@ refDbl bread.y";
         Setup(src, out var compiler, out var prog, ignoreParseCheck: true);
         _exprAst.AssertParseErrors(1);
         var errs = _exprAst.GetAllErrors();
-        Assert.That(errs[0].errorCode, Is.EqualTo(ErrorCodes.InvalidCast));
+        // A ref parameter can't take a converted argument; passing a struct
+        // field to `ref double` is a by-reference type mismatch.
+        Assert.That(errs[0].errorCode, Is.EqualTo(ErrorCodes.RefArgTypeMismatch));
 //         var vm = new VirtualMachine(prog);
 //         vm.hostMethods = compiler.methodTable;
 //         vm.Execute2();
@@ -4618,6 +4620,77 @@ w$ = x$(2)
         Assert.That(vm.dataRegisters[0], Is.EqualTo(1));
     }
     
+    [Test]
+    public void CallHost_RefType_StructMember()
+    {
+        // `inc` takes `ref int`, so the ref-target member must be an int. This
+        // exercises the struct-member by-ref path end to end (read + write-back
+        // through a heap pointer into the struct).
+        var src = @"
+TYPE vector
+    x as integer
+    y as integer
+ENDTYPE
+
+v as vector
+v.x = 3
+inc v.x, 2
+result = v.x
+";
+        Setup(src, out var compiler, out var prog);
+        var vm = new VirtualMachine(prog);
+        vm.hostMethods = compiler.methodTable;
+        vm.Execute2();
+
+        // `result = v.x` reads the (incremented) member back into a register.
+        Assert.That(vm.typeRegisters[1], Is.EqualTo(TypeCodes.INT));
+        Assert.That(vm.dataRegisters[1], Is.EqualTo(5));
+    }
+
+    // A REAL member passed to `inc`'s `ref int` is a by-reference type mismatch
+    // — a ref can't be implicitly converted (that would make the VM read/write
+    // the float's bytes as an int, silently corrupting memory). Must be a
+    // compile-time diagnostic, not a runtime miscompute.
+    [Test]
+    public void CallHost_RefArg_FloatStructMember_IsTypeMismatch()
+    {
+        var src = @"
+type egg
+    tuna#
+endtype
+e as egg
+e.tuna# = 3.2
+inc e.tuna#, 2
+";
+        Setup(src, out _, out _, expectedParseErrors: 1);
+        var errs = _exprAst.GetAllErrors();
+        Assert.That(errs[0].errorCode, Is.EqualTo(ErrorCodes.RefArgTypeMismatch));
+    }
+
+    // Same rule for a plain float variable, not just struct members — it's about
+    // the type, not where the lvalue lives.
+    [Test]
+    public void CallHost_RefArg_FloatVariable_IsTypeMismatch()
+    {
+        var src = "x# = 3.2\ninc x#, 2";
+        Setup(src, out _, out _, expectedParseErrors: 1);
+        var errs = _exprAst.GetAllErrors();
+        Assert.That(errs[0].errorCode, Is.EqualTo(ErrorCodes.RefArgTypeMismatch));
+    }
+
+    // Matching type is fine — no diagnostic, increments normally.
+    [Test]
+    public void CallHost_RefArg_IntVariable_NoTypeMismatch()
+    {
+        var src = "x = 3\ninc x, 2";
+        Setup(src, out var compiler, out var prog);
+        var vm = new VirtualMachine(prog);
+        vm.hostMethods = compiler.methodTable;
+        vm.Execute2();
+        Assert.That(vm.typeRegisters[0], Is.EqualTo(TypeCodes.INT));
+        Assert.That(vm.dataRegisters[0], Is.EqualTo(5));
+    }
+
     
     [Test]
     public void CallHost_RefType_GlobalFunction()

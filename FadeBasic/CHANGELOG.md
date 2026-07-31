@@ -12,6 +12,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 - Can have more than 255 variables per scope
+- Passing a mismatched-type argument (e.g. a real) to a by-reference command parameter (e.g. `ref int`) is now a compile-time error instead of silently corrupting memory at runtime
 
 ## [0.2.5] - 2026-07-21
 ### Fixed
