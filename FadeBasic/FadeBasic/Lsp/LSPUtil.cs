@@ -373,6 +373,15 @@ namespace FadeBasic.Lsp
                         docMarkdown = declarationStatement.Trivia ?? string.Empty;
                         displayName = declarationStatement.variableNode.VariableNameCaseSensitive;
                         break;
+                    case VariableRefNode variableRefSource:
+                        // Variables first introduced NOT by an explicit
+                        // declaration/assignment — e.g. passed as a `ref` arg to
+                        // a command (`reserve sprite id(THE_ID)`) or a `for`-loop
+                        // counter — have a VariableRefNode source. Without this
+                        // case the label fell back to the lowercased symbol-table
+                        // key (`the_id`); recover the original casing.
+                        displayName = variableRefSource.VariableNameCaseSensitive;
+                        break;
                 }
 
                 var insert = displayName;

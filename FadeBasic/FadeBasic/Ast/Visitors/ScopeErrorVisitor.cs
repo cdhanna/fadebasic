@@ -803,8 +803,14 @@ namespace FadeBasic.Ast.Visitors
                         ValidateClearMockStatement(clearMockStatement);
                         break;
                     default:
-                        throw new NotImplementedException($"cannot check statement for scope errors - {statement.GetType().Name} {statement}");
-                        // break;
+                        // A statement type the scope checker has no case for.
+                        // Record it instead of throwing — an unhandled node must
+                        // never abort AddScopeRelatedErrors for the whole file
+                        // (which silently drops every later variable from
+                        // diagnostics + completions).
+                        if (statement is IAstNode unknownStatementNode)
+                            unknownStatementNode.Errors.Add(new ParseError(unknownStatementNode, ErrorCodes.UnknownStatement));
+                        break;
                 }
             }
         }
@@ -1404,8 +1410,11 @@ namespace FadeBasic.Ast.Visitors
                     EnsureStructField(nestedRef, subScope, ctx);
                     break;
                 default:
-                    throw new NotImplementedException(
-                        "struct reference cannot have a right-side other than variable ref or nested-ref");
+                    // Right side of a `.` that's neither a field name nor a
+                    // nested field access (e.g. `s.5`). Diagnose, don't throw.
+                    fieldRef.right.Errors.Add(new ParseError(fieldRef.right, ErrorCodes.StructFieldDoesNotExist,
+                        "struct member reference must be a field name or nested field"));
+                    break;
             }
 
         }
@@ -1488,7 +1497,12 @@ namespace FadeBasic.Ast.Visitors
                     // we need to know what the left side _is_ in order to create a scope for the right side.
                     break;
                 default:
-                    throw new NotImplementedException("How do you do this? asdf");
+                    // Left side of a `.` that isn't a variable / array element /
+                    // struct field (e.g. `5.field`, `(a+b).field`). Diagnose
+                    // instead of throwing.
+                    fieldRef.Errors.Add(new ParseError(fieldRef, ErrorCodes.InvalidReference,
+                        "left side of a `.` must be a variable, array element, or struct field"));
+                    break;
             }
 
             // the entire value of the structure is the right-hand-side.
@@ -1500,7 +1514,16 @@ namespace FadeBasic.Ast.Visitors
         {
             if (!scope.TryGetSymbol(indexRef.variableName, out var arraySymbol))
             {
-                throw new NotImplementedException();
+                // Mirror the VariableRefNode path (unknown vs declared-later)
+                // instead of throwing — a reference to a not-yet-in-scope array
+                // is user error, not an internal one, and throwing here aborted
+                // the WHOLE AddScopeRelatedErrors pass (so every variable after
+                // this point silently vanished from diagnostics + completions).
+                indexRef.Errors.Add(new ParseError(indexRef,
+                    arraySymbol != null ? ErrorCodes.SymbolNotDeclaredYet : ErrorCodes.InvalidReference,
+                    "symbol, " + indexRef.variableName));
+                indexRef.DeclaredFromSymbol = arraySymbol;
+                return;
             }
 
             indexRef.DeclaredFromSymbol = arraySymbol;
@@ -1676,7 +1699,11 @@ namespace FadeBasic.Ast.Visitors
                                                         structName: structNode.variableNode.variableName);
                                                 break;
                                             default:
-                                                throw new NotImplementedException();
+                                                // Parameter with an unresolved
+                                                // type node — diagnose, don't
+                                                // throw (leaves ParsedType Void).
+                                                parameter.Errors.Add(new ParseError(parameter, ErrorCodes.UnknownType));
+                                                break;
                                         }
                                     }
 

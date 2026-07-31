@@ -234,7 +234,22 @@ const _priority = new Set([
 function _nextIndex() {
     // Prefer the earliest priority message; otherwise the head (FIFO).
     for (let i = 0; i < _inbox.length; i++) {
-        if (_inbox[i] && _priority.has(_inbox[i].type)) return i;
+        const m = _inbox[i];
+        if (m && _priority.has(m.type)) {
+            // Doc-reading priority requests (completion/hover/tokens) must answer
+            // from the LATEST doc. If a newer lsp-set for the same uri is queued
+            // (the client pushes the current doc right before a completion), do
+            // that reparse FIRST — otherwise the request reads a stale parse and,
+            // e.g., a mid-typing completion misses the just-typed context (no
+            // variable completions). `ping` has no uri and is returned as-is.
+            if (m.uri) {
+                for (let j = 0; j < _inbox.length; j++) {
+                    const s = _inbox[j];
+                    if (s && s.type === 'lsp-set' && s.uri === m.uri) return j;
+                }
+            }
+            return i;
+        }
     }
     return 0;
 }
@@ -282,10 +297,24 @@ function handle(msg) {
         emit({ type: 'result', id: msg.id, result });
     } else if (msg.type === 'lsp-set') {
         let diagnosticsJson = '[]';
+        let tokens = null;
         try {
             const _t0 = Date.now();
             diagnosticsJson = FB.LspSetDocument(msg.uri, msg.text);
             log('lsp-set: reparse ' + (Date.now() - _t0) + 'ms (' + (msg.text ? msg.text.length : 0) + ' chars)');
+            // Unified single pass: compute the requested viewport tokens from the
+            // just-parsed doc IN THIS SAME call, so highlighting rides back with
+            // the diagnostics — no separate getTokens round-trip to queue behind
+            // the next reparse.
+            if (msg.tokenRanges && msg.tokenRanges.length) {
+                tokens = [];
+                for (const r of msg.tokenRanges) {
+                    let data = [];
+                    try { data = JSON.parse(FB.LspGetSemanticTokensRange(msg.uri, r.start | 0, (r.end | 0))); }
+                    catch (e) { log('lsp-set tokens failed: ' + (e?.message ?? e)); }
+                    tokens.push({ start: r.start, end: r.end, data });
+                }
+            }
         } catch (e) {
             log('lsp-set failed: ' + (e?.message ?? e));
         }
@@ -294,6 +323,7 @@ function handle(msg) {
             uri: msg.uri,
             version: msg.version,
             diagnostics: diagnosticsJson,
+            tokens,
         });
     } else if (msg.type === 'lsp-check') {
         let diagnosticsJson = '[]';
