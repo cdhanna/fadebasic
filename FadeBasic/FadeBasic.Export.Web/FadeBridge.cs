@@ -747,33 +747,48 @@ public static partial class FadeBridge
                 }
             }
 
-            // Dedupe by command.name. Overloads (e.g. `rgb` with 3 vs 4
-            // args) share a name; we surface one row per name and use the
-            // first CommandInfo we find — BuildCommandMarkdown already
-            // describes all parameter slots from that signature.
-            var seen = new HashSet<string>();
-            var rows = new List<(string name, string sig, string group, string markdown)>();
+            // Group by command.name. Overloads (e.g. `inc` with a ref-int and a
+            // ref-float variant, or `rgb` with 3 vs 4 args) share a name; we
+            // surface ONE row per name whose markdown lists every overload, each
+            // with its own signature and doc decoration (via
+            // BuildOverloadedCommandMarkdown). First-seen order is preserved.
+            var order = new List<string>();
+            var byName = new Dictionary<string, List<CommandInfo>>(StringComparer.OrdinalIgnoreCase);
             foreach (var c in commands)
             {
                 if (string.IsNullOrEmpty(c.name)) continue;
-                if (!seen.Add(c.name)) continue;
+                if (!byName.TryGetValue(c.name, out var list))
+                {
+                    byName[c.name] = list = new List<CommandInfo>();
+                    order.Add(c.name);
+                }
+                list.Add(c);
+            }
+
+            var rows = new List<(string name, string sig, string group, string markdown)>();
+            foreach (var name in order)
+            {
+                var overloads = byName[name];
                 string markdown;
                 try
                 {
-                    markdown = FadeBasic.LSP.Core.Handlers.HoverHandler.BuildCommandMarkdown(
-                        c, _workspace.Docs);
+                    markdown = FadeBasic.LSP.Core.Handlers.HoverHandler.BuildOverloadedCommandMarkdown(
+                        name, overloads, _workspace.Docs);
                 }
                 catch (Exception ex)
                 {
-                    markdown = $"### {c.name}\n\n_Failed to render docs: {ex.Message}_";
+                    markdown = $"### {name}\n\n_Failed to render docs: {ex.Message}_";
                 }
                 // group: the IMethodSource the command came from, so the
                 // TOC reflects actual library origin. GuessGroup is the
                 // backstop for commands that somehow have no source map
                 // entry (shouldn't happen — every Command was iterated
                 // off some Source above — but defensive).
-                var group = nameToGroup.TryGetValue(c.name, out var g) ? g : GuessGroup(c.name);
-                rows.Add((c.name, c.sig, group, markdown));
+                var group = nameToGroup.TryGetValue(name, out var g) ? g : GuessGroup(name);
+                // The row-level signature stays the first overload's — it feeds
+                // coarse heuristics (e.g. "does this return a value"); the full
+                // per-overload signatures live in the markdown.
+                rows.Add((name, overloads[0].sig, group, markdown));
             }
             // Stable alphabetical order so the TOC is deterministic.
             rows.Sort((a, b) => string.Compare(a.name, b.name, StringComparison.OrdinalIgnoreCase));

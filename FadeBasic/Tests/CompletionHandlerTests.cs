@@ -67,6 +67,17 @@ namespace Tests
         }
 
         [Test]
+        public void CommandCompletions_OverloadedCommand_ListedOnce()
+        {
+            // `ovrbump` has two overloads (ref-int and ref-float). They all
+            // insert the same text, so the completion list must show the name
+            // once, not once per overload.
+            var items = CompleteAt("x = 5\n|");
+            var count = items.Count(i => i.Label == "ovrbump");
+            Assert.That(count, Is.EqualTo(1), "an overloaded command should appear once in completions");
+        }
+
+        [Test]
         public void Cursor_AtStartOfDocument_ReturnsCommands()
         {
             // Bare empty document — leftToken is null/missing. Today the

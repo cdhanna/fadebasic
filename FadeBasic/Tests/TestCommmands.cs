@@ -161,6 +161,108 @@ namespace Tests
         {
             variable += amount;
         }
+
+        // --- Overload-resolution fixtures ---------------------------------
+        // `bump` is a by-ref command overloaded on element type. The type pass
+        // must pick the int or real variant based on the argument's type.
+        [FadeBasicCommand("ovrbump")]
+        public static void BumpInt(ref int value, int amount)
+        {
+            value += amount;
+        }
+        [FadeBasicCommand("ovrbump")]
+        public static void BumpReal(ref float value, float amount)
+        {
+            value += amount;
+        }
+
+        // `twice` is a value-arg command overloaded on element type, returning
+        // the same type from every overload — exercises overload selection in
+        // expression context.
+        [FadeBasicCommand("ovrtwice")]
+        public static int TwiceInt(int x)
+        {
+            return x * 2;
+        }
+        [FadeBasicCommand("ovrtwice")]
+        public static int TwiceReal(float x)
+        {
+            return (int)(x * 2);
+        }
+
+        // `ovrret` overloads differ in BOTH parameter type and return type —
+        // a perfectly legal overload set. Selection is driven by the argument
+        // type, and the expression's type is whatever the winning overload
+        // returns (int for an int arg, string for a string arg).
+        [FadeBasicCommand("ovrret")]
+        public static int RetInt(int x)
+        {
+            return x;
+        }
+        [FadeBasicCommand("ovrret")]
+        public static string RetStr(string x)
+        {
+            return x;
+        }
+
+        // `pairf` overloads on float vs double (same return type). An integer
+        // argument widens equally well to either, so `pairf(3)` is genuinely
+        // ambiguous and must report CommandOverloadAmbiguous.
+        [FadeBasicCommand("ovrpair")]
+        public static int PairF(float x)
+        {
+            return 1;
+        }
+        [FadeBasicCommand("ovrpair")]
+        public static int PairD(double x)
+        {
+            return 2;
+        }
+
+        // `ovrarity` overloads purely on arity (both return int). Selection is
+        // by argument COUNT — resolved at parse time, before types are known.
+        [FadeBasicCommand("ovrarity")]
+        public static int ArityOne(int a)
+        {
+            return a;
+        }
+        [FadeBasicCommand("ovrarity")]
+        public static int ArityTwo(int a, int b)
+        {
+            return a + b;
+        }
+
+        // `ovrv` is the void/statement-context version of arity overloading, and
+        // the first parameter is by-ref.
+        [FadeBasicCommand("ovrv")]
+        public static void VOne(ref int a)
+        {
+            a += 1;
+        }
+        [FadeBasicCommand("ovrv")]
+        public static void VTwo(ref int a, int b)
+        {
+            a += b;
+        }
+
+        // `ovrmix` combines both axes: two same-arity overloads that differ by
+        // type, plus a higher-arity overload. Arity narrows first (parse), then
+        // type resolves within the winning arity (type pass).
+        [FadeBasicCommand("ovrmix")]
+        public static int MixInt(int a)
+        {
+            return a;
+        }
+        [FadeBasicCommand("ovrmix")]
+        public static int MixReal(float a)
+        {
+            return (int)a;
+        }
+        [FadeBasicCommand("ovrmix")]
+        public static int MixTwo(int a, int b)
+        {
+            return a + b;
+        }
         //
         //
         [FadeBasicCommand("print")]

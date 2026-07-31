@@ -268,6 +268,12 @@ namespace FadeBasic.Lsp
 
         public static IEnumerable<(PortableCompletionItem item, CommandInfo command)> GetCommandCallCompletions(TypeInfo forType, CompletionContext context)
         {
+            // A command name can have multiple overloads (same name, different
+            // signatures). They all insert the same text, so collapse them to a
+            // single completion entry per name — otherwise the dropdown shows
+            // `inc`, `inc`, ... once per overload. The first overload that
+            // passes the usage/return-type filters is the representative.
+            var seenNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
             foreach (var command in context.Commands.Commands)
             {
                 if (context.IsMacro && !command.usage.HasFlag(FadeBasicCommandUsage.Macro))
@@ -277,6 +283,8 @@ namespace FadeBasic.Lsp
                 if (!TypeInfo.TryGetFromTypeCode(command.returnType, out var commandType))
                     continue;
                 if (!commandType.IsAssignable(forType))
+                    continue;
+                if (!seenNames.Add(command.name))
                     continue;
 
                 var hasReturn = command.returnType != TypeCodes.VOID;

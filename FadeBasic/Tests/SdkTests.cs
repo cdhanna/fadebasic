@@ -386,6 +386,33 @@ w = 1
         Assert.IsFalse(found);
         Assert.IsNotNull(err);
     }
+
+    // The real stdlib inc/dec are overloaded on target type. An int variable
+    // resolves to the ref-int overload; a float variable resolves to the
+    // ref-float overload (impossible before command overloading existed).
+    [Test]
+    public void Overload_StdlibIncDec_ResolvesIntAndRealTargets()
+    {
+        var commands = new CommandCollection(new StandardCommands());
+        var src = @"
+i = 10
+inc i, 5
+dec i, 2
+
+x as float = 3.0
+inc x, 1.5
+dec x, 0.5
+";
+        var created = Fade.TryCreateFromString(src, commands, out var ctx, out _);
+        Assert.IsTrue(created);
+        ctx.Run();
+
+        Assert.IsTrue(ctx.TryGetInteger("i", out var i));
+        Assert.That(i, Is.EqualTo(13)); // 10 + 5 - 2
+
+        Assert.IsTrue(ctx.TryGetFloat("x", out var x));
+        Assert.That(x, Is.EqualTo(4.0f)); // 3.0 + 1.5 - 0.5
+    }
     
     
     [Test]

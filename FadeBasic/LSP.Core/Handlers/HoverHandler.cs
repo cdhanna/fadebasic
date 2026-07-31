@@ -5,6 +5,7 @@
 //   4. A symbol reference / declaration → name + type + trivia (as markdown).
 //   5. Generic token info as a fallback.
 
+using System.Collections.Generic;
 using System.Text;
 using FadeBasic;
 using FadeBasic.Ast;
@@ -136,6 +137,73 @@ namespace FadeBasic.LSP.Core.Handlers
                 sb.AppendLine($"[Full Documentation]({docs.Url})\n");
 
             sb.AppendLine("### " + command.name);
+            AppendCommandBody(sb, command, docs);
+            return sb.ToString();
+        }
+
+        // The full markdown for a command NAME that may carry several overloads:
+        // the name once, then each overload's signature followed by ITS OWN doc
+        // decoration (summary/params/returns/remarks/examples). A single-overload
+        // command reads the same as BuildCommandMarkdown, minus the redundant
+        // signature line. Used by the help browser so overloaded commands show
+        // every variant instead of collapsing to the first.
+        public static string BuildOverloadedCommandMarkdown(string name, IReadOnlyList<CommandInfo> overloads, ICommandDocsProvider docsProvider)
+        {
+            var sb = new StringBuilder();
+            sb.AppendLine("### " + name);
+            if (overloads == null || overloads.Count == 0) return sb.ToString();
+
+            var showSignatures = overloads.Count > 1;
+            for (var i = 0; i < overloads.Count; i++)
+            {
+                var command = overloads[i];
+                var docs = docsProvider?.Lookup(command);
+
+                // With multiple overloads, head each one with its signature so
+                // the reader can tell which variant the following docs describe.
+                if (showSignatures)
+                {
+                    sb.AppendLine();
+                    sb.AppendLine("#### `" + BuildCommandSignatureString(command) + "`");
+                }
+
+                if (docs != null && !string.IsNullOrEmpty(docs.Url))
+                    sb.AppendLine($"[Full Documentation]({docs.Url})\n");
+
+                AppendCommandBody(sb, command, docs);
+            }
+            return sb.ToString();
+        }
+
+        // A one-line, human-readable signature, e.g.
+        // `inc(ref Integer arg1, [Integer arg2]) -> Integer`.
+        private static string BuildCommandSignatureString(CommandInfo command)
+        {
+            var parts = new List<string>();
+            var args = command.args ?? new CommandArgInfo[0];
+            var visibleIdx = 0;
+            foreach (var a in args)
+            {
+                if (a.isVmArg || a.isRawArg) continue;
+                var part = new StringBuilder();
+                if (a.isRef) part.Append("ref ");
+                part.Append(VmUtil.TryGetVariableTypeDisplay(a.typeCode, out var tn) ? tn : "?");
+                if (a.isParams) part.Append("...");
+                part.Append(" arg").Append(++visibleIdx);
+                if (a.isOptional) { part.Insert(0, "["); part.Append("]"); }
+                parts.Add(part.ToString());
+            }
+            var sig = command.name + "(" + string.Join(", ", parts) + ")";
+            if (command.returnType != TypeCodes.VOID && VmUtil.TryGetVariableTypeDisplay(command.returnType, out var rt))
+                sig += " -> " + rt;
+            return sig;
+        }
+
+        // Renders everything below the `### name` header: summary, parameters,
+        // returns, remarks, examples. Shared by the single- and multi-overload
+        // markdown builders so each overload gets the same decoration.
+        private static void AppendCommandBody(StringBuilder sb, CommandInfo command, ICommandDocs docs)
+        {
             if (!string.IsNullOrEmpty(docs?.Summary))
                 sb.AppendLine(docs.Summary.Trim() + "\n");
 
@@ -205,8 +273,6 @@ namespace FadeBasic.LSP.Core.Handlers
                 sb.AppendLine("#### Examples");
                 foreach (var ex in docs.Examples) sb.AppendLine(ex.Trim());
             }
-
-            return sb.ToString();
         }
 
         // Builds a markdown hover for symbol-bearing nodes. Returns null when

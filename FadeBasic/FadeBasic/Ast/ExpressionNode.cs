@@ -161,7 +161,22 @@ namespace FadeBasic.Ast
 
     public class CommandExpression : AstNode, IExpressionNode
     {
+        /// <summary>
+        /// The command this call resolves to. Until overload resolution runs
+        /// (in the scope/type pass) this holds the first viable overload;
+        /// afterwards it is the type-matched overload the compiler emits.
+        /// </summary>
         public CommandInfo command;
+
+        /// <summary>
+        /// The set of overloads the parser found viable for this call site —
+        /// same command name, same argument shape (count + arg mapping). One is
+        /// selected during the type pass once argument types are known. Always
+        /// contains at least <see cref="command"/>. Every viable overload shares
+        /// the same return type, so the expression's type is known before
+        /// selection.
+        /// </summary>
+        public List<CommandInfo> overloads = new List<CommandInfo>();
         public List<IExpressionNode> args = new List<IExpressionNode>();
         public List<int> argMap = new List<int>();
         

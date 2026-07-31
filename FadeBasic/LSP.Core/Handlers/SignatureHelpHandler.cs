@@ -92,10 +92,12 @@ namespace FadeBasic.LSP.Core.Handlers
 
             if (commandNode != null)
             {
+                var resolved = commandNode.Value.command;
                 return BuildCommandSignature(
-                    commandNode.Value.command,
+                    resolved,
                     commandNode.Value.args,
-                    commandNode.Value.argMap);
+                    commandNode.Value.argMap,
+                    OverloadsOf(doc, resolved.name));
             }
 
             // Fallback: AST is incomplete (e.g. user just typed `CommandName(`).
@@ -143,6 +145,7 @@ namespace FadeBasic.LSP.Core.Handlers
                             command,
                             new List<IExpressionNode>(),
                             new List<int>(),
+                            OverloadsOf(doc, command.name),
                             activeParam);
                     }
                 }
@@ -186,24 +189,35 @@ namespace FadeBasic.LSP.Core.Handlers
 
         // --- Built-in commands ---------------------------------------------
 
-        private static LspSignatureHelp BuildCommandSignature(
-            CommandInfo command,
-            List<IExpressionNode> args,
-            List<int> argMap,
-            int tokenWalkActiveParam = -1)
-        {
-            // Visible params = skip VM-internal and raw args
-            var visibleArgs = command.args
+        // Every command with the given name (case-insensitive) — i.e. the full
+        // overload set — so signature help can list them all.
+        private static List<CommandInfo> OverloadsOf(FadeDocument doc, string name) =>
+            doc.Commands.Commands
+                .Where(c => string.Equals(c.name, name, System.StringComparison.OrdinalIgnoreCase))
+                .ToList();
+
+        private static List<(CommandArgInfo arg, int index)> VisibleArgs(CommandInfo command) =>
+            command.args
                 .Select((a, i) => (arg: a, index: i))
                 .Where(x => !x.arg.isVmArg && !x.arg.isRawArg)
                 .ToList();
 
-            if (visibleArgs.Count == 0) return null;
+        private static LspSignatureHelp BuildCommandSignature(
+            CommandInfo command,
+            List<IExpressionNode> args,
+            List<int> argMap,
+            IReadOnlyList<CommandInfo> overloads = null,
+            int tokenWalkActiveParam = -1)
+        {
+            // The active-parameter index is computed against the RESOLVED
+            // command (the one the call actually binds to).
+            var resolvedVisible = VisibleArgs(command);
+            if (resolvedVisible.Count == 0) return null;
 
             int activeCommandArgIndex;
             if (tokenWalkActiveParam >= 0)
             {
-                activeCommandArgIndex = System.Math.Min(tokenWalkActiveParam, visibleArgs[visibleArgs.Count - 1].index);
+                activeCommandArgIndex = System.Math.Min(tokenWalkActiveParam, resolvedVisible[resolvedVisible.Count - 1].index);
             }
             else if (args.Count == 0 || argMap.Count == 0)
             {
@@ -217,10 +231,38 @@ namespace FadeBasic.LSP.Core.Handlers
                     : lastArgInfoIndex + 1;
             }
 
-            var activeVisibleIndex = visibleArgs.FindIndex(x => x.index == activeCommandArgIndex);
+            var activeVisibleIndex = resolvedVisible.FindIndex(x => x.index == activeCommandArgIndex);
             if (activeVisibleIndex < 0)
-                activeVisibleIndex = visibleArgs.Count - 1;
+                activeVisibleIndex = resolvedVisible.Count - 1;
 
+            // One signature per overload; ActiveSignature points at the one the
+            // call resolved to (matched by UniqueName), so the editor highlights
+            // the overload actually in effect.
+            var overloadList = (overloads != null && overloads.Count > 0)
+                ? overloads
+                : new List<CommandInfo> { command };
+
+            var signatures = new List<LspSignatureInformation>();
+            var activeSignature = 0;
+            for (var i = 0; i < overloadList.Count; i++)
+            {
+                var o = overloadList[i];
+                if (string.Equals(o.UniqueName, command.UniqueName, System.StringComparison.Ordinal))
+                    activeSignature = signatures.Count;
+                signatures.Add(BuildSignatureInfo(o, activeVisibleIndex));
+            }
+
+            return new LspSignatureHelp
+            {
+                Signatures = signatures,
+                ActiveSignature = activeSignature,
+                ActiveParameter = signatures[activeSignature].ActiveParameter,
+            };
+        }
+
+        private static LspSignatureInformation BuildSignatureInfo(CommandInfo command, int desiredActiveVisibleIndex)
+        {
+            var visibleArgs = VisibleArgs(command);
             var paramLabels = new List<string>();
             var paramInfos = new List<LspSignatureParameter>();
             for (var vi = 0; vi < visibleArgs.Count; vi++)
@@ -232,21 +274,17 @@ namespace FadeBasic.LSP.Core.Handlers
                 paramInfos.Add(new LspSignatureParameter { Label = label });
             }
 
-            var signatureLabel = $"{command.name}({string.Join(", ", paramLabels)})";
+            // Clamp the resolved command's active-parameter index into this
+            // overload's range (overloads can have different arities).
+            var active = visibleArgs.Count == 0
+                ? 0
+                : System.Math.Max(0, System.Math.Min(desiredActiveVisibleIndex, visibleArgs.Count - 1));
 
-            return new LspSignatureHelp
+            return new LspSignatureInformation
             {
-                Signatures = new List<LspSignatureInformation>
-                {
-                    new LspSignatureInformation
-                    {
-                        Label = signatureLabel,
-                        Parameters = paramInfos,
-                        ActiveParameter = activeVisibleIndex,
-                    },
-                },
-                ActiveSignature = 0,
-                ActiveParameter = activeVisibleIndex,
+                Label = $"{command.name}({string.Join(", ", paramLabels)})",
+                Parameters = paramInfos,
+                ActiveParameter = active,
             };
         }
 

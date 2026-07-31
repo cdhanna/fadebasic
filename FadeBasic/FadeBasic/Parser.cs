@@ -812,7 +812,10 @@ namespace FadeBasic
         }
 
         public void AddCommand(CommandExpression commandExpr, EnsureTypeContext ctx) =>
-            AddCommand(commandExpr.command, commandExpr.args, commandExpr.argMap, ctx);
+            ProcessCommand(ref commandExpr.command, commandExpr.overloads, commandExpr.args, commandExpr.argMap, commandExpr, ctx);
+
+        public void AddCommand(CommandStatement commandStatement, EnsureTypeContext ctx) =>
+            ProcessCommand(ref commandStatement.command, commandStatement.overloads, commandStatement.args, commandStatement.argMap, commandStatement, ctx);
 
         public void ValidateCommandArgs(CommandInfo command, List<IExpressionNode> args, List<int> argMap,
             EnsureTypeContext ctx)
@@ -822,7 +825,10 @@ namespace FadeBasic
                 var arg = args[argIndex];
                 var descriptor = command.args[argMap[argIndex]];
 
-                arg.EnsureVariablesAreDefined(this, ctx);
+                // Note: argument types are already resolved by ProcessCommand
+                // (which must know them to select the overload) before this
+                // runs, so we do NOT call EnsureVariablesAreDefined again here —
+                // doing so would double-report undefined-variable errors.
 
                 // Special case: a single array-typed expression at a
                 // `params` arg position spreads the array onto the stack
@@ -917,37 +923,151 @@ namespace FadeBasic
             return VariableType.Void;
         }
         
-        public void AddCommand(CommandInfo command, List<IExpressionNode> args, List<int> argMap, EnsureTypeContext ctx)
+        // Runs a command call through the type pass: declares ref targets,
+        // resolves argument types, selects the overload matching those types,
+        // then validates the arguments against it. `command` is updated in place
+        // to the selected overload so the compiler emits the right call.
+        private void ProcessCommand(ref CommandInfo command, List<CommandInfo> overloads,
+            List<IExpressionNode> args, List<int> argMap, AstNode commandNode, EnsureTypeContext ctx)
         {
+            // 1. A by-ref argument naming a not-yet-declared variable declares it
+            //    (as its own sigil type). Which positions are ref is consistent
+            //    across a command's overloads, so the current `command` is a safe
+            //    guide even before the final overload is selected.
             for (var i = 0; i < args.Count; i++)
             {
                 var argExpr = args[i];
                 var argDesc = command.args[argMap[i]];
-                if (argDesc.isRef)
+                if (argDesc.isRef && argExpr is VariableRefNode variableRefNode)
                 {
-                    if (argExpr is VariableRefNode variableRefNode)
-                    {
-                        TryAddVariable(variableRefNode, out var refSymbol);
-                        
-                        // all ref arguments are always haunted.
-                        refSymbol.transitiveTypeFlags |= TransitiveTypeFlags.Haunted;
-                    }
+                    TryAddVariable(variableRefNode, out var refSymbol);
+                    // all ref arguments are always haunted.
+                    refSymbol.transitiveTypeFlags |= TransitiveTypeFlags.Haunted;
                 }
             }
 
-            foreach (var expr in args)
+            // 2. Resolve every argument's type exactly once. This also recurses
+            //    into nested command expressions (via the CommandExpression case
+            //    of EnsureVariablesAreDefined), which selects THEIR overloads.
+            for (var i = 0; i < args.Count; i++)
             {
-                switch (expr)
+                args[i].EnsureVariablesAreDefined(this, ctx);
+            }
+
+            // 3. Pick the overload whose parameter types best fit the argument
+            //    types. Single-overload commands skip this untouched.
+            if (overloads != null && overloads.Count > 1)
+            {
+                command = ResolveOverload(overloads, command, args, argMap, commandNode);
+            }
+
+            // 4. Type-check the arguments against the selected overload.
+            ValidateCommandArgs(command, args, argMap, ctx);
+        }
+
+        // Chooses the best-fitting overload for the resolved argument types.
+        // Exact type matches beat implicit numeric conversions; a ref parameter
+        // only matches an exact-typed argument (a ref can't be converted).
+        // Returns the fallback (first viable) overload when nothing fits, so
+        // ValidateCommandArgs can report the concrete mismatch. Flags a true tie.
+        private CommandInfo ResolveOverload(List<CommandInfo> overloads, CommandInfo fallback,
+            List<IExpressionNode> args, List<int> argMap, AstNode commandNode)
+        {
+            const int disqualified = int.MinValue;
+            var bestScore = disqualified;
+            var bestTieCount = 0;
+            var best = fallback;
+
+            foreach (var candidate in overloads)
+            {
+                var score = ScoreOverload(candidate, args, argMap);
+                if (score == disqualified) continue;
+                if (score > bestScore)
                 {
-                    case CommandExpression commandExpr:
-                        // recursive call could explode given highly nested call stack. 
-                        AddCommand(commandExpr.command, commandExpr.args, commandExpr.argMap, ctx);
-                        break;
+                    bestScore = score;
+                    best = candidate;
+                    bestTieCount = 1;
+                }
+                else if (score == bestScore)
+                {
+                    bestTieCount++;
                 }
             }
-            
-            ValidateCommandArgs(command, args, argMap, ctx);
 
+            if (bestScore == disqualified)
+            {
+                // Nothing fits; keep the fallback and let ValidateCommandArgs
+                // produce the specific per-argument error.
+                return fallback;
+            }
+
+            if (bestTieCount > 1)
+            {
+                commandNode.Errors.Add(new ParseError(commandNode, ErrorCodes.CommandOverloadAmbiguous));
+            }
+
+            return best;
+        }
+
+        // Scores how well an overload's parameters fit the parsed argument types.
+        // Higher is better; int.MinValue means "cannot be called this way".
+        private static int ScoreOverload(CommandInfo candidate, List<IExpressionNode> args, List<int> argMap)
+        {
+            var score = 0;
+            for (var i = 0; i < args.Count; i++)
+            {
+                var desc = candidate.args[argMap[i]];
+                var argType = args[i].ParsedType;
+
+                // Unknown/unresolved argument types can't discriminate — treat
+                // as neutral rather than disqualifying the candidate.
+                if (argType.unset) continue;
+
+                // `any`/object parameters accept anything, but rank below a
+                // concrete match so a typed overload wins when one exists.
+                if (desc.typeCode == TypeCodes.ANY)
+                {
+                    score += 1;
+                    continue;
+                }
+
+                var descType = ConvertTypeCodeToVariableType(desc.typeCode);
+
+                if (desc.isParams && argType.IsArray)
+                {
+                    if (descType == argType.type) { score += 3; continue; }
+                    return int.MinValue;
+                }
+
+                if (desc.isRef)
+                {
+                    // A ref aliases storage — no conversion possible, exact only.
+                    if (!argType.IsArray && argType.type == descType) { score += 3; continue; }
+                    return int.MinValue;
+                }
+
+                if (argType.type == descType) { score += 3; continue; }          // exact
+                if (IsNumeric(argType.type) && IsNumeric(descType)) { score += 1; continue; } // widen/narrow
+                return int.MinValue;                                             // incompatible
+            }
+            return score;
+        }
+
+        private static bool IsNumeric(VariableType t)
+        {
+            switch (t)
+            {
+                case VariableType.Integer:
+                case VariableType.DoubleInteger:
+                case VariableType.Byte:
+                case VariableType.Word:
+                case VariableType.DWord:
+                case VariableType.Float:
+                case VariableType.DoubleFloat:
+                    return true;
+                default:
+                    return false;
+            }
         }
 
         public void SetFunctionType(FunctionStatement function, IExpressionNode returnExpr)
@@ -1883,12 +2003,13 @@ namespace FadeBasic
                         break;
 
                     case LexemType.CommandWord:
-                        ParseCommandOverload2(token, out var command, out var commandArgs, out var argMap, out var errors);
+                        ParseCommandOverload2(token, out var command, out var commandOverloads, out var commandArgs, out var argMap, out var errors);
                         var commandStatement = new CommandStatement
                         {
                             startToken = token,
                             // endToken = GetLastToken(token, commandArgs),
                             command = command,
+                            overloads = commandOverloads,
                             endToken = _stream.Previous,
                             args = commandArgs,
                             argMap = argMap,
@@ -2167,7 +2288,21 @@ namespace FadeBasic
             return true;
         }
         
-        private void ParseCommandOverload2(Token token, out CommandInfo foundCommand, out List<IExpressionNode> commandArgs, out List<int> argMap, out List<ParseError> errors)
+        // Two arg-shapes are interchangeable overloads only if they consume the
+        // same number of expressions AND map each to the same CommandArgInfo
+        // slot. Same count but different mapping (e.g. one overload takes a
+        // [FromVm] arg first) is a genuinely different shape and stays ambiguous.
+        private static bool SameArgShape(List<int> a, List<int> b)
+        {
+            if (a.Count != b.Count) return false;
+            for (var i = 0; i < a.Count; i++)
+            {
+                if (a[i] != b[i]) return false;
+            }
+            return true;
+        }
+
+        private void ParseCommandOverload2(Token token, out CommandInfo foundCommand, out List<CommandInfo> viableOverloads, out List<IExpressionNode> commandArgs, out List<int> argMap, out List<ParseError> errors)
         {
             /*
              * Okay, so, we need to parse the expressions one at a time, and invalidate commands as we go,
@@ -2212,6 +2347,7 @@ namespace FadeBasic
 
             // var possibleArgs = new List<IExpressionNode>[possibleCommands.Count];
             foundCommand = possibleCommands[0];
+            viableOverloads = new List<CommandInfo>();
             var found = false;
             commandArgs = new List<IExpressionNode>();
             argMap = new List<int>();
@@ -2223,18 +2359,31 @@ namespace FadeBasic
                 {
                     if (found)
                     {
-                        // we'll pick the command with the longest arg path
-                        if (commandArgs.Count == args.Count)
+                        // Same arg shape as the current best → this is a real
+                        // overload of the same call. Keep BOTH; the type pass
+                        // will pick one once argument types are known. (Arg
+                        // types aren't resolved yet here, so we can't choose.)
+                        if (SameArgShape(argMap, foundArgMap))
                         {
+                            viableOverloads.Add(option);
+                        }
+                        else if (args.Count == commandArgs.Count)
+                        {
+                            // Same count but different mapping — structurally
+                            // indistinguishable and not a type overload we can
+                            // defer. Preserve the historical ambiguity error.
                             throw new ParserException("command ambigious", _stream.Current);
                         }
-
-                        if (args.Count > commandArgs.Count)
+                        else if (args.Count > commandArgs.Count)
                         {
+                            // A longer arg path is a different (better-fitting)
+                            // shape — it wins outright and resets the viable set.
                             foundCommand = option;
                             commandArgs = args;
                             argMap = foundArgMap;
                             foundJump = jump;
+                            viableOverloads.Clear();
+                            viableOverloads.Add(option);
                         }
                     }
                     else
@@ -2245,9 +2394,18 @@ namespace FadeBasic
                         commandArgs = args;
                         argMap = foundArgMap;
                         foundJump = jump;
+                        viableOverloads.Add(option);
                     }
                 }
             }
+
+            // NOTE: overloads are NOT required to share a return type. Overload
+            // selection is driven entirely by ARGUMENT types (resolved bottom-up
+            // in the type pass), and the command expression's type is then read
+            // from the WINNING overload — so `f(int)->int` and `f(str)->str`
+            // resolve fine. Two overloads that differ ONLY by return type (same
+            // parameters) can't be told apart by argument types and are caught as
+            // CommandOverloadAmbiguous during resolution.
 
             if (!found)
             {
@@ -2259,6 +2417,7 @@ namespace FadeBasic
                  */
 
                 foundCommand = possibleCommands[0];
+                viableOverloads = new List<CommandInfo> { possibleCommands[0] };
                 commandArgs = new List<IExpressionNode>(); // don't actually need to fill these...
                 argMap = new List<int>();
                 errors.Add(new ParseError(token, ErrorCodes.CommandNoOverloadFound));
@@ -4457,8 +4616,8 @@ namespace FadeBasic
                     _stream.Advance();
 
                     // ParseCommandOverload(token, out var command, out var argExpressions);
-                    ParseCommandOverload2(token, out var command, out var argExpressions, out var argMap, out var errors);
-                    
+                    ParseCommandOverload2(token, out var command, out var commandOverloads, out var argExpressions, out var argMap, out var errors);
+
                     // // parse the args!
                     // var argExpressions = ParseCommandArgs(token, command);
                     outputExpression = new CommandExpression()
@@ -4467,6 +4626,7 @@ namespace FadeBasic
                         // endToken = GetLastToken(token, argExpressions),
                         endToken = _stream.Previous,
                         command = command,
+                        overloads = commandOverloads,
                         args = argExpressions,
                         argMap = argMap
                     };

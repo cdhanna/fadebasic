@@ -4691,7 +4691,177 @@ inc e.tuna#, 2
         Assert.That(vm.dataRegisters[0], Is.EqualTo(5));
     }
 
-    
+    // --- Command overload resolution -------------------------------------
+    // `bump` has ref-int and ref-float overloads. An int argument must select
+    // the int overload and run it correctly.
+    [Test]
+    public void Overload_Bump_ResolvesIntByArgType()
+    {
+        var src = "x = 3\novrbump x, 2";
+        Setup(src, out var compiler, out var prog);
+        var vm = new VirtualMachine(prog);
+        vm.hostMethods = compiler.methodTable;
+        vm.Execute2();
+        Assert.That(vm.typeRegisters[0], Is.EqualTo(TypeCodes.INT));
+        Assert.That(vm.dataRegisters[0], Is.EqualTo(5));
+    }
+
+    // ...and a real argument selects the ref-float overload — the exact case
+    // that was impossible before overloads (a real to `ref int` was corruption).
+    [Test]
+    public void Overload_Bump_ResolvesRealByArgType()
+    {
+        var src = "x# = 3.0\novrbump x#, 2.0";
+        Setup(src, out var compiler, out var prog);
+        var vm = new VirtualMachine(prog);
+        vm.hostMethods = compiler.methodTable;
+        vm.Execute2();
+        Assert.That(vm.typeRegisters[0], Is.EqualTo(TypeCodes.REAL));
+        Assert.That(VmUtil.ConvertToFloat(vm.dataRegisters[0]), Is.EqualTo(5.0f));
+    }
+
+    // Value-arg overload selection in expression context: exact match wins over
+    // an implicit numeric conversion.
+    [Test]
+    public void Overload_Twice_ResolvesIntInExpression()
+    {
+        var src = "x = ovrtwice(3)";
+        Setup(src, out var compiler, out var prog);
+        var vm = new VirtualMachine(prog);
+        vm.hostMethods = compiler.methodTable;
+        vm.Execute2();
+        Assert.That(vm.typeRegisters[0], Is.EqualTo(TypeCodes.INT));
+        Assert.That(vm.dataRegisters[0], Is.EqualTo(6)); // TwiceInt: 3 * 2
+    }
+
+    [Test]
+    public void Overload_Twice_ResolvesRealInExpression()
+    {
+        var src = "x = ovrtwice(3.5)";
+        Setup(src, out var compiler, out var prog);
+        var vm = new VirtualMachine(prog);
+        vm.hostMethods = compiler.methodTable;
+        vm.Execute2();
+        // Return type is int for both overloads; TwiceReal: (int)(3.5 * 2) = 7.
+        Assert.That(vm.typeRegisters[0], Is.EqualTo(TypeCodes.INT));
+        Assert.That(vm.dataRegisters[0], Is.EqualTo(7));
+    }
+
+    // Overloads may differ in return type as long as they differ in parameters:
+    // the argument type picks the overload, and the expression takes THAT
+    // overload's return type. An int argument → the int-returning overload.
+    [Test]
+    public void Overload_DifferentReturnTypes_IntArgReturnsInt()
+    {
+        var src = "x = ovrret(3)";
+        Setup(src, out var compiler, out var prog);
+        var vm = new VirtualMachine(prog);
+        vm.hostMethods = compiler.methodTable;
+        vm.Execute2();
+        Assert.That(vm.typeRegisters[0], Is.EqualTo(TypeCodes.INT));
+        Assert.That(vm.dataRegisters[0], Is.EqualTo(3));
+    }
+
+    // ...and a string argument → the string-returning overload of the SAME
+    // command name.
+    [Test]
+    public void Overload_DifferentReturnTypes_StringArgReturnsString()
+    {
+        var src = "s$ = ovrret(\"hi\")";
+        Setup(src, out var compiler, out var prog);
+        var vm = new VirtualMachine(prog);
+        vm.hostMethods = compiler.methodTable;
+        vm.Execute2();
+        Assert.That(vm.typeRegisters[0], Is.EqualTo(TypeCodes.STRING));
+        vm.heap.Read(vm.dataRegisters[0].ToPtr(), "hi".Length * 4, out var memory);
+        Assert.That(VmConverter.ToString(memory), Is.EqualTo("hi"));
+    }
+
+    // An integer argument widens equally to `pairf`'s float and double
+    // overloads — a real tie that must be reported as ambiguous.
+    [Test]
+    public void Overload_Pairf_AmbiguousIsError()
+    {
+        var src = "x = ovrpair(3)";
+        Setup(src, out _, out _, expectedParseErrors: 1);
+        var errs = _exprAst.GetAllErrors();
+        Assert.That(errs[0].errorCode, Is.EqualTo(ErrorCodes.CommandOverloadAmbiguous));
+    }
+
+    // --- Different-arity overloads ---------------------------------------
+    // Selection by argument COUNT (resolved at parse time). One arg → the
+    // 1-param overload; two args → the 2-param overload.
+    [Test]
+    public void Overload_Arity_ResolvesOneArg()
+    {
+        var src = "x = ovrarity(5)";
+        Setup(src, out var compiler, out var prog);
+        var vm = new VirtualMachine(prog);
+        vm.hostMethods = compiler.methodTable;
+        vm.Execute2();
+        Assert.That(vm.dataRegisters[0], Is.EqualTo(5)); // ArityOne
+    }
+
+    [Test]
+    public void Overload_Arity_ResolvesTwoArgs()
+    {
+        var src = "x = ovrarity(5, 3)";
+        Setup(src, out var compiler, out var prog);
+        var vm = new VirtualMachine(prog);
+        vm.hostMethods = compiler.methodTable;
+        vm.Execute2();
+        Assert.That(vm.dataRegisters[0], Is.EqualTo(8)); // ArityTwo: 5 + 3
+    }
+
+    // Same, in void/statement context with a by-ref first parameter.
+    [Test]
+    public void Overload_Arity_VoidStatement_OneArg()
+    {
+        var src = "x = 10\novrv x";
+        Setup(src, out var compiler, out var prog);
+        var vm = new VirtualMachine(prog);
+        vm.hostMethods = compiler.methodTable;
+        vm.Execute2();
+        Assert.That(vm.dataRegisters[0], Is.EqualTo(11)); // VOne: += 1
+    }
+
+    [Test]
+    public void Overload_Arity_VoidStatement_TwoArgs()
+    {
+        var src = "x = 10\novrv x, 5";
+        Setup(src, out var compiler, out var prog);
+        var vm = new VirtualMachine(prog);
+        vm.hostMethods = compiler.methodTable;
+        vm.Execute2();
+        Assert.That(vm.dataRegisters[0], Is.EqualTo(15)); // VTwo: += 5
+    }
+
+    // Arity + type together: arity narrows to the 1-param overloads, then the
+    // argument type picks int-vs-real among them; a 2-arg call takes the
+    // higher-arity overload outright.
+    [Test]
+    public void Overload_ArityAndType_RealPicksOneParamRealOverload()
+    {
+        var src = "x = ovrmix(3.5)";
+        Setup(src, out var compiler, out var prog);
+        var vm = new VirtualMachine(prog);
+        vm.hostMethods = compiler.methodTable;
+        vm.Execute2();
+        Assert.That(vm.dataRegisters[0], Is.EqualTo(3)); // MixReal: (int)3.5
+    }
+
+    [Test]
+    public void Overload_ArityAndType_TwoArgsTakesHigherArity()
+    {
+        var src = "x = ovrmix(3, 4)";
+        Setup(src, out var compiler, out var prog);
+        var vm = new VirtualMachine(prog);
+        vm.hostMethods = compiler.methodTable;
+        vm.Execute2();
+        Assert.That(vm.dataRegisters[0], Is.EqualTo(7)); // MixTwo: 3 + 4
+    }
+
+
     [Test]
     public void CallHost_RefType_GlobalFunction()
     {

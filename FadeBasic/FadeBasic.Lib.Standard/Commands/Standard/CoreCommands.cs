@@ -66,9 +66,24 @@ namespace FadeBasic.Lib.Standard
         {
             value += amount;
         }
-                
+
+        // Overload for real targets. A ref parameter can't be cast, so a float
+        // variable needs its own overload; the amount is a value arg and casts
+        // freely, so this also handles `inc floatVar, <int>`.
+        [FadeBasicCommand("inc", FadeBasicCommandUsage.Both)]
+        public static void IncrementReal(ref float value, float amount = 1)
+        {
+            value += amount;
+        }
+
         [FadeBasicCommand("dec", FadeBasicCommandUsage.Both)]
         public static void Decrement(ref int value, int amount = 1)
+        {
+            value -= amount;
+        }
+
+        [FadeBasicCommand("dec", FadeBasicCommandUsage.Both)]
+        public static void DecrementReal(ref float value, float amount = 1)
         {
             value -= amount;
         }

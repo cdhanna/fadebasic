@@ -549,8 +549,8 @@ namespace FadeBasic.Ast.Visitors
                         }
                         break;
                     case CommandStatement commandStatement:
-                        scope.AddCommand(commandStatement.command, commandStatement.args, commandStatement.argMap, ctx);
-                        
+                        scope.AddCommand(commandStatement, ctx);
+
                         break;
                     case DeclarationStatement decl:
 
