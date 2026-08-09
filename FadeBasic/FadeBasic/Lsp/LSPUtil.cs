@@ -586,12 +586,18 @@ namespace FadeBasic.Lsp
             var list = new List<PortableCompletionItem>();
             foreach (var kvp in context.Scope.typeNameToDecl)
             {
+                // typeNameToDecl is keyed by the lowercased type name (the lexer
+                // lowercases identifiers), so recover the original casing from
+                // the declaration's name token — otherwise `type fTest` shows up
+                // as `ftest` in the `as <type>` completion list.
+                var displayName = kvp.Value?.name?.VariableNameCaseSensitive;
+                if (string.IsNullOrEmpty(displayName)) displayName = kvp.Key;
                 list.Add(new PortableCompletionItem
                 {
                     InsertTextFormat = PortableInsertTextFormat.Snippet,
                     Kind = PortableCompletionKind.Class,
-                    Label = kvp.Key,
-                    InsertText = kvp.Key,
+                    Label = displayName,
+                    InsertText = displayName,
                     SortText = "a"
                 });
             }

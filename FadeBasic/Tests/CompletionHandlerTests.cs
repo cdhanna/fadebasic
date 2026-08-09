@@ -67,6 +67,16 @@ namespace Tests
         }
 
         [Test]
+        public void TypeNameCompletions_PreserveDeclaredCasing()
+        {
+            // `type fTest` is stored under the lowercased key `ftest`, but the
+            // `as <type>` completion must show the declared casing `fTest`.
+            var items = CompleteAt("type fTest\nendtype\nff as |");
+            Assert.That(HasLabel(items, "fTest"), Is.True, "type completion should preserve declared casing");
+            Assert.That(HasLabel(items, "ftest"), Is.False, "should not offer the lowercased key");
+        }
+
+        [Test]
         public void CommandCompletions_OverloadedCommand_ListedOnce()
         {
             // `ovrbump` has two overloads (ref-int and ref-float). They all

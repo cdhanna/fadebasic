@@ -41,6 +41,10 @@ internal sealed class WebDebugSession : DebugSession
         didClientConnect = true;
         hasConnectedDebugger = 1;
         debuggerSaidHello = 1;
+        // No socket → the post-Restart PROTO_HELLO can never arrive, so skip
+        // that wait unconditionally. Belt-and-braces with the flag-setting
+        // above/in OnReloadRebound, but immune to reset paths those miss.
+        suppressHelloWait = true;
     }
 
     // After a hot-reload rebind, RestartAfterReload raises the PROTO_HELLO gate

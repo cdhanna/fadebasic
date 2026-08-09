@@ -1,0 +1,100 @@
+_animIntroBinSkull:
+  GOSUB _resetAnim
+
+  w# = 512
+  h# = 512
+
+  a# = w# / h#
+  y# = (render width()-200) / a#
+  x# = (render height()-200) * a#
+
+
+  `first panel
+  anims(0) = {
+    textureId = 0,
+    startTimeMs = 200
+    endTimeMs = 10 * 1000
+    startPos = {
+      x = 100,
+      y = 100
+    }
+    startSize = {
+      x = render width() - 200
+      y = render height() - 200
+    }
+    color = rgb(0, 0, 0)
+  }
+
+  anims(1) = {
+    textureId = TEX_HOODED_MAN,
+    startTimeMs = 200
+    lockTime = 5 * 1000
+    endTimeMs = 10 * 1000
+
+    order = 10
+    startPos = {
+      x = render width() /2,
+      y = 450
+    }
+    endPos = {
+      x = render width() / 2,
+      y = 450
+    }
+    startSize = {
+      x = 180
+      y = 280
+    }
+    color = rgb(255, 255, 255)
+    animMaskIndex = 1 ` use the index+1
+  }
+
+    ` binary backhround 512x512
+    anims(2) = {
+      textureId = TEX_BINARY_BACKGROUND,
+      startTimeMs = 500
+      lockTime = 5 * 1000
+     endTimeMs = 10 * 1000
+        startPos = {
+        x = 100,
+        y = 100
+      }
+     endPos = {
+       x = 100,
+       y = 80
+     }
+     startSize = {
+       x = render width() - 200
+       y = y#
+     }
+     color = rgb(255, 255, 255)
+     animMaskIndex = 1 ` use the index+1
+   }
+
+    anims(3) = {
+      textureId = TEX_SKULL,
+      startTimeMs = 1500
+      lockTime = 5 * 1000
+      order = 9
+
+     endTimeMs = 10 * 1000
+        startPos = {
+        x = 420,
+        y = 180
+      }
+     endPos = {
+       x = 420,
+       y = 180
+     }
+     startSize = {
+       x = 350
+       y = 280
+     }
+     color = rgb(255, 255, 255)
+     animMaskIndex = 1 ` use the index+1
+   }
+
+  ` load the next image
+
+  animCount = 4
+
+RETURN

@@ -4691,6 +4691,185 @@ inc e.tuna#, 2
         Assert.That(vm.dataRegisters[0], Is.EqualTo(5));
     }
 
+    // A by-ref FLOAT argument that is a struct member: the ref path must read
+    // and write the member's 4 float bytes correctly (regression repro for a
+    // huge/garbage value coming back through the heap pointer).
+    [Test]
+    public void CallHost_RefFloat_StructMember_ReadsAndWritesCorrectly()
+    {
+        var src = @"
+type egg
+    tuna#
+endtype
+e as egg
+e.tuna# = 3.0
+ovrbump e.tuna#, 2.0
+x# = e.tuna#
+";
+        Setup(src, out var compiler, out var prog);
+        var vm = new VirtualMachine(prog);
+        vm.hostMethods = compiler.methodTable;
+        vm.Execute2();
+
+        Assert.That(vm.typeRegisters[1], Is.EqualTo(TypeCodes.REAL));
+        Assert.That(VmUtil.ConvertToFloat(vm.dataRegisters[1]), Is.EqualTo(5.0f));
+    }
+
+    // Same, but the float member is NOT the first field — so the ref address is
+    // struct-base + a non-zero offset. If the offset/width is mishandled the
+    // read comes back as garbage (the reported "huge number").
+    [Test]
+    public void CallHost_RefFloat_StructMember_NonZeroOffset()
+    {
+        var src = @"
+type egg
+    a#
+    tuna#
+endtype
+e as egg
+e.a# = 9.0
+e.tuna# = 3.0
+ovrbump e.tuna#, 2.0
+x# = e.tuna#
+y# = e.a#
+";
+        Setup(src, out var compiler, out var prog);
+        var vm = new VirtualMachine(prog);
+        vm.hostMethods = compiler.methodTable;
+        vm.Execute2();
+
+        // Scan registers: tuna# must be 5.0 and a# must be untouched at 9.0.
+        bool found5 = false, found9 = false;
+        for (var i = 0; i < vm.dataRegisters.Length; i++)
+        {
+            if (vm.typeRegisters[i] != TypeCodes.REAL) continue;
+            var f = VmUtil.ConvertToFloat(vm.dataRegisters[i]);
+            if (System.Math.Abs(f - 5.0f) < 0.001f) found5 = true;
+            if (System.Math.Abs(f - 9.0f) < 0.001f) found9 = true;
+        }
+        Assert.That(found5, Is.True, "e.tuna# should read back as 5.0 after inc");
+        Assert.That(found9, Is.True, "e.a# should be untouched at 9.0");
+    }
+
+    // Ref-float command with an OPTIONAL float amount (mirrors stdlib inc),
+    // explicit amount supplied.
+    [Test]
+    public void CallHost_RefFloat_OptionalAmount_ExplicitFloat()
+    {
+        var src = "x# = 3.0\nincf x#, 0.5";
+        Setup(src, out var compiler, out var prog);
+        var vm = new VirtualMachine(prog);
+        vm.hostMethods = compiler.methodTable;
+        vm.Execute2();
+        Assert.That(vm.typeRegisters[0], Is.EqualTo(TypeCodes.REAL));
+        Assert.That(VmUtil.ConvertToFloat(vm.dataRegisters[0]), Is.EqualTo(3.5f));
+    }
+
+    // Same command, amount OMITTED — the default `1` must be injected as a
+    // float, not raw int bytes reinterpreted as a float (which reads huge).
+    [Test]
+    public void CallHost_RefFloat_OptionalAmount_DefaultedToOne()
+    {
+        var src = "x# = 3.0\nincf x#";
+        Setup(src, out var compiler, out var prog);
+        var vm = new VirtualMachine(prog);
+        vm.hostMethods = compiler.methodTable;
+        vm.Execute2();
+        Assert.That(vm.typeRegisters[0], Is.EqualTo(TypeCodes.REAL));
+        Assert.That(VmUtil.ConvertToFloat(vm.dataRegisters[0]), Is.EqualTo(4.0f));
+    }
+
+    // Struct type defined AFTER it is used (forward reference). The member's
+    // float type must still be resolved before overload resolution, or `ovrbump`
+    // binds the ref-INT overload and does integer math into the float slot —
+    // reported as `8E-45` (the int reinterpreted as float bytes).
+    [Test]
+    public void CallHost_RefFloat_StructMember_TypeDefinedAfterUse()
+    {
+        var src = @"
+ff as fTest
+ovrbump ff.f#, 3.4
+x# = ff.f#
+
+type fTest
+  f#
+endtype
+";
+        Setup(src, out var compiler, out var prog);
+        var vm = new VirtualMachine(prog);
+        vm.hostMethods = compiler.methodTable;
+        vm.Execute2();
+
+        bool found = false;
+        for (var i = 0; i < vm.dataRegisters.Length; i++)
+        {
+            if (vm.typeRegisters[i] != TypeCodes.REAL) continue;
+            if (System.Math.Abs(VmUtil.ConvertToFloat(vm.dataRegisters[i]) - 3.4f) < 0.001f) found = true;
+        }
+        Assert.That(found, Is.True, "ff.f# should read back as 3.4 (float overload), not int garbage");
+    }
+
+    // The exact reported scenario in miniature: a command with ref-int AND
+    // ref-float overloads (both with optional amount, like stdlib inc), called
+    // twice on a struct float member whose type is defined AFTER use. Must bind
+    // the ref-FLOAT overload and do float math (3.4 + 3 = 6.4) — the bug did
+    // integer math into the float slot (read back as ~8E-45).
+    [Test]
+    public void CallHost_RefFloat_StructMember_OverloadedWithOptional_TypeAfter()
+    {
+        var src = @"
+ff as fTest
+incx ff.f#, 3.4
+incx ff.f#, 3
+x# = ff.f#
+type fTest
+  f#
+endtype
+";
+        Setup(src, out var compiler, out var prog);
+        var vm = new VirtualMachine(prog);
+        vm.hostMethods = compiler.methodTable;
+        vm.Execute2();
+
+        Assert.That(vm.typeRegisters[1], Is.EqualTo(TypeCodes.REAL));
+        Assert.That(VmUtil.ConvertToFloat(vm.dataRegisters[1]), Is.EqualTo(6.4f).Within(0.001f));
+    }
+
+    // Int amount into a ref-float command: the value arg must be cast int→float
+    // (3.0 + 2 = 5.0), not have its int bytes read as a float.
+    [Test]
+    public void CallHost_RefFloat_IntAmountCastsToFloat()
+    {
+        var src = "x# = 3.0\nincf x#, 2";
+        Setup(src, out var compiler, out var prog);
+        var vm = new VirtualMachine(prog);
+        vm.hostMethods = compiler.methodTable;
+        vm.Execute2();
+        Assert.That(vm.typeRegisters[0], Is.EqualTo(TypeCodes.REAL));
+        Assert.That(VmUtil.ConvertToFloat(vm.dataRegisters[0]), Is.EqualTo(5.0f));
+    }
+
+    // The full reported scenario: struct float member + optional float amount.
+    [Test]
+    public void CallHost_RefFloat_StructMember_OptionalAmount()
+    {
+        var src = @"
+type egg
+    tuna#
+endtype
+e as egg
+e.tuna# = 3.0
+incf e.tuna#, 0.5
+x# = e.tuna#
+";
+        Setup(src, out var compiler, out var prog);
+        var vm = new VirtualMachine(prog);
+        vm.hostMethods = compiler.methodTable;
+        vm.Execute2();
+        Assert.That(vm.typeRegisters[1], Is.EqualTo(TypeCodes.REAL));
+        Assert.That(VmUtil.ConvertToFloat(vm.dataRegisters[1]), Is.EqualTo(3.5f));
+    }
+
     // --- Command overload resolution -------------------------------------
     // `bump` has ref-int and ref-float overloads. An int argument must select
     // the int overload and run it correctly.

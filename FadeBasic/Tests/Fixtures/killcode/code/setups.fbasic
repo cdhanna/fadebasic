@@ -1,0 +1,503 @@
+
+_setupLanes:
+
+  dim rainbowColors(8)
+  rainbowColors(0) = rgb(255, 74, 74)
+  rainbowColors(1) = rgb(255, 155, 74)
+  rainbowColors(2) = rgb(249, 255, 74)
+  rainbowColors(3) = rgb(128, 255, 74)
+  rainbowColors(4) = rgb(74, 255, 207)
+  rainbowColors(5) = rgb(74, 101, 255)
+  rainbowColors(6) = rgb(210, 74, 255)
+  rainbowColors(7) = rgb(255, 74, 225)
+
+
+  gameRenderTarget = reserve render target id(gameRenderTarget)
+  render target gameRenderTarget
+  set render target background color gameRenderTarget, rgb(32, 32, 32)
+  set render target clear flags gameRenderTarget, 1
+
+  crtEffect = 2`reserve effect id(crtEffect)
+  effect crtEffect, "crt"
+
+  gameSprite = reserve sprite id(gameSprite)
+  sprite gameSprite, 100, 100, render target texture(gameRenderTarget)
+  set sprite offset gameSprite, 0, 0
+  order sprite gameSprite, -10
+  size sprite gameSprite, render width() - 200, render height() - 200
+  set sprite effect gameSprite, crtEffect
+
+  compSprite = reserve sprite id(compSprite)
+  sprite compSprite, -50, -50, TEX_COMP
+  set sprite offset compSprite, 0, 0
+  order sprite compSprite, -11
+  size sprite compSprite, render width()+100, render height()+100
+  color sprite compSprite, rgb(175, 175, 117)
+  set sprite alpha compSprite, 100
+
+  dim laneKeys$(4)
+  laneKeys$(0) = "F"
+  laneKeys$(1) = "G"
+  laneKeys$(2) = "H"
+  laneKeys$(3) = "J"
+  print "loaded keys"
+
+  lineColor = rgb(128, 128, 128, 128)
+
+  ` setup the lanes
+  dim lanes(4) as lane
+  lane as lane
+  for n = 0 to len(lanes) - 1
+    lanes(n) = {
+      keyCode = scanCode(laneKeys$(n))
+      textId = reserve text id(lanes(n).textId)
+      leftSpriteId = reserve sprite id(leftSpriteId)
+      rightSpriteId = reserve sprite id(rightSpriteId)
+      posTween = reserve tween id(posTween)
+      scaleTween = reserve tween id(scaleTween)
+    }
+    reserve sprite id(lanes(n).leftGradSprite)
+    reserve sprite id(lanes(n).rightGradSprite)
+    reserve sprite id(lanes(n).topGradSprite)
+    reserve sprite id(lanes(n).lowGradSprite)
+    reserve sprite id(lanes(n).fillSprite)
+    reserve tween id(lanes(n).fillLerpTween)
+    reserve tween id(lanes(n).colorLerpTween)
+
+    x = getLaneX(n)
+    text lanes(n).textId, x, laneTextY, 1, laneKeys$(n)
+    enable text drop shadow lanes(n).textId, -4, -8, rgb(0,0,0)
+    size text x lanes(n).textId, 50
+    set text render target lanes(n).textId, gameRenderTarget
+
+    sprite lanes(n).fillSprite, x, 10 + render height()/2, 0
+    size sprite lanes(n).fillSprite, 140*2, render height()-200
+    color sprite lanes(n).fillSprite, lineColor
+    set sprite render target lanes(n).fillSprite, gameRenderTarget
+    order sprite lanes(n).fillSprite, -1
+    set sprite alpha lanes(n).fillSprite, 0
+
+
+    sprite lanes(n).leftSpriteId, x-140, 10 + render height()/2, 0
+    size sprite lanes(n).leftSpriteId, 5, render height()-200
+    color sprite lanes(n).leftspriteid, lineColor
+    set sprite render target lanes(n).leftspriteid, gameRenderTarget
+
+    sprite lanes(n).leftGradSprite, x-140, 10 + render height()/2, TEX_LINE_GRAD
+    set sprite offset lanes(n).leftGradSprite, 0, .5
+    size sprite lanes(n).leftGradSprite, 32, render height() - 200
+    set sprite render target lanes(n).leftGradSprite, gameRenderTarget
+    set sprite alpha lanes(n).leftGradSprite, laneFadeAmount
+
+    sprite lanes(n).rightSpriteId, x+140, 10 + render height()/2, 0
+    size sprite lanes(n).rightSpriteId, 5, render height()-200
+    color sprite lanes(n).rightSpriteId, lineColor
+    set sprite render target lanes(n).rightSpriteId, gameRenderTarget
+
+    sprite lanes(n).rightGradSprite, x+140 - 32, 10 + render height()/2, TEX_LINE_GRAD
+    set sprite offset lanes(n).rightGradSprite, 0, .5
+    set sprite flip lanes(n).rightGradSprite, 1, 0
+    size sprite lanes(n).rightGradSprite, 32, render height() - 200
+    set sprite render target lanes(n).rightGradSprite, gameRenderTarget
+    set sprite alpha lanes(n).rightGradSprite, laneFadeAmount
+
+
+    sprite lanes(n).lowGradSprite, x, 100, TEX_LINE_GRAD
+    set sprite offset lanes(n).lowGradSprite, 0, .5
+    rotate sprite lanes(n).lowGradSprite, 1.57
+    size sprite lanes(n).lowGradSprite, 32, 140*2
+    set sprite render target lanes(n).lowGradSprite, gameRenderTarget
+    set sprite alpha lanes(n).lowGradSprite, laneFadeAmount
+
+
+    sprite lanes(n).topGradSprite, x, render height() - 90, TEX_LINE_GRAD
+    set sprite offset lanes(n).topGradSprite, 0, .5
+    rotate sprite lanes(n).topGradSprite, -1.57
+    size sprite lanes(n).topGradSprite, 32, 140*2
+    set sprite render target lanes(n).topGradSprite, gameRenderTarget
+    set sprite alpha lanes(n).topGradSprite, laneFadeAmount
+
+    ` create basic tween lane.posTween, laneTextY, laneTextY - 30, 300, 0
+    ` set tween type lane.posTween, 1
+
+  next
+
+RETURN
+
+_updateLanes:
+  for n = 0 to len(lanes) - 1
+    set sprite alpha lanes(n).topGradSprite, tweenVal(lanes(n).colorLerpTween)
+    set sprite alpha lanes(n).lowGradSprite, tweenVal(lanes(n).colorLerpTween)
+    set sprite alpha lanes(n).leftGradSprite, tweenVal(lanes(n).colorLerpTween)
+    set sprite alpha lanes(n).rightGradSprite, tweenVal(lanes(n).colorLerpTween)
+    set sprite alpha lanes(n).fillSprite, tweenVal(lanes(n).fillLerpTween)
+  next
+RETURN
+
+_setupLines:
+
+  ` create the target goal posts
+  free sprite id(sid)
+  sprite sid, render width()/2, targetY - targetHeight/2, 0
+  size sprite sid, render width(), 4
+  color sprite sid, lineColor
+  set sprite render target sid, gameRenderTarget
+
+  
+  free sprite id(sid)
+  sprite sid, render width()/2, targetY + targetHeight/2, 0
+  size sprite sid, render width(), 4
+  color sprite sid, lineColor
+  set sprite render target sid, gameRenderTarget
+
+  ` create top bar
+  free sprite id(sid)
+  sprite sid, render width()/2, 100, 0
+  size sprite sid, render width(), 4
+  color sprite sid, lineColor
+  set sprite render target sid, gameRenderTarget
+
+RETURN
+
+_setupSnips:
+
+` create the snips
+dim snips(32) as snip
+  snip as snip
+  `y = -500
+  songTimeCounter = 3 / bps
+  noteDelta = 150
+  for n = 0 to len(snips) - 1
+    snips(n) = {
+      textId = reserve sprite id(snips(n).textId)
+      laneIndex = (n+rnd(2)) mod len(lanes),
+      index = rnd(len(snippets$))
+
+      ` reserve tween id(snips(n).scaleTween)
+      fadeTween = reserve tween id(snips(n).fadeTween)
+      scaleTween = reserve tween id(snips(n).scaleTween)
+      rotateTween = reserve tween id(snips(n).rotateTween)
+      `y = y,
+      ` songTime# = (songTimeCounter * bps * 1) * 1000 `arbitrary easy factor
+    }
+    ` songTimeCounter += 1 + rnd(3)
+
+    text snips(n).textId, getLaneX(snips(n).laneIndex), snips(n).y, 1, snippets$(snips(n).index)
+    set text render target snips(n).textId, gameRenderTarget
+    
+    resetSnip(n)
+  next
+  print "loaded snips"
+
+RETURN
+
+function resetSnip(n)
+    size text y snips(n).textId, 50
+    rotate text snips(n).textId, 0
+    set text alpha snips(n).textId, 255
+endfunction
+
+_initSnips:
+  songTimeCounter = 3 / bps
+
+  for n = 0 to len(snips) - 1
+    snips(n).songTime# = (songTimeCounter * bps * 1) * 1000
+    snips(n).dead = 0
+    snips(n).missed = 1
+    songTimeCounter += 1 + rnd(3)
+    set text position snips(n).textId, text x(snips(n).textId), -50
+    set text alpha snips(n).textId, 255
+
+  next
+RETURN
+
+_setupMan:
+
+  ` dancing man
+  danceManSprite = reserve sprite id(danceManSprite)
+  afroSprite = reserve sprite id(afroSprite)
+RETURN
+
+_initMan:
+  ` sprite danceManSprite, render width()/2, render height()/2, happyDanceTextures(rnd(len(happyDanceTextures)))
+  sprite danceManSprite, render width()/2, render height()/2, happyDanceTextures(0)
+  size sprite x danceManSprite, render width() / 3
+  set sprite render target danceManSprite, gameRenderTarget
+  order sprite danceManSprite, -2
+  color sprite danceManSprite, rgb(200, 200, 200)
+
+  sprite afroSprite, sprite x(danceManSprite), sprite y(danceManSprite), afroTextures(0)
+  set sprite render target afroSprite, gameRenderTarget
+  order sprite afroSprite, -1
+  color sprite afroSprite, rgb(203, 255, 214)
+  size sprite afroSprite, 140, 140
+  
+  afterIndex = 0
+  happyIndex = 0
+  sadIndex = 0
+
+  GOSUB _applyHappyAfro
+
+RETURN
+
+_applyHappyAfro:
+
+  isFlip = rnd(2)
+  flipSign = 1
+  if isFlip then flipSign = -1
+  set sprite flip dancemansprite, isFlip, 0
+  set sprite flip afroSprite, isFlip, 0
+
+  happyIndex = rnd(len(happyDanceTextures))
+  ` happyIndex = 3
+  set sprite texture dancemansprite, happyDanceTextures(happyIndex)
+
+  position sprite afroSprite, sprite x(danceManSprite) + happyAfros(happyIndex).x*flipSign, sprite y(danceManSprite) + happyAfros(happyIndex).y
+  rotate sprite afroSprite, happyAfros(happyIndex).angle + (happyAfros(happyIndex).dumbFlip * 3.14 * isFlip)
+  color sprite afroSprite, rainbowColors(rnd(len(rainbowColors)))
+  set sprite alpha afroSprite, 200
+
+RETURN
+_applySadAfro:
+  isFlip = rnd(2)
+  flipSign = 1
+  if isFlip then flipSign = -1
+  set sprite flip dancemansprite, isFlip, 0
+  set sprite flip afroSprite, isFlip, 0
+
+  sadIndex = 0`rnd(len(sadDanceTextures))
+  print "sad dance textures", len(sadDanceTextures)
+  set sprite texture dancemansprite, sadDanceTextures(sadIndex)
+
+  position sprite afroSprite, sprite x(danceManSprite) + sadAfros(sadIndex).x*flipSign, sprite y(danceManSprite) + sadAfros(sadIndex).y
+  rotate sprite afroSprite, sadAfros(sadIndex).angle + (sadAfros(sadIndex).dumbFlip * 3.14 * isFlip)
+
+RETURN
+
+_setupScoreTexts:
+    ` create the score text
+  ` scoreLabelTextId = reserve text id(scoreLabelTextId)
+  ` text scoreLabelTextId, 10, 10, 1, "SCORE"
+  ` set text offset scoreLabelTextId, 0, 0
+  ` size text y scoreLabelTextId, 30
+
+RETURN
+
+_setupCode:
+
+  ` set up the secret code
+  dim secretCode(8) as codePart
+  codePart as codePart
+  secretCodeSize = 5
+  pendingCodeIndex = 0
+  ` textX = 400
+  ` textY = 15
+  for n = 0 to len(secretCode) - 1
+    secretCode(n) = {
+      index = 1,
+      textId = reserve text id(secretCode(n).textId)
+      spriteId = reserve sprite id(spriteId)
+      crossSpriteId = reserve sprite id(crossSpriteId)
+      transformId = reserve transform id(transformId)
+    }
+
+    codePart = secretCode(n)
+    sid = codePart.spriteId
+    print "sprite part", sid
+    sprite codePart.spriteId, 80 + 125*n + rnd(10), render height() - (60+rnd(10)), TEX_PAPERS
+    set sprite frame sid, rnd(2)
+    set sprite flip sid, rnd(1), 0
+    color sprite sid, noteColors(3) -rnd(20)
+    r# = (rnd(10)-5) * .02
+    rotate sprite sid, r#
+    size = 125 + rnd(2)*8
+    size sprite sid, size, size
+
+    tid = codePart.textId
+
+    ` color sprite codePart.spriteId, rgb(255, 0, 0)
+    
+    ` if n > 0  
+    `   textX += get text size x(secretCode(n-1).textId) + 12
+    ` endif
+    wtf = secretCode(n).textId
+    print "wtf", wtf, n, len(snippets$), len(secretCode)
+    text secretCode(n).textId, sprite x(sid), sprite y(sid), 1, snippets$(secretCode(n).index)
+    size text y secretCode(n).textId, 25
+    color text secretCode(n).textId, rgb(255, 255, 255, 200)
+    rotate text secretCode(n).textId, r#
+    
+    ` enable text gizmo secretCode(n).textId
+    ` set text offset secretCode(n).textId, 0, 0
+    enable text drop shadow secretCode(n).textId, -4, -4, rgb(0,0,0)
+    order text secretCode(n).textId, 3
+    ` if textX + get text size x(secretCode(n).textId) > render width() - 10
+    `   textX = 400
+    `   textY += 35
+    `   set text position secretCode(n).textId, textX, textY
+    ` endif
+    ` sync
+  next
+
+RETURN
+
+_setupStatusText:
+  reserve text id(statusText)
+  text statusText, render width()/2, 30 + render height()/2, 1, "FINE"
+  set text render target statusText gamerendertarget
+  set text offset statusText, .5, .5
+  order text statusText, -2
+  size text y statusText 300
+  enable text drop shadow statusText, 0, 30, rgb(0,255, 255, 255)
+  color text statusText, rgb(128, 128, 128, 128)
+
+  reserve tween id(statusPunchTween)
+  reserve tween id(statusFadeTween)
+  reserve tween id(statusShakeTween)
+  
+  dim statusColors(4)
+  statusColors(3) = rgb(128, 255, 128)
+  statusColors(2) = rgb(128, 255, 255)
+  statusColors(1) = rgb(255, 128, 64)
+  statusColors(0) = rgb(255, 0, 0)
+
+
+  dim perfectStatusMessages$(3)
+  perfectStatusMessages$(0) = "PERF"
+  perfectStatusMessages$(1) = "BEST"
+  perfectStatusMessages$(2) = "FREN"
+
+  dim goodStatusMessages$(3)
+  goodStatusMessages$(0) = "OKAY"
+  goodStatusMessages$(1) = "FINE"
+  goodStatusMessages$(2) = "GOOD"
+
+  dim badStatusMessages$(3)
+  badStatusMessages$(0) = "MID"
+  badStatusMessages$(1) = "SAD"
+  badStatusMessages$(2) = "EEW"
+
+  statusCode = 0
+RETURN
+
+_punchLaneColor:
+  create basic tween lanes(hitLaneIndex).colorLerpTween, laneFadeAmount, 80, 200, 0
+  set tween type lanes(hitLaneIndex).colorLerpTween, 1
+
+  if statusCode
+    create basic tween lanes(hitLaneIndex).fillLerpTween, 0, 60, 200, 0
+  
+    color = rainbowColors(rnd(len(rainbowColors)))
+
+    color sprite lanes(hitLaneIndex).fillSprite, color
+    color sprite lanes(hitLaneIndex).leftGradSprite, color
+    color sprite lanes(hitLaneIndex).topGradSprite, color
+    color sprite lanes(hitLaneIndex).rightGradSprite, color
+    color sprite lanes(hitLaneIndex).lowGradSprite, color
+
+
+
+    else 
+    create basic tween lanes(hitLaneIndex).fillLerpTween, 0, 0, 200, 0
+
+    color = rgb(100,100,100)
+
+    color sprite lanes(hitLaneIndex).fillSprite, color
+    color sprite lanes(hitLaneIndex).leftGradSprite, color
+    color sprite lanes(hitLaneIndex).topGradSprite, color
+    color sprite lanes(hitLaneIndex).rightGradSprite, color
+    color sprite lanes(hitLaneIndex).lowGradSprite, color
+  endif
+  set tween type lanes(hitLaneIndex).fillLerpTween, 1
+
+RETURN
+
+_punchStatus:
+  select statusCode
+    case 3
+      set text statusText, perfectStatusMessages$(rnd(len(perfectStatusMessages$)))
+      enable text drop shadow statusText, 0, 30, statusColors(3)
+    endcase
+    case 2
+      set text statusText, goodStatusMessages$(rnd(len(goodStatusMessages$)))
+      enable text drop shadow statusText, 0, 30, statusColors(2)
+    
+    endcase
+    case 1
+      set text statusText, badStatusMessages$(rnd(len(badStatusMessages$)))
+      enable text drop shadow statusText, 0, 30, statusColors(1)
+    
+    endcase
+  endselect
+
+  size text y statusText, 300
+
+  create basic tween statusShakeTween, 0, 3 * statusCode, 100, 0
+  set tween type statusShakeTween, 1
+  create basic tween statusPunchTween, 280, 320, 250, 0
+  set tween easing statusPunchTween, 2
+  create basic tween statusFadeTween, 100, 0, 150, 100
+
+  set text alpha statusText, 128
+RETURN
+
+_updateStatus:
+  set screen shake amount tweenVal(statusShakeTween)
+  set screen shake bounce .5
+  size text y statusText, tweenVal(statusPunchTween)
+  set text alpha statusText, tweenVal(statusFadeTween)
+RETURN
+
+_setupVfx:
+  DIM vfxs(20) as vfx
+  vfx as vfx
+
+  global nextVfx = 0
+  for n = 0 to len(vfxs) - 1
+    vfxs(n) = {
+      spriteId = reserve sprite id(s)
+    }
+  next
+
+  global boomSfx
+  reserve sfx id(boomSfx)
+RETURN
+
+_loopVfx:
+  time = timer()
+  if nextVfx >= len(vfxs) - 1
+    nextVfx = 0
+  endif
+  for n = 0 to len(vfxs) - 1
+    vfx = vfxs(n)
+    endTime = vfx.startTimeMs + vfx.durationMs
+    ratio# = max(0, min(1, ((endTime - time) / (vfx.durationMs + 1.0))))
+    ratio# = 1 - ratio#
+    if (ratio# <= 0 or ratio# >= 1)
+      hide sprite vfx.spriteId
+      else
+      show sprite vfx.spriteId
+    endif
+    frame = vfx.startFrame + ratio# * (vfx.endFrame - vfx.startFrame)
+    set sprite frame vfx.spriteId, frame
+  next
+RETURN
+
+function spawnBoom(x, y, duration)
+  vfx = vfxs(nextVfx)
+
+  sfx boomSfx, SFX_BOOM(rnd(len(SFX_BOOM)))
+  play sfx boomSfx
+  vfx.textureId = TEX_BOOM(rnd(len(TEX_BOOM)))
+  sprite vfx.spriteId, x, y, vfx.textureId
+  order sprite vfx.spriteId, 10
+  set sprite frame vfx.spriteId, 0
+
+  size sprite vfx.spriteId, 400, 400
+  vfx.startFrame = 0
+  vfx.endFrame = 8*8
+  vfx.startTimeMs = timer()
+  vfx.durationMs = duration
+  vfxs(nextVfx) = vfx
+  inc extVfx
+endfunction 

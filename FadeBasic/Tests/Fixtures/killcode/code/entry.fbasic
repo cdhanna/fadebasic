@@ -1,0 +1,52 @@
+
+` :::: set up basic screen dimensions and such
+set render size 1280, 720
+set background color rgb(135, 123, 123)
+backgroundColor = rgb(62, 62, 62)
+
+font 1, "assets/fonts/pressStart"
+font 2, "assets/fonts/hand"
+
+loadingText = reserve text id(loadingText)
+text loadingtext, render width()/2, render height()/2, 1, "Loading"
+size text x loadingText, render width()/2
+
+scoreTextId = reserve text id(scoreTextId)
+
+` load all the assets
+GOSUB _loadAssets
+
+
+` :::: set up big game important variables.
+
+` the bpm of the loaded song
+bpm = 160
+bps as float = 60.0 / (bpm + 0.0)
+songLengthSeconds = 150
+
+` the location where we want the user to hit
+targetY = render height() - 135
+` the band they have to enter success
+targetHeight = 100
+
+laneTextY = render height()-40
+
+` starting score
+score = 0
+startCountdown = 3
+combo = 0
+maxCombo = 10
+startingLives = 5
+lives = 0
+
+` menu options
+isPauseMenu = 0
+
+laneFadeAmount = 15
+hitLaneIndex = 0
+
+ORDER_ANIM = 100
+ORDER_MENU = 200
+
+
+goto _main

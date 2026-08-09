@@ -1,0 +1,1449 @@
+_setupAnimatics:
+
+  ` setup the main backdrop
+  animBackdropSprite = reserve sprite id(animBackdropSprite)
+  sprite animBackdropSprite, 0, 0, 0
+  color Sprite animBackdropSprite, backgroundColor
+  size sprite animBackdropSprite, render width(), render height()
+  set sprite offset animBackdropSprite, 0, 0
+  order sprite animBackdropSprite, ORDER_ANIM
+  set sprite alpha animBackDropSprite, 0
+
+  animBackdropTween = reserve tween id(animBackdropTween)
+
+  ` skip text
+  animSkipText = reserve text id(animSkipText)
+  text animSkipText, render width()/2, render height() - 60, 1, "hold left shift to skip"
+  size text y animSkiptext, 20
+  enable text drop shadow animSkipText, 4, -4, rgb(0,0,0)
+  order text animSkipText, ORDER_ANIM + 100
+  set text alpha animSkipText, 180
+
+  animSkipSprite = reserve sprite id(animSkipSprite)
+  skipWidth = 220
+  sprite animSkipSprite, (render width()/2)-skipWidth, render height() - 40, 0
+  size sprite animSkipSprite, 0, 4
+  set sprite offset animSkipSprite, 0, .5
+  order sprite animSkipSprite, ORDER_ANIM + 100
+  set sprite alpha animSkipSprite, 100
+
+
+  ignoreAnimaticStartFade = 0
+  ignoreAnimaticEndFade = 0
+  effect 1, "mask"
+
+  remstart
+    An animatic is made up of several little animations. 
+    To control this, we'll have a big array of anim objects
+    and they get setup programmatically.
+
+    Then we run through the anim array until all of them are complete. 
+    At that point, the animatic is complete. 
+
+
+  remend
+
+  global MAX_ANIM_COUNT = 200
+  DIM anims(MAX_ANIM_COUNT) as anim
+  anim as anim
+  animCount = 0
+
+
+  dim animSpriteIds(MAX_ANIM_COUNT)
+  for n = 0 to MAX_ANIM_COUNT - 1
+    reserve sprite id(animSpriteIds(n))
+  next
+
+  dim animSfxIds(MAX_ANIM_COUNT)
+  for n = 0 to MAX_ANIM_COUNT - 1
+    reserve sfx id(animSfxIds(n))
+  next
+
+  ` reserve some panel textures
+  ` global MAX_PANEL_COUNT = 10
+  ` DIM panels(MAX_PANEL_COUNT)
+  ` panelCount = 0
+  ` for n = 0 to len(panels) - 1
+  `   panels(n) = reserve render target id(panels(n))
+  ` next
+
+  forceTimeStart = 0*1000 ` reset to zero after adding new anims
+
+RETURN
+
+_playAnimatic:
+
+  ` bring in the backdrop
+  ` show sprite animbackdropsprite
+  startSkip = 0
+  size sprite animskipsprite, 0*skipWidth*2, 4
+  skipRatio# = 0
+  if ignoreAnimaticStartFade = 0
+    create basic tween animBackdropTween, 0, 1, 500, 0
+    while is tween done(animbackdroptween) = 0
+      set sprite alpha animbackdropsprite, tweenVal(animBackdropTween) * 255
+      set sprite alpha animskipsprite, tweenVal(animBackdropTween) * 100
+      set text alpha animskiptext, tweenVal(animBackdropTween) * 180
+      sync
+    endwhile
+  endif
+
+  highestEndMs = 0
+
+  ` setup all the sprites
+  for n = 0 to animCount - 1
+    anim = anims(n)
+
+    anim.pos = anim.startPos
+    anim.size = anim.startSize
+
+    anim.volume = anim.startVolume
+    anim.pitch = anim.startPitch
+    anim.pan = anim.startPan
+
+    if anim.sfxClipId
+      sfx animSfxIds(n), anim.sfxClipId
+    endif
+
+    sprite animSpriteIds(n), anim.pos.x, anim.pos.y, anim.textureId
+    set sprite offset animSpriteIds(n), 0, 0
+    size sprite animSpriteIds(n), anim.size.x, anim.size.y
+    color sprite animSpriteIds(n), rgb(255, 255, 255)
+  
+    order sprite animSpriteIds(n), ORDER_ANIM + 200+ anim.order
+    set sprite alpha animSpriteIds(n), 255
+    if anim.endTimeMs > highestEndMs
+      highestEndMs = anim.endTimeMs
+    endif
+
+    if anim.animMaskIndex
+      set sprite effect animSpriteIds(n), 1
+    else 
+      set sprite effect animSpriteIds(n), 0
+    endif
+    set sprite flip animSpriteIds(n), anim.xFlip, 0
+
+    if anim.color <> 0 then color sprite animSpriteIds(n), anim.color
+
+    anims(n) = anim
+    ` set sprite gizmo thickness animSpriteIds(n), anim.borderWidth 
+  next
+
+  ` correct any animations
+  for n = 0 to animCount - 1
+    anim = anims(n)
+    if anim.endTimeMs <= 0
+      anim.endTimeMs = highestEndMs
+    endif
+    if anim.locktime <= 0
+      anim.lockTime = anim.endTImeMs
+    endif
+    if anim.fadeOutTimems <= 0
+      anim.fadeOutTimeMs = 0
+    endif
+    if anim.fadeInTimeMs <= 0
+      anim.fadeInTimeMs = 100
+    endif
+
+    if anim.startVolume =0
+      anim.startVolume = 1
+    endif
+    if anim.endVolume=0
+      anim.endVolume = anim.startVolume
+
+    endif
+
+     if anim.startPitch =0
+      anim.startPitch = 1
+    endif
+    if anim.endPitch =0
+      anim.endPitch = anim.startPitch
+    endif
+
+     if anim.startPan=0
+      anim.startPan = 1
+    endif
+    if anim.endPan=0
+      anim.endPan = anim.startPan
+    endif
+    anims(n) = anim
+  next
+
+
+  animStartMs = timer()
+
+  skipDuration as float = 600
+  startSkip = 0
+  do
+  
+    time = (timer() - animStartMs) + forceTimeStart
+    ` time = forceTimeStart
+
+    if (left shiftKey())
+      if startSkip = 0
+        startSkip = time
+      endif
+
+      skipRatio# = min(1, 1 - (((startSkip + skipDuration) - time) / skipDuration))
+      size sprite animskipsprite, skipRatio# * skipWidth*2, 4
+      else
+      startSkip = 0
+      size sprite animskipsprite, 0*skipWidth*2, 4
+      skipRatio# = 0
+    endif
+    if skipRatio# >= 1
+      time = highestEndMs + 1
+    endif
+
+    anyLeft = 0
+
+    for n = 0 to animCount - 1
+      anim = anims(n)
+
+      ` how many ms away from the start are we? 
+      `  negative numbers are leading up to the start time, 
+      `  positive numbers are into the animation. 
+      animTime = time - anim.startTimeMs
+
+      fadeInTime = -anim.fadeInTimeMs
+      fadeInRatio# = 1 - max(0, min(1, (fadeInTime - animTime) / (anim.fadeInTimeMs+1) ))`(-500 - -300)/-500 = -200 /-500 = -.2
+
+      ` fadeInRatio# = fadeInRatio#*fadeInRatio#*fadeInRatio#
+
+      fadeOutTime = (anim.endTimeMs-anim.startTimeMs) - anim.fadeOutTimeMs
+      fadeOutRatio# = max(0, min(1, (fadeOutTime - animTime) / (anim.fadeOutTimeMs + 1)))
+      lockTime = (anim.lockTime-anim.startTimeMs)
+
+      if animTime < 0
+        set sprite alpha animSpriteIds(n), fadeInRatio# * 255
+      else
+        set sprite alpha animSpriteIds(n), fadeOutRatio# * 255
+      endif
+
+      if animTime > anim.sfxDelayMs and anim.sfxClipId and skipRatio# < 1
+        print "I WAN TTO PLAY", animSfxIds(n), anim.sfxClipId, anim.startVolume, anim.endVolume
+        play sfx animSfxIds(n)
+        anim.sfxCliPId = 0
+
+      endif
+
+      animRatio# = max(0, min(1, 1 - ((lockTime - animTime + 0.0) / (lockTime - fadeInTime)))) 
+      ` print "anim ratio", animRatio#
+
+      set sfx volume animSfxIds(n), anim.startVolume + animRatio# * (anim.endVolume - anim.startVolume)
+      ` set sfx pitch animSfxIds(n), anim.startPitch + animRatio# * (anim.endPitch - anim.startPitch)
+      ` set sfx pan animSfxIds(n), anim.startPan + animRatio# * (anim.endPan - anim.startPan)
+
+      if anim.endPos.x <> 0 
+        anim.pos.x = anim.startPos.x + animRatio# * (anim.endPos.x - anim.startPos.x)
+        anim.pos.y = anim.startPos.y + animRatio# * (anim.endPos.y - anim.startPos.y)
+        position sprite animSpriteIds(n), anim.pos.x, anim.pos.y
+      endif
+      if anim.endSize.x <> 0
+        anim.size.x = anim.startSize.x + animRatio# * (anim.endSize.x - anim.startSize.x)
+        anim.size.y = anim.startSize.y + animRatio# * (anim.endSize.y - anim.startSize.y)
+        size sprite animSpriteIds(n), anim.size.x, anim.size.y
+      endif
+
+      anims(n) = anim
+
+
+      if (anim.animMaskIndex)
+        ` set sprite 
+        ` maskSpriteId = animSpriteIds(anim(maskSpriteId-1))
+        panel as anim = anims(anim.animMaskIndex - 1)
+
+        sw# = anim.size.x
+        sh# = anim.size.y
+        sx# = anim.pos.x
+        sy# = anim.pos.y
+        px# = panel.pos.x
+        py# = panel.pos.y
+        pw# = panel.size.x
+        ph# = panel.size.y
+        
+        uvX1# = (px# - sx#) / sw#
+        uvX2# = ((px# + pw#) - sx#) / sw#
+        uvY1# = (py# - sy#) / sh#
+        uvY2# = ((py# + ph#) - sy#) / sh#
+
+        if (anim.xFlip)
+          uvX1# = 1 - uvX1#
+          uvX2# = 1 - uvX2#
+
+          temp# = uvX1#
+          uvX1# = uvX2#
+          uvX2# = temp#
+          ` enable sprite gizmo animSpriteIds(n)
+        endif
+
+        set sprite all texcoord1 animSpriteIds(n), uvX1#, uvY1#, uvX2#, uvY2#
+      endif
+
+
+      if time < anim.endTimeMs
+        anyLeft = 1
+      endif
+
+
+    next
+
+    if not anyLeft
+      exit
+    endif
+    sync
+  loop
+
+
+  if ignoreAnimaticEndFade = 0
+    create basic tween animBackdropTween, 1, 0, 500, 0
+
+    while is tween done(animbackdroptween) = 0
+      ` set sprite alpha animbackdropsprite, tweenVal(animBackdropTween) * 255
+      set sprite alpha animskipsprite, tweenVal(animBackdropTween) * 100
+      set text alpha animskiptext, tweenVal(animBackdropTween) * 180
+      sync
+    endwhile
+  endif
+
+RETURN
+
+type anim
+
+  `[REQUIRED] the sprite's texture
+  textureId
+
+  `[REQUIRED] at what point does this animation enter
+  startTimeMs as float
+
+  `[REQUIRED] at what point does this animation exit
+  endTimeMs as float
+
+  startPos as iVec
+  startSize as iVec
+  pos as iVec
+  size as iVec
+
+  sfxClipId
+  sfxDelayMs
+  volume as float
+  startVolume as float
+  endVolume as float
+  pan as float
+  startPan as float
+  endPan as float
+  pitch as float
+  startPitch as float
+  endPitch as float
+
+
+  `[OPTIONAL] 
+  fadeInTimeMs as float
+
+  `[OPTIONAL] 
+  fadeOutTimeMs as float
+
+  lockTime 
+  endPos as iVec
+  endSize as iVec
+
+  xFlip
+  color
+  animMaskIndex
+  borderWidth
+  order
+endtype
+
+
+_resetAnim:
+  for n = 0 to MAX_ANIM_COUNT - 1
+    anim = anims(n)
+    ` anim.color = rgb(255, 255, 255)
+    
+    anims(n) = anim
+  next
+RETURN
+
+function addAnim(textureId, duration, pos as iVec, size as iVec)
+
+endfunction
+
+` setup a test animation
+_animTest:
+  GOSUB _resetAnim
+  anims(0) = {
+    textureId = 0,
+    startTimeMs = 200
+    lockTime = 1000
+    startPos = {
+      x = 100,
+      y = 100
+    },
+    endPos = {
+      x = 200,
+      y = 0
+    }
+    startSize = {
+      x = 300
+      y = 300
+    }
+    borderWidth = 12
+    color = rgb(255, 146, 146)
+  }
+
+  anims(1) = {
+    textureId = happyDanceTextures(2),
+    startTimeMs = 400
+    endTimeMs = 4000
+    ` lockTime = 1000
+    startPos = {
+      x = 150,
+      y = 100
+    },
+    startSize = {
+      x = 400
+      y = 400
+    },
+    endSize = {
+      x = 300, y = 300
+    }
+
+    ` animMaskIndex = 1 ` use the index+1
+  }
+
+  animCount = 2
+
+RETURN
+
+
+_fullAnimIntro:
+
+  ` reserve sfx id(introSFX)
+  ` sfx introSFX
+  ignoreAnimaticEndFade = 1
+  ignoreAnimaticStartFade = 0
+
+  GOSUB _animintro
+  GOSUB _playanimatic
+  ignoreAnimaticStartFade = 1
+
+  GOSUB _intro3
+  GOSUB _playanimatic
+
+  GOSUB _intro4
+  GOSUB _playanimatic
+
+
+  GOSUB _intro5
+  GOSUB _playanimatic
+
+  GOSUB _intro6
+  GOSUB _playanimatic
+
+  ignoreAnimaticEndFade = 0
+
+  GOSUB _intro7
+  GOSUB _playanimatic
+
+  ignoreAnimaticStartFade = 0
+
+
+RETURN
+
+_intro1:
+  GOSUB _resetAnim
+
+  anims(0) = {
+    textureId = 0,
+    sfxClipId = SFX_INTRO_1
+    startTimeMs = 1
+    endTimeMs = 4 * 1000
+    startVolume = 1
+    endVolume = .01
+    startPos = {
+      x = 0,
+      y = 0
+    }
+    startSize = {
+      x = render width()
+      y = render height()
+    }
+    color = rgb(0, 0, 0)
+  }
+  animCount = 0
+
+RETURN
+
+_intro3:
+  GOSUB _resetAnim
+
+  sfxIntro5End = 10 * 1000
+  panel2EnterTime = 5 * 1000
+
+  `first panel
+  anims(0) = {
+    textureId = 0,
+    startTimeMs = 0
+    endTimeMs = sfxIntro5End
+    sfxCLipId = SFX_INTRO_5
+    startPos = {
+      x = 100,
+      y = 20
+    }
+    ` endPos = {
+    `   x = 100
+    `   y = 20
+    ` }
+    startSize = {
+      x = render width() - 200
+      y = render height() - 200
+    }
+    color = rgb(80, 61, 61)
+  }
+
+  ` left titan
+  anims(1) = {
+    textureId = TEX_TITAN2,
+    startTimeMs = 0
+    endTimeMs = sfxIntro5End
+    startPos = {
+      x = 100,
+      y = 80
+    }
+    endPos = {
+      x = 200
+      y = 120
+    }
+    startSize = {
+      x = 600
+      y = 600
+    }
+    animMaskIndex = 1 ` use the index+1
+
+  }
+
+    ` right titan
+  anims(2) = {
+    textureId = TEX_TITAN1,
+    startTimeMs = 0
+    endTimeMs = sfxIntro5End
+    startPos = {
+      x = render width() - 700,
+      y = 0
+    }
+    endPos = {
+      x = render width() - 750
+      y = 10
+    }
+    startSize = {
+      x = 800
+      y = 800
+    }
+    animMaskIndex = 1 ` use the index+1
+
+  }
+
+
+  `first panel
+  anims(3) = {
+    textureId = 0,
+    startTimeMs = panel2EnterTime
+    startPos = {
+      x = render width() / 2 - 200,
+      y = render height() - 350
+    }
+    endPos = {
+      x = render width() / 2 - 250
+      y = render height() - 400
+    }
+    startSize = {
+      x = 400
+      y = 250
+    }
+    endSize = {
+      x = 450
+      y = 300
+    }
+    color = rgb(52, 41, 41)
+  }
+
+`boy
+  anims(4) = {
+    textureId = TEX_RUNNING_BOY,
+    startTimeMs = panel2EnterTime
+    startPos = {
+      x = render width() / 2 - 200,
+      y = render height() - 350
+    }
+    endPos = {
+      x = render width() / 2 - 250
+      y = render height() - 400
+    }
+    startSize = {
+      x = 500
+      y = 350
+    }
+    animMaskIndex = 4 ` use the index+1
+
+  }
+
+  animCount = 5
+
+RETURN
+
+_intro4:
+  GOSUB _resetAnim
+
+  intro6Length = 8 * 1000
+  intro7Length = 5 * 1000
+  endTime = intro6Length + intro7Length
+
+  `first panel
+  anims(0) = {
+    textureId = 0,
+    sfxClipId = SFX_INTRO_6
+    endTimeMs = endTime
+    startTimeMs = 0
+    startPos = {
+      x = 100,
+      y = 50
+    }
+    startSize = {
+      x = render width() / 2 - 200
+      y = render height() - 200
+    }
+    color = rgb(135, 124, 124)
+  }
+
+  `second panel
+anims(1) = {
+    textureId = 0,
+    sfxClipId = SFX_INTRO_7
+    endTimeMs = endTime
+    startTimeMs = intro6Length
+    startPos = {
+      x = render width() / 2 + 100,
+      y = 50
+    }
+    startSize = {
+      x = render width() / 2 - 200
+      y = render height() - 200
+    }
+    color = rgb(135, 124, 124)
+  }
+
+  `left hood
+anims(2) = {
+    textureId = TEX_HOODED_MAN_FRONT,
+    lockTime = endTime
+  
+    startTimeMs = 1000
+    fadeInTimeMs = 400
+    startPos = {
+      x = 100,
+      y = 150
+    }
+    startSize = {
+      x = render width() / 2 - 200
+      y = render height() - 200
+    }
+    color = rgb(121, 121, 121)
+    animMaskIndex = 1 ` use the index+1
+
+  }
+
+
+  `right hood
+anims(3) = {
+    textureId = TEX_CLOSE_UP,
+    lockTime = endTime
+    startTimeMs = intro6Length + 500
+    fadeInTimeMs = 400
+startPos = {
+      x = render width() / 2 + 100,
+      y = 50
+    }
+    startSize = {
+      x = render width() / 2 - 200
+      y = render height() - 200
+    }
+    color = rgb(96, 96, 96)
+    animMaskIndex = 2 ` use the index+1
+
+  }
+
+  animCount = 4
+RETURN
+
+
+_intro5:
+  GOSUB _resetAnim
+
+  `first panel
+  anims(0) = {
+    textureId = 0,
+    sfxClipId = SFX_INTRO_8
+    endTimeMs = 7*1000
+    startPos = {
+      x = 100,
+      y = 100
+    }
+    startSize = {
+      x = render width() - 200
+      y = render height() - 200
+    }
+    color = rgb(135, 124, 124)
+  }
+
+  anims(1) = {
+    textureId = TEX_OFFICE,
+    startPos = {
+      x = 100,
+      y = 100
+    }
+    endPos = {
+      x = 80,
+      y = 100
+    }
+    startSize = {
+      x = 1200
+      y = 1200
+    }
+    color = rgb(255, 255, 255)
+    animMaskIndex = 1 ` use the index+1
+
+  }
+
+
+  anims(2) = {
+    textureId = TEX_HOODED_MAN,
+    startPos = {
+      x = 500,
+      y = 450
+    }
+    endPos = {
+      x = 520,
+      y = 450
+    }
+    startSize = {
+      x = 128*1.5
+      y = 256*1.5
+    }
+    color = rgb(126, 126, 126)
+    animMaskIndex = 1 ` use the index+1
+  }
+
+
+  animCount = 3
+RETURN
+
+
+_intro6:
+  GOSUB _resetAnim
+
+  `first panel
+  anims(0) = {
+    textureId = 0,
+    sfxClipId = SFX_INTRO_9
+    endTimeMs = 6*1000
+    startPos = {
+      x = 100,
+      y = 100
+    }
+    startSize = {
+      x = render width() - 200
+      y = render height() - 200
+    }
+    color = rgb(135, 124, 124)
+  }
+
+  anims(1) = {
+    textureId = TEX_BINARY_BACKGROUND,
+    startPos = {
+      x = 100,
+      y = 100
+    }
+    endPos = {
+      x = 100,
+      y = 50
+    }
+    startSize = {
+      x = 1200
+      y = 1200
+    }
+    color = rgb(204, 255, 176)
+    animMaskIndex = 1 ` use the index+1
+
+  }
+
+
+  anims(2) = {
+    textureId = TEX_HOODED_MAN,
+    startPos = {
+      x = 520,
+      y = 450
+    }
+    endPos = {
+      x = 540,
+      y = 450
+    }
+    startSize = {
+      x = 128*1.5
+      y = 256*1.5
+    }
+    color = rgb(126, 126, 126)
+    animMaskIndex = 1 ` use the index+1
+  }
+
+  anims(3) = {
+    textureId = TEX_MONEY_SNAKE,
+    startPos = {
+      x = 50,
+      y = 100
+    }
+    startSize = {
+      x = 512
+      y = 512
+    }
+    endSize = {
+      x = 512+80
+      y = 512
+    }
+    color = rgb(255, 255, 255)
+    animMaskIndex = 1 ` use the index+1
+  }
+
+anims(4) = {
+    textureId = TEX_MONSTER_SNAKE,
+    startPos = {
+      x = render width() -(50+512),
+      y = 100
+    }
+     endPos = {
+      x = render width() -(50+512+80),
+      y = 100
+    }
+    startSize = {
+      x = 512
+      y = 512
+    }
+    endSize = {
+      x = 512 + 80
+      y = 512
+    }
+    color = rgb(255, 255, 255)
+    animMaskIndex = 1 ` use the index+1
+  }
+  animCount = 5
+RETURN
+
+
+_intro7:
+  GOSUB _resetAnim
+
+  intro10Length = (13 * 1000) + 160
+  intro11Length = 9 * 1000
+  endTime = intro10Length + intro11Length
+
+  `first panel
+  anims(0) = {
+    textureId = 0,
+    sfxClipId = SFX_INTRO_10
+    startTimeMs = 1
+    endTimeMs = endTime
+    startPos = {
+      x = 100,
+      y = 50
+    }
+    startSize = {
+      x = render width() / 2 - 200
+      y = render height() - 200
+    }
+    color = rgb(132, 99, 99)
+  }
+
+  `second panel
+anims(1) = {
+    textureId = 0,
+    sfxClipId = SFX_INTRO_11
+    endTimeMs = endTime
+    startTimeMs = intro10Length
+    startPos = {
+      x = render width() / 2 + 100,
+      y = 50
+    }
+    startSize = {
+      x = render width() / 2 - 200
+      y = render height() - 200
+    }
+    color = rgb(135, 124, 124)
+  }
+
+  `left hood
+anims(2) = {
+    textureId = TEX_HOODED_MAN_LOWERING,
+    lockTime = endTime
+  
+    startTimeMs = 1000
+    fadeInTimeMs = 400
+    startPos = {
+      x = 100,
+      y = 150
+    }
+    startSize = {
+      x = render width() / 2 - 200
+      y = render height() - 200
+    }
+    color = rgb(121, 121, 121)
+    animMaskIndex = 1 ` use the index+1
+
+  }
+
+
+  `right hood
+anims(3) = {
+    textureId = TEX_HOODED_MAN_REVEAL,
+    lockTime = endTime
+    startTimeMs = intro10Length + 500
+    fadeInTimeMs = 400
+startPos = {
+      x = render width() / 2 + 100,
+      y = 250
+    }
+    startSize = {
+      x = render width() / 2 - 200
+      y = render height() - 350
+    }
+    color = rgb(96, 96, 96)
+    animMaskIndex = 2 ` use the index+1
+
+  }
+
+
+  `right hood
+anims(4) = {
+    textureId = afroTextures(0),
+    lockTime = endTime
+    startTimeMs = intro10Length + 500
+    fadeInTimeMs = 400
+startPos = {
+      x = render width() / 2 + 120,
+      y = 20
+    }
+    startSize = {
+      x = render width() / 2 - 290
+      y = render height() - 320
+    }
+    color = rgb(153, 208, 255)
+    animMaskIndex = 2 ` use the index+1
+
+  }
+
+  animCount = 5
+RETURN
+
+` setup a test animation
+_animIntro:
+  GOSUB _resetAnim
+
+  clipLength = 7
+  clipLength2 = 9
+  clipLength3 = 6
+
+  clip2EndTime = clipLength + clipLength2
+  clip3EndTime = clip2EndTime + clipLength3
+
+  w# = 486
+  h# = 343
+
+  a# = w# / h#
+  y# = (render width()-200) / a#
+  x# = (render height()-200) * a#
+
+
+  `first panel
+  anims(0) = {
+    textureId = 0,
+    startTimeMs = 200
+    endTimeMs = 10 * 1000
+    startPos = {
+      x = 100,
+      y = 100
+    }
+    startSize = {
+      x = x#
+      y = render height() - 200
+    }
+    color = rgb(0, 0, 0)
+  }
+
+  ` city backdrop, panel 1 486x343
+  anims(1) = {
+    textureId = TEX_NIGHTSCAPE,
+    startTimeMs = 200
+    lockTime = clipLength * 1000
+    endTimeMs = clipLength * 1000
+
+    startPos = {
+      x = 100,
+      y = 100
+    }
+    endPos = {
+      x = 50,
+      y = 100
+    }
+    startSize = {
+      x = x# * 1.2
+      y = (render height()-200) * 1.2
+    }
+    color = rgb(205, 205, 205)
+    animMaskIndex = 1 ` use the index+1
+  }
+
+  ` hooded man
+  anims(2) = {
+    textureId = TEX_HOODED_MAN,
+    startTimeMs = 200
+    lockTime = clipLength * 1000
+    endTimeMs = clipLength * 1000
+    order = 10
+    ` endTimeMs = 10 * 1000
+    startPos = {
+      x = 630,
+      y = render height() - (200 +128)
+    }
+    endPos = {
+      x = 630 - 30,
+      y = render height() - (200 +128)
+    }
+    startSize = {
+      x = 128
+      y = 256
+    }
+    endSize = {
+      x = 128*1.3
+      y = 256*1.3
+    }
+    color = rgb(119, 119, 119)
+    animMaskIndex = 1 ` use the index+1
+  }
+
+  redTint = rgb(255, 194, 194)
+  anims(3) = {
+    textureId = TEX_NIGHTSCAPE,
+    startTimeMs = clipLength * 1000
+    lockTime = clip2EndTime * 1000
+    ` endTimeMs = 15 * 1000
+
+    startPos = {
+      x = 50,
+      y = 100
+    }
+
+    endPos = {
+      x = 1,
+      y = 100
+    }
+
+    startSize = {
+      x = x# * 1.2
+      y = (render height()-200) * 1.2
+    }
+    color =redTint
+    animMaskIndex = 1 ` use the index+1
+  }
+
+
+  ` hooded man bright mode
+  anims(4) = {
+    textureId = TEX_HOODED_MAN,
+    startTimeMs = 200
+    startTimeMs = clipLength * 1000
+    lockTime = clip2EndTime * 1000
+    ` endTimeMs = 10 * 1000
+    order = 10
+    ` endTimeMs = 10 * 1000
+    endPos = {
+      x = 630 - 60,
+      y = render height() - (200 +128)
+    }
+    startPos = {
+      x = 630 - 30,
+      y = render height() - (200 +128)
+    }
+    endSize = {
+      x = 128*1.4
+      y = 256*1.4
+    }
+    startSize = {
+      x = 128*1.3
+      y = 256*1.3
+    }
+    color = rgb(130, 84, 84)
+    animMaskIndex = 1 ` use the index+1
+  }
+
+
+  ` monster 1
+  anims(5) = {
+    textureId = TEX_MONSTER_1,
+    startTimeMs = clipLength * 1000
+    lockTime = clip2EndTime * 1000
+    order = 5
+    startPos = {
+      x = 200,
+      y = 200
+    }
+    endPos = {
+      x = 200-49,
+      y = 200
+    }
+  
+    startSize = {
+      x = 128
+      y = 256
+    }
+    color = redTint
+
+    animMaskIndex = 1 ` use the index+1
+  }
+
+
+  ` monster 2
+  x = 600
+  anims(7) = {
+    textureId = TEX_MONSTER_2,
+    startTimeMs = clipLength * 1000
+    lockTime = clip2EndTime * 1000
+    order = 5
+    startPos = {
+      x = x,
+      y = 300
+    }
+    endPos = {
+      x = x-49,
+      y = 300
+    }
+  
+    startSize = {
+      x = 256
+      y = 128
+    }
+    color = redTint
+    animMaskIndex = 1 ` use the index+1
+  }
+
+
+  ` monster 3
+  x = 515
+  y = 50
+  anims(8) = {
+    textureId = TEX_MONSTER_3,
+    startTimeMs = clipLength * 1000
+    lockTime = clip2EndTime * 1000
+    order = 4
+    startPos = {
+      x = x,
+      y = y
+    }
+    endPos = {
+      x = x-49,
+      y = y
+    }
+  
+    startSize = {
+      x = 128
+      y = 256
+    }
+    xflip = 1
+    color = redTint
+    animMaskIndex = 1 ` use the index+1
+  }
+
+
+  ` monster 4
+  x = 320
+  y = 330
+  anims(9) = {
+    textureId = TEX_MONSTER_4,
+    startTimeMs = clipLength * 1000
+    sfxClipId = SFX_INTRO_3
+    lockTime = clip2EndTime * 1000
+    order = 10
+    startPos = {
+      x = x,
+      y = y
+    }
+    endPos = {
+      x = x-30,
+      y = y
+    }
+  
+    startSize = {
+      x = 128*1.4
+      y = 256*1.4
+    }
+    color = redTint
+    animMaskIndex = 1 ` use the index+1
+  }
+
+
+  ` monster 5 
+  x = 65000
+  y = 80
+  anims(6) = {
+    textureId = TEX_MONSTER_5,
+    startTimeMs = clipLength * 1000
+    ` sfxClipId = SFX_INTRO_3
+
+    lockTime = clip2EndTime * 1000
+    order = 5
+    startPos = {
+      x = x,
+      y = y
+    }
+    endPos = {
+      x = x-49,
+      y = y
+    }
+  
+    startSize = {
+      x = 256*1.3
+      y = 256*1.3
+    }
+    xflip = 1
+    ` color = rgb(0, 0, 0, 0)
+    ` animMaskIndex = 1 ` use the index+1
+  }
+  ` white flash overrides monster right
+  anims(6) = {
+
+    sfxClipId = SFX_THUNDER,
+    sfxDelayMs = -500
+
+    startVolume = .3
+    startPan = -1
+    endPan = 1
+    textureId = 0,
+    startTimeMs = (clipLength * 1000)
+    fadeInTimeMs = 50
+
+    endTimeMs = (clipLength * 1000)
+    fadeouttimems = 50
+    order = 15
+    startPos = {
+      x = 100,
+      y = 100
+    }
+    
+    color = rgb(255, 255, 255, 200)
+    startSize = {
+      x = x#
+      y = render height() - 200
+    }
+    ` color = rgb(0, 0, 0, 0)
+    ` animMaskIndex = 1 ` use the index+1
+  }
+
+  panel2StartOffset = -3000
+
+  `second panel
+  anims(10) = {
+    textureId = 0,
+    startTimeMs = panel2StartOffset + clip2EndTime * 1000
+    endTimeMs = clip3EndTime * 1000
+    startPos = {
+      x = x# + 150,
+      y = 100
+    }
+    startSize = {
+      x = (render width() - x# + 250)
+      y = render height() - 200
+    }
+    color = rgb(33, 22, 22)
+  }
+
+  `boss
+  panelLeft = x# + 150
+  x = panelLeft + 50
+  y = 165
+  anims(11) = {
+    textureId = TEX_BIZ_BOSS,
+    startTimeMs =  panel2StartOffset +clip2EndTime * 1000
+    fadeInTimeMs = 200
+    endTimeMs = clip3EndTime * 1000
+    startPos = {
+      x = x
+      y = y
+    }
+    endPos = {
+      x = x
+      y = y + 50
+    }
+    order = 10
+    startSize = {
+      x = 180,
+      y = 180
+    }
+    ` color = rgb(255, 146, 146)
+    animMaskIndex = 11 ` use the index+1
+  }
+  
+
+  `board room
+  x = panelLeft + 20
+  y = 190
+  anims(12) = {
+    textureId = TEX_BOARDROOM,
+    startTimeMs = panel2StartOffset + clip2EndTime * 1000
+    fadeInTimeMs = 200
+    endTimeMs = clip3EndTime * 1000
+    startPos = {
+      x = x
+      y = y
+    }
+    endPos = {
+      x = x 
+      y = y + 50
+    }
+    order = 11
+    startSize = {
+      x = 256,
+      y = 512
+    }
+    endSize = {
+      x = 256,
+      y = 600
+    }
+    animMaskIndex = 11 ` use the index+1
+  }
+
+
+  `biz man 1
+  x = panelLeft + 30
+  y = 220
+  anims(13) = {
+    textureId = TEX_BIZ_MAN,
+    startTimeMs = panel2StartOffset + 1200 + clip2EndTime * 1000
+    fadeInTimeMs = 500
+
+    endTimeMs = clip3EndTime * 1000
+    startPos = {
+      x = x
+      y = y
+    }
+    endPos = {
+      x = x 
+      y = y + 50
+    }
+    order = 11
+    startSize = {
+      x = 128,
+      y = 128
+    }
+    animMaskIndex = 11 ` use the index+1
+  }
+
+
+  `arrow
+  x = panelLeft + 0
+  y = 60
+  anims(14) = {
+    textureId = TEX_ARROW,
+    sfxClipId = SFX_INTRO_4
+    startTimeMs = panel2StartOffset +  3000 + clip2EndTime * 1000
+    fadeInTimeMs = 500
+
+    endTimeMs = clip3EndTime * 1000
+    startPos = {
+      x = x
+      y = y
+    }
+    endPos = {
+      x = x
+      y = y - 50
+    }
+    order = 8
+    startSize = {
+      x = 350,
+      y = 350
+    }
+    endSize = {
+      x = 380
+      y = 400
+    }
+    color = rgb(0,255,0)
+    ` animMaskIndex = 11 ` use the index+1
+  }
+
+
+  `biz man 2
+  x = panelLeft + 115
+  y = 320
+  anims(15) = {
+    textureId = TEX_BIZ_MAN,
+    startTimeMs = panel2StartOffset +  1800 + clip2EndTime * 1000
+    fadeInTimeMs = 500
+
+    endTimeMs = clip3EndTime * 1000
+    startPos = {
+      x = x
+      y = y
+    }
+    endPos = {
+      x = x 
+      y = y + 50
+    }
+    order = 11
+    startSize = {
+      x = 200,
+      y = 200
+    }
+    xFlip = 1
+    animMaskIndex = 11 ` use the index+1
+  }
+
+  `biz man 3
+    x = panelLeft + 5
+    y = 420
+    anims(16) = {
+      textureId = TEX_BIZ_MAN,
+      startTimeMs = panel2StartOffset +  2400 + clip2EndTime * 1000
+      fadeInTimeMs = 500
+
+      endTimeMs = clip3EndTime * 1000
+      startPos = {
+        x = x
+        y = y
+      }
+      endPos = {
+        x = x 
+        y = y + 50
+      }
+      order = 11
+      startSize = {
+        x = 128 * 1.4,
+        y = 178 * 1.2
+      }
+      animMaskIndex = 11 ` use the index+1
+    }
+
+
+  `intro audio 2
+  anims(17) = {
+      textureId = 0,
+      startTimeMs = 0
+      sfxClipId = SFX_INTRO_2
+      startPos = {
+        x = 0
+        y = 0
+      }
+      startSize = {
+        x = 1
+        y = 1
+      }
+    }
+
+  animCount = 18
+
+RETURN

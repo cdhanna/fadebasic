@@ -1,0 +1,337 @@
+
+_main:
+
+
+` setup music
+reserve sfx id(mainMusic)
+sfx mainMusic, 1
+
+reserve sfx id(impactSfx)
+set sfx volume impactSfx, .3
+
+reserve sfx id(fanfareSfx)
+sfx fanfareSfx, SFX_VICTORY
+
+GOSUB _setupSnippets
+GOSUB _setupLanes
+GOSUB _setupLines
+GOSUB _setupSnips
+GOSUB _setupMan
+GOSUB _setupScoreTexts
+GOSUB _setupNotes
+GOSUB _setupStatusText
+GOSUB _setupGameOver
+GOSUB _setupVfx
+
+GOSUB _setupCode
+GOSUB _setupcountdown
+
+hide text loadingText
+
+GOSUB _setupAnimatics
+
+GOSUB _setupMenu
+
+
+
+
+` GOSUB _fullAnimIntro
+` GOSUB _animIntro
+` GOSUB _playAnimatic
+
+` GOSUB _animIntroBinSkull
+` GOSUB _playAnimatic
+
+GOTO _mainMenu
+
+_gamePlay:
+GOSUB _initSnips:
+GOSUB _initMan:
+
+
+set sprite alpha animbackdropsprite, 0
+
+` GOSUB _doCountDown
+
+` do the 3/2/1 timer countdown
+
+play sfx mainMusic
+songStartTime = timer()
+fallSpeed# = (noteDelta / bps) / 1000
+pauseOffset = 0
+crtTime# = 0
+lives = startingLives
+do
+
+  crtTime# += .1
+  set effect param float crtEffect, "Time", crtTime#
+
+  if new key down(27) `ESCAPE KEY
+    
+    isPauseMenu = 1
+    pause sfx mainMusic
+    pausedAt = timer()
+    GOSUB _mainmenu
+    GOSUB _docountdown
+    pauseOffset += timer() - pausedAt
+    resume sfx mainMusic
+  endif
+
+  time = timer()
+  songTime = time - (songStartTime + pauseOffset)
+
+  timeRemainingSeconds = (songLengthSeconds*1000) - songTime
+  timeRemainingSeconds /= 1000
+  set text timeLeftText, str$(timeRemainingSeconds)
+  set text livesLeftText, str$(lives)
+  set text comboTextId, str$(combo)
+
+  GOSUB _updateStatus
+  GOSUB _updateLanes
+  GOSUB _loopVfx
+
+
+  if (lives <= 0)
+    pause sfx mainMusic
+    ` GOTO _doMidWin
+
+    GOTO _doGameOver
+  endif
+  if (timeRemainingSeconds <= 0)
+    pause sfx mainMusic
+
+    if (pendingCodeIndex >= secretCodeSize)
+      GOTO _doWin
+    endif
+
+    GOTO _doMidWin
+  endif
+
+  `312.5px/second for quarter note at 125bpm 
+  ` speed = distance / time
+  ` speed = 150px / .48 (.48 is 60/125 bpm)
+  ` print fallSpeed#
+  `update the snippets falling down
+  ` y += fallSpeed
+  for n = 0 to len(snips) - 1
+    snip = snips(n)
+    
+    snip.y = targetY - (snip.songtime#-songTime)*fallSpeed#
+
+    if snip.dead = 0 and snip.y < render height() 
+      set text position snip.textId, text x(snip.textId), snip.y
+
+      else
+
+      size text y snip.textId, tweenVal(snip.scaleTween)
+      set text alpha snip.textId, tweenVal(snip.fadeTween)*255
+      rotate text snip.textId, tweenVal(snip.rotateTween)
+      if snip.dead = 0 or any tweens running(snip.scaleTween, snip.fadeTween, snip.rotateTween) = 0
+        
+        
+        if (snip.missed)
+          lives = max(0, lives - 1)
+          combo = 0
+          GOSUB _applySadAfro
+          ` set sprite texture dancemansprite, sadDanceTextures(rnd(len(sadDanceTextures)))
+
+        endif
+        
+        songTimeCounter += 1 + rnd(2)
+        snip.songTime# = (songTimeCounter * bps * 1) * 1000 
+        snip.dead = 0
+        snip.missed = 1
+        snip.index = rnd(len(snippets$))
+        set text position snip.textId, text x(snip.textId), -100
+        
+        resetSnip(n)
+        set text snip.textId, snippets$(snip.index)
+        color text snip.textId, rgb(255, 255, 255)
+
+      endif
+    endif
+    
+
+    snips(n) = snip
+
+  next n
+
+
+  ` check for keystroke
+  for n = 0 to len(lanes) - 1
+    lane = lanes(n)
+
+    `if any tweens running(lane.textId)
+    if tweenVal(lane.posTween) > 0
+      set text position lane.textId, text x(lane.textId), tweenVal(lane.posTween)
+    endif
+
+    if new key down(lane.keyCode)
+      print "hit lane " + str$(n)
+      hitLaneIndex = n
+      create basic tween lane.posTween, laneTextY, laneTextY - 30, 300, 0
+      set tween type lane.posTween, 1
+
+
+      ` set screen shake amount 4.0
+      ` set screen shake bounce 1
+
+
+      ` find the lowest snip in the current lane
+      highestY = targetY - (5*60*1000-songTime)*fallSpeed# `TODO: make 0, so only on screen things get caught
+      bestSnipIndex = -1
+      for l = 0 to len(snips) - 1
+        snip = snips(l)
+        if snip.laneIndex <> n then skip
+        if snip.dead then skip
+        if snip.y > highestY
+          highestY = snip.y
+          bestSnipIndex = l
+        endif
+      next
+      if bestSnipIndex < 0
+        assert 0, "ultimate failure!"
+      endif
+
+      print "found snip " + str$(bestSnipIndex)
+      ` found snip, how close is it to the banner?
+      snip = snips(bestSnipIndex)
+      targetDist = abs(targetY - snip.y)
+      targetRatio# = min(1, max(0, (targetDist + 0.0) / targetHeight))
+      
+      
+      snips(bestSnipIndex).dead = 1
+      create basic tween snip.fadeTween, 1, 0, 300, 0
+      create basic tween snip.scaleTween, 50, 50 + 15+rnd(5), 100, 0
+      set tween easing snip.scaleTween, 2
+      create basic tween snip.rotateTween, 0, (rnd(10)-5)*.04, 200, 0
+      set tween easing snip.rotateTween, 1
+
+
+      ` is this a special code? 
+      if left shiftKey()
+
+        if pendingCodeIndex < secretCodeSize
+          if secretCode(pendingCodeIndex).index = snip.index
+            if targetRatio# < .5
+              color text secretCode(pendingCodeIndex).textId, rgb(128, 64, 0)
+              
+              spawnBoom(text x(secretCode(pendingCodeIndex).textId) + rnd(50)-25, text y(secretCode(pendingCodeIndex).textId) + rnd(50)-25, 300)
+              pendingCodeIndex += 1
+              targetRatio# -= 1 `bonus points!
+            endif
+          else
+            ` oh no, bad flunk!
+            targetRatio# = 1
+          endif
+        endif
+      endif
+
+      
+      
+      scoreAmount = min(3, ((1 - targetRatio#) * 4))
+      
+
+      if (scoreAmount > 0)
+        ` hit!
+        GOSUB _applyHappyAfro
+        combo = min(combo + 1, maxCombo)
+        
+        statusCode = scoreAmount
+        GOSUB _punchStatus
+        snips(bestSnipIndex).missed = 0
+
+        sfx impactSfx, SFX_YES
+        set sfx volume impactSfx, .1
+        play sfx impactSfx
+        set sfx pitch impactSfx, (rnd(10)-5)*.1
+
+        else
+        combo = 0
+        statusCode = 0
+
+        sfx impactSfx, SFX_OOPS
+        set sfx volume impactSfx, .1
+        play sfx impactSfx
+        set sfx pitch impactSfx, (rnd(10)-5)*.1
+
+        GOSUB _applySadAfro
+
+        ` set sprite texture dancemansprite, sadDanceTextures(rnd(len(sadDanceTextures)))
+
+      endif
+      GOSUB _punchLaneColor
+
+      score += scoreAmount
+      lives = min(startingLives, lives + scoreAmount)
+      scoreAmount += combo
+      set text scoreTextId, str$(score)
+      size text x scoreTextId, 100
+
+
+
+      color text snip.textId, rgb(targetRatio# * 255, (1 - targetRatio#) * 255, 0)
+      
+
+
+
+    endif
+  next
+
+  sync
+  
+
+loop
+
+
+type menuButton
+  textId
+endtype
+
+type iVec
+  x,y
+endtype
+
+type lane
+  keyCode
+  textId
+  leftSpriteId, rightSpriteId
+  posTween
+  scaleTween
+  leftGradSprite, rightGradSprite, lowGradSprite, topGradSprite
+  fillSprite
+  colorLerpTween
+  fillLerpTween
+endtype
+
+type codePart
+  index,
+  textId,
+  transformId,
+  spriteId,
+  crossSpriteId
+endtype
+
+type snip
+  index, laneIndex, y
+  textId,
+  songTime#,
+  dead
+  missed
+  scaleTween
+  fadeTween
+  rotateTween
+endtype
+
+type vfx
+  textureId
+  spriteId
+  startFrame
+  endFrame
+  startTimeMs
+  durationMs
+endtype
+
+
+function getLaneX(index)
+endfunction 200 + index * 300

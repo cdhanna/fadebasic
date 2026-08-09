@@ -1,0 +1,420 @@
+
+_setupMenu:
+set sprite alpha animbackdropsprite, 255
+show sprite animbackdropsprite
+
+
+menuRenderTarget = reserve render target id(menuRenderTarget)
+render target menuRenderTarget
+set render target clear flags menurendertarget, 1
+set render target background color menurendertarget, rgb(255, 0, 0, 0)
+
+menuSprite = reserve sprite id(menuSprite)
+sprite menuSprite, 0, 0, render target texture(menuRenderTarget)
+order sprite menuSprite, ORDER_MENU + 1
+set sprite offset menuSprite, 0, 0
+set sprite alpha menuSprite, 0
+menuFadeTween = reserve tween id(menuFadeTween)
+  
+menuBackground = reserve sprite id(menuBackground)
+sprite menubackground, 0, 0, 0
+set sprite offset menuBackground, 0, 0
+size sprite menuBackground, render width(), render height()
+order sprite menubackground, ORDER_MENU - 1
+color sprite menuBackground, backgroundColor
+set sprite render target menuBackground, menuRenderTarget
+
+
+upperTitleText = reserve text id(upperTitleText)
+text upperTitleText, render width() / 2, 100, 1, "the COUNTDOWN to"
+order text upperTitleText, ORDER_MENU
+size text y uppertitletext, 30
+enable text drop shadow uppertitletext, 0, 2, rgb(70, 138, 255)
+set text render target upperTitleText, menuRenderTarget
+
+mainTitleText = reserve text id(mainTitleText)
+text mainTitleText, render width() / 2, 180, 1, "FREEDOM"
+order text mainTitleText, ORDER_MENU
+size text x mainTitleText, render width() / 2
+enable text drop shadow mainTitleText, - 4, - 4, rgb(70, 119, 255)
+set text render target mainTitleText, menuRenderTarget
+  
+
+helperText = reserve text id(helperText)
+text helperText, render width() / 2, render height() - 50, 1, "Arrow keys / LShift"
+order text helperText, ORDER_MENU
+size text y helperText, 30
+enable text drop shadow helperText, - 2, - 2, rgb(70, 119, 255)
+set text render target helperText, menuRenderTarget
+  
+  
+buttonStartY = 300
+selectedButtonIndex = 0
+buttonHeight = 100
+
+dim menuButtons(2) as menuButton
+menuButton as menuButton
+for n = 0 to len(menuButtons) - 1
+  tid = reserve text id(menuButtons(n).textId)
+    
+  text tid, - 100 + render width() / 2, buttonStartY + n * buttonHeight, 1, "play"
+  set text render target tid, menuRenderTarget
+  enable text drop shadow tid, - 4, - 4, rgb(70, 119, 255)
+  set text offset tid, 0, .5
+  if n = 1
+    set text tid, "story"
+  endif
+
+  size text y tid, 80
+  order text tid, ORDER_MENU
+next
+
+selectionSprite = reserve sprite id(selectionSprite)
+sprite selectionSprite, render width() / 2 - 150, buttonStartY, 0
+size sprite selectionSprite, 50, 50
+order sprite selectionSprite, ORDER_MENU
+set sprite render target selectionSprite, menuRenderTarget
+
+buttonMoveTween = reserve tween id(buttonMoveTween)
+RETURN
+
+_setupPauseMenu:
+`pauseRenderTarget = reserve render target id(pauseRenderTarget)
+`render target pauserendertarget
+
+
+RETURN
+
+_mainMenu:
+
+selectedButtonIndex = 0
+GOSUB _menubuttontweensetup
+
+if isPauseMenu
+  hide text uppertitletext
+  set text maintitletext, "PAUSE"
+  color sprite menubackground, rgb(128, 128, 128, 128)
+  for n = 0 to len(menuButtons) - 1
+    select n
+      case 0
+        set text menuButtons(n).textId, "continue"
+      endcase
+      case 1
+        set text menuButtons(n).textId, "quit"
+      endcase
+    endselect
+  next
+else
+  show text upperTitleText
+  set text maintitletext, "FREEDOM"
+  color sprite menubackground, backgroundColor
+  for n = 0 to len(menuButtons) - 1
+    select n
+      case 0
+        set text menuButtons(n).textId, "play"
+      endcase
+      case 1
+        set text menuButtons(n).textId, "story"
+      endcase
+    endselect
+  next
+endif
+
+t# = timer()
+angle# = 0
+
+
+create basic tween menuFadeTween, 0, 1, 250, 0
+while is tween done(menuFadeTween) = 0
+  set sprite alpha menuSprite, tweenVal(menuFadeTween) * 255
+  sync
+endwhile
+
+do
+  dt# = timer() - t#
+  t# = timer()
+
+  if new upkey()
+    selectedButtonIndex - = 1
+    if selectedButtonIndex < 0 then selectedButtonIndex = len(menuButtons) - 1
+    
+    GOSUB _menubuttontweensetup
+
+  endif
+  if new downkey()
+    selectedButtonIndex + = 1
+    if selectedButtonIndex > len(menuButtons) - 1 then selectedButtonIndex = 0
+      
+    GOSUB _menubuttontweensetup
+  endif
+
+  position sprite selectionSprite, render width() / 2 - 150, tweenVal(buttonMoveTween)
+
+  if new rightkey() or new left shiftKey()
+    `RETURN
+
+    create basic tween menuFadeTween, 1, 0, 250, 0
+    while is tween done(menuFadeTween) = 0
+      set sprite alpha menuSprite, tweenVal(menuFadeTween) * 255
+      sync
+    endwhile
+
+    print "MENU ENTER", selectedButtonIndex
+    if isPauseMenu
+      select selectedButtonIndex
+        case 0
+          print "going back to game"
+          RETURN
+        endcase
+        case 1
+          isPauseMenu = 0
+          GOTO _mainMenu
+        endcase
+      endselect
+    else
+      select selectedButtonIndex
+        case 0
+          print "going to game"
+          GOTO _gamePlay
+        endcase
+        case 1
+          print "going to intro"
+          GOSUB _animIntro
+          GOSUB _playAnimatic
+          print "back at menu"
+          create basic tween menuFadeTween, 0, 1, 250, 0
+          while is tween done(menuFadeTween) = 0
+            set sprite alpha menuSprite, tweenVal(menuFadeTween) * 255
+            sync
+          endwhile
+
+        endcase
+      endselect
+    endif
+  endif
+
+
+  sync
+loop
+
+RETURN
+
+_menuButtonTweenSetup:
+create basic tween buttonMoveTween, sprite y(selectionSprite), buttonStartY + selectedButtonIndex * buttonHeight, 250, 0
+RETURN
+
+
+_setupGameOver:
+  reserve render target id(gameOverTarget)
+  render target gameOverTarget
+  set render target background color gameOverTarget, rgb(0,0,0,128)
+
+  reserve sprite id (gameOverSprite)
+  sprite gameOverSprite, 0, 0, render target texture(gameOverTarget)
+  set sprite offset gameoverSprite, 0, 0
+  set sprite render target gameOverSprite, gameRenderTarget
+  set sprite alpha gameOverSprite, 0
+  reserve text id(defeatText)
+  text defeatText, render width()/2, 200, 1, "DEFEAT"
+  size text x defeatText, render width() - 200
+  enable text drop shadow defeatText, 0, -15, rgb(255, 0, 0)
+  set text render target defeatText, gameOverTarget
+
+
+  reserve text id(bossmanText)
+  text bossmanText, render width()/2, 350, 1, "BOSSMAN SAYS 'YOU ARE FIRED!'"
+  size text x bossmanText, render width() - 150
+  enable text drop shadow bossmanText, 0, 10, rgb(128, 0, 0)
+  set text render target bossmanText, gameOverTarget
+
+  reserve text id(tryAgainText)
+  text tryAgainText, render width()/2, 500, 1, "TRY AGAIN"
+  size text y tryAgainText, 60
+  enable text drop shadow tryAgainText, 0, 10, rgb(128, 0, 0)
+  set text render target tryAgainText, gameOverTarget
+
+
+  reserve tween id(gameOverTween)
+
+RETURN
+
+_doGameOver:
+  sfx fanfareSfx, sfx_fail
+  play sfx fanfareSfx
+
+  set text defeatText, "DEFEAT"
+  set text tryAgainText, "TRY AGAIN"
+  set text bossmanText, "BOSSMAN SAYS 'YOU ARE FIRED'"
+  enable text drop shadow tryAgainText, 0, 10, rgb(128, 0, 0)
+  enable text drop shadow defeatText, 0, -15, rgb(255, 0, 0)
+  
+  size text x defeatText, render width() - 200
+
+
+  create basic tween gameOverTween, 0, 1, 500, 300
+  set text alpha bossManText, 0
+  set text alpha defeatText, 0
+  set text alpha tryAgainText, 0
+  while is tween done(gameOverTween) = 0
+    set sprite alpha gameOverSprite, tweenVal(gameoverTween) * 255
+    sync
+  endwhile
+
+  create basic tween gameOverTween, 0, 1, 500, 0
+  set tween easing gameOverTween, 1
+  while is tween done(gameOverTween) = 0
+    position sprite danceManSprite, sprite x(danceManSprite), render height()/2 + tweenVal(gameOverTween)*200
+
+    for n = 0 to len(snips) - 1
+      set text alpha snips(n).textId, (1 - tweenVal(gameoverTween))*255
+    next
+    sync
+  endwhile
+  create basic tween gameOverTween, 0, 1, 500, 0
+
+
+
+  sad = 0
+  sadTime = 150
+  do
+    color = rgb(255, 200, 200, 180*tweenVal(gameOverTween))
+    color text bossmanText, color
+    color text defeatText, color
+    set text alpha tryAgainText, tweenVal(gameOverTween)*255
+
+    if timer() > sadTime
+      set sprite texture dancemansprite, sadDanceTextures(sad mod (len(sadDanceTextures)))
+      inc sad
+      sadTime = timer() + 150
+      set sprite flip danceManSprite rnd(2), 0
+    endif
+
+    if new left shiftkey() or new rightKey()
+      set sprite alpha gameOverSprite, 0
+      pause sfx fanfareSfx
+      GOTO _mainMenu
+    endif
+
+    sync
+  loop
+
+RETURN
+
+
+_doMidWin:
+  sfx fanfareSfx, sfx_mid_victory
+  play sfx fanfareSfx
+
+  set text defeatText, "NOT TODAY"
+  set text tryAgainText, "TRY AGAIN, TOMORROW"
+  set text bossmanText, "YOU DID NOT ENTER THE KILLCODE"
+  enable text drop shadow tryAgainText, 0, 10, rgb(128, 128, 0)
+  size text x defeatText, render width() - 200
+  enable text drop shadow defeatText, 0, -15, rgb(255, 0, 0)
+
+
+  create basic tween gameOverTween, 0, 1, 500, 300
+  set text alpha bossManText, 0
+  set text alpha defeatText, 0
+  set text alpha tryAgainText, 0
+  while is tween done(gameOverTween) = 0
+    set sprite alpha gameOverSprite, tweenVal(gameoverTween) * 255
+    sync
+  endwhile
+
+  create basic tween gameOverTween, 0, 1, 500, 0
+  set tween easing gameOverTween, 1
+  while is tween done(gameOverTween) = 0
+    position sprite danceManSprite, sprite x(danceManSprite), render height()/2 + tweenVal(gameOverTween)*600
+
+    for n = 0 to len(snips) - 1
+      set text alpha snips(n).textId, (1 - tweenVal(gameoverTween))*255
+    next
+    sync
+  endwhile
+  create basic tween gameOverTween, 0, 1, 500, 0
+
+
+
+  sad = 0
+  sadTime = 150
+  do
+    color = rgb(240, 255, 200, 180*tweenVal(gameOverTween))
+    color text bossmanText, color
+    color text defeatText, color
+    set text alpha tryAgainText, tweenVal(gameOverTween)*255
+
+    if new left shiftkey() or new rightKey()
+      set sprite alpha gameOverSprite, 0
+      pause sfx fanfareSfx
+      
+      GOTO _mainMenu
+    endif
+
+    sync
+  loop
+
+RETURN
+
+
+_doWin:
+  sfx fanfareSfx, SFX_VICTORY
+  play sfx fanfareSfx
+
+  set text defeatText, "FREEDOM!!"
+  set text tryAgainText, "DO AN ENCORE"
+  set text bossmanText, "YOU SAVED HUMANITY, FRIEND"
+  enable text drop shadow defeatText, 0, -10, rgb(128, 255, 0)
+  enable text drop shadow tryAgainText, 0, 7, rgb(128, 255, 0)
+  size text x defeatText, render width() - 200
+
+
+  create basic tween gameOverTween, 0, 1, 500, 300
+  set text alpha bossManText, 0
+  set text alpha defeatText, 0
+  set text alpha tryAgainText, 0
+  while is tween done(gameOverTween) = 0
+    set sprite alpha gameOverSprite, tweenVal(gameoverTween) * 255
+    sync
+  endwhile
+
+  create basic tween gameOverTween, 0, 1, 500, 0
+  set tween easing gameOverTween, 1
+  while is tween done(gameOverTween) = 0
+    position sprite danceManSprite, sprite x(danceManSprite), render height()/2 + tweenVal(gameOverTween)*100
+
+    for n = 0 to len(snips) - 1
+      set text alpha snips(n).textId, (1 - tweenVal(gameoverTween))*255
+    next
+    sync
+  endwhile
+  create basic tween gameOverTween, 0, 1, 500, 0
+
+
+
+  happy = 0
+  happyTime = 150
+  do
+    color = rgb(200, 255, 200, 180*tweenVal(gameOverTween))
+    color text bossmanText, color
+    color text defeatText, color
+    set text alpha tryAgainText, tweenVal(gameOverTween)*255
+
+    if timer() > happyTime
+      set sprite texture dancemansprite, happyDanceTextures(happy mod (len(happyDanceTextures)))
+      inc happy
+      happyTime = timer() + 150
+      set sprite flip danceManSprite rnd(2), 0
+    endif
+
+    if new left shiftkey() or new rightKey()
+      set sprite alpha gameOverSprite, 0
+      pause sfx fanfareSfx
+      
+      GOTO _mainMenu
+    endif
+
+    sync
+  loop
+
+RETURN

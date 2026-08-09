@@ -1,0 +1,117 @@
+
+_setupSnippets:
+    dim snippets$(20)
+    snippets$(0) = "if"
+    snippets$(1) = "endif"
+    snippets$(2) = "do"
+    snippets$(3) = "loop"
+    snippets$(4) = "x"
+    snippets$(5) = "="
+    snippets$(6) = "1 + "
+    snippets$(7) = "y"
+    snippets$(8) = "("
+    snippets$(9) = ")"
+    snippets$(10) = "42"
+    snippets$(11) = "kill"
+    snippets$(12) = "sys"
+    snippets$(13) = "call"
+    snippets$(14) = "print"
+    snippets$(15) = "sleep"
+    snippets$(16) = "beep"
+    snippets$(17) = "sync"
+    snippets$(18) = "72"
+    snippets$(19) = "goto"
+    print "set up the snippets", len(snippets$)
+
+    dim afroTextureNames$(3)
+    afroTextureNames$(0) = "assets/dance2/Afro1"
+    afroTextureNames$(1) = "assets/dance2/Afro2"
+    afroTextureNames$(2) = "assets/dance2/Afro3"
+    dim afroTextures(len(afroTextureNames$))
+    for n = 0 to len(afroTextures) - 1
+        reserve texture id(afroTextures(n))
+        texture afroTextures(n), afroTextureNames$(n)
+    next
+
+    dim sadDanceTextureNames$(2)
+    sadDanceTextureNames$(0) = "assets/dance2/Dance_sad1"
+    sadDanceTextureNames$(1) = "assets/dance2/Dance_sad2"
+
+
+    dim happyDanceTextureNames$(5)
+    ` happyDanceTextureNames$(0) = "assets/dance/Dance_breakdance"
+    ` happyDanceTextureNames$(1) = "assets/dance/Dance_handstand_left"
+    ` happyDanceTextureNames$(2) = "assets/dance/Dance_headtap_left"
+    ` happyDanceTextureNames$(3) = "assets/dance/Dance_kick_left"
+    ` happyDanceTextureNames$(4) = "assets/dance/Dance_reach_left"
+    ` happyDanceTextureNames$(5) = "assets/dance/Dance_robot_left"
+
+    happyDanceTextureNames$(0) = "assets/dance2/Dance_handstand"
+    happyDanceTextureNames$(1) = "assets/dance2/Dance_headphone"
+    happyDanceTextureNames$(2) = "assets/dance2/Dance_jazzhands"
+    happyDanceTextureNames$(3) = "assets/dance2/Dance_point"
+    happyDanceTextureNames$(4) = "assets/dance2/Dance_tip_toe"
+
+    dim happyDanceTextures(len(happyDanceTextureNames$))
+    dim happyAfros(len(happyDanceTextureNames$)) as manAddon
+    dim sadAfros(len(sadDanceTextureNames$)) as manAddon
+    for n = 0 to len(happyDanceTextures) - 1
+        reserve texture id(happyDanceTextures(n))
+        texture happyDanceTextures(n), happyDanceTextureNames$(n)
+    next
+
+
+    happyAfros(0) = {
+        x = -100
+        y = 50
+        angle = -1.5
+        dumbFlip = 1
+    }
+      happyAfros(1) = {
+        x = -40
+        y = -225
+        angle = -.18
+    }
+      happyAfros(2) = {
+        x = -25
+        y = -120
+        angle = -.187
+    }
+      happyAfros(3) = {
+        x = 40
+        y = -220
+        angle = .2
+    }
+      happyAfros(4) = {
+        x = -20
+        y = -220
+        angle = .2
+    }
+
+    dim sadDanceTextures(len(sadDanceTextureNames$))
+    for n = 0 to len(sadDanceTextures) - 1
+        reserve texture id(sadDanceTextures(n))
+        texture sadDanceTextures(n), sadDanceTextureNames$(n)
+    next
+
+    sadAfros(0) = {
+        x = -200
+        y = -30
+        angle = -1.5
+        dumbFlip = 1
+    }
+    sadAfros(1) = {
+        x = -15
+        y = -210
+        angle = -.1
+    }
+
+RETURN
+
+type manAddon
+    x as float
+    y as float
+    size
+    angle as float
+    dumbFlip
+endtype

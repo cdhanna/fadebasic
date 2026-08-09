@@ -1,0 +1,154 @@
+_loadAssets:
+
+    load sfx clip 1, "assets/songs/demo5a"
+
+
+    reserve sfx clip id(SFX_INTRO_1)
+    load sfx clip SFX_INTRO_1, "assets/songs/intro_1"
+
+    reserve sfx clip id(SFX_INTRO_2)
+    load sfx clip SFX_INTRO_2, "assets/songs/intro_2"
+
+    reserve sfx clip id(SFX_INTRO_3)
+    load sfx clip SFX_INTRO_3, "assets/songs/intro_3"
+
+
+    reserve sfx clip id(SFX_INTRO_4)
+    load sfx clip SFX_INTRO_4, "assets/songs/intro_4"
+    reserve sfx clip id(SFX_INTRO_5)
+    load sfx clip SFX_INTRO_5, "assets/songs/intro_5"
+
+    reserve sfx clip id(SFX_INTRO_6)
+    load sfx clip SFX_INTRO_6, "assets/songs/intro_6"
+
+    reserve sfx clip id(SFX_INTRO_7)
+    load sfx clip SFX_INTRO_7, "assets/songs/intro_7"
+
+    reserve sfx clip id(SFX_INTRO_8)
+    load sfx clip SFX_INTRO_8, "assets/songs/intro_8"
+
+    reserve sfx clip id(SFX_INTRO_9)
+    load sfx clip SFX_INTRO_9, "assets/songs/intro_9"
+
+    reserve sfx clip id(SFX_INTRO_10)
+    load sfx clip SFX_INTRO_10, "assets/songs/intro_10"
+    reserve sfx clip id(SFX_INTRO_11)
+    load sfx clip SFX_INTRO_11, "assets/songs/intro_11"
+
+
+    reserve sfx clip id(SFX_OOPS)
+    load sfx clip SFX_OOPS, "assets/songs/oops"
+
+    reserve sfx clip id(SFX_YES)
+    load sfx clip SFX_YES, "assets/songs/yes"
+
+    reserve sfx clip id(SFX_VICTORY)
+    load sfx clip SFX_VICTORY, "assets/songs/victory"
+  
+    reserve sfx clip id(SFX_MID_VICTORY)
+    load sfx clip SFX_VICTORY, "assets/songs/partialWin"
+
+    reserve sfx clip id(SFX_FAIL)
+    load sfx clip SFX_FAIL, "assets/songs/fail"
+
+
+    reserve sfx clip id(SFX_THUNDER)
+    load sfx clip SFX_THUNDER, "assets/animatics/sfx/thunder"
+
+    dim SFX_BOOM(3)
+    reserve sfx clip id(SFX_BOOM(0))
+    reserve sfx clip id(SFX_BOOM(1))
+    reserve sfx clip id(SFX_BOOM(2))
+    load sfx clip SFX_BOOM(0), "assets/animatics/sfx/explosion01"
+    load sfx clip SFX_BOOM(1), "assets/animatics/sfx/explosion02"
+    load sfx clip SFX_BOOM(2), "assets/animatics/sfx/explosion03"
+
+    dim TEX_BOOM(4)
+    reserve texture id(TEX_BOOM(0))
+    reserve texture id(TEX_BOOM(1))
+    reserve texture id(TEX_BOOM(2))
+    reserve texture id(TEX_BOOM(3))
+    texture TEX_BOOM(0), "assets/vfx/boom1"
+    texture TEX_BOOM(1), "assets/vfx/boom2"
+    texture TEX_BOOM(2), "assets/vfx/boom3"
+    texture TEX_BOOM(3), "assets/vfx/boom4"
+    for n = 0 to len(TEX_BOOM) - 1
+        set texture frame grid TEX_BOOM(n), 8,8
+    next
+
+
+    TEX_PAPERS = reserve texture id(TEX_PAPERS)
+    texture TEX_PAPERS, "assets/papers_fix"
+    TEX_COMP = reserve texture id(TEX_COMP)
+    texture TEX_COMP, "assets/comp"
+    reserve texture id(TEX_LINE_GRAD)
+    texture TEX_LINE_GRAD, "assets/lineGrad"
+
+
+    TEX_NIGHTSCAPE = reserve texture id(TEX_NIGHTSCAPE)
+    texture TEX_NIGHTSCAPE, "assets/animatics/Nightscape"
+
+
+    TEX_OFFICE = reserve texture id(TEX_OFFICE)
+    texture TEX_OFFICE, "assets/animatics/Office"
+
+    TEX_HOODED_MAN = reserve texture id(TEX_HOODED_MAN)
+    texture TEX_HOODED_MAN, "assets/animatics/Hooded_man"
+    TEX_HOODED_MAN_FRONT = reserve texture id(TEX_HOODED_MAN_FRONT)
+    texture TEX_HOODED_MAN_FRONT, "assets/animatics/Hooded_man_front"
+    TEX_HOODED_MAN_LOWERING = reserve texture id(TEX_HOODED_MAN_LOWERING)
+    texture TEX_HOODED_MAN_LOWERING, "assets/animatics/Lowering_hood"
+    TEX_HOODED_MAN_REVEAL = reserve texture id(TEX_HOODED_MAN_REVEAL)
+    texture TEX_HOODED_MAN_REVEAL, "assets/animatics/Face_reveal"
+
+    TEX_RUNNING_BOY = reserve texture id(TEX_RUNNING_BOY)
+    texture TEX_RUNNING_BOY, "assets/animatics/Running_boy"
+   TEX_CLOSE_UP = reserve texture id(TEX_CLOSE_UP)
+    texture TEX_CLOSE_UP, "assets/animatics/Close_up"
+
+
+
+    TEX_MONSTER_1 = reserve texture id(TEX_MONSTER_1)
+    texture TEX_MONSTER_1, "assets/animatics/monster_1"
+    TEX_MONSTER_2 = reserve texture id(TEX_MONSTER_2)
+    texture TEX_MONSTER_2, "assets/animatics/Monster_2"
+    TEX_MONSTER_3 = reserve texture id(TEX_MONSTER_3)
+    texture TEX_MONSTER_3, "assets/animatics/Monster_3"
+    TEX_MONSTER_4 = reserve texture id(TEX_MONSTER_4)
+    texture TEX_MONSTER_4, "assets/animatics/Monster_4"
+    TEX_MONSTER_5 = reserve texture id(TEX_MONSTER_5)
+    texture TEX_MONSTER_5, "assets/animatics/Monster_5"
+
+    TEX_MONSTER_SNAKE = reserve texture id(TEX_MONSTER_SNAKE)
+    texture TEX_MONSTER_SNAKE, "assets/animatics/Monster_snake"
+    TEX_MONEY_SNAKE = reserve texture id(TEX_MONEY_SNAKE)
+    texture TEX_MONEY_SNAKE, "assets/animatics/Money_snake"
+
+
+    TEX_ARROW = reserve texture id(TEX_ARROW)
+    texture TEX_ARROW, "assets/animatics/Arrow"
+
+    TEX_BOARDROOM = reserve texture id(TEX_BOARDROOM)
+    texture TEX_BOARDROOM, "assets/animatics/boardroom2"
+
+    TEX_BIZ_MAN = reserve texture id(TEX_BIZ_MAN)
+    texture TEX_BIZ_MAN, "assets/animatics/Business_man2"
+
+    TEX_BIZ_BOSS = reserve texture id(TEX_BIZ_BOSS)
+    texture TEX_BIZ_BOSS, "assets/animatics/Business_boss2"
+
+    TEX_BINARY_BACKGROUND = reserve texture id(TEX_BINARY_BACKGROUND)
+    texture TEX_BINARY_BACKGROUND, "assets/animatics/Binary"
+
+    TEX_SKULL = reserve texture id(TEX_SKULL)
+    texture TEX_SKULL, "assets/animatics/Skull"
+
+
+    TEX_TITAN1 = reserve texture id(TEX_TITAN1)
+    texture TEX_TITAN1, "assets/animatics/titan_1"
+
+    TEX_TITAN2 = reserve texture id(TEX_TITAN2)
+    texture TEX_TITAN2, "assets/animatics/titan_2"
+
+
+RETURN

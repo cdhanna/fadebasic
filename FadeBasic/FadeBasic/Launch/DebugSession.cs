@@ -82,6 +82,14 @@ namespace FadeBasic.Launch
         protected int hasConnectedDebugger;
         protected int debuggerSaidHello;
         protected int debuggerReset;
+        // The post-Restart "re-HELLO" gate in StartDebugging waits for a
+        // socket DAP client to re-send PROTO_HELLO. Browser hosts (WASM) have
+        // no socket, so that HELLO never arrives and the wait spins on
+        // Thread.Sleep forever — deadlocking the single WASM thread the tick
+        // loop runs on. Browser sessions set this true so the gate is skipped
+        // entirely, making them immune to every flag-reset path (rather than
+        // relying on MarkConnected() being re-applied after each reset).
+        protected bool suppressHelloWait;
         protected int pauseRequestedByMessageId;
         protected int resumeRequestedByMessageId;
         
@@ -188,13 +196,23 @@ namespace FadeBasic.Launch
 
             logger.Log("Starting debug session... version=" + typeof(DebugSession).Assembly.GetName().Version);
 
-            foreach (var token in _dbg.statementTokens)
+            // Dump every statement token to the debug log — but ONLY when a real
+            // logger is attached (desktop `debugLogPath`). In the browser the
+            // logger is always EmptyDebugLogger (a no-op), so this loop was
+            // building + discarding a JSON string per token on every program
+            // load — thousands of throwaway allocations on the WASM thread for a
+            // big program, all fed to /dev/null. Gate it so that work only
+            // happens when something will actually consume it.
+            if (!(logger is EmptyDebugLogger))
             {
-                var json = JsonableExtensions.Jsonify(token);
-                logger.Log(json);
+                foreach (var token in _dbg.statementTokens)
+                {
+                    var json = JsonableExtensions.Jsonify(token);
+                    logger.Log(json);
+                }
             }
-            
-            
+
+
             // _tree = IntervalTree.From(dbg.points);
         }
 
@@ -302,10 +320,16 @@ namespace FadeBasic.Launch
             variableDb = new DebugVariableDatabase(_vm, _dbg, logger);
 
             logger.Log("RESTARTING debug session... version=" + typeof(DebugSession).Assembly.GetName().Version);
-            foreach (var token in _dbg.statementTokens)
+            // Same as the constructor: skip the per-token JSON dump unless a real
+            // logger will consume it (never in the browser). This runs on EVERY
+            // reload/restart, so it was pure per-load waste.
+            if (!(logger is EmptyDebugLogger))
             {
-                var json = JsonableExtensions.Jsonify(token);
-                logger.Log(json);
+                foreach (var token in _dbg.statementTokens)
+                {
+                    var json = JsonableExtensions.Jsonify(token);
+                    logger.Log(json);
+                }
             }
 
             // reset state variables
@@ -2032,8 +2056,11 @@ namespace FadeBasic.Launch
             var budget = ops;
             // only wait for a post-restart hello if a debugger client actually connected — otherwise
             // a Restart() with no client attached would deadlock waiting for a PROTO_HELLO that never arrives.
-            while ((_options.debugWaitForConnection && hasConnectedDebugger == 0)
-                   || (hasConnectedDebugger != 0 && debuggerReset > 0 && debuggerSaidHello == 0))
+            // suppressHelloWait short-circuits this for socket-less (browser/WASM) hosts, where the HELLO
+            // can never arrive and the wait would deadlock the single runtime thread.
+            while (!suppressHelloWait &&
+                   ((_options.debugWaitForConnection && hasConnectedDebugger == 0)
+                   || (hasConnectedDebugger != 0 && debuggerReset > 0 && debuggerSaidHello == 0)))
             {
                 if (ops > 0 && budget-- == 0) break; 
                 ReadMessage();

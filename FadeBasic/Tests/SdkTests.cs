@@ -413,6 +413,32 @@ dec x, 0.5
         Assert.IsTrue(ctx.TryGetFloat("x", out var x));
         Assert.That(x, Is.EqualTo(4.0f)); // 3.0 + 1.5 - 0.5
     }
+
+    // Exact user repro: stdlib inc on a struct float member, struct type defined
+    // AFTER use. Expected 6.4; the bug reported it as ~8E-45 (int 6 read as
+    // float bytes → the int overload was selected for a float member).
+    [Test]
+    public void Overload_StdlibInc_StructFloatMember_TypeDefinedAfter()
+    {
+        var commands = new CommandCollection(new StandardCommands());
+        var src = @"
+ff as fTest
+inc ff.f#, 3.4
+inc ff.f#, 3
+x as float
+x = ff.f#
+
+type fTest
+  f#
+endtype
+";
+        var created = Fade.TryCreateFromString(src, commands, out var ctx, out _);
+        Assert.IsTrue(created);
+        ctx.Run();
+
+        Assert.IsTrue(ctx.TryGetFloat("x", out var x), "x should be readable");
+        Assert.That(x, Is.EqualTo(6.4f).Within(0.001f)); // 3.4 + 3
+    }
     
     
     [Test]

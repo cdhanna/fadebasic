@@ -2004,12 +2004,32 @@ namespace FadeBasic
         
         public int lineNumber;
         public int charNumber;
+
+        // PERF NOTE — two shelved attempts at cutting lexer allocation (lexing is
+        // ~half GC in WASM; per-token substrings are ~76% of it, Token objects
+        // ~24%). Both were fully implemented, passed the suite, and MEASURED as
+        // not worth it — recorded here so they aren't naively re-attempted:
+        //
+        //  1) Lazy span-backed raw/caseInsensitiveRaw (defer the Substring via a
+        //     (source,offset,length) slice). Allocation came out FLAT: the strings
+        //     are CONSUMED, not deferrable — the command-detection pass reads
+        //     caseInsensitiveRaw for every token to match multi-word commands, and
+        //     the parser needs raw as symbol keys. Only short operator strings are
+        //     deferrable, and a lazy Token grows the object. Real fix would need a
+        //     span-based command matcher (net9 ReadOnlySpan<char> lookup — not
+        //     available on this netstandard core — or a hand-rolled char trie).
+        //
+        //  2) Token-object pooling (frame allocator, recycled per reparse). Native
+        //     lex+parse got ~21% faster (−1.5MB), but in WASM it was net NEUTRAL/
+        //     slightly WORSE: Mono-WASM nursery allocation is cheap (bump-pointer),
+        //     so avoiding it saves little, while the per-token Lease/Reset
+        //     bookkeeping costs about as much. WASM is the only place the LSP runs.
         public string raw;
         public string caseInsensitiveRaw;
         public LexemType type = LexemType.EOF;
         public LexemFlags lexemFlags;
         public TokenFlags flags = TokenFlags.None;
-        
+
         public int Length => caseInsensitiveRaw?.Length ?? 0;
         public int EndCharNumber => charNumber + Length;
   

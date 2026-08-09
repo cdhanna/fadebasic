@@ -176,6 +176,29 @@ namespace Tests
             value += amount;
         }
 
+        // Mirrors the real stdlib `inc` ref-float overload EXACTLY, including
+        // the optional `amount = 1` default — used to test that the default
+        // value is injected as a float (not raw int bytes read as a float).
+        [FadeBasicCommand("incf")]
+        public static void IncF(ref float value, float amount = 1)
+        {
+            value += amount;
+        }
+
+        // Mirrors the FULL stdlib `inc` overload set: ref-int and ref-float,
+        // both with an optional `amount = 1`. Reproduces overload selection for
+        // a float target when both overloads carry defaults.
+        [FadeBasicCommand("incx")]
+        public static void IncxInt(ref int value, int amount = 1)
+        {
+            value += amount;
+        }
+        [FadeBasicCommand("incx")]
+        public static void IncxReal(ref float value, float amount = 1)
+        {
+            value += amount;
+        }
+
         // `twice` is a value-arg command overloaded on element type, returning
         // the same type from every overload — exercises overload selection in
         // expression context.

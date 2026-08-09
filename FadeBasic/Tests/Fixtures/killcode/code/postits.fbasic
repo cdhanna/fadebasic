@@ -1,0 +1,189 @@
+
+
+_setupNotes:
+
+  DIM noteColors(5)
+  noteColors(0) = rgb(255, 209, 179)
+  noteColors(1) = rgb(249, 255, 179)
+  noteColors(2) = rgb(245, 179, 255)
+  noteColors(3) = rgb(255, 179, 179)
+  noteColors(4) = rgb(179, 227, 255)
+
+  DIM notes(20) as note
+  note as note
+
+  for n = 0 to len(notes)-1
+    notes(n) = {
+      spriteId = reserve sprite id(spriteId)
+      transformId = reserve transform id(transformId)
+    }
+  next
+
+  set texture frame grid TEX_PAPERS, 2, 2
+
+  reserve sprite id(sid)
+  sprite sid, 110, 110, TEX_PAPERS
+  set sprite frame sid, 1
+  size sprite sid, 180, 180
+  rotate sprite sid, .1
+  color sprite sid, noteColors(0)
+  
+
+  reserve text id(tid)
+  text tid, 85, 60, 2, "SCORE"
+  order text tid, 2
+  rotate text tid, -.1
+  size text y tid, 50
+  color text tid, rgb(37, 37, 37, 180)
+  ` enable text drop shadow tid, -4, -4, rgb(0, 0, 0)
+  ` reserve sprite id(sid)
+  ` sprite sid, 200, 100, TEX_PAPERS
+  ` set sprite frame sid, 3
+  ` size sprite sid, 140, 140
+  ` rotate sprite sid, 0
+  ` color sprite sid, rgb(255, 209, 179)
+
+
+  reserve sprite id(sid)
+  sprite sid, 90, 210, TEX_PAPERS
+  set sprite frame sid, 0
+  size sprite sid, 140, 140
+  order sprite sid, -1
+  rotate sprite sid, -0.08
+  color sprite sid, noteColors(1)
+
+
+  reserve text id(tid)
+  text tid, 90, 200, 2, "BONUS"
+  order text tid, 2
+  rotate text tid, .2
+  size text y tid, 40
+  color text tid, rgb(37, 37, 37, 180)
+
+  reserve text id(comboTextId)
+
+  text comboTextId, 90, 220, 1, "0"
+  set text offset comboTextId, .5, 0
+  order text comboTextId, 2
+  size text x comboTextId, 40
+  rotate text comboTextId, .3
+  color text comboTextId, rgb(0,0,0,128)
+  enable text drop shadow comboTextId, -2, 2, rgb(0,0,0,128)
+
+
+  text scoreTextId, 100, 80, 1, "0"
+  set text offset scoreTextId, .5, 0
+  order text scoreTextId, 2
+  size text x scoreTextId, 100
+  color text scoreTextId, rgb(0,0,0,128)
+  enable text drop shadow scoreTextId, -2, 2, rgb(0,0,0,128)
+
+  reserve sprite id(sid)
+  sprite sid, 80, render height() - 250, TEX_PAPERS
+  set sprite frame sid, 3
+  size sprite sid, 140, 140
+  order sprite sid, -1
+  rotate sprite sid, -0.2
+  color sprite sid, rgb(255, 179, 211)
+
+  reserve sprite id(sid)
+  sprite sid, 100, render height() - 150, TEX_PAPERS
+  set sprite frame sid, 3
+  size sprite sid, 140, 140
+  order sprite sid, -1
+  rotate sprite sid, .1
+  color sprite sid, noteColors(2)
+
+  reserve text id(tid)
+  text tid, 80, render height() - 270, 2, "SECRET"
+  order text tid, 2
+  rotate text tid, -.2
+  size text y tid, 40
+  color text tid, rgb(37, 37, 37, 180)
+ 
+  reserve text id(tid)
+  text tid, 80, render height() - 240, 2, "KILLCODE"
+  order text tid, 2
+  rotate text tid, -.1
+  size text y tid, 45
+  color text tid, rgb(37, 37, 37, 220)
+
+  reserve text id(tid)
+  text tid, 80, render height() - 190, 2, "HOLD"
+  order text tid, 2
+  rotate text tid, -.08
+  size text y tid, 40
+  color text tid, rgb(37, 37, 37, 220)
+
+  reserve text id(tid)
+  text tid, 100, render height() - 160, 2, "L SHIFT"
+  order text tid, 2
+  rotate text tid, -.05
+  size text y tid, 45
+  color text tid, rgb(37, 37, 37, 220)
+
+  reserve text id(tid)
+  text tid, 100, render height() - 140, 2, "TO INJECT"
+  order text tid, 2
+  rotate text tid, -.02
+  size text y tid, 35
+  color text tid, rgb(37, 37, 37, 220)
+
+  reserve sprite id(sid)
+  sprite sid, render width() - 80, 110, TEX_PAPERS
+  set sprite frame sid, 1
+  set sprite flip sid, 1, 0
+  size sprite sid, 140, 140
+  order sprite sid, -1
+  rotate sprite sid, -0.2
+  color sprite sid, noteColors(1)
+
+  reserve text id(tid)
+  text tid, render width() - 80, 70, 2, "TIME"
+  order text tid, 2
+  rotate text tid, -.3
+  size text y tid, 50
+  color text tid, rgb(37, 37, 37, 220)
+
+
+  reserve text id(timeLeftText)
+  text timeLeftText, render width() - 77, 120, 1, "150"
+  order text timeLeftText, 2
+  rotate text timeLeftText, -.2
+  size text y timeLeftText, 42
+  color text timeLeftText, rgb(37, 37, 37, 220)
+
+
+  reserve sprite id(sid)
+  sprite sid, 240, 80, TEX_PAPERS
+  set sprite frame sid, 1
+  set sprite flip sid, 1, 0
+  size sprite sid, 140, 140
+  order sprite sid, -1
+  rotate sprite sid, -0.2
+  color sprite sid, noteColors(4)
+
+  reserve text id(tid)
+  text tid, 240, 50, 2, "LIVES"
+  order text tid, 2
+  rotate text tid, .02
+  size text y tid, 50
+  color text tid, rgb(37, 37, 37, 220)
+
+  reserve text id(livesLeftText)
+  text livesLeftText, 240, 90, 1, "10"
+  order text livesLeftText, 2
+  rotate text livesLeftText, -.1
+  size text y livesLeftText, 40
+  color text livesLeftText, rgb(37, 37, 37, 220)
+
+
+RETURN
+
+
+
+type note
+  spriteId
+  transformId
+
+endtype

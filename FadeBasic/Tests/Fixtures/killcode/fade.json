@@ -1,0 +1,18 @@
+{
+  "$schema": "/fade.schema.json",
+  "name": "killcode",
+  "type": "monogame",
+  "commandDlls": [],
+  "sources": [
+    "code/entry.fbasic",
+    "code/snippets.fbasic",
+    "code/assets.fbasic",
+    "code/postits.fbasic",
+    "code/setups.fbasic",
+    "code/animatics.fbasic",
+    "code/main.fbasic",
+    "code/menu.fbasic",
+    "code/countdown.fbasic",
+    "code/animatics_Intro_BinSkull.fbasic"
+  ]
+}
