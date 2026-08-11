@@ -5,17 +5,18 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [0.2.6] - Unreleased
+## [0.2.6] - 2026-08-11
 ### Added
-- Commands can be overloaded on argument type and arity — e.g. `inc`/`dec` now work on real variables as well as integers. The right overload is selected from the argument types during type checking; overloads may differ in return type (an ambiguous call is reported). Completions list an overloaded command once, signature help shows every overload (highlighting the one in effect), and the help browser documents each overload separately.
+- Commands support basic overloading
+- VM can take and restore snapshots
 
 ### Changed
-- Web runtime retargeted to .NET 10 for a much faster interpreter; optional WASM AOT build via the `FADE_AOT` flag
-- Large-project LSP reparse is significantly faster per keystroke: command-tree caching, a single scope-resolution pass, lazy doc-comment trivia, and viewport-scoped semantic tokens that ride back with diagnostics in one pass
+- Net10 compatability
+- LSP parses large projects faster
 
 ### Fixed
 - Can have more than 255 variables per scope
-- Passing a mismatched-type argument (e.g. a real) to a by-reference command parameter (e.g. `ref int`) is now a compile-time error instead of silently corrupting memory at runtime
+- ref based command args enforce exact types instead of casting 
 
 ## [0.2.5] - 2026-07-21
 ### Fixed

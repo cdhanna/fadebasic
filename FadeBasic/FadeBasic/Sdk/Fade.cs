@@ -28,7 +28,15 @@ namespace FadeBasic.Sdk
                 var sourceMatch = sourceMatches[i];
                 var relativeSourceFile = sourceMatch.Groups[1].Value;
 
-                var fullSource = Path.Combine(csProjDir, relativeSourceFile);
+                // MSBuild paths conventionally use '\', and MSBuild itself accepts
+                // either separator on any OS. Path.Combine does not translate them, so
+                // on Unix a `..\Dir\file.fbasic` include produced one long literal
+                // filename and failed with a FileNotFoundException naming a path that
+                // looked almost right. Normalise before combining.
+                if (Path.DirectorySeparatorChar != '\\')
+                    relativeSourceFile = relativeSourceFile.Replace('\\', Path.DirectorySeparatorChar);
+
+                var fullSource = Path.GetFullPath(Path.Combine(csProjDir, relativeSourceFile));
                 fullSourcePaths.Add(fullSource);
             }
 

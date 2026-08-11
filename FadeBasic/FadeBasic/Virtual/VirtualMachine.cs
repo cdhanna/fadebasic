@@ -112,7 +112,7 @@ namespace FadeBasic.Virtual
         public object raw;
     }
     
-    public class VirtualMachine
+    public partial class VirtualMachine
     {
         public byte[] program; // TODO: this could be readonly, except for the REPL.
 

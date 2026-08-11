@@ -128,7 +128,7 @@ namespace FadeBasic.Virtual
         public int BucketSize(VmPtr ptr) => this[ptr.bucketPtr].Length;
     }
     
-    public struct VmHeap
+    public partial struct VmHeap
     {
         // private byte[] memory;
         private HeapData memory;
