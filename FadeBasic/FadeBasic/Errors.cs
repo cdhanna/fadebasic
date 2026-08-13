@@ -299,6 +299,18 @@ namespace FadeBasic
         public static readonly ErrorCode TokenizationContainsHaunted = "[0219] Tokenization cannot be resolved without running the program ";
         public static readonly ErrorCode VariableUsesHaunted = "[0220] Variable cannot include tokens generated from a non deterministic macro";
         public static readonly ErrorCode CannotCallTestFunctionFromOutsideTest = "[0221] Cannot invoke function declared in test";
+
+        /// <summary>
+        /// The paren-less statement form -- `wait ms 5` -- is only available to commands that
+        /// return nothing. A command with a return value has to be called with parentheses,
+        /// whether or not its result is used: `add(1, 2)` is a fine statement, `add 1, 2` is not.
+        ///
+        /// Split out of CommandNoOverloadFound because the generic wording sends people to the
+        /// wrong place. "No overload" reads as "your arguments are wrong", so the natural
+        /// response is to rewrite an argument list that was already correct.
+        /// </summary>
+        public static readonly ErrorCode CommandReturnsValueNeedsParens =
+            "[0222] Command returns a value, so its arguments need parentheses";
     
         // 300 series represents type issues
         public static readonly ErrorCode SymbolAlreadyDeclared = "[0300] Symbol already declared";

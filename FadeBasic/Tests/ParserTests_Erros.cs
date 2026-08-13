@@ -4128,4 +4128,98 @@ y = 2 + 1
         Assert.That(errors.Count, Is.EqualTo(1));
         Assert.That(errors[0].Display, Is.EqualTo($"[1:4] - {ErrorCodes.ExpressionMissingCloseParen}"));
     }
+
+    // ---------------------------------------------------------------------------------------
+    //  A command used as an ARGUMENT to another command.
+    //
+    //  These exist because a downstream project talked itself into believing multi-word commands
+    //  could not be nested in another command's argument list, and worked around it for a while.
+    //  They can. What actually bites is that a command with a RETURN VALUE is not usable as a
+    //  statement, so `min 1, 2` fails while `print 1, min(1, 2)` is fine -- and the error for
+    //  both shapes is the same [0147] No overload for command, which is easy to misread as being
+    //  about the nesting rather than about statement-vs-expression usage.
+    // ---------------------------------------------------------------------------------------
+
+    /// <summary>A multi-word command with arguments nests fine as the sole argument.</summary>
+    [Test]
+    public void CommandAsArg_MultiWordWithArgs_AsOnlyArgument()
+    {
+        MakeParser("wait ms file end(1)").ParseProgram().AssertNoParseErrors();
+    }
+
+    /// <summary>...and in a later argument position, which is the part that was doubted.</summary>
+    [Test]
+    public void CommandAsArg_MultiWordWithArgs_AsSecondArgument()
+    {
+        MakeParser("print 1, file end(1)").ParseProgram().AssertNoParseErrors();
+    }
+
+    /// <summary>...and nested two deep, a command inside a command inside an argument list.</summary>
+    [Test]
+    public void CommandAsArg_MultiWordWithArgs_NestedTwoDeep()
+    {
+        MakeParser("print 1, file end(add(1, 2))").ParseProgram().AssertNoParseErrors();
+    }
+
+    /// <summary>...and inside a function call's argument list.</summary>
+    [Test]
+    public void CommandAsArg_MultiWordWithArgs_InsideFunctionCall()
+    {
+        MakeParser("x = add(1, file end(1))").ParseProgram().AssertNoParseErrors();
+    }
+
+
+    /// <summary>
+    /// The paren-less statement form belongs to void commands only, and the error now says so.
+    /// It used to report [0147] No overload for command, which reads as "your arguments are
+    /// wrong" and sends you rewriting an argument list that was already correct.
+    /// </summary>
+    [TestCase("add 1, 2")]
+    [TestCase("min 1, 2")]
+    [TestCase("screen width")]
+    [TestCase("file end 1")]
+    [TestCase("get last 1, 2")]
+    public void CommandAsStatement_WithReturnValue_SaysSo(string input)
+    {
+        var prog = MakeParser(input).ParseProgram();
+
+        prog.AssertParseErrors(1, out var errors);
+        Assert.That(errors[0].Display, Does.Contain(ErrorCodes.CommandReturnsValueNeedsParens.ToString()));
+    }
+
+    /// <summary>The same commands are fine as expressions -- the half that makes it confusing.</summary>
+    [TestCase("add(1, 2)")]
+    [TestCase("x = add(1, 2)")]
+    [TestCase("x = min(1, 2)")]
+    [TestCase("x = screen width()")]
+    [TestCase("print 1, file end(1)")]
+    public void CommandAsStatement_WithReturnValue_IsFineInAnExpression(string input)
+    {
+        MakeParser(input).ParseProgram().AssertNoParseErrors();
+    }
+
+    /// <summary>
+    /// A genuine argument mistake still reports the overload error, so the new code narrows the
+    /// message rather than swallowing the old one.
+    /// </summary>
+    [TestCase("x = add(1)")]
+    [TestCase("x = add(1, 2, 3)")]
+    public void CommandWithBadArguments_StillReportsNoOverload(string input)
+    {
+        var prog = MakeParser(input).ParseProgram();
+
+        var errors = prog.GetAllErrors();
+        Assert.That(errors.Select(e => e.Display),
+            Has.Some.Contains(ErrorCodes.CommandNoOverloadFound.ToString()));
+    }
+
+    /// <summary>A void command taking arguments is a statement, and stays one.</summary>
+    [TestCase("wait ms 1")]
+    [TestCase("print 1, 2")]
+    [TestCase("any input 1, y")]
+    public void CommandAsStatement_Void_IsStillAStatement(string input)
+    {
+        MakeParser(input).ParseProgram().AssertNoParseErrors();
+    }
+
 }

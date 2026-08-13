@@ -2041,10 +2041,19 @@ ENDIF
     }
 
     
+    // >= and <= were missing from IsLeftAssoc while > and < were present, so a comparison only
+    // failed when its LEFT side was compound enough to make the parser consult associativity.
+    // `a >= 2` parsed; `a + 1 >= 2` threw ParserException out of the parser itself -- not a
+    // parse ERROR against the source, an exception, which surfaces with no source location.
     [TestCase("(a + 1) >= 2")]
-    
-    // order of ops is taking this wrong
-    // [TestCase("a + 1 >= 2")] // TODO: add a fix for this later. 
+    [TestCase("a + 1 >= 2")]
+    [TestCase("a + 1 <= 2")]
+    [TestCase("a >= 2 - 1")]
+    [TestCase("a <= 2 - 1")]
+    [TestCase("a * 2 >= 2 + 1")]
+    [TestCase("a + 1 > 2")]
+    [TestCase("a + 1 < 2")]
+    [TestCase("a + 1 >= 2 AND a < 3")]
     public void Bug_Aug12_2026_GreaterThanEqual_Compound(string fragment)
     {
         var input = @"

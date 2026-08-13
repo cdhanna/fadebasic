@@ -2003,7 +2003,7 @@ namespace FadeBasic
                         break;
 
                     case LexemType.CommandWord:
-                        ParseCommandOverload2(token, out var command, out var commandOverloads, out var commandArgs, out var argMap, out var errors);
+                        ParseCommandOverload2(token, out var command, out var commandOverloads, out var commandArgs, out var argMap, out var errors, asStatement: true);
                         var commandStatement = new CommandStatement
                         {
                             startToken = token,
@@ -2302,7 +2302,12 @@ namespace FadeBasic
             return true;
         }
 
-        private void ParseCommandOverload2(Token token, out CommandInfo foundCommand, out List<CommandInfo> viableOverloads, out List<IExpressionNode> commandArgs, out List<int> argMap, out List<ParseError> errors)
+        /// <param name="asStatement">
+        /// True when this call sits on its own line rather than inside an expression. Only used
+        /// to pick a clearer error: a value-returning command is not a statement, and saying so
+        /// is far more useful than reporting no overload.
+        /// </param>
+        private void ParseCommandOverload2(Token token, out CommandInfo foundCommand, out List<CommandInfo> viableOverloads, out List<IExpressionNode> commandArgs, out List<int> argMap, out List<ParseError> errors, bool asStatement = false)
         {
             /*
              * Okay, so, we need to parse the expressions one at a time, and invalidate commands as we go,
@@ -2420,8 +2425,28 @@ namespace FadeBasic
                 viableOverloads = new List<CommandInfo> { possibleCommands[0] };
                 commandArgs = new List<IExpressionNode>(); // don't actually need to fill these...
                 argMap = new List<int>();
-                errors.Add(new ParseError(token, ErrorCodes.CommandNoOverloadFound));
+
                 bool isOpenParen = _stream.Peek.type == LexemType.ParenOpen;
+
+                // Distinguish "your arguments are wrong" from "this form needs parentheses".
+                //
+                // The paren-less statement form is only open to commands returning nothing, so a
+                // value-returning command written that way could never have matched any overload
+                // no matter what its arguments were -- and "no overload" would send the reader to
+                // check argument types that were fine. Note the parenthesised form IS a legal
+                // statement, so this must not fire there: `add(1)` really is an arity mistake and
+                // still deserves the overload error.
+                var everyOverloadReturnsAValue = true;
+                for (var o = 0; o < possibleCommands.Count; o++)
+                {
+                    if (possibleCommands[o].returnType != TypeCodes.VOID) continue;
+                    everyOverloadReturnsAValue = false;
+                    break;
+                }
+
+                errors.Add(new ParseError(token, asStatement && everyOverloadReturnsAValue && !isOpenParen
+                    ? ErrorCodes.CommandReturnsValueNeedsParens
+                    : ErrorCodes.CommandNoOverloadFound));
                 _stream.Advance(); // discard open paren...
 
                 while (!_stream.IsEof)
@@ -4193,6 +4218,13 @@ namespace FadeBasic
                 case LexemType.OpMinus:
                 case LexemType.OpGt:
                 case LexemType.OpLt:
+                // Grouped with OpGt/OpLt so >= and <= associate exactly as > and < do. They were
+                // absent entirely, and the miss was invisible until the left side of the
+                // comparison was compound: `a >= 2` never consults associativity, while
+                // `a + 1 >= 2` does, and threw "Invalid lexem type for op assoc" from the
+                // parser rather than reporting an error against the source.
+                case LexemType.OpGte:
+                case LexemType.OpLte:
                 case LexemType.OpBitwiseLeftShift:
                 case LexemType.OpBitwiseRightShift:
                 case LexemType.OpBitwiseNot:
