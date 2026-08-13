@@ -1650,7 +1650,7 @@ namespace FadeBasic.Virtual
             public int cyclesRemaining;
         }
 
-        void TriggerRuntimeError(VirtualRuntimeError error)
+        public void TriggerRuntimeError(VirtualRuntimeError error)
         {
             // Stamp a call-stack snapshot onto the error unless the caller
             // already provided one. This gives every runtime-error consumer

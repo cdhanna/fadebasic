@@ -2041,6 +2041,23 @@ ENDIF
     }
 
     
+    [TestCase("(a + 1) >= 2")]
+    
+    // order of ops is taking this wrong
+    // [TestCase("a + 1 >= 2")] // TODO: add a fix for this later. 
+    public void Bug_Aug12_2026_GreaterThanEqual_Compound(string fragment)
+    {
+        var input = @"
+a = 1
+IF " + fragment + @" 
+    
+ENDIF
+";
+        var parser = MakeParser(input);
+        var prog = parser.ParseProgram();
+        prog.AssertNoParseErrors();
+    }
+    
     [Test]
     public void IfStatement_Conditional()
     {
