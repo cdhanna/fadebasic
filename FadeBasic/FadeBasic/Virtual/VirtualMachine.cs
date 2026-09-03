@@ -885,23 +885,48 @@ namespace FadeBasic.Virtual
                             break;
                         case OpCodes.GT:
                             VmUtil.ReadTwoValues(ref stack, out vTypeCode, out aSpan, out bSpan);
-                            VmUtil.GreaterThan(vTypeCode, bSpan, aSpan, out cSpan);
-                            VmUtil.PushSpan(ref stack, cSpan, vTypeCode);
+                            VmUtil.GreaterThan(ref heap, vTypeCode, bSpan, aSpan, out cSpan);
+
+                            if (vTypeCode != TypeCodes.STRING)
+                            {
+                                // we know the output is already an int, so no need to cast. 
+                                VmUtil.CastInlineSpan(cSpan, vTypeCode, TypeCodes.INT, ref cSpan);
+                            } 
+                            
+                            VmUtil.PushSpan(ref stack, cSpan, TypeCodes.INT);
                             break;
                         case OpCodes.GTE:
                             VmUtil.ReadTwoValues(ref stack, out vTypeCode, out aSpan, out bSpan);
-                            VmUtil.GreaterThanOrEqualTo(vTypeCode, bSpan, aSpan, out cSpan);
-                            VmUtil.PushSpan(ref stack, cSpan, vTypeCode);
+                            VmUtil.GreaterThanOrEqualTo(ref heap, vTypeCode, bSpan, aSpan, out cSpan);
+
+                            if (vTypeCode != TypeCodes.STRING)
+                            {
+                                // we know the output is already an int, so no need to cast. 
+                                VmUtil.CastInlineSpan(cSpan, vTypeCode, TypeCodes.INT, ref cSpan);
+                            } 
+                            VmUtil.PushSpan(ref stack, cSpan, TypeCodes.INT);
                             break;
                         case OpCodes.LT:
                             VmUtil.ReadTwoValues(ref stack, out vTypeCode, out aSpan, out bSpan);
-                            VmUtil.GreaterThan(vTypeCode, aSpan, bSpan, out cSpan);
-                            VmUtil.PushSpan(ref stack, cSpan, vTypeCode);
+                            VmUtil.GreaterThan(ref heap, vTypeCode, aSpan, bSpan, out cSpan);
+
+                            if (vTypeCode != TypeCodes.STRING)
+                            {
+                                // we know the output is already an int, so no need to cast. 
+                                VmUtil.CastInlineSpan(cSpan, vTypeCode, TypeCodes.INT, ref cSpan);
+                            } 
+                            VmUtil.PushSpan(ref stack, cSpan, TypeCodes.INT);
                             break;
                         case OpCodes.LTE:
                             VmUtil.ReadTwoValues(ref stack, out vTypeCode, out aSpan, out bSpan);
-                            VmUtil.GreaterThanOrEqualTo(vTypeCode, aSpan, bSpan, out cSpan);
-                            VmUtil.PushSpan(ref stack, cSpan, vTypeCode);
+                            VmUtil.GreaterThanOrEqualTo(ref heap, vTypeCode, aSpan, bSpan, out cSpan);
+
+                            if (vTypeCode != TypeCodes.STRING)
+                            {
+                                // we know the output is already an int, so no need to cast. 
+                                VmUtil.CastInlineSpan(cSpan, vTypeCode, TypeCodes.INT, ref cSpan);
+                            } 
+                            VmUtil.PushSpan(ref stack, cSpan, TypeCodes.INT);
                             break;
                         case OpCodes.EQ:
                             VmUtil.ReadTwoValues(ref stack, out vTypeCode, out aSpan, out bSpan);

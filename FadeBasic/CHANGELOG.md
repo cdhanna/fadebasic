@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 - Better error messaging for statement vs expression commands
 - `<=` and `>=` are parsed correctly 
+- string inequality works
+- strings support alphabetical sorting based on `>` and `<` operations
 
 ## [0.2.6] - 2026-08-11
 ### Added

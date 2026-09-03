@@ -4309,6 +4309,7 @@ namespace FadeBasic.Virtual
                             throw new NotImplementedException("unknown compiled op code: " + op.operationType);
                     }
                     
+                    
                     var endJumpValue = _buffer.Count;
                     if (jumpIndex > 0)
                     {

@@ -218,7 +218,13 @@ namespace FadeBasic
             if (lht.type == rht.type && lht.structName == rht.structName)
             {
                 
-                if (expr.operationType == OperationType.EqualTo)
+                if (expr.operationType == OperationType.EqualTo 
+                    || expr.operationType == OperationType.NotEqualTo
+                    || expr.operationType == OperationType.GreaterThan
+                    || expr.operationType == OperationType.GreaterThanOrEqualTo
+                    || expr.operationType == OperationType.LessThan
+                    || expr.operationType == OperationType.LessThanOrEqualTo
+                    )
                 {
                     // Comparison result is an int (BASIC uses int as boolean).
                     expr.ParsedType = TypeInfo.FromVariableType(VariableType.Integer);

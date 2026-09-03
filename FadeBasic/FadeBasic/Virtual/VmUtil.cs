@@ -968,7 +968,7 @@ namespace FadeBasic.Virtual
         }
         
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        public static void GreaterThan(byte aTypeCode, ReadOnlySpan<byte> aSpan, ReadOnlySpan<byte> bSpan, out ReadOnlySpan<byte> c)
+        public static void GreaterThan(ref VmHeap heap, byte aTypeCode, ReadOnlySpan<byte> aSpan, ReadOnlySpan<byte> bSpan, out ReadOnlySpan<byte> c)
         {
             var a = aSpan;
             var b = bSpan;
@@ -1010,12 +1010,38 @@ namespace FadeBasic.Virtual
                     float sumReal = (aReal > bReal ? 1 : 0);
                     c = ScratchBytes(sumReal);
                     break;
+                case TypeCodes.STRING:
+                    
+                    // a and b are pointers to strings. 
+                    if (!heap.TryGetAllocationSpan(VmPtr.FromBytes(a), out _, out var a2))
+                    {
+                        throw new Exception("Invalid string pointer for greater checking (a).");
+                    }
+                    if (!heap.TryGetAllocationSpan(VmPtr.FromBytes(b), out _, out var b2))
+                    {
+                        throw new Exception("Invalid string pointer for greater checking (b).");
+                    }
+
+                    var aStr = VmConverter.ToStringSpan(a2);
+                    var bStr = VmConverter.ToStringSpan(b2);
+
+                    var result = string.CompareOrdinal(aStr, bStr);
+                    switch (result)
+                    {
+                        default:
+                            c = ScratchBytes(0); // not greater than.
+                            break;
+                        case 1:
+                            c = ScratchBytes(1); // greater than.
+                            break;
+                    }
+                    break;
                 default:
                     throw new Exception("Unsupported add operation");
             }
         }
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        public static void GreaterThanOrEqualTo(byte aTypeCode, ReadOnlySpan<byte> aSpan, ReadOnlySpan<byte> bSpan, out ReadOnlySpan<byte> c)
+        public static void GreaterThanOrEqualTo(ref VmHeap heap, byte aTypeCode, ReadOnlySpan<byte> aSpan, ReadOnlySpan<byte> bSpan, out ReadOnlySpan<byte> c)
         {
             var a = aSpan;
             var b = bSpan;
@@ -1056,6 +1082,32 @@ namespace FadeBasic.Virtual
                     ConvertTwoDFloats(a, b, out var aDReal, out var bDReal);
                     double sumDReal = (aDReal >= bDReal ? 1 : 0);
                     c = ScratchBytes(sumDReal);
+                    break;
+                case TypeCodes.STRING:
+                    
+                    // a and b are pointers to strings. 
+                    if (!heap.TryGetAllocationSpan(VmPtr.FromBytes(a), out _, out var a2))
+                    {
+                        throw new Exception("Invalid string pointer for greater checking (a).");
+                    }
+                    if (!heap.TryGetAllocationSpan(VmPtr.FromBytes(b), out _, out var b2))
+                    {
+                        throw new Exception("Invalid string pointer for greater checking (b).");
+                    }
+
+                    var aStr = VmConverter.ToStringSpan(a2);
+                    var bStr = VmConverter.ToStringSpan(b2);
+
+                    var result = string.CompareOrdinal(aStr, bStr);
+                    switch (result)
+                    {
+                        default:
+                            c = ScratchBytes(1); 
+                            break;
+                        case -1:
+                            c = ScratchBytes(0);
+                            break;
+                    }
                     break;
                 default:
                     throw new Exception("Unsupported add operation");

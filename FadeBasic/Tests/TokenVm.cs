@@ -198,7 +198,39 @@ z$ = x$ + y$
         Assert.That(str, Is.EqualTo("helloworld"));
     }
 
-    
+
+    [TestCase("a", "a", "<", 0)]
+    [TestCase("a", "b", "<", 1)]
+    [TestCase("b", "a", "<", 0)]
+    [TestCase("a", "a", ">", 0)]
+    [TestCase("a", "b", ">", 0)]
+    [TestCase("b", "a", ">", 1)]
+    [TestCase("a", "a", ">=", 1)]
+    [TestCase("a", "b", ">=", 0)]
+    [TestCase("b", "a", ">=", 1)]
+    [TestCase("a", "a", "<=", 1)]
+    [TestCase("a", "b", "<=", 1)]
+    [TestCase("b", "a", "<=", 0)]
+    [TestCase("world", "hello", "=", 0)]
+    [TestCase("hello", "hello", "=", 1)]
+    [TestCase("hello", "hello", "<>", 0)]
+    [TestCase("world", "hello", "<>", 1)]
+    public void String_Qualities(string x, string y, string op, int a)
+    {
+        var src = @$"
+x$ = ""{x}""
+y$ = ""{y}""
+a = x$ {op} y$
+";
+        Setup(src, out _, out var prog);
+
+        var vm = new VirtualMachine(prog);
+        vm.Execute2();
+        Assert.That(vm.typeRegisters[2], Is.EqualTo(TypeCodes.INT));
+        Assert.That(vm.dataRegisters[2], Is.EqualTo(a));
+
+    }
+
     [Test]
     public void String_Concat_SelfReference()
     {

@@ -2068,6 +2068,37 @@ ENDIF
     }
     
     [Test]
+    public void Bug_Aug26_2026_StringInequality()
+    {
+        var input = @"
+a1$ = ""b""
+a2$ = ""b""
+
+c = a1$ <> a2$ 
+";
+        var parser = MakeParser(input);
+        var prog = parser.ParseProgram();
+        prog.AssertNoParseErrors();
+    }
+
+    
+    [Test]
+    public void Bug_Aug26_2026_StringComparisonGreaterTHan()
+    {
+        var input = @"
+a1$ = ""b""
+a2$ = ""b""
+
+` what does this even mean?
+c = a1$ > a2$ 
+";
+        var parser = MakeParser(input);
+        var prog = parser.ParseProgram();
+        prog.AssertNoParseErrors();
+    }
+
+    
+    [Test]
     public void IfStatement_Conditional()
     {
         var input = @"
