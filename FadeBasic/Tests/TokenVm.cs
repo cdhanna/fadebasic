@@ -4411,6 +4411,30 @@ tuna_echo 2, y$
         Assert.That(str, Is.EqualTo("tuna"));
     }
     
+    /// <summary>
+    /// A GLOBAL string passed by ref must be written back. VmUtil.HandleValueString handled a
+    /// local register and a heap ref but had no GlobalRegisterRef case, so the host's write was
+    /// silently dropped -- a `debug textbox` bound to a `global s$` never took what was typed,
+    /// while the same call on a local string, or on a global int (HandleValue has the case),
+    /// worked. Reading back through a second variable proves the VM value, not just the register.
+    /// </summary>
+    [Test]
+    public void CallHost_RefType_String_Global()
+    {
+        var src = "global x$ = \"a\": tuna x$ : y$ = x$";
+        Setup(src, out var compiler, out var prog);
+        var vm = new VirtualMachine(prog);
+        vm.hostMethods = compiler.methodTable;
+        vm.Execute2();
+
+        Assert.That(vm.globalScope.typeRegisters[0], Is.EqualTo(TypeCodes.STRING));
+        vm.heap.Read(vm.globalScope.dataRegisters[0].ToPtr(), "tuna".Length * 4, out var globalMem);
+        Assert.That(VmConverter.ToString(globalMem), Is.EqualTo("tuna"), "the global register itself");
+
+        vm.heap.Read(vm.dataRegisters[0].ToPtr(), "tuna".Length * 4, out var localMem);
+        Assert.That(VmConverter.ToString(localMem), Is.EqualTo("tuna"), "and what a later read of it sees");
+    }
+
     [Test]
     public void CallHost_RefType_Int_FromArrayMulti()
     {

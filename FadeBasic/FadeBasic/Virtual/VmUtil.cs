@@ -327,27 +327,14 @@ namespace FadeBasic.Virtual
             switch (state)
             {
                 case CommandArgRuntimeState.RegisterRef:
-                    var existingPtr = VmPtr.FromRaw(vm.dataRegisters[address]);
-                    if (vm.heap.TryGetAllocation(existingPtr, out var existingAlloc))
-                    {
-                        if (existingAlloc.format.IsString())
-                        {
-                            vm.heap.Read(existingPtr, existingAlloc.length, out var existingMem);
-                            var existingString = VmConverter.ToString(existingMem);
-                            if (existingString == value)
-                            {
-                                // don't need to do anything; because the string is the same as what already exists, so no need to re-allocate it. 
-                                break;
-                            }
-                        }
-                    }
-                    
-                    VmConverter.FromString(value, out strBytes);
-                    
-                    vm.heap.Allocate(ref HeapTypeFormat.STRING_FORMAT, strBytes.Length, out strPtr);
-                    vm.heap.Write(strPtr, strBytes.Length, strBytes);
-                    vm.dataRegisters[address] = VmPtr.GetRaw(ref strPtr);
-                    vm.typeRegisters[address] = typeCode;
+                    WriteStringRegister(vm, vm.dataRegisters, vm.typeRegisters, value, typeCode, address);
+                    break;
+                case CommandArgRuntimeState.GlobalRegisterRef:
+                    // Was missing, so a host write to a GLOBAL string ref fell through the switch
+                    // and was dropped: `debug textbox` on a `global s$` never took what was typed.
+                    // Same write as a local register, against the global scope's registers --
+                    // exactly the split HandleValue and HandleValueAny already make.
+                    WriteStringRegister(vm, vm.globalScope.dataRegisters, vm.globalScope.typeRegisters, value, typeCode, address);
                     break;
                 case CommandArgRuntimeState.HeapRef:
                     
@@ -363,6 +350,32 @@ namespace FadeBasic.Virtual
         }
 
         
+        static void WriteStringRegister(VirtualMachine vm, ulong[] dataRegisters, byte[] typeRegisters,
+            string value, byte typeCode, ulong address)
+        {
+            var existingPtr = VmPtr.FromRaw(dataRegisters[address]);
+            if (vm.heap.TryGetAllocation(existingPtr, out var existingAlloc))
+            {
+                if (existingAlloc.format.IsString())
+                {
+                    vm.heap.Read(existingPtr, existingAlloc.length, out var existingMem);
+                    var existingString = VmConverter.ToString(existingMem);
+                    if (existingString == value)
+                    {
+                        // don't need to do anything; because the string is the same as what already exists, so no need to re-allocate it. 
+                        return;
+                    }
+                }
+            }
+
+            VmConverter.FromString(value, out var strBytes);
+
+            vm.heap.Allocate(ref HeapTypeFormat.STRING_FORMAT, strBytes.Length, out var strPtr);
+            vm.heap.Write(strPtr, strBytes.Length, strBytes);
+            dataRegisters[address] = VmPtr.GetRaw(ref strPtr);
+            typeRegisters[address] = typeCode;
+        }
+
         // public static void ReadValue(VirtualMachine vm, string defaultValue, out string )
         public static void ReadValueString(VirtualMachine vm, string defaultValue, out string value,
             out CommandArgRuntimeState state, out ulong address)
