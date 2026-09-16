@@ -19,6 +19,45 @@ public class JsonTests
         }
     }
 
+    /// <summary>
+    /// TWELVE fields, which is what it takes to run past the read index's initial buffer. The
+    /// field index is rented from ArrayPool at 8 fields x 3 ints = 24 and comes back as 32, so the
+    /// eleventh field wrote slots 30, 31, 32 and threw IndexOutOfRangeException. Reading a perfectly
+    /// valid document, with no error that names the field or the type.
+    /// </summary>
+    class ManyFields : IJsonable
+    {
+        public int a, b, c, d, e, f, g, h, i, j, k, l;
+
+        public void ProcessJson<T>(ref T op) where T : IJsonOperation
+        {
+            op.IncludeField(nameof(a), ref a);
+            op.IncludeField(nameof(b), ref b);
+            op.IncludeField(nameof(c), ref c);
+            op.IncludeField(nameof(d), ref d);
+            op.IncludeField(nameof(e), ref e);
+            op.IncludeField(nameof(f), ref f);
+            op.IncludeField(nameof(g), ref g);
+            op.IncludeField(nameof(h), ref h);
+            op.IncludeField(nameof(i), ref i);
+            op.IncludeField(nameof(j), ref j);
+            op.IncludeField(nameof(k), ref k);
+            op.IncludeField(nameof(l), ref l);
+        }
+    }
+
+    [Test]
+    public void Json_ObjectWithMoreFieldsThanTheIndexBuffer()
+    {
+        var src = new ManyFields { a = 1, b = 2, c = 3, d = 4, e = 5, f = 6, g = 7, h = 8, i = 9, j = 10, k = 11, l = 12 };
+
+        var back = JsonableExtensions.FromJson<ManyFields>(src.Jsonify());
+
+        Assert.That(back.a, Is.EqualTo(1));
+        Assert.That(back.k, Is.EqualTo(11), "the eleventh field is where the index used to overrun");
+        Assert.That(back.l, Is.EqualTo(12));
+    }
+
     class ByteArray : IJsonable
     {
         public byte[] numbers;

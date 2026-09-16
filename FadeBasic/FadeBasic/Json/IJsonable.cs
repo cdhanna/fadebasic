@@ -852,7 +852,12 @@ namespace FadeBasic.Json
                 i++; // skip ':'
                 SkipWs(ref i);
 
-                if (_fieldCount * FieldStride >= _fields.Length)
+                // ROOM FOR A WHOLE FIELD, not for one int. `>= Length` only grows once the next
+                // slot's FIRST int is out of range, so an object whose field count first exceeds
+                // the buffer part-way through a stride wrote past the end: ArrayPool rents 32 ints
+                // for the initial 8 fields (24), and field 11 wrote slots 30, 31, 32 -- an
+                // IndexOutOfRangeException reading any object with 11 or more fields.
+                if (_fieldCount * FieldStride + FieldStride > _fields.Length)
                 {
                     var newSize = _fields.Length * 2;
                     var grown = ArrayPool<int>.Shared.Rent(newSize);
