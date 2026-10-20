@@ -1,0 +1,38 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+    <!--
+        A Fade console program built with the C# backend, wired to the build task in this repo
+        (instead of the FadeBasic.Build package) so it always uses the current source.
+
+            dotnet run   (compiled C#)
+            dotnet run -p:FadeBackend=VM   (bytecode VM)
+
+        The generated program (bytecode launchable + C# class) lands in
+        obj/FadeGenerated/GeneratedFade.g.cs.
+    -->
+    <PropertyGroup>
+        <TargetFramework>net8.0</TargetFramework>
+        <OutputType>Exe</OutputType>
+        <IsPackable>false</IsPackable>
+        <FadeBackend Condition="'$(FadeBackend)'==''">CSharp</FadeBackend>
+        <FadeDisableAutoDocs>true</FadeDisableAutoDocs>
+        <FadeGeneratedLaunchFile>$(MSBuildProjectDirectory)/obj/FadeGenerated/GeneratedFade.g.cs</FadeGeneratedLaunchFile>
+        <_FadeTaskAssembly>$(MSBuildThisFileDirectory)../FadeBuildTasks/bin/$(Configuration)/net8.0/FadeBasic.Build.dll</_FadeTaskAssembly>
+    </PropertyGroup>
+
+    <!-- out-of-process task host, so rebuilding the task DLL is never blocked by a locked file -->
+    <UsingTask TaskName="FadeBasic.Build.FadeProjectTask" AssemblyFile="$(_FadeTaskAssembly)" TaskFactory="TaskHostFactory" />
+    <Import Project="../FadeBuildTasks/FadeBasic.Build.targets" />
+
+    <ItemGroup>
+        <ProjectReference Include="../FadeBuildTasks/FadeBuildTasks.csproj" ReferenceOutputAssembly="false" Private="false" />
+        <ProjectReference Include="../FadeBasic/FadeBasic.csproj" />
+        <ProjectReference Include="../FadeBasic.Lib.Standard/FadeBasic.Lib.Standard.csproj" />
+
+        <FadeCommand Include="FadeBasic.Lib.Standard" FullName="FadeBasic.Lib.Standard.ConsoleCommands" />
+        <FadeCommand Include="FadeBasic.Lib.Standard" FullName="FadeBasic.Lib.Standard.StandardCommands" />
+        <FadeSource Include="main.fbasic" />
+        <FadeSource Include="shapes.fbasic" />
+        <FadeSource Include="demo_tests.fbasic" />
+    </ItemGroup>
+</Project>

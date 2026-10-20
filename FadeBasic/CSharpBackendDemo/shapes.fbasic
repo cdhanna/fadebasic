@@ -1,0 +1,3 @@
+function boxArea(w, h)
+    area = w * h
+endfunction area
