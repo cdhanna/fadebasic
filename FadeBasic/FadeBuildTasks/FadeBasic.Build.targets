@@ -10,6 +10,17 @@
 
         <FadeGeneratedLaunchType Condition="'$(FadeGeneratedLaunchType)'==''">GeneratedFade</FadeGeneratedLaunchType>
 
+        <!-- VM (default): the program runs on the bytecode VM. CSharp: the program is also
+             compiled to C# and a plain `dotnet run` runs that; tests, watch and the Fade
+             debugger keep using the VM. -->
+        <FadeBackend Condition="'$(FadeBackend)'==''">VM</FadeBackend>
+
+        <!-- Compile `test` blocks into the program. On for Debug, off otherwise, so a Release
+             build ships without them. FadeEnableTesting turns it on in any configuration,
+             since `dotnet test` needs the tests. -->
+        <FadeIncludeTests Condition="'$(FadeIncludeTests)'=='' AND ('$(Configuration)'=='Debug' OR '$(FadeEnableTesting)'=='True' OR '$(FadeEnableTesting)'=='true')">true</FadeIncludeTests>
+        <FadeIncludeTests Condition="'$(FadeIncludeTests)'==''">false</FadeIncludeTests>
+
         <FadeGeneratedFolder Condition="'$(FadeGeneratedFolder)'==''">Launch</FadeGeneratedFolder>
 
         <!--        MSBuildProjectDirectory-->
@@ -52,7 +63,7 @@
         <UpToDateCheckBuilt Include="$(FadeGeneratedLaunchFile)" Set="FadeBasic" />
     </ItemGroup>
 
-    <Target Name="GenerateFadeBasic" BeforeTargets="CoreCompile" Condition="'$(FadeDisableAutoBuild)'!='true'" Inputs="@(FadeSource);@(Commands);@(ReferencePath)" Outputs="$(FadeGeneratedLaunchFile)">
+    <Target Name="GenerateFadeBasic" BeforeTargets="CoreCompile" Condition="'$(FadeDisableAutoBuild)'!='true'" Inputs="@(FadeSource);@(Commands);@(ReferencePath);$(MSBuildProjectFullPath)" Outputs="$(FadeGeneratedLaunchFile)">
         <FadeProjectTask
                 OutputPath="$(TargetDir)"
                 GenerateDebugData="$(FadeBasicDebug)"
@@ -64,6 +75,8 @@
                 References="@(ReferencePath)"
                 GenerateFileLocation="$(FadeGeneratedLaunchFile)"
                 EnableTesting="$(FadeEnableTesting)"
+                Backend="$(FadeBackend)"
+                IncludeTests="$(FadeIncludeTests)"
         >
             <Output TaskParameter="GeneratedFile" PropertyName="FadeGeneratedClassFileName" />
         </FadeProjectTask>

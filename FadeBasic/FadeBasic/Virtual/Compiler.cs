@@ -169,34 +169,72 @@ namespace FadeBasic.Virtual
         public string FunctionName;
     }
 
+    /// <summary>
+    /// Maps variable names to registers while compiling. Names are scoped by region, the way the
+    /// VM's scopes actually behave:
+    /// <list type="bullet">
+    /// <item>the main program sees its own variables and the globals;</item>
+    /// <item>a function (or mock body) sees its own locals and the globals: it runs in a fresh scope,
+    ///   so another function's locals, or main's, can never be its own;</item>
+    /// <item>a test body runs in the global scope, so it sees its own variables, main's, and the globals.</item>
+    /// </list>
+    /// It used to be one table for the whole program where the last declaration of a name won, so a
+    /// plain `entry = 3` in one function could resolve to the struct `entry` of another and write
+    /// through it. Register numbers are still allocated program-wide, so every variable keeps a
+    /// unique register.
+    /// </summary>
     public class CompileScope
     {
         public ulong registerCount;
-        
-        private Dictionary<string, CompiledVariable> _varToReg = new Dictionary<string, CompiledVariable>();
 
-        private Dictionary<string, CompiledArrayVariable> _arrayVarToReg =
-            new Dictionary<string, CompiledArrayVariable>();
+        public enum RegionKind
+        {
+            Main,
+            Function,
+            Test
+        }
+
+        class Region
+        {
+            public RegionKind kind;
+            public string testName;
+            public List<Region> ancestors = new List<Region>(); // a test's `from` chain, nearest first
+            public readonly Dictionary<string, CompiledVariable> variables = new Dictionary<string, CompiledVariable>();
+            public readonly Dictionary<string, CompiledArrayVariable> arrays = new Dictionary<string, CompiledArrayVariable>();
+        }
+
+        readonly Dictionary<string, CompiledVariable> _globals = new Dictionary<string, CompiledVariable>();
+        readonly Dictionary<string, CompiledArrayVariable> _globalArrays = new Dictionary<string, CompiledArrayVariable>();
+        readonly Region _main = new Region { kind = RegionKind.Main };
+        readonly Dictionary<string, Region> _tests = new Dictionary<string, Region>(StringComparer.OrdinalIgnoreCase);
+        readonly Stack<Region> _regions = new Stack<Region>();
+        Region Current => _regions.Count > 0 ? _regions.Peek() : _main;
 
         public CompileScope()
         {
-            
+
         }
 
+        /// <summary>
+        /// A scope seeded with existing variables (the debugger's eval): each one is visible from the
+        /// main region, globals as globals and everything else as a main-program variable.
+        /// </summary>
         public CompileScope(Dictionary<string, CompiledVariable> varToReg, Dictionary<string, CompiledArrayVariable> arrayVarToReg)
         {
-            _varToReg = varToReg;
-            _arrayVarToReg = arrayVarToReg;
             ulong highestAddress = 0;
-            foreach (var kvp in _varToReg)
+            foreach (var kvp in varToReg)
             {
+                if (kvp.Value.isGlobal) _globals[kvp.Key] = kvp.Value;
+                else _main.variables[kvp.Key] = kvp.Value;
                 if (kvp.Value.registerAddress > highestAddress)
                 {
                     highestAddress = kvp.Value.registerAddress;
                 }
             }
-            foreach (var kvp in _arrayVarToReg)
+            foreach (var kvp in arrayVarToReg)
             {
+                if (kvp.Value.isGlobal) _globalArrays[kvp.Key] = kvp.Value;
+                else _main.arrays[kvp.Key] = kvp.Value;
                 if (kvp.Value.registerAddress > highestAddress)
                 {
                     highestAddress = kvp.Value.registerAddress;
@@ -214,23 +252,70 @@ namespace FadeBasic.Virtual
 
             registerCount = highestAddress + 1;
         }
-        
+
+        /// <summary>Start compiling a function, mock body or test body. Pair with <see cref="ExitRegion"/>.</summary>
+        public void EnterRegion(RegionKind kind)
+        {
+            _regions.Push(new Region { kind = kind });
+        }
+
+        /// <summary>
+        /// Start compiling a test body. A `from` child continues its parent's run, so it also sees the
+        /// variables of every test in its chain (compile parents first).
+        /// </summary>
+        public void EnterTestRegion(string testName, IEnumerable<string> ancestorsNearestFirst)
+        {
+            var region = new Region { kind = RegionKind.Test, testName = testName };
+            foreach (var name in ancestorsNearestFirst)
+            {
+                if (name != null && _tests.TryGetValue(name, out var ancestor)) region.ancestors.Add(ancestor);
+            }
+            _regions.Push(region);
+        }
+
+        public void ExitRegion()
+        {
+            var region = _regions.Pop();
+            if (region.kind == RegionKind.Test && region.testName != null) _tests[region.testName] = region;
+        }
+
         public bool TryGetVariable(string name, out CompiledVariable variable)
         {
-            return _varToReg.TryGetValue(name, out variable);
+            var region = Current;
+            if (region.variables.TryGetValue(name, out variable)) return true;
+            foreach (var ancestor in region.ancestors)
+            {
+                if (ancestor.variables.TryGetValue(name, out variable)) return true;
+            }
+            if (region.kind == RegionKind.Test && _main.variables.TryGetValue(name, out variable)) return true;
+            return _globals.TryGetValue(name, out variable);
         }
 
         public bool TryGetArray(string name, out CompiledArrayVariable arrayVariable)
         {
-            return _arrayVarToReg.TryGetValue(name, out arrayVariable);
+            var region = Current;
+            if (region.arrays.TryGetValue(name, out arrayVariable)) return true;
+            foreach (var ancestor in region.ancestors)
+            {
+                if (ancestor.arrays.TryGetValue(name, out arrayVariable)) return true;
+            }
+            if (region.kind == RegionKind.Test && _main.arrays.TryGetValue(name, out arrayVariable)) return true;
+            return _globalArrays.TryGetValue(name, out arrayVariable);
         }
 
         // Enumeration accessors used by hot-reload's structural diff to read the
-        // full name -> register/type mapping out of a compiled program. Kept
-        // read-only so callers can't mutate the scope's tables.
-        public IReadOnlyDictionary<string, CompiledVariable> Variables => _varToReg;
-        public IReadOnlyDictionary<string, CompiledArrayVariable> ArrayVariables => _arrayVarToReg;
-        
+        // name -> register/type mapping of the global scope: the globals and the main
+        // program's variables (main runs in the global scope). Read-only views.
+        public IReadOnlyDictionary<string, CompiledVariable> Variables => Merge(_main.variables, _globals);
+        public IReadOnlyDictionary<string, CompiledArrayVariable> ArrayVariables => Merge(_main.arrays, _globalArrays);
+
+        static Dictionary<string, T> Merge<T>(Dictionary<string, T> locals, Dictionary<string, T> globals)
+        {
+            var merged = new Dictionary<string, T>(locals);
+            foreach (var kvp in globals) merged[kvp.Key] = kvp.Value;
+            return merged;
+        }
+
         public CompiledVariable Create(string name, byte typeCode, bool isGlobal, byte regOffset=0)
         {
             var compileVar = new CompiledVariable
@@ -240,10 +325,18 @@ namespace FadeBasic.Virtual
                 typeCode = typeCode,
                 byteSize = TypeCodes.GetByteSize(typeCode),
                 isGlobal = isGlobal
-            };  
+            };
 
-            _varToReg[name] = compileVar;
-            
+            if (isGlobal)
+            {
+                _globals[name] = compileVar;
+                Current.variables.Remove(name); // the global now answers for this name here too
+            }
+            else
+            {
+                Current.variables[name] = compileVar;
+            }
+
             return compileVar;
         }
 
@@ -267,7 +360,15 @@ namespace FadeBasic.Virtual
                 byteSize = TypeCodes.GetByteSize(typeCode),
                 isGlobal = isGlobal
             };
-            _arrayVarToReg[declarationVariable] = compileArrayVar;
+            if (isGlobal)
+            {
+                _globalArrays[declarationVariable] = compileArrayVar;
+                Current.arrays.Remove(declarationVariable);
+            }
+            else
+            {
+                Current.arrays[declarationVariable] = compileArrayVar;
+            }
             return compileArrayVar;
         }
 
@@ -287,6 +388,14 @@ namespace FadeBasic.Virtual
     {
         public bool GenerateDebugData = false;
         public bool InternStrings = true;
+
+        /// <summary>
+        /// Compile `test` blocks: their bodies, launchers, test-scoped functions and the `runto`
+        /// stops in the program. When false the program carries none of them and the test manifest
+        /// is empty; the tests are still parsed and checked. A shipped build has no use for them
+        /// (a Release build of Fish Fish Pop carried 473 tests, 35% of its bytecode).
+        /// </summary>
+        public bool IncludeTests = true;
 
         public static readonly CompilerOptions Default = new CompilerOptions
         {
@@ -557,7 +666,10 @@ namespace FadeBasic.Virtual
             // the test corpus. These labels get a RUNTO_YIELD opcode emitted right
             // after their NOOP. Labels not referenced get no overhead, and run builds
             // with no tests skip this pass entirely (set stays empty).
-            CollectRuntoTargets(program);
+            if (_options.IncludeTests)
+            {
+                CollectRuntoTargets(program);
+            }
 
             foreach (var typeDef in program.typeDefinitions)
             {
@@ -625,13 +737,15 @@ namespace FadeBasic.Virtual
             // Running a test = jump to its launcher, which GOSUBs through the
             // full chain in order, sharing the VM's scope/registers/mock-table.
             var testBodyAddresses = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
-            foreach (var test in program.tests)
+            _allTestsForScope = program.tests;
+            var tests = _options.IncludeTests ? program.tests : new List<TestNode>();
+            foreach (var test in TestsParentsFirst(tests))
             {
                 CompileTestBody(test, testBodyAddresses);
             }
-            foreach (var test in program.tests)
+            foreach (var test in tests)
             {
-                CompileTestLauncher(test, testBodyAddresses, program.tests);
+                CompileTestLauncher(test, testBodyAddresses, tests);
             }
 
             // Emit the assert-unwind trampoline after tests, before interned
@@ -647,6 +761,52 @@ namespace FadeBasic.Virtual
                 PushInternedData();
             }
             CompileJumpReplacements();
+        }
+
+        List<TestNode> _allTestsForScope = new List<TestNode>();
+
+        /// <summary>
+        /// Tests in source order, except that a test always comes after the tests it is `from`, so a
+        /// child's body is compiled with its ancestors' variables already declared.
+        /// </summary>
+        public static List<TestNode> TestsParentsFirst(List<TestNode> tests)
+        {
+            var byName = new Dictionary<string, TestNode>(StringComparer.OrdinalIgnoreCase);
+            foreach (var t in tests)
+            {
+                if (t.name != null && !byName.ContainsKey(t.name)) byName[t.name] = t;
+            }
+            var ordered = new List<TestNode>();
+            var placed = new HashSet<TestNode>();
+            var visiting = new HashSet<TestNode>();
+            void Place(TestNode t)
+            {
+                if (placed.Contains(t) || !visiting.Add(t)) return; // cycles: the visitor reports them
+                if (t.fromParent != null && byName.TryGetValue(t.fromParent, out var parent)) Place(parent);
+                visiting.Remove(t);
+                if (placed.Add(t)) ordered.Add(t);
+            }
+            foreach (var t in tests) Place(t);
+            return ordered;
+        }
+
+        /// <summary>The names of a test's `from` chain, nearest ancestor first.</summary>
+        public static List<string> TestAncestorNames(TestNode test, List<TestNode> tests)
+        {
+            var byName = new Dictionary<string, TestNode>(StringComparer.OrdinalIgnoreCase);
+            foreach (var t in tests)
+            {
+                if (t.name != null && !byName.ContainsKey(t.name)) byName[t.name] = t;
+            }
+            var names = new List<string>();
+            var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            var cursor = test;
+            while (cursor.fromParent != null && byName.TryGetValue(cursor.fromParent, out var parent) && seen.Add(parent.name))
+            {
+                names.Add(parent.name);
+                cursor = parent;
+            }
+            return names;
         }
 
         private void CollectRuntoTargets(ProgramNode program)
@@ -690,10 +850,12 @@ namespace FadeBasic.Virtual
             // FunctionStatement nodes — they're emitted separately below — so the
             // body's own function declarations don't pollute the test's entry-point
             // bytecode region.
+            scope.EnterTestRegion(test.name, TestAncestorNames(test, _allTestsForScope));
             foreach (var statement in test.testProgram.statements)
             {
                 Compile(statement);
             }
+            scope.ExitRegion();
 
             // RETURN instead of HALT: when invoked via the launcher's
             // JUMP_HISTORY, this returns control so the next ancestor-or-
@@ -1304,10 +1466,15 @@ namespace FadeBasic.Virtual
         
         private void Compile(FunctionReturnStatement returnStatement)
         {
-            // put the return value onto the stack
+            // put the return value onto the stack; a call always leaves exactly one value, so a
+            // return without one leaves a VOID (a call used as a statement discards it)
             if (returnStatement.returnExpression != null)
             {
                 Compile(returnStatement.returnExpression);
+            }
+            else
+            {
+                AddPush(_buffer, new byte[] { }, TypeCodes.VOID);
             }
 
             // pop a scope
@@ -1352,6 +1519,7 @@ namespace FadeBasic.Virtual
 
             // push a new scope
             CompilePushScope();
+            scope.EnterRegion(CompileScope.RegionKind.Function);
 
             // Labels inside this function get their own region — two
             // functions can share label names without resolving to each
@@ -1403,7 +1571,10 @@ namespace FadeBasic.Virtual
             {
                 Compile(statement);
             }
-            
+
+            // falling off the end returns nothing: leave a VOID for the caller to discard
+            AddPush(_buffer, new byte[] { }, TypeCodes.VOID);
+
             // at the end of the function, we need to jump home
             // pop a scope
             CompilePopScope();
@@ -1411,6 +1582,7 @@ namespace FadeBasic.Virtual
             // and then jump home
             _buffer.Add(OpCodes.RETURN);
 
+            scope.ExitRegion();
             _currentLabelRegion = prevRegion;
         }
 
@@ -1617,11 +1789,17 @@ namespace FadeBasic.Virtual
             AddPushInt(_buffer, forLoopValue);
             _buffer.Add(OpCodes.JUMP);
 
+            // Leaving through the first bounds check (x < min) skips the second one, which is
+            // what would have consumed the other bound. Drop it here, or every such exit leaks one
+            // value onto the operand stack, under whatever expression is being evaluated.
+            var lteExitValue = _buffer.Count;
+            _buffer.Add(OpCodes.DISCARD_TYPED);
+
             var endJumpValue = _buffer.Count;
 
             PatchInt32(_buffer, successJumpIndex + 2, successJumpValue);
             PatchInt32(_buffer, exitJumpIndex + 2, endJumpValue);
-            PatchInt32(_buffer, lteExitJumpIndex + 2, endJumpValue);
+            PatchInt32(_buffer, lteExitJumpIndex + 2, lteExitValue);
             foreach (var index in exitStatementIndexes) PatchInt32(_buffer, index + 2, endJumpValue);
             foreach (var index in skipStatementIndexes) PatchInt32(_buffer, index + 2, stepLoopValue);
             ReturnJumpList(exitStatementIndexes);
@@ -2103,6 +2281,7 @@ namespace FadeBasic.Virtual
                 _dbg?.AddFunction(bodyStart, mockStatement.commandNameToken);
             }
             CompilePushScope();
+            scope.EnterRegion(CompileScope.RegionKind.Function);
 
             // Build the list of real (non-VmArg) arg indices for this overload.
             var commandArgs = argMethod.args ?? System.Array.Empty<CommandArgInfo>();
@@ -2304,6 +2483,7 @@ namespace FadeBasic.Virtual
 
             CompilePopScope();
             _buffer.Add(OpCodes.RETURN);
+            scope.ExitRegion();
 
             // Patch the skip-over JUMP to land past this body.
             PatchAddress(skipBodyPatchIndex, _buffer.Count);

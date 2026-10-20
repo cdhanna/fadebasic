@@ -497,6 +497,16 @@ namespace FadeBasic
                         else
                         {
                             EnforceTypeAssignment(variableRef, rightType, defaultTypeInfo, true, out foundType);
+
+                            // An undeclared scalar is typed by its name, as the compiler and VM type
+                            // it (`slot` is an int even after `slot = 10 / 4.0`, which stores 2).
+                            // Taking the right side's type here made the checker disagree with the
+                            // program, e.g. rejecting `names(slot)` with error 211. Only a struct
+                            // gets its variable declared from the right side (implicitDecl below).
+                            if (foundType.type != VariableType.Struct && !foundType.IsArray && !foundType.unset)
+                            {
+                                foundType = defaultTypeInfo;
+                            }
                         }
                         
                         
@@ -1863,6 +1873,10 @@ namespace FadeBasic
                         return ParseAssert(token);
                     case LexemType.KeywordMock:
                         return ParseMock(token);
+                    case LexemType.KeywordExitMock:
+                        return ParseExitMock(token);
+                    case LexemType.KeywordForbid:
+                        return ParseForbid(token);
                     case LexemType.KeywordClear:
                         return ParseClearMock(token);
                     case LexemType.KeywordEnd:
@@ -1916,7 +1930,10 @@ namespace FadeBasic
                                 var labelDecl = new LabelDeclarationNode(token, secondToken);
                                 return labelDecl;
                             case LexemType.EndStatement:
-                                _stream.Advance(); // consume the token.
+                                // A one-line `if ... then call()` parses its statement with
+                                // consumeEndOfStatement=false and stops at the line end; eating it
+                                // here made the if swallow the following lines (e.g. a `next`).
+                                if (consumeEndOfStatement) _stream.Advance();
                                 return new ExpressionStatement(reference); // TODO: eh?
 
                             case LexemType.OpEqual:
@@ -3579,6 +3596,12 @@ namespace FadeBasic
                 case LexemType.KeywordEndRunto:
                 case LexemType.KeywordEndMock:
                 case LexemType.KeywordEndDefer:
+                // Top-level-only declarations. An unterminated block used to run on and swallow
+                // the next `type`, which left that type undefined and turned one missing `next`
+                // into an error at every use of the type (over a thousand in Fish Fish Pop).
+                case LexemType.KeywordType:
+                case LexemType.KeywordTest:
+                case LexemType.KeywordAbstract:
                     return true;
                 default:
                     return false;
@@ -3878,46 +3901,12 @@ namespace FadeBasic
                     }
 
                     case LexemType.KeywordExitMock:
-                    {
-                        var head = _stream.Advance();
-                        var rs = new MockExitMockStatement(head, head);
-                        if (TryParseExpression(out var expr))
-                        {
-                            rs.expression = expr;
-                            rs.endToken = expr.EndToken;
-                        }
-                        else
-                        {
-                            rs.Errors.Add(new ParseError(head, ErrorCodes.MockReturnsMissingExpression));
-                        }
-                        stmt.body.Add(rs);
+                        stmt.body.Add(ParseExitMock(_stream.Advance()));
                         break;
-                    }
 
                     case LexemType.KeywordForbid:
-                    {
-                        var head = _stream.Advance();
-                        var fs = new MockForbidStatement(head, head);
-                        // Optional reason expression (string-typed). Same
-                        // shape as `assert <cond>, "reason"`. We attempt
-                        // to parse it; if the next token isn't expression-
-                        // shaped, fall through with no reason.
-                        if (!IsMockBodyTerminator(_stream.Peek.type))
-                        {
-                            var saved = _stream.Save();
-                            if (TryParseExpression(out var reasonExpr))
-                            {
-                                fs.reason = reasonExpr;
-                                fs.endToken = reasonExpr.EndToken;
-                            }
-                            else
-                            {
-                                _stream.Restore(saved);
-                            }
-                        }
-                        stmt.body.Add(fs);
+                        stmt.body.Add(ParseForbid(_stream.Advance()));
                         break;
-                    }
 
                     default:
                     {
@@ -3938,6 +3927,45 @@ namespace FadeBasic
             }
 
             return stmt;
+        }
+
+        // `exitmock <expr>`. Parsed wherever it appears; the scope checker rejects it outside a
+        // mock body. (It used to be recognized only at the top level of a mock body, so an
+        // `exitmock` inside an `if` was an "Invalid statement".)
+        private MockExitMockStatement ParseExitMock(Token head)
+        {
+            var rs = new MockExitMockStatement(head, head);
+            if (TryParseExpression(out var expr))
+            {
+                rs.expression = expr;
+                rs.endToken = expr.EndToken;
+            }
+            else
+            {
+                rs.Errors.Add(new ParseError(head, ErrorCodes.MockReturnsMissingExpression));
+            }
+            return rs;
+        }
+
+        // `forbid [reason]`. The optional reason is string-typed, the same shape as
+        // `assert <cond>, "reason"`; if the next token isn't expression-shaped there is none.
+        private MockForbidStatement ParseForbid(Token head)
+        {
+            var fs = new MockForbidStatement(head, head);
+            if (!IsMockBodyTerminator(_stream.Peek.type))
+            {
+                var saved = _stream.Save();
+                if (TryParseExpression(out var reasonExpr))
+                {
+                    fs.reason = reasonExpr;
+                    fs.endToken = reasonExpr.EndToken;
+                }
+                else
+                {
+                    _stream.Restore(saved);
+                }
+            }
+            return fs;
         }
 
         // True for tokens that can't start a `forbid` reason expression —
@@ -4069,7 +4097,12 @@ namespace FadeBasic
                     }
                     break;
                 default:
-                    var error = new ParseError(token, ErrorCodes.ExpectedParameter);
+                    // a keyword or command name where a name was expected (`function advance(step)`)
+                    var isWord = !string.IsNullOrEmpty(token.raw) && char.IsLetter(token.raw[0]);
+                    var error = isWord
+                        ? new ParseError(token, ErrorCodes.ExpectedParameter,
+                            $"`{token.raw}` is a reserved word in Fade and cannot be used as a name")
+                        : new ParseError(token, ErrorCodes.ExpectedParameter);
                     var patchToken = _stream.CreatePatchToken(LexemType.VariableGeneral, "_")[0];
                     var fake = new TypeDefinitionMember(patchToken, patchToken, new VariableRefNode(patchToken),
                         new TypeReferenceNode(VariableType.Integer, patchToken));
@@ -4216,40 +4249,11 @@ namespace FadeBasic
                     throw new ParserException("Invalid lexem type for op order", token);
             }
         }
-        private bool IsLeftAssoc(Token token)
-        {
-            switch (token.type)
-            {
-                case LexemType.OpDivide:
-                case LexemType.OpMinus:
-                case LexemType.OpGt:
-                case LexemType.OpLt:
-                // Grouped with OpGt/OpLt so >= and <= associate exactly as > and < do. They were
-                // absent entirely, and the miss was invisible until the left side of the
-                // comparison was compound: `a >= 2` never consults associativity, while
-                // `a + 1 >= 2` does, and threw "Invalid lexem type for op assoc" from the
-                // parser rather than reporting an error against the source.
-                case LexemType.OpGte:
-                case LexemType.OpLte:
-                case LexemType.OpBitwiseLeftShift:
-                case LexemType.OpBitwiseRightShift:
-                case LexemType.OpBitwiseNot:
-                    return false;
-                case LexemType.OpPlus:
-                case LexemType.OpMultiply:
-                case LexemType.OpEqual:
-                case LexemType.OpNotEqual:
-                case LexemType.KeywordAnd:
-                case LexemType.KeywordXor:
-                case LexemType.KeywordOr:
-                case LexemType.OpBitwiseOr:
-                case LexemType.OpBitwiseAnd:
-                case LexemType.OpBitwiseXor:
-                    return true;
-                default:
-                    throw new ParserException("Invalid lexem type for op assoc", token);
-            }
-        }
+        /// <summary>
+        /// Only `^` groups to the right (`2 ^ 3 ^ 2` is `2 ^ (3 ^ 2)`); every other binary operator
+        /// groups to the left, so `a - b + c` is `(a - b) + c`.
+        /// </summary>
+        private static bool IsRightAssoc(Token token) => token.type == LexemType.OpPower;
 
         private bool IsBinaryOp(Token token)
         {
@@ -4340,9 +4344,13 @@ namespace FadeBasic
                 // while lookahead is a binary operator whose precedence is greater
                 //     than op's, or a right-associative operator
                 //     whose precedence is equal to op's
+                //
+                // This used to test IsLeftAssoc here, so every operator that function listed as
+                // left-associative (+, *, =, and, or...) actually grouped to the right:
+                // `10 - 3 + 2` parsed as `10 - (3 + 2)` and `8 / 4 * 2` as `8 / (4 * 2)`.
                 while (IsBinaryOp(lookAhead) && (
                         (GetOperatorOrder(lookAhead) > GetOperatorOrder(op)) ||
-                        (IsLeftAssoc(lookAhead) && GetOperatorOrder(lookAhead) == GetOperatorOrder(op))
+                        (IsRightAssoc(lookAhead) && GetOperatorOrder(lookAhead) == GetOperatorOrder(op))
                        ))
                 {
                     //rhs := parse_expression_1 (rhs, precedence of op + (1 if lookahead precedence is greater, else 0))

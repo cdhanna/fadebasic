@@ -1874,7 +1874,7 @@ endfunction";
         var errors = prog.GetAllErrors();
         Assert.That(errors.Count, Is.EqualTo(2));
         Assert.That(errors[0].Display, Is.EqualTo($"[1:15] - {ErrorCodes.ExpectedParameter}"));
-        Assert.That(errors[1].Display, Is.EqualTo($"[1:21] - {ErrorCodes.ExpectedParameter}"));
+        Assert.That(errors[1].Display, Is.EqualTo($"[1:21] - {ErrorCodes.ExpectedParameter} | `for` is a reserved word in Fade and cannot be used as a name"));
     }
     
     

@@ -40,6 +40,8 @@ These are evaluated by [FadeBasic.Build.props](../../FadeBuildTasks/FadeBasic.Bu
 
 | Property | Default | What it does |
 |---|---|---|
+| **`FadeBackend`** | `VM` | `VM` runs the program as bytecode on the Fade VM. `CSharp` compiles it to C# instead, which runs much faster; the generated class lands in the same `.g.cs` file, and `#line` directives map it back to the `.fbasic` source for C# errors, the .NET debugger and stack traces. A `CSharp` build carries no bytecode, so the Fade DAP debugger and `--fade-watch` need a `VM` build. If the backend can't compile a program exactly as the VM would run it, the build fails with `FADE:CS0001`. |
+| **`FadeIncludeTests`** | `true` when `Configuration=Debug` or `FadeEnableTesting=True`, otherwise `false` | Compiles the program's `TEST` blocks into the build. Set to `false` to leave them out of a shipped build. |
 | **`FadeBasicDebug`** | `true` when `Configuration=Debug`, otherwise unset | Emits source-mapping debug data into the generated launchable so the DAP debugger can step through `.fbasic` source. Set to `false` in Debug to opt out, or `true` in Release to opt in. |
 | **`FadeGenerateMain`** | `True` | Emits a `Main` method on the generated launchable class. Set to `False` if your project ships its own `Main` (e.g., a custom host like the MonoGame sample) and you want to call the generator's static helpers manually. |
 | **`FadeIgnoreChecks`** | `False` | Skips the parser's semantic-error pass (unknown symbols, type mismatches, etc.). Useful when iterating quickly with deliberately-broken source; **don't ship with this on**. |

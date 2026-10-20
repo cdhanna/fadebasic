@@ -139,6 +139,17 @@ namespace FadeBasic.Launch
         {
             options ??= LaunchOptions.DefaultOptions;
 
+            // A FadeBackend=CSharp build has no bytecode, so the VM-only modes (the Fade debugger,
+            // hot-reload watch) can't run; say so and run the compiled program.
+            if ((options.debug || options.watch) && !FadeRunners.HasBytecode(instance) && instance is ICompiledLaunchable)
+            {
+                Console.Error.WriteLine("fade: the debugger and --fade-watch run on the bytecode VM, which a " +
+                                        "FadeBackend=CSharp build leaves out. Running the compiled program; build " +
+                                        "with FadeBackend=VM to debug.");
+                FadeRunners.CreateRunner(instance).Run();
+                return;
+            }
+
             // Headless watch (no debugger): the standalone hot-reload loop.
             if (options.watch && !options.debug)
             {
@@ -146,15 +157,13 @@ namespace FadeBasic.Launch
                 return;
             }
 
-            // Plain run (no debugger, no watch): just execute the baked bytecode.
+            // Plain run (no debugger, no watch): the compiled program when the launchable carries
+            // one (FadeBackend=CSharp, unless FADE_BACKEND=vm), otherwise the baked bytecode.
+            // Either way it runs until the program ends or first suspends.
             if (!options.debug)
             {
-                var runVm = new VirtualMachine(instance.Bytecode)
-                {
-                    hostMethods = HostMethodTable.FromCommandCollection(instance.CommandCollection)
-                };
-                options.ApplyGc(runVm);
-                runVm.Execute2(0); // 0 means run until suspend.
+                var runner = FadeRunners.CreateRunner(instance, options.ApplyGc);
+                runner.Run();
                 return;
             }
 
@@ -598,7 +607,7 @@ namespace FadeBasic.Launch
 
             if (testAll)
             {
-                exitCode = RunManyAndReport(testInstance.TestManifest, testInstance.Bytecode, hostMethods);
+                exitCode = RunManyAndReport(testInstance);
                 return true;
             }
 
@@ -611,20 +620,20 @@ namespace FadeBasic.Launch
                 exitCode = 1;
                 return true;
             }
-            var result = FadeTestExecutor.RunTest(testInstance.Bytecode, hostMethods, match);
+            var result = FadeTestExecutor.RunTest(testInstance, match);
             ReportResult(result);
             exitCode = result.passed ? 0 : 1;
             return true;
         }
 
-        static int RunManyAndReport(IReadOnlyList<TestManifestEntry> manifest, byte[] bytecode, HostMethodTable hostMethods)
+        static int RunManyAndReport(ITestLaunchable launchable)
         {
             var passed = 0;
             var failed = 0;
-            foreach (var entry in manifest)
+            foreach (var entry in launchable.TestManifest)
             {
                 if (entry.isAbstract) continue;
-                var r = FadeTestExecutor.RunTest(bytecode, hostMethods, entry);
+                var r = FadeTestExecutor.RunTest(launchable, entry);
                 ReportResult(r);
                 if (r.passed) passed++; else failed++;
             }

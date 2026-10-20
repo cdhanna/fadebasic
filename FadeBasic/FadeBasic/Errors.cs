@@ -238,6 +238,7 @@ namespace FadeBasic
         public static readonly ErrorCode AssertReasonMissingExpression = "[0191] assert reason clause (after `,`) requires a string expression";
         public static readonly ErrorCode AssertReasonMustBeString = "[0192] assert reason expression must be a string";
         public static readonly ErrorCode MockReturnsMissingExpression = "[0193] `exitmock` requires an expression";
+        public static readonly ErrorCode MockExitOutsideMockBody = "[0268] `exitmock` and `forbid` can only be used inside a mock body";
         public static readonly ErrorCode MockForbidReasonMustBeString = "[0194] forbid reason expression must be a string";
         public static readonly ErrorCode MockReturnsOnVoidCommand = "[0195] `exitmock`/`endmock <expr>` is not allowed when the command has no return value";
         public static readonly ErrorCode MockReturnsTypeMismatch = "[0196] mock return-value expression type does not match the command's return type";
