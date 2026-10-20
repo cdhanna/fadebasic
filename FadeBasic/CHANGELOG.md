@@ -5,6 +5,28 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.0] - 2026-10-20
+### Added
+- C# transpiler. Set `<FadeBackend>CSharp</FadeBackend>`
+- `<FadeIncludeTests>` leaves test blocks out of a build; it defaults to `true` for Debug builds and test projects and `false` otherwise
+- `FADE_TEST_TIMEOUT` (seconds) fails a test that runs too long instead of hanging the run
+- `EXITMOCK` and `FORBID` can sit inside blocks (`IF`, loops) in a mock body
+
+### Changed
+- A `#CONSTANT` no longer replaces a label name of the same name, in the label or in `GOTO`/`GOSUB`/`RUNTO`
+- Build errors point at the `.fbasic` file and its own line numbers
+
+### Fixed
+- Operator ordering issue
+- A local in one function or test that shares its name with a struct variable elsewhere no longer collides with it
+- A function called inside an expression no longer corrupts the expression's value when it calls a void function or runs a descending `FOR` loop
+- A one-line `IF ... THEN call()` inside a loop parses correctly
+- A test whose `RUNTO` stops inside a `GOSUB` routine ends when the test does, instead of running the main program on
+- A mock's parameters can be used in a test declared `FROM` another test
+- An unterminated block no longer produces a cascade of errors through the rest of the file
+- Using a reserved word as a parameter name says so
+- An internal VM failure is reported as a runtime error with its source line instead of crashing the host
+
 ## [0.2.7] - 2026-09-03
 ### Fixed
 - Better error messaging for statement vs expression commands

@@ -24,9 +24,9 @@
     -->
   </PropertyGroup>
   <ItemGroup>
-    <PackageReference Include="FadeBasic.Build" Version="0.0.2.595" />
-    <PackageReference Include="FadeBasic.Lang.Core" Version="0.0.2.595" />
-    <PackageReference Include="FadeBasic.Lib.Standard" Version="0.0.2.595" />
+    <PackageReference Include="FadeBasic.Build" Version="0.2.6.9006" />
+    <PackageReference Include="FadeBasic.Lang.Core" Version="0.2.6.9006" />
+    <PackageReference Include="FadeBasic.Lib.Standard" Version="0.2.6.9006" />
     <FadeCommand Include="FadeBasic.Lib.Standard" FullName="FadeBasic.Lib.Standard.ConsoleCommands" />
     <FadeCommand Include="FadeBasic.Lib.Standard" FullName="FadeBasic.Lib.Standard.StandardCommands" />
     <FadeSource Include="main.fbasic" />

@@ -86,7 +86,13 @@ namespace FadeBasic.Virtual
         INVALID_MEMORY_COPY,
         CANNOT_TOKENIZE_WITHOUT_HIGHER_CONTEXT,
         EXPLODE,
-        ASSERT_FAILED
+        ASSERT_FAILED,
+
+        /// <summary>
+        /// The VM failed inside an instruction (for example an operand of the wrong type). The
+        /// message is the underlying exception's; the instruction index locates the statement.
+        /// </summary>
+        INTERNAL_ERROR
     }
 
     public class TokenReplacement
@@ -202,6 +208,9 @@ namespace FadeBasic.Virtual
             // between. Used to build a source-mapped call stack for the failure
             // report; resolution happens in the test runner, not the VM.
             public JumpHistoryData[] callStack = System.Array.Empty<JumpHistoryData>();
+            // Set by the C# backend, which has no instruction index: the 0-based line of the
+            // failing statement in the concatenated source. -1 when the VM produced the failure.
+            public int sourceLine = -1;
         }
 
         /// <summary>
@@ -453,6 +462,26 @@ namespace FadeBasic.Virtual
         }
 
         /// <summary>
+        /// A VM with an empty program, used by the compiled (C#) backend as the context object
+        /// for commands that take a <c>[FromVm] VirtualMachine</c>. It never executes bytecode.
+        /// </summary>
+        public static VirtualMachine CreateHostContext()
+        {
+            var data = new InternedData
+            {
+                types = new Dictionary<string, InternedType>(),
+                maxRegisterAddress = 1
+            };
+            var json = Encoding.Default.GetBytes(data.Jsonify());
+            var program = new byte[4 + json.Length];
+            BitConverter.GetBytes(4).CopyTo(program, 0);
+            json.CopyTo(program, 4);
+            var vm = new VirtualMachine(program);
+            vm.instructionIndex = 0;
+            return vm;
+        }
+
+        /// <summary>
         /// The state structure keeps track of data between instruction evaluations.
         /// If you were to run the <see cref="VirtualMachine.Execute2"/> with infinite budget, then
         /// these variables would be kept local within the for-loop.
@@ -534,6 +563,27 @@ namespace FadeBasic.Virtual
         }
         
         public int Execute3(int instructionBatchCount=1000, Func<int, bool> shouldBreakpointCallback=null)
+        {
+            try
+            {
+                return Execute3Core(instructionBatchCount, shouldBreakpointCallback);
+            }
+            catch (Exception ex) when (!(ex is VirtualRuntimeException) && shouldThrowRuntimeException)
+            {
+                // A .NET exception from inside an instruction ("expected an int", an index out of
+                // range...) carried no location, and took a host down with it. Report it as a VM
+                // runtime error at the failing instruction instead, so hosts can name the statement.
+                TriggerRuntimeError(new VirtualRuntimeError
+                {
+                    type = VirtualRuntimeErrorType.INTERNAL_ERROR,
+                    insIndex = Math.Max(0, instructionIndex - 1),
+                    message = ex.Message
+                });
+                throw; // TriggerRuntimeError throws; this keeps the compiler happy
+            }
+        }
+
+        int Execute3Core(int instructionBatchCount, Func<int, bool> shouldBreakpointCallback)
         {
             isSuspendRequested = false;
             var cycles = 0;
@@ -1562,9 +1612,13 @@ namespace FadeBasic.Virtual
                             {
                                 targetAddr = runtoTarget,
                                 testResumeIp = instructionIndex,
-                                cyclesRemaining = runtoMaxCycles
+                                cyclesRemaining = runtoMaxCycles,
+                                methodStackDepth = methodStack.ptr
                             });
-                            // Switch execution to wherever the program is currently paused.
+                            // put back the main program's own frames, then switch execution to
+                            // wherever it is paused
+                            foreach (var parked in parkedMainFrames) methodStack.Push(parked);
+                            parkedMainFrames.Clear();
                             instructionIndex = programResumeIP;
                             break;
                         case OpCodes.RUNTO_YIELD:
@@ -1579,8 +1633,14 @@ namespace FadeBasic.Virtual
                             if (runtoStack.Count > 0 && runtoStack.buffer[runtoStack.ptr - 1].targetAddr == instructionIndex)
                             {
                                 var frame = runtoStack.Pop();
-                                // Save where the program is now so the next runto can resume from here.
+                                // Save where the program is now so the next runto can resume from here,
+                                // and set aside the main program's frames (see parkedMainFrames).
                                 programResumeIP = instructionIndex;
+                                for (var f = frame.methodStackDepth; f < methodStack.ptr; f++)
+                                {
+                                    parkedMainFrames.Add(methodStack.buffer[f]);
+                                }
+                                if (methodStack.ptr > frame.methodStackDepth) methodStack.ptr = frame.methodStackDepth;
                                 instructionIndex = frame.testResumeIp;
                             }
                             // else fall through; this label wasn't the targeted one.
@@ -1673,7 +1733,18 @@ namespace FadeBasic.Virtual
             public int targetAddr;
             public int testResumeIp;
             public int cyclesRemaining;
+            // methodStack depth when the test asked for the runto: frames above it are the
+            // main program's (e.g. the gosub routine the target label sits in)
+            public int methodStackDepth;
         }
+
+        /// <summary>
+        /// The main program's return frames while a test runs: when a runto stops inside a gosub
+        /// routine, that routine's frame is the main program's, not the test's. Without parking it,
+        /// the test body's final RETURN popped it and resumed the main program, so a test that did
+        /// not end with `end` ran the game on instead of finishing.
+        /// </summary>
+        public List<JumpHistoryData> parkedMainFrames = new List<JumpHistoryData>();
 
         public void TriggerRuntimeError(VirtualRuntimeError error)
         {

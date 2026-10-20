@@ -90,8 +90,9 @@ namespace FadeBasic.Testing
             // cooperative cancellation lands inside the VM, this becomes an
             // actual async call.
             ct.ThrowIfCancellationRequested();
-            var result = FadeTestExecutor.RunTest(
-                Launchable.Bytecode, HostMethods, Entry, Launchable.DebugData);
+            var result = FadeRunners.UseCompiled(Launchable)
+                ? FadeTestExecutor.RunTest(Launchable, Entry)
+                : FadeTestExecutor.RunTest(Launchable.Bytecode, HostMethods, Entry, Launchable.DebugData);
             return Task.FromResult(result);
         }
     }

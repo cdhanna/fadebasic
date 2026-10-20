@@ -600,7 +600,7 @@ Most numeric operations require two expressions, a _left_ and _right_. The follo
 | mod | takes the modulo of the left number by the right <pre>4 mod 3 `1 </pre> |
 | ^ | raises the left number to the power of the right <pre>2 ^ 3 `8 </pre> |
 | AND | results in `1` if both left and right values are positive. Otherwise, the result is `0` <pre>1 AND 2 `1 </pre> |
-| OR | results in `1` if either the left or right values are positive. Otherwise, the result is `0` <pre>1 OR 0 `1 </pre> |
+| OR | if the left value is positive, results in the left value itself. Otherwise, results in `1` if the right value is positive, or `0` <pre>1 OR 0 `1 </pre><pre>5 OR 0 `5 </pre> |
 | XOR | results in `1` if either the left or right values are positive, but not both. Otherwise, the result is `0` <pre>1 XOR 1 `0 </pre> |
 | > | results in `1` if the left number is greater than the right number. Otherwise, the result is `0`  <pre>2 > 1 `1 </pre> |
 | < | results in `1` if the right number is greater than the left number. Otherwise, the result is `0`  <pre>1 < 2 `1 </pre> |
@@ -626,6 +626,37 @@ There is also a few unary numeric operations that only require a single number.
 | NOT | if the number is not `0`, the result is `0`. Otherwise, the result is `1` |
 | - | negate the numeric value |
 | .. | _Bitwise_; results in a number the bitwise opposite of the numeric value |
+
+----
+#### Order of Operations
+
+When an expression has more than one operation, the operations that bind tighter happen first. This table lists the operations from the tightest to the loosest. Use parenthesis whenever the order matters to the reader.
+
+| Binds | Operations |
+| ----- | ---------- |
+| tightest | `..` (bitwise not) |
+| | `&&` |
+| | `\|\|` |
+| | `~~` |
+| | `<<`, `>>` |
+| | `^`, `MOD` |
+| | `*`, `/` |
+| | `+`, `-` |
+| | `>`, `<`, `>=`, `<=`, `=`, `<>` |
+| | `XOR` |
+| | `OR` |
+| | `AND` |
+| loosest | `NOT` |
+
+Operations on the same row group from left to right, except `^`, which groups from right to left.
+```basic
+x = 10 - 3 - 2 `5, the same as (10 - 3) - 2
+y = 10 - 3 + 2 `9, the same as (10 - 3) + 2
+z = 2 ^ 3 ^ 2  `512, the same as 2 ^ (3 ^ 2)
+```
+
+> [!WARNING]
+> A few rows are not where other languages put them. The bitwise operations bind tighter than arithmetic, so `1 + 2 << 1` is `5`, not `6`. And `OR` binds tighter than `AND`, so `a AND b OR c` is `a AND (b OR c)`.
 
 
 ----
@@ -1361,7 +1392,17 @@ print 42
 ```
 
 Compile time constants cannot access any runtime data in their initializer, and cannot be modified at runtime. 
-Compile time constants cannot be multi-line segments. 
+Compile time constants cannot be multi-line segments.
+
+A constant does not replace a label name, so a label may share its name with a constant.
+```basic
+#CONSTANT reef 1
+GOSUB reef `jumps to the label, reef
+END
+reef:
+    PRINT "in the reef"
+RETURN
+```
 
 ## Memory
 
@@ -1873,7 +1914,21 @@ ENDTEST
 `the test will fail.
 ```
 
-It is not valid to put a `FORBID` statement as a sub statement in a mock block. It must be part of the top level scope. 
+`EXITMOCK` and `FORBID` may also sit inside a block of the mock body, such as an `IF`.
+```basic
+WAIT MS(1000)
+_L1:
+
+TEST sample
+    MOCK WAIT MS(ms)
+        IF ms > 500
+            FORBID "no long waits" `the test fails: WAIT MS was called with 1000
+        ENDIF
+    ENDMOCK
+
+    RUNTO _L1
+ENDTEST
+```
 
 Once a command is mocked, the mock will be called for every call to the command.
 ```basic

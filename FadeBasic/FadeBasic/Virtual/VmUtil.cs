@@ -637,7 +637,7 @@ namespace FadeBasic.Virtual
             var typeCode = stack.Pop();
             if (typeCode != TypeCodes.PTR_HEAP && typeCode != TypeCodes.STRUCT) // TODO: this used to say INT. Maybe it needs to also allow STRING? 
             {
-                throw new Exception("vm exception: expected ptr");
+                throw new Exception($"vm exception: expected a pointer, but found {TypeCodeName(typeCode)}");
             }
             
             ReadSpan(ref stack, TypeCodes.PTR_HEAP, out var aSpan);
@@ -662,7 +662,7 @@ namespace FadeBasic.Virtual
             var typeCode = stack.Pop();
             if (typeCode != TypeCodes.PTR_HEAP && typeCode != TypeCodes.STRUCT) // TODO: does this also need to include string?
             {
-                throw new Exception("vm exception: expected a ptr");
+                throw new Exception($"vm exception: expected a pointer, but found {TypeCodeName(typeCode)}");
             }
             ReadSpan(ref stack, TypeCodes.PTR_HEAP, out var span);
             result = VmPtr.FromBytes(span);
@@ -673,10 +673,31 @@ namespace FadeBasic.Virtual
             var typeCode = stack.Pop();
             if (typeCode != TypeCodes.INT)
             {
-                throw new Exception("vm exception: expected an int");
+                throw new Exception($"vm exception: expected an int, but found {TypeCodeName(typeCode)}");
             }
             ReadSpan(ref stack, TypeCodes.INT, out var span);
             result = MemoryMarshal.Read<int>(span);
+        }
+
+        /// <summary>A type code as a person reads it, for error messages.</summary>
+        public static string TypeCodeName(byte typeCode)
+        {
+            switch (typeCode)
+            {
+                case TypeCodes.INT: return "an int";
+                case TypeCodes.REAL: return "a float";
+                case TypeCodes.BOOL: return "a boolean";
+                case TypeCodes.BYTE: return "a byte";
+                case TypeCodes.WORD: return "a word";
+                case TypeCodes.DWORD: return "a dword";
+                case TypeCodes.DINT: return "a double integer";
+                case TypeCodes.DFLOAT: return "a double float";
+                case TypeCodes.STRING: return "a string";
+                case TypeCodes.STRUCT: return "a struct";
+                case TypeCodes.VOID: return "nothing (a function that returns no value)";
+                case TypeCodes.PTR_HEAP: return "a pointer";
+                default: return $"type code {typeCode}";
+            }
         }
 
         public static void ReadAsTypeFormat(ref FastStack<byte> stack, out HeapTypeFormat format)

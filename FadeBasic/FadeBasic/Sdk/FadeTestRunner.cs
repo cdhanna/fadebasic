@@ -8,6 +8,25 @@ namespace FadeBasic.Sdk
 {
     public static class FadeTestExecutor
     {
+        /// <summary>Environment variable: the longest a single test may run, in seconds.</summary>
+        public const string ENV_TEST_TIMEOUT = "FADE_TEST_TIMEOUT";
+
+        /// <summary>
+        /// How long one test may run before it fails as timed out, or null for no limit. Read from
+        /// FADE_TEST_TIMEOUT (seconds) unless set in code. Without it a test that never finishes
+        /// hangs the whole run with nothing to say which test it was.
+        /// </summary>
+        public static TimeSpan? Timeout = ReadTimeout();
+
+        static TimeSpan? ReadTimeout()
+        {
+            var raw = Environment.GetEnvironmentVariable(ENV_TEST_TIMEOUT);
+            return double.TryParse(raw, System.Globalization.NumberStyles.Float,
+                System.Globalization.CultureInfo.InvariantCulture, out var seconds) && seconds > 0
+                ? TimeSpan.FromSeconds(seconds)
+                : (TimeSpan?)null;
+        }
+
         // Run a single test entry against pre-built bytecode + host method table.
         // Used both by the SDK (FadeRuntimeContext.RunTest) and the console-app
         // launcher when handling `--fade-test=name`. Each call gets a fresh VM,
@@ -18,6 +37,105 @@ namespace FadeBasic.Sdk
             TestManifestEntry entry)
         {
             return RunTest(bytecode, hostMethods, entry, debugData: null);
+        }
+
+        /// <summary>
+        /// Runs a test of a launchable on the backend <see cref="FadeRunners.UseCompiled"/> picks
+        /// (the compiled program when the launchable carries one and FADE_BACKEND is not "vm").
+        /// </summary>
+        public static FadeTestResult RunTest(ILaunchable launchable, TestManifestEntry entry)
+        {
+            if (!FadeRunners.UseCompiled(launchable))
+            {
+                return RunTest(launchable.Bytecode,
+                    HostMethodTable.FromCommandCollection(launchable.CommandCollection), entry, launchable.DebugData);
+            }
+
+            if (entry.isAbstract)
+            {
+                return new FadeTestResult
+                {
+                    testName = entry.name,
+                    passed = false,
+                    failureMessage = $"Test `{entry.name}` is abstract and cannot be run directly."
+                };
+            }
+
+            var sw = Stopwatch.StartNew();
+            var runner = FadeRunners.CreateTestRunner(launchable, entry);
+            if (runner == null)
+            {
+                return new FadeTestResult
+                {
+                    testName = entry.name,
+                    passed = false,
+                    failureMessage = $"No test named `{entry.name}` was compiled into the program."
+                };
+            }
+            try
+            {
+                // same contract as the VM path's Execute3(0): run until it ends or first suspends
+                runner.Run();
+            }
+            catch (Exception ex)
+            {
+                sw.Stop();
+                var line = ex is Compiled.CompiledFadeRuntimeException cex ? cex.SourceLine : -1;
+                return new FadeTestResult
+                {
+                    testName = entry.name,
+                    passed = false,
+                    failureMessage = "program threw: " + ex.Message,
+                    failureFrames = LineFrame(line),
+                    duration = sw.Elapsed
+                };
+            }
+            sw.Stop();
+            return BuildResult(runner, entry, sw.Elapsed);
+        }
+
+        /// <summary>Builds a result from a runner that has stopped (either backend).</summary>
+        public static FadeTestResult BuildResult(IFadeRunner runner, TestManifestEntry entry, TimeSpan elapsed,
+            DebugData debugData = null)
+        {
+            if (runner is VmRunner vmRunner)
+            {
+                return BuildResultFromVm(vmRunner.Machine, entry, elapsed, debugData);
+            }
+
+            var failure = runner.AssertionFailure;
+            if (failure != null)
+            {
+                var hasReason = !string.IsNullOrEmpty(failure.reason);
+                return new FadeTestResult
+                {
+                    testName = entry.name,
+                    passed = false,
+                    failureMessage = hasReason
+                        ? $"assert failed: {failure.sourceText} — {failure.reason}"
+                        : $"assert failed: {failure.sourceText}",
+                    failureSourceText = failure.sourceText,
+                    failureReason = failure.reason,
+                    failureFrames = LineFrame(failure.sourceLine),
+                    duration = elapsed
+                };
+            }
+            return new FadeTestResult
+            {
+                testName = entry.name,
+                passed = true,
+                duration = elapsed
+            };
+        }
+
+        static List<FadeStackFrame> LineFrame(int line)
+        {
+            var frames = new List<FadeStackFrame>();
+            if (line >= 0)
+            {
+                frames.Add(new FadeStackFrame { functionName = string.Empty, lineNumber = line, instructionIndex = -1 });
+            }
+            return frames;
         }
 
         // DebugData-aware overload: when supplied, the failure result includes
@@ -58,7 +176,33 @@ namespace FadeBasic.Sdk
             onVmCreated?.Invoke(vm);
             try
             {
-                vm.Execute3(0); // infinite budget!
+                if (Timeout == null)
+                {
+                    vm.Execute3(0); // infinite budget!
+                }
+                else
+                {
+                    // the same contract as Execute3(0) (run until the end or a suspension), in
+                    // slices, so a test that never ends can be stopped
+                    vm.isSuspendRequested = false;
+                    while (vm.instructionIndex < vm.program.Length && !vm.isSuspendRequested)
+                    {
+                        vm.Execute3(100_000);
+                        if (sw.Elapsed > Timeout.Value && vm.instructionIndex < vm.program.Length && !vm.isSuspendRequested)
+                        {
+                            sw.Stop();
+                            return new FadeTestResult
+                            {
+                                testName = entry.name,
+                                passed = false,
+                                failureMessage = $"timed out after {Timeout.Value.TotalSeconds:0.#} s ({ENV_TEST_TIMEOUT})",
+                                failureInstructionIndex = vm.instructionIndex,
+                                failureFrames = BuildFrames(vm.instructionIndex, vm.CaptureCallStack(), debugData),
+                                duration = sw.Elapsed
+                            };
+                        }
+                    }
+                }
             }
             catch (VirtualRuntimeException rex)
             {

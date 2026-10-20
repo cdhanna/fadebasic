@@ -687,6 +687,27 @@ namespace FadeBasic
                 all.Add(t);
             }
 
+            // A #constant is a text replace, but not of a label: neither its declaration
+            // (`name:` at the start of a statement) nor the target of gosub/goto/runto. Names are
+            // case-insensitive, so `#constant CORAL_ENDING_REEF 1` used to turn the label
+            // `coral_ending_reef:` into `1:`.
+            bool IsLabelName(string text, int after, int end, bool atLineStart)
+            {
+                var previous = tokens.Count > 0 ? tokens[tokens.Count - 1] : null;
+                if (!atLineStart && previous != null &&
+                    (previous.type == LexemType.KeywordGoSub || previous.type == LexemType.KeywordGoto ||
+                     previous.type == LexemType.KeywordRunto))
+                {
+                    return true;
+                }
+
+                var statementStart = atLineStart || previous == null || previous.type == LexemType.EndStatement;
+                if (!statementStart) return false;
+                var i = after;
+                while (i < end && (text[i] == ' ' || text[i] == '\t')) i++;
+                return i < end && text[i] == ':';
+            }
+
             void FlushEos(ref bool requestEoS, int requestEoSCharNumber, int[] lineEndsArr, int[] lineStartsArr, int lineNumber, Lexem eolLexem, TokenFlags flags)
             {
                 if (requestEoS)
@@ -957,7 +978,8 @@ namespace FadeBasic
                                 // var replacementLine = prefix + toAdd + suffix;
                                 break;
                             case LexemType.VariableGeneral
-                                when constantTable.TryGetValue(bestToken.caseInsensitiveRaw, out var replacement):
+                                when constantTable.TryGetValue(bestToken.caseInsensitiveRaw, out var replacement)
+                                     && !IsLabelName(src, lineStart + charNumber + bestToken.Length, lineEnd, requestEoS):
                                 var prefix = src.Substring(lineStart, charNumber);
                                 var suffix = src.Substring(lineStart + charNumber + bestToken.Length, lineLen - charNumber - bestToken.Length);
 

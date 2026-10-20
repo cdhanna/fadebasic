@@ -22,8 +22,9 @@ namespace FadeBasic.Ast.Visitors
             var scope = program.scope = new Scope();
             // Plumb the program's CommandCollection onto the scope so visitors
             // can look up command metadata (return type, args) without taking
-            // it as a parameter. Test sub-programs inherit from the parent.
-            scope.commands = program.commands ?? parentProgram?.commands;
+            // it as a parameter. Test sub-programs inherit from the parent. A `from` test's
+            // parent is the parent test's sub-program, which holds its commands on its scope.
+            scope.commands = program.commands ?? parentProgram?.commands ?? parentProgram?.scope?.commands;
 
             // Region name used to tag this program's top-level labels and to seed
             // GetCurrentFunctionName() so EnsureLabel can detect cross-scope gotos
@@ -801,6 +802,29 @@ namespace FadeBasic.Ast.Visitors
                             clearMockStatement.Errors.Add(new ParseError(clearMockStatement.StartToken, ErrorCodes.ClearMockOutsideTest));
                         }
                         ValidateClearMockStatement(clearMockStatement);
+                        break;
+                    case MockExitMockStatement exitMock:
+                        // reached for an exitmock nested in a block; top-level ones are
+                        // handled by ValidateMockStatement
+                        if (!ctx.insideMockBody)
+                        {
+                            exitMock.Errors.Add(new ParseError(exitMock.StartToken, ErrorCodes.MockExitOutsideMockBody));
+                        }
+                        exitMock.expression?.EnsureVariablesAreDefined(scope, ctx);
+                        break;
+                    case MockForbidStatement forbid:
+                        if (!ctx.insideMockBody)
+                        {
+                            forbid.Errors.Add(new ParseError(forbid.StartToken, ErrorCodes.MockExitOutsideMockBody));
+                        }
+                        if (forbid.reason != null)
+                        {
+                            forbid.reason.EnsureVariablesAreDefined(scope, ctx);
+                            if (forbid.reason.ParsedType.type != VariableType.String && !forbid.reason.ParsedType.unset)
+                            {
+                                forbid.Errors.Add(new ParseError(forbid.reason, ErrorCodes.MockForbidReasonMustBeString));
+                            }
+                        }
                         break;
                     default:
                         // A statement type the scope checker has no case for.

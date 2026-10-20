@@ -247,12 +247,15 @@ namespace FadeBasic.Ast.Visitors
             var result = new Dictionary<string, HashSet<string>>(StringComparer.OrdinalIgnoreCase);
             var globals = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
-            // First pass: collect globals (always visible).
+            // First pass: collect globals (always visible). A node is top-level when no
+            // function body contains it; the function bodies are walked once, not once per
+            // global (that was quadratic: ~4 s of a Fish Fish Pop build).
+            var inFunctions = NodesInFunctions(program);
             program.Visit(node =>
             {
                 if (node is DeclarationStatement decl
                     && decl.scopeType == DeclarationScopeType.Global
-                    && IsAtTopLevel(node, program))
+                    && !inFunctions.Contains(node))
                 {
                     globals.Add(decl.variable);
                 }
@@ -266,25 +269,29 @@ namespace FadeBasic.Ast.Visitors
             return result;
         }
 
-        private static bool IsAtTopLevel(IAstNode node, ProgramNode program)
+        // Every node inside a function body.
+        private static HashSet<IAstVisitable> NodesInFunctions(ProgramNode program)
         {
-            // Heuristic: a node is "top-level" if it appears in program.statements,
-            // not inside any function body. The Visit method walks recursively, so
-            // we need a cheap check. For simplicity, use the start token's depth in
-            // function bodies — if any function contains the node, it's not top-level.
+            var nodes = new HashSet<IAstVisitable>(ReferenceComparer.Instance);
             foreach (var fn in program.functions)
             {
                 foreach (var stmt in fn.statements)
                 {
-                    if (ReferenceEquals(stmt, node)) return false;
                     if (stmt is IAstVisitable visitable)
                     {
-                        var found = visitable.FindFirst(n => ReferenceEquals(n, node));
-                        if (found != null) return false;
+                        nodes.Add(visitable);
+                        visitable.Visit(n => nodes.Add(n));
                     }
                 }
             }
-            return true;
+            return nodes;
+        }
+
+        private sealed class ReferenceComparer : IEqualityComparer<IAstVisitable>
+        {
+            public static readonly ReferenceComparer Instance = new ReferenceComparer();
+            public bool Equals(IAstVisitable x, IAstVisitable y) => ReferenceEquals(x, y);
+            public int GetHashCode(IAstVisitable obj) => System.Runtime.CompilerServices.RuntimeHelpers.GetHashCode(obj);
         }
 
         private static void WalkStatements(
