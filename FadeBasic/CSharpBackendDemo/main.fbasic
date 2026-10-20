@@ -1,0 +1,39 @@
+` A small Fade program for the C# backend demo.
+
+type particle
+    x#
+    y#
+    vx#
+    vy#
+endtype
+
+global dim parts(500) as particle
+
+print "fade, compiled to C#"
+
+for i = 0 to len(parts) - 1
+    parts(i).x# = i
+    parts(i).vx# = (i mod 7) - 3
+    parts(i).vy# = (i mod 5) - 2
+next
+
+_ready:
+for frame = 1 to 2000
+    stepParticles(0.016)
+next
+
+print "particle 10 is at " + str$(parts(10).x#) + ", " + str$(parts(10).y#)
+print "fib(25) = " + str$(fib(25))
+print "area of a 3x4 box = " + str$(boxArea(3, 4))
+
+function stepParticles(dt#)
+    for i = 0 to len(parts) - 1
+        parts(i).x# = parts(i).x# + parts(i).vx# * dt#
+        parts(i).y# = parts(i).y# + parts(i).vy# * dt#
+        if parts(i).y# < -10 then parts(i).vy# = -parts(i).vy#
+    next
+endfunction
+
+function fib(n)
+    if n < 2 then exitfunction n
+endfunction fib(n - 1) + fib(n - 2)

@@ -1,0 +1,24 @@
+` tests run on whichever backend FADE_BACKEND picks (the compiled program by default)
+
+test particles_move
+    runto _ready
+    assert parts(10).x# = 10, "particle 10 starts at x 10"
+    stepParticles(1.0)
+    assert parts(10).y# = -2
+endtest
+
+test fib_is_right
+    assert fib(10) = 55
+endtest
+
+test mocked_random
+    mock rnd(limit)
+    endmock limit - 1
+    assert rnd(10) = 9
+    assert call count rnd = 1
+endtest
+
+test this_one_fails
+    x = 3
+    assert x = 4, "three is not four"
+endtest

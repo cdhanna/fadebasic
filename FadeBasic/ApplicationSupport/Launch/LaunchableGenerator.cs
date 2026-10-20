@@ -117,11 +117,14 @@ public partial class {TAG_CLASSNAME} : {nameof(ITestLaunchable)}, {nameof(IWatch
         List<string> commandClasses,
         bool includeMain=true,
         bool generateDebug=false,
-        bool enableTesting=false)
+        bool enableTesting=false,
+        FadeBasic.CSharp.CSharpTranspileResult compiledProgram=null,
+        bool includeTests=true)
     {
         var compiler = unit.program.Compile(collection, new CompilerOptions
         {
-            GenerateDebugData = generateDebug
+            GenerateDebugData = generateDebug,
+            IncludeTests = includeTests
         });
 
         // Stamp originating .fbasic file paths onto each test manifest entry
@@ -134,12 +137,15 @@ public partial class {TAG_CLASSNAME} : {nameof(ITestLaunchable)}, {nameof(IWatch
         var byteCode = compiler.Program.ToArray();
         var src = ClassTemplate;
 
-        var byteCodeStr = LaunchUtil.Pack64(byteCode);
+        // A FadeBackend=CSharp build runs the compiled program; it carries no bytecode (nor the
+        // debug data that maps bytecode to source). The VM compile above still runs, for its
+        // checks and for the test manifest.
+        var byteCodeStr = compiledProgram != null ? "" : LaunchUtil.Pack64(byteCode);
         string byteCodeReplacement = "\"" + byteCodeStr + "\"";
         var commandArray = GetCommandTable(commandClasses);
 
 
-        var debugDataStr = generateDebug ? LaunchUtil.PackDebugData(compiler.DebugData) : "";
+        var debugDataStr = generateDebug && compiledProgram == null ? LaunchUtil.PackDebugData(compiler.DebugData) : "";
         string debugDataReplacement = "\"" + debugDataStr + "\"";
 
         // Always pack the test manifest. Empty when the source has no tests.
@@ -168,6 +174,17 @@ public partial class {TAG_CLASSNAME} : {nameof(ITestLaunchable)}, {nameof(IWatch
         src = src.Replace(TAG_ENCODED_DEBUGDATA, debugDataReplacement);
         src = src.Replace(TAG_ENCODED_TESTMANIFEST, testManifestReplacement);
         src = src.Replace(TAG_CLASSNAME, className);
+        if (compiledProgram != null)
+        {
+            // The C# backend's program class rides along in the same file, and the launchable
+            // hands it out; FADE_BACKEND=vm still runs the bytecode (see FadeRunners).
+            src += Environment.NewLine
+                   + $"public partial class {className} : {nameof(ICompiledLaunchable)}" + Environment.NewLine
+                   + "{" + Environment.NewLine
+                   + $"    public global::FadeBasic.Compiled.CompiledFadeProgram CreateCompiledProgram() => new global::{compiledProgram.ClassFullName}();" + Environment.NewLine
+                   + "}" + Environment.NewLine
+                   + compiledProgram.Source;
+        }
 
         var dir = Path.GetDirectoryName(filePath);
         Directory.CreateDirectory(dir);
